@@ -1,0 +1,5 @@
+lockfile_version = 2
+
+[meta]
+name = 'xi'
+version = '0.0.1'

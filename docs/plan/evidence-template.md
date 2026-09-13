@@ -1,0 +1,28 @@
+# Ticket evidence
+
+- Ticket ID and title:
+- Outcome: passed / failed / unproven
+- Implementation revision or tree hash:
+- Environment and pinned dependency/oracle versions:
+- Specification sections and acceptance items covered:
+
+## Observable result
+
+Describe the production behavior and the relevant owner contract.
+
+## Executed validation
+
+| Command / fixture | Actual result | Evidence path / retained CI artifact |
+|---|---|---|
+
+## Performance and visual evidence
+
+When applicable: baseline/candidate revisions, corpus/seed, hardware/terminal, sample counts, p50/p95/p99/max, memory/CPU, screenshots and visual-review observations. Explicitly say when not applicable and why.
+
+## Failure cases and recovery
+
+Record cancellation, stale/conflict, error and cleanup scenarios relevant to the ticket.
+
+## Limitations and next action
+
+List every unmet acceptance item. A ticket with unmet required items remains unfinished. Link minimized regressions and any follow-up tickets without treating their existence as a pass.
