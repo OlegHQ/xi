@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "ticket": "T035",
+  "cases": [
+    {
+      "id": "T035-EXACT-ONCE-01",
+      "title": "One canonical key reaches one focused command target",
+      "input": "q",
+      "expected": { "result": "consumed", "handlerCalls": 1 }
+    },
+    {
+      "id": "T035-UTF8-SPLIT-01",
+      "title": "Valid split UTF-8 remains text beyond the parser timeout",
+      "inputHex": ["c3", "a9"],
+      "timeoutMilliseconds": 20,
+      "expected": { "key": "é", "rawHex": "c3a9", "command": false }
+    },
+    {
+      "id": "T035-UTF8-INVALID-01",
+      "title": "Invalid partial UTF-8 becomes replacement text",
+      "inputHex": ["c3", "41"],
+      "expected": { "keys": ["�", "a"], "containsCommandChord": false }
+    },
+    {
+      "id": "T035-OVERLAY-CANCEL-01",
+      "title": "Escape cancels an overlay and restores valid prior focus",
+      "sequence": ["g", "open-overlay", "escape"],
+      "expected": { "activeFocus": "editor-main", "pending": [] }
+    },
+    {
+      "id": "T035-AVAILABILITY-01",
+      "title": "Missing capability exposes a reason",
+      "command": "xi.t035.capability",
+      "expected": { "available": false, "reason": "Filesystem write capability is unavailable." }
+    },
+    {
+      "id": "T035-X10-RAW-01",
+      "title": "Legacy high-byte X10 diagnostics preserve wire bytes",
+      "inputHex": "1b5b4d20f3a1",
+      "expected": { "rawHex": "1b5b4d20f3a1" }
+    }
+  ]
+}

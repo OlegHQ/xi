@@ -1,0 +1,6 @@
+68048e9deb025b615dbee346ddf75b4403742598ea878943688f6df5ccccfb79  docs/plan/05-validation.md
+fd2fec9736555fdb79f83c16898e651d6e6bd0371a69baa6e19fc4c52d485cfa  docs/plan/06-execution.md
+319b7d5a51c3b6773c4a2e142a79bcb7bce2912e44024cc18e28da7e4f86043d  packages/ui/src/index.ts
+8023796dce0d425cd10254785fb305237ebfe8d673c37ad334e9c9efc8be6a13  packages/vim/src/index.ts
+d5ed8931f7591847ddbf45d5926392f6535cb9e96606c14a0b0d6014bd643bbb  packages/workbench/src/index.ts
+aabc79d6006a675cc9b50bab91ad25db2577e6146ab58b7f8da90176e8607fdd  tests/e2e/t045-g3.test.ts

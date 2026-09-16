@@ -1,0 +1,1005 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "version": "0.12.4",
+    "binarySha256": "d9635db0b272b7c81cd705ef0d8bbf16edfeb05b08b36b4228ab0d6a92ec384f",
+    "runtimeDocsSha256": "79b80909bf8f5fe1d89a0fb66200388e651c88d49d565fdc51780ef4b24d7b1e"
+  },
+  "helpTags": [
+    "word",
+    "WORD",
+    "w",
+    "W",
+    "b",
+    "B",
+    "e",
+    "E",
+    "ge",
+    "gE",
+    "'iskeyword'"
+  ],
+  "note": "Pinned fixture evidence only. Compatibility inventory rows remain unimplemented pending T061 review.",
+  "fixtures": [
+    {
+      "id": "T017-ORACLE-W-CLASSES-01",
+      "steps": [
+        {
+          "label": "w-keyword-to-punctuation",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-punctuation-to-keyword",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-keyword-to-punctuation-again",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-to-next-keyword",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-over-tab-to-number",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-to-punctuation-after-number",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-at-final-punctuation",
+          "keys": "w",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "w-keyword-to-punctuation",
+          "lines": [
+            "foo..bar--baz\t42!"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 4,
+            "desiredColumn": 3
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-punctuation-to-keyword",
+          "lines": [
+            "foo..bar--baz\t42!"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 6,
+            "coladd": 0,
+            "virtualColumn": 6,
+            "desiredColumn": 5
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-keyword-to-punctuation-again",
+          "lines": [
+            "foo..bar--baz\t42!"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 9,
+            "coladd": 0,
+            "virtualColumn": 9,
+            "desiredColumn": 8
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-to-next-keyword",
+          "lines": [
+            "foo..bar--baz\t42!"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 11,
+            "coladd": 0,
+            "virtualColumn": 11,
+            "desiredColumn": 10
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-over-tab-to-number",
+          "lines": [
+            "foo..bar--baz\t42!"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 15,
+            "coladd": 0,
+            "virtualColumn": 17,
+            "desiredColumn": 16
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-to-punctuation-after-number",
+          "lines": [
+            "foo..bar--baz\t42!"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 17,
+            "coladd": 0,
+            "virtualColumn": 19,
+            "desiredColumn": 18
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-at-final-punctuation",
+          "lines": [
+            "foo..bar--baz\t42!"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 17,
+            "coladd": 0,
+            "virtualColumn": 19,
+            "desiredColumn": 18
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-WORD-COUNTS-01",
+      "steps": [
+        {
+          "label": "2w",
+          "keys": "2w",
+          "drain": false
+        },
+        {
+          "label": "3e",
+          "keys": "3e",
+          "drain": false
+        },
+        {
+          "label": "2W",
+          "keys": "2W",
+          "drain": false
+        },
+        {
+          "label": "3E",
+          "keys": "3E",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "2w",
+          "lines": [
+            "one..two---three four five"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 6,
+            "coladd": 0,
+            "virtualColumn": 6,
+            "desiredColumn": 5
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "3e",
+          "lines": [
+            "one..two---three four five"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 16,
+            "coladd": 0,
+            "virtualColumn": 16,
+            "desiredColumn": 15
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "2W",
+          "lines": [
+            "one..two---three four five"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 23,
+            "coladd": 0,
+            "virtualColumn": 23,
+            "desiredColumn": 22
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "3E",
+          "lines": [
+            "one..two---three four five"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 26,
+            "coladd": 0,
+            "virtualColumn": 26,
+            "desiredColumn": 25
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-REVERSE-COUNTS-01",
+      "steps": [
+        {
+          "label": "2b",
+          "keys": "2b",
+          "drain": false
+        },
+        {
+          "label": "2ge",
+          "keys": "2ge",
+          "drain": false
+        },
+        {
+          "label": "2B",
+          "keys": "2B",
+          "drain": false
+        },
+        {
+          "label": "2gE",
+          "keys": "2gE",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "2b",
+          "lines": [
+            "one..two---three four"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 9,
+            "coladd": 0,
+            "virtualColumn": 9,
+            "desiredColumn": 8
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "2ge",
+          "lines": [
+            "one..two---three four"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 5,
+            "desiredColumn": 4
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "2B",
+          "lines": [
+            "one..two---three four"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "2gE",
+          "lines": [
+            "one..two---three four"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-EMPTY-LINES-01",
+      "steps": [
+        {
+          "label": "w-to-first-empty-line",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-to-second-empty-line",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-to-indented-word",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-to-trailing-empty-line",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "b-to-bar",
+          "keys": "b",
+          "drain": false
+        },
+        {
+          "label": "ge-to-preceding-empty-line",
+          "keys": "ge",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "w-to-first-empty-line",
+          "lines": [
+            "foo",
+            "",
+            "",
+            "  bar",
+            ""
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-to-second-empty-line",
+          "lines": [
+            "foo",
+            "",
+            "",
+            "  bar",
+            ""
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-to-indented-word",
+          "lines": [
+            "foo",
+            "",
+            "",
+            "  bar",
+            ""
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-to-trailing-empty-line",
+          "lines": [
+            "foo",
+            "",
+            "",
+            "  bar",
+            ""
+          ],
+          "cursor": {
+            "line": 5,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "b-to-bar",
+          "lines": [
+            "foo",
+            "",
+            "",
+            "  bar",
+            ""
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "ge-to-preceding-empty-line",
+          "lines": [
+            "foo",
+            "",
+            "",
+            "  bar",
+            ""
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-PUNCTUATION-ONLY-01",
+      "steps": [
+        {
+          "label": "w-to-empty-line",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-to-keyword",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-to-final-punctuation",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "b-to-keyword",
+          "keys": "b",
+          "drain": false
+        },
+        {
+          "label": "ge-to-preceding-empty-line",
+          "keys": "ge",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "w-to-empty-line",
+          "lines": [
+            "!!!",
+            "",
+            "foo",
+            "???"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-to-keyword",
+          "lines": [
+            "!!!",
+            "",
+            "foo",
+            "???"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-to-final-punctuation",
+          "lines": [
+            "!!!",
+            "",
+            "foo",
+            "???"
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "b-to-keyword",
+          "lines": [
+            "!!!",
+            "",
+            "foo",
+            "???"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "ge-to-preceding-empty-line",
+          "lines": [
+            "!!!",
+            "",
+            "foo",
+            "???"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-UNICODE-CLASSES-01",
+      "steps": [
+        {
+          "label": "w-latin1-to-unicode-letter",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-from-unicode-keyword-to-next-word",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-combining-word-to-emoji",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-emoji-to-ascii-keyword",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "w-final-keyword-to-end-of-word",
+          "keys": "w",
+          "drain": false
+        },
+        {
+          "label": "b-unicode-reverse",
+          "keys": "b",
+          "drain": false
+        },
+        {
+          "label": "ge-unicode-reverse-end",
+          "keys": "ge",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "w-latin1-to-unicode-letter",
+          "lines": [
+            "café λ2 á 😀_x"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 7,
+            "coladd": 0,
+            "virtualColumn": 6,
+            "desiredColumn": 5
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-from-unicode-keyword-to-next-word",
+          "lines": [
+            "café λ2 á 😀_x"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 11,
+            "coladd": 0,
+            "virtualColumn": 9,
+            "desiredColumn": 8
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-combining-word-to-emoji",
+          "lines": [
+            "café λ2 á 😀_x"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 15,
+            "coladd": 0,
+            "virtualColumn": 12,
+            "desiredColumn": 10
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-emoji-to-ascii-keyword",
+          "lines": [
+            "café λ2 á 😀_x"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 19,
+            "coladd": 0,
+            "virtualColumn": 13,
+            "desiredColumn": 12
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "w-final-keyword-to-end-of-word",
+          "lines": [
+            "café λ2 á 😀_x"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 20,
+            "coladd": 0,
+            "virtualColumn": 14,
+            "desiredColumn": 13
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "b-unicode-reverse",
+          "lines": [
+            "café λ2 á 😀_x"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 19,
+            "coladd": 0,
+            "virtualColumn": 13,
+            "desiredColumn": 12
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        },
+        {
+          "label": "ge-unicode-reverse-end",
+          "lines": [
+            "café λ2 á 😀_x"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 15,
+            "coladd": 0,
+            "virtualColumn": 12,
+            "desiredColumn": 10
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-UNICODE-AT-LETTER-01",
+      "steps": [
+        {
+          "label": "w-from-unicode-letter",
+          "keys": "w",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "w-from-unicode-letter",
+          "lines": [
+            "Ω+δ"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-UNICODE-AT-NUMBER-01",
+      "steps": [
+        {
+          "label": "w-from-supplementary-number",
+          "keys": "w",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "w-from-supplementary-number",
+          "lines": [
+            "𝟠+z"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 6,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-UNICODE-AT-EMOJI-01",
+      "steps": [
+        {
+          "label": "w-from-emoji",
+          "keys": "w",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "w-from-emoji",
+          "lines": [
+            "😀+x"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-UNICODE-AT-EMOJI-LETTER-01",
+      "steps": [
+        {
+          "label": "w-between-emoji-and-letter-class",
+          "keys": "w",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "w-between-emoji-and-letter-class",
+          "lines": [
+            "😀Ω+x"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-ISKEYWORD-DEFAULT-01",
+      "steps": [
+        {
+          "label": "default-iskeyword-w",
+          "keys": "w",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "default-iskeyword-w",
+          "lines": [
+            "foo-bar baz"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 4,
+            "desiredColumn": 3
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255",
+          "nonemptyRegisters": {}
+        }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-ISKEYWORD-CUSTOM-01",
+      "steps": [
+        {
+          "label": "custom-iskeyword-w",
+          "keys": "w",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "custom-iskeyword-w",
+          "lines": [
+            "foo-bar baz"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 9,
+            "coladd": 0,
+            "virtualColumn": 9,
+            "desiredColumn": 8
+          },
+          "mode": "n",
+          "error": "",
+          "iskeyword": "@,48-57,_,192-255,-",
+          "nonemptyRegisters": {}
+        }
+      ]
+    }
+  ]
+}

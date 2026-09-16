@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "openTuiVersion": "0.5.11",
+  "legacyEscapeTimeoutMs": 20,
+  "cases": [
+    {
+      "id": "INP-ESC-ALT-01",
+      "title": "A delayed Escape followed by Alt-x remains two key events",
+      "protocol": "legacy",
+      "actions": [
+        { "op": "push", "hex": "1b" },
+        { "op": "advance", "milliseconds": 19, "assertEventCount": 0 },
+        { "op": "advance", "milliseconds": 1, "flush": true, "assertEventCount": 1 },
+        { "op": "push", "hex": "1b78" }
+      ],
+      "expected": [
+        { "kind": "key", "name": "escape", "ctrl": false, "meta": false, "source": "raw", "eventType": "press", "rawHex": "1b" },
+        { "kind": "key", "name": "x", "ctrl": false, "meta": true, "source": "raw", "eventType": "press", "rawHex": "1b78" }
+      ]
+    },
+    {
+      "id": "INP-TAB-CTRLI-LEGACY-01",
+      "title": "Legacy Tab and Ctrl-I byte sequences collide",
+      "protocol": "legacy",
+      "actions": [
+        { "op": "push", "hex": "09" },
+        { "op": "push", "hex": "09" }
+      ],
+      "expected": [
+        { "kind": "key", "name": "tab", "ctrl": false, "meta": false, "source": "raw", "eventType": "press", "rawHex": "09" },
+        { "kind": "key", "name": "tab", "ctrl": false, "meta": false, "source": "raw", "eventType": "press", "rawHex": "09" }
+      ]
+    },
+    {
+      "id": "INP-TAB-CTRLI-KITTY-01",
+      "title": "Kitty disambiguation distinguishes Tab from Ctrl-I",
+      "protocol": "kitty",
+      "actions": [
+        { "op": "push", "hex": "1b5b3975" },
+        { "op": "push", "hex": "1b5b3130353b3575" }
+      ],
+      "expected": [
+        { "kind": "key", "name": "tab", "ctrl": false, "meta": false, "source": "kitty", "eventType": "press", "rawHex": "1b5b3975" },
+        { "kind": "key", "name": "i", "ctrl": true, "meta": false, "source": "kitty", "eventType": "press", "rawHex": "1b5b3130353b3575" }
+      ]
+    },
+    {
+      "id": "INP-KITTY-RELEASE-01",
+      "title": "Kitty release reports remain distinct from key presses",
+      "protocol": "kitty",
+      "actions": [{ "op": "push", "hex": "1b5b39393b353a3375" }],
+      "expected": [
+        { "kind": "key", "name": "c", "ctrl": true, "eventType": "release", "source": "kitty", "rawHex": "1b5b39393b353a3375" }
+      ]
+    },
+    {
+      "id": "INP-KITTY-REPEAT-01",
+      "title": "The canonical key event marks a Kitty repeat distinctly",
+      "protocol": "kitty",
+      "actions": [{ "op": "push", "hex": "1b5b3132303b313a3275" }],
+      "expected": [
+        { "kind": "key", "name": "x", "eventType": "repeat", "repeated": true, "source": "kitty", "rawHex": "1b5b3132303b313a3275" }
+      ]
+    },
+    {
+      "id": "INP-CTRLC-LEGACY-01",
+      "title": "Legacy Ctrl-C is a key event, not a parser exit signal",
+      "protocol": "legacy",
+      "actions": [{ "op": "push", "hex": "03" }],
+      "expected": [
+        { "kind": "key", "name": "c", "ctrl": true, "meta": false, "source": "raw", "eventType": "press", "rawHex": "03" }
+      ]
+    },
+    {
+      "id": "INP-CTRLC-KITTY-01",
+      "title": "Kitty Ctrl-C is an unambiguous key event",
+      "protocol": "kitty",
+      "actions": [{ "op": "push", "hex": "1b5b39393b3575" }],
+      "expected": [
+        { "kind": "key", "name": "c", "ctrl": true, "meta": false, "source": "kitty", "eventType": "press", "rawHex": "1b5b39393b3575" }
+      ]
+    },
+    {
+      "id": "INP-PASTE-ESCAPES-01",
+      "title": "Bracketed paste keeps embedded key-looking bytes as one text payload",
+      "protocol": "legacy",
+      "actions": [{ "op": "push", "hex": "1b5b3230307e781b5b410a711b5b3230317e" }],
+      "expected": [
+        { "kind": "paste", "payloadHex": "781b5b410a71", "length": 6 }
+      ]
+    },
+    {
+      "id": "INP-FOCUS-01",
+      "title": "The stdin parser preserves terminal focus reports as CSI responses",
+      "protocol": "legacy",
+      "actions": [{ "op": "push", "hex": "1b5b491b5b4f" }],
+      "expected": [
+        { "kind": "response", "protocol": "csi", "sequenceHex": "1b5b49" },
+        { "kind": "response", "protocol": "csi", "sequenceHex": "1b5b4f" }
+      ]
+    },
+    {
+      "id": "INP-MOUSE-SGR-01",
+      "title": "SGR mouse coordinates normalize to zero-based cells exactly once",
+      "protocol": "legacy",
+      "actions": [{ "op": "push", "hex": "1b5b3c303b363b334d" }],
+      "expected": [
+        { "kind": "mouse", "eventType": "down", "encoding": "sgr", "button": 0, "column0": 5, "row0": 2, "ctrl": false, "alt": false, "shift": false, "rawHex": "1b5b3c303b363b334d" }
+      ]
+    },
+    {
+      "id": "INP-UTF8-CHUNK-01",
+      "title": "A UTF-8 character split across terminal reads emits one key event",
+      "protocol": "legacy",
+      "actions": [
+        { "op": "push", "hex": "c3" },
+        { "op": "advance", "milliseconds": 5, "assertEventCount": 0 },
+        { "op": "push", "hex": "a9", "assertEventCount": 1 }
+      ],
+      "expected": [
+        { "kind": "key", "name": "é", "ctrl": false, "meta": false, "source": "raw", "eventType": "press", "rawHex": "c3a9" }
+      ]
+    },
+    {
+      "id": "INP-UTF8-CHUNK-LATE-01",
+      "title": "A UTF-8 continuation arriving after the parser deadline falls back to separate legacy keys",
+      "protocol": "legacy",
+      "actions": [
+        { "op": "push", "hex": "c3" },
+        { "op": "advance", "milliseconds": 20, "flush": true, "assertEventCount": 1 },
+        { "op": "push", "hex": "a9" },
+        { "op": "advance", "milliseconds": 20, "flush": true, "assertEventCount": 2 }
+      ],
+      "expected": [
+        { "kind": "key", "name": "C", "meta": true, "shift": true, "source": "raw", "rawHex": "1b43" },
+        { "kind": "key", "name": "", "source": "raw", "rawHex": "1b29" }
+      ]
+    }
+  ],
+  "utf8GuardCases": [
+    {
+      "id": "INP-UTF8-GUARD-SPLIT-01",
+      "title": "A multibyte code point remains one character across delayed chunks",
+      "chunksHex": ["c3", "a9"],
+      "expectedOutputsHex": ["", "c3a9"],
+      "expectedFinishHex": ""
+    },
+    {
+      "id": "INP-UTF8-GUARD-INVALID-CONTINUATION-01",
+      "title": "An invalid continuation becomes replacement text before ASCII is reprocessed",
+      "chunksHex": ["c3", "41"],
+      "expectedOutputsHex": ["", "efbfbd41"],
+      "expectedFinishHex": ""
+    },
+    {
+      "id": "INP-UTF8-GUARD-EOF-01",
+      "title": "An incomplete terminal code point flushes as replacement text on close",
+      "chunksHex": ["f0", "9f"],
+      "expectedOutputsHex": ["", ""],
+      "expectedFinishHex": "efbfbd"
+    }
+  ],
+  "oracleCases": [
+    {
+      "id": "INP-ORACLE-CTRLC-01",
+      "title": "Ctrl-C exits an insert session without exiting the editor process",
+      "lines": ["abc"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "keys": "iX<C-C>",
+      "expected": { "lines": ["aXbc"], "cursor": { "line": 1, "byteColumn": 2 }, "mode": "n", "blocking": false, "error": "", "modified": true }
+    }
+  ]
+}

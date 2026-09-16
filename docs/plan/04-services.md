@@ -10,6 +10,8 @@ Client identity is `(server config, root, environment, workspace folders)`. Disc
 
 Sync uses committed document deltas and monotonically increasing LSP versions; didOpen precedes didChange and didClose invalidates pending requests. Debounce/coalesce carefully while preserving the server's expected base text; incremental changes are expressed against the correct sequential versions. Negotiate UTF-8/16/32 positions and test conversion of astral characters, combining sequences, CRLF-normalized buffers and out-of-range server positions. If a server supports only full sync, send snapshots asynchronously with a documented large-file limit.
 
+One multi-cursor transaction produces one coherent committed batch; LSP translates its base-relative edits into the correct protocol sequence. Selection-only changes send no didChange. Positional requests carry view and selection generation so motion alone invalidates stale completions. [Selection/service continuity](08-selections.md) specifies required multi-cursor completion, snippets, primary navigation, shared additional edits and formatting across all sets; T088 qualifies integration. Provider lifecycle follows [10-extensibility](10-extensibility.md).
+
 ### Capability matrix
 
 | Feature | Client behavior | Required validation |
@@ -72,6 +74,8 @@ Use `~/.config/xi/config.toml`, `languages.toml`, `themes/*.toml` and optional w
 
 Parse into unknown, validate with a schema, compile command references and key tries, then atomically swap the immutable config generation. Unknown fields/commands, duplicate normalized keys, conflicting exact/prefix bindings and wrong types get filename/line/column diagnostics where supported. Keep last-good config on failed reload. Hot-reload appearance and keymaps immediately; restart affected servers only when their effective configuration changed, with state replay. Do not silently swallow unsupported settings.
 
+Registry/config publication is coherent; pending key sequences finish under their captured generation unless the target is disposed, when they cancel visibly. Validate native Ex alias collisions, command selection policies and contribution ownership before publication. Required settings include `editor.motion-trail` (`off`/`last-motion`), `editor.selection-limit` (10000), `editor.selection-history-limit` (100), `editor.hints.delay-ms` (250), mouse enablement/modifier/scroll settings and semantic selection/cursor/trail tokens. Profile defaults and gesture fallbacks are in [interaction](09-interaction.md); command IDs are in [selections](08-selections.md). Limits never silently truncate selections.
+
 Workspace settings can configure executable servers/formatters/tasks. Treat executable changes in an untrusted project as an explicit trust boundary; ordinary appearance settings remain usable. Trusted user config commands are argv arrays and explicit cwd/env, never automatic shell evaluation. A shell task is a separately declared task type. This is product behavior for opening untrusted repositories, not a requirement to seek approval for routine implementation work.
 
 The following is the **proposed Xi schema**, not a currently functioning config or a drop-in Helix file:
@@ -86,6 +90,9 @@ line-number = "absolute"
 scrolloff = 5
 mouse = true
 wrap = false
+motion-trail = "last-motion"
+selection-limit = 10000
+selection-history-limit = 100
 
 [editor.cursor-shape]
 normal = "block"
@@ -162,3 +169,9 @@ Use Tree-sitter incrementally behind the syntax owner; choose and pin grammar/ru
 Save uses a snapshot, external-change detection and same-directory temporary write/rename where appropriate; preserve permissions and handle symlink/hardlink semantics explicitly rather than silently replacing link identity. Implement data/parent-directory flush policy for supported platforms and distinguish committed-in-memory from persisted-on-disk state. Recovery journal records incremental committed edits on a bounded cadence; a crash can lose only the documented unsynced window. On restart, compare recovery base to disk and offer a diff if disk changed. Sessions restore roots, buffers, layout and cursors separately from recovered text.
 
 Basic tasks are configured argv commands with explicit cwd, cancellation, bounded output, exit status and optional problem matchers feeding a separate diagnostic source. General terminal emulation, DAP and rich test explorers remain deferred per the capability matrix. A future PTY terminal must implement terminal input mode and escape routing separately; a scrollbox of ANSI text is not a terminal emulator.
+
+## CPU, memory and backpressure contracts
+
+All service families inherit numeric owner limits and aggregate admission from [performance](12-performance.md) and its [catalog](performance-budgets.json). Count queued bytes, replicas, parser/native trees and retained results, not just request counts. Async functions and microtasks do not isolate CPU. Services submit versioned deltas/proposals through typed ports and never mutate authoritative storage. Cancellation/staleness tests include a slow consumer, resync and pressure eviction while E14 typing remains responsive.
+
+Load/save/recovery must stream bounded chunks and record incremental committed edits; full snapshot JSON checkpointing is an identified T113 remediation, not evidence that this requirement is already met. T117 bounds LSP full/incremental serialization. SQLite is user-confirmed development budgets/results storage only: no runtime persistence migration or DB lookup on the input loop.

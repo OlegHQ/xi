@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "T024-ORACLE-INSERT-01",
+      "title": "dot repeats an insert at the next cursor",
+      "purpose": "Pin the semantic insert recipe and its replay at a new cursor.",
+      "modes": ["normal", "insert"],
+      "lines": ["alpha beta"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "insert-X", "keys": "iX<Esc>" },
+        { "label": "move-to-beta", "keys": "w" },
+        { "label": "dot-insert", "keys": "." }
+      ]
+    },
+    {
+      "id": "T024-ORACLE-CHANGE-01",
+      "title": "dot repeats a change with a motion re-evaluated",
+      "purpose": "Pin change replay using the current cursor and current word boundary.",
+      "modes": ["normal", "insert", "operator-pending"],
+      "lines": ["one two three"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "change-first-word", "keys": "cwX<Esc>" },
+        { "label": "move-to-second-word", "keys": "w" },
+        { "label": "dot-change", "keys": "." }
+      ]
+    },
+    {
+      "id": "T024-ORACLE-VISUAL-01",
+      "title": "dot repeats visual replacement shape",
+      "purpose": "Pin a visual replacement followed by dot on the next matching selection shape.",
+      "modes": ["normal", "visual", "insert"],
+      "lines": ["one two three"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "replace-first-word", "keys": "vecX<Esc>" },
+        { "label": "move-to-second-word", "keys": "w" },
+        { "label": "dot-visual-replace", "keys": "." }
+      ]
+    },
+    {
+      "id": "T024-ORACLE-PUT-01",
+      "title": "dot repeats put using the current register",
+      "purpose": "Pin put replay and register lookup at replay time.",
+      "modes": ["normal"],
+      "lines": ["one", "two", "three"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "yank-line", "keys": "yy" },
+        { "label": "put-line", "keys": "p" },
+        { "label": "move-to-next-line", "keys": "j" },
+        { "label": "dot-put", "keys": "." }
+      ]
+    },
+    {
+      "id": "T024-ORACLE-FAILED-01",
+      "title": "failed command leaves the prior dot target",
+      "purpose": "Pin that a failed motion does not replace a successful delete target.",
+      "modes": ["normal", "operator-pending"],
+      "lines": ["one two"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "delete-first-word", "keys": "dw" },
+        { "label": "failed-find", "keys": "dfZ" },
+        { "label": "dot-prior-delete", "keys": "." }
+      ]
+    }
+  ]
+}

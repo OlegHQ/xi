@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "T017-ORACLE-W-CLASSES-01",
+      "title": "w crosses keyword, punctuation, and whitespace words",
+      "purpose": "Capture small-word class changes across punctuation runs, a tab, and the final word.",
+      "modes": ["normal"],
+      "lines": ["foo..bar--baz\t42!"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "w-keyword-to-punctuation", "keys": "w" },
+        { "label": "w-punctuation-to-keyword", "keys": "w" },
+        { "label": "w-keyword-to-punctuation-again", "keys": "w" },
+        { "label": "w-to-next-keyword", "keys": "w" },
+        { "label": "w-over-tab-to-number", "keys": "w" },
+        { "label": "w-to-punctuation-after-number", "keys": "w" },
+        { "label": "w-at-final-punctuation", "keys": "w" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-WORD-COUNTS-01",
+      "title": "Counts compose with forward word and WORD motions",
+      "purpose": "Capture counted w, W, e, and E on text whose keyword and punctuation boundaries differ.",
+      "modes": ["normal"],
+      "lines": ["one..two---three four five"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "2w", "keys": "2w" },
+        { "label": "3e", "keys": "3e" },
+        { "label": "2W", "keys": "2W" },
+        { "label": "3E", "keys": "3E" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-REVERSE-COUNTS-01",
+      "title": "Counts compose with reverse word and WORD motions",
+      "purpose": "Capture counted b, B, ge, and gE from a later word across mixed keyword and punctuation classes.",
+      "modes": ["normal"],
+      "lines": ["one..two---three four"],
+      "cursor": { "line": 1, "byteColumn0": 17 },
+      "steps": [
+        { "label": "2b", "keys": "2b" },
+        { "label": "2ge", "keys": "2ge" },
+        { "label": "2B", "keys": "2B" },
+        { "label": "2gE", "keys": "2gE" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-EMPTY-LINES-01",
+      "title": "Empty logical lines count as words between nonblank lines",
+      "purpose": "Capture forward and reverse word steps over consecutive empty lines and surrounding whitespace.",
+      "modes": ["normal"],
+      "lines": ["foo", "", "", "  bar", ""],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "w-to-first-empty-line", "keys": "w" },
+        { "label": "w-to-second-empty-line", "keys": "w" },
+        { "label": "w-to-indented-word", "keys": "w" },
+        { "label": "w-to-trailing-empty-line", "keys": "w" },
+        { "label": "b-to-bar", "keys": "b" },
+        { "label": "ge-to-preceding-empty-line", "keys": "ge" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-PUNCTUATION-ONLY-01",
+      "title": "Punctuation-only lines remain traversable small words and WORDs",
+      "purpose": "Capture punctuation-only lines beside an empty paragraph and ordinary keyword text.",
+      "modes": ["normal"],
+      "lines": ["!!!", "", "foo", "???"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "w-to-empty-line", "keys": "w" },
+        { "label": "w-to-keyword", "keys": "w" },
+        { "label": "w-to-final-punctuation", "keys": "w" },
+        { "label": "b-to-keyword", "keys": "b" },
+        { "label": "ge-to-preceding-empty-line", "keys": "ge" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-UNICODE-CLASSES-01",
+      "title": "Unicode keyword and grapheme boundaries match the pinned Vim word classes",
+      "purpose": "Capture Latin-1 and Unicode-letter keywords, a combining sequence, and an emoji class transition.",
+      "modes": ["normal"],
+      "lines": ["café λ2 á 😀_x"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "w-latin1-to-unicode-letter", "keys": "w" },
+        { "label": "w-from-unicode-keyword-to-next-word", "keys": "w" },
+        { "label": "w-combining-word-to-emoji", "keys": "w" },
+        { "label": "w-emoji-to-ascii-keyword", "keys": "w" },
+        { "label": "w-final-keyword-to-end-of-word", "keys": "w" },
+        { "label": "b-unicode-reverse", "keys": "b" },
+        { "label": "ge-unicode-reverse-end", "keys": "ge" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-UNICODE-AT-LETTER-01",
+      "title": "The pinned @ class treats a Unicode letter as keyword",
+      "purpose": "Disambiguate Neovim's @ class for letters above the 192-255 range using an adjacent punctuation boundary.",
+      "modes": ["normal"],
+      "lines": ["Ω+δ"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "w-from-unicode-letter", "keys": "w" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-UNICODE-AT-NUMBER-01",
+      "title": "The pinned @ class treatment of supplementary numerals is observed",
+      "purpose": "Determine whether a supplementary Unicode number shares the @ class or the punctuation class in word motions.",
+      "modes": ["normal"],
+      "lines": ["𝟠+z"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "w-from-supplementary-number", "keys": "w" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-UNICODE-AT-EMOJI-01",
+      "title": "The pinned @ class treatment of emoji is observed",
+      "purpose": "Determine whether an emoji shares the @ class or the punctuation class in word motions.",
+      "modes": ["normal"],
+      "lines": ["😀+x"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "w-from-emoji", "keys": "w" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-UNICODE-AT-EMOJI-LETTER-01",
+      "title": "The pinned @ class relationship between emoji and Unicode letters is observed",
+      "purpose": "Determine whether emoji and letters above 255 form one small word or adjacent classes.",
+      "modes": ["normal"],
+      "lines": ["😀Ω+x"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "w-between-emoji-and-letter-class", "keys": "w" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-ISKEYWORD-DEFAULT-01",
+      "title": "Default iskeyword separates a hyphen from keyword text",
+      "purpose": "Pin the default iskeyword classification used by word motions.",
+      "modes": ["normal"],
+      "lines": ["foo-bar baz"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "default-iskeyword-w", "keys": "w" }
+      ]
+    },
+    {
+      "id": "T017-ORACLE-ISKEYWORD-CUSTOM-01",
+      "title": "Custom iskeyword immediately groups hyphenated text",
+      "purpose": "Pin a custom iskeyword value that adds hyphen to the keyword class.",
+      "modes": ["normal"],
+      "lines": ["foo-bar baz"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "options": { "iskeyword": "@,48-57,_,192-255,-" },
+      "steps": [
+        { "label": "custom-iskeyword-w", "keys": "w" }
+      ]
+    }
+  ]
+}

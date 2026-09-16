@@ -1,0 +1,127 @@
+# Performance research and implementation audit
+
+Reviewed 2026-09-15 against the worktree based on `555ed0ce3c2475a10844824468e6fddbb6e49755`. Bun 1.3.13, strict TypeScript 7.0.2, OpenTUI 0.5.11, Linux aarch64. This is research and planning evidence, not release qualification. The worktree contains product code and historical evidence; the old description of a planning-only repository is no longer a description of current state.
+
+The two supplied attachments were read in full. The user subsequently clarified that the objective is **the right engine for Xi's initial requirements**, not copying all of Vim, and confirmed SQLite means a **budgets/results ledger**. [12-performance](12-performance.md) makes those distinctions normative. No personal Neovim configuration was executed or modified.
+
+## Findings that change the plan
+
+1. The public document path is a materially different workload from the storage-only spike. Newline metadata and normalization can dominate a small file. Fix data density before generic TypeScript micro-optimization.
+2. Bounded UTF-16 chunks are not inherently a bad choice. Keep public units stable and compare actual lifetime/copy/coordinate costs before choosing UTF-8 leaves. The current piece-tree rejection was a comparison of two particular prototypes, not a result about all piece trees.
+3. The real hot path includes semantic reads, metadata, history, selection mapping, layout and consumers. A fast tree edit cannot compensate for materializing a whole long line on Insert or duplicating a full snapshot in services.
+4. Object-free public APIs conflict with the current immutable snapshot/history contract. Enforce zero intentional temporary allocation in inner loops and measured bounded command allocation, with safe lifetimes. Never reuse a published change object.
+5. Background work needs CPU and byte admission, actual task yielding/worker isolation and lifecycle accounting. Async/microtask syntax is insufficient.
+6. Keep OpenTUI's native diff and focus Xi optimization on packed visible geometry, bounded long-line layout, invalidation and queue pressure. Building another terminal renderer would duplicate ownership.
+7. Performance evidence needs catalogued boundaries and a baseline comparator. The existing benchmark runner discovers scripts but does not compare a baseline, enforce every threshold, or certify release coverage.
+
+## Checking the attachments against primary sources
+
+| Attachment claim | Evidence and conclusion for Xi |
+|---|---|
+| TypeScript cannot match Vim | No universal language-level conclusion follows. Vim uses packed line blocks and file-backed memory; its design supports workloads Xi has not promised. Match the required interactions and memory envelope on identical fixtures. Do not silently add a multi-gigabyte pager project. |
+| V8 string limits and ConsStrings determine the design | Xi runs JavaScriptCore. WebKit has both 8-bit and 16-bit string representations and shared substring storage. Exact limits/retention depend on the runtime build; V8 constants and flags are not Xi specifications. Bounded leaves and peak-memory measurements remain necessary. |
+| Prefer a piece tree; undo is just swapping its root | Root-swap undo requires persistence/versioning; a mutable piece tree does not automatically supply it. Xi must retain session selections, EOL metadata, anchors, repeat and saved identity too. Compare the complete history path. |
+| UTF-8 typed arrays always save memory | They provide explicit density but impose decoding/checkpoint/scan costs, backing-buffer retention and transfer ownership hazards. ASCII JSC strings may already use 8-bit storage. Use measured byte/chunk representation, preserve branded public coordinates. |
+| One object per line is a memory trap | Supported by the VS Code experience and the local density reproduction. Xi currently does it indirectly through EOL nodes. Dense typed index arrays can also be expensive for all-newline data; test compressed/bitset representations. |
+| Hot paths must allocate zero objects | Useful for inner iterations; impossible as a blanket promise for retained immutable history/persistent roots. Bounded allocations with inclusive heap/native evidence are the acceptance mechanism. Pools cannot recycle data still reachable by history. |
+| Put everything heavy in workers | Worker startup, replicas, queues and synchronization can dominate. Keep authoritative text next to input. Isolate or slice work according to measured cost and give every replica/transfer a byte budget. |
+| Regex chunks with overlap are enough | Only for patterns with a proven finite context bound. Xi's owned dialect includes unbounded multiline/backreference/lookaround behavior; fixed overlap can miss or invent matches. Require resumable state and cancellation without narrowing semantics. |
+| Emit terminal diffs and scrolling escapes | OpenTUI already owns native diff/output. Xi should supply bounded damaged viewport data, not implement competing ANSI emission. Terminal scroll optimizations require pinned API support and visual/PTY proof. |
+| WASM/native is the escape hatch | A coarse pure kernel may help after profiling, but frequent JS/native crossings and copies may erase the gain. Measure the complete command and lifetime; keep owned semantics and strict TypeScript unless a documented decision warrants a kernel. |
+| RSS ≤2.5×file +20 MB is a universal bound | That ignores runtime, native renderer, history, multiple buffers and workers. Use separate document-density targets and a simultaneous process envelope; retain the original 150 MiB ten-buffer target. |
+
+### Text storage and runtime
+
+The VS Code team's 2018 report describes about 600 MB used for a 35 MB / 13.7-million-line file in its former line-array model. Its selected piece tree reduced per-line overhead, used typed line indexes and kept JavaScript after testing native-boundary costs. This supports measuring representation plus access patterns, not a prohibition on either strings or native code. [VS Code report](https://code.visualstudio.com/blogs/2018/03/23/text-buffer-reimplementation).
+
+The pinned VS Code 1.104.0 implementation chooses `Uint16Array` or `Uint32Array` for line starts and includes an append-to-existing-node path. Xi's T004 prototype did not establish equivalent append coalescing. Comparing that prototype's 100,002 descriptors with a coalescing rope does not show that production piece trees inherently fragment once per character. T108 must compare equivalent editing/coalescing/retention workloads, without importing VS Code's engine. [Pinned piece-tree source](https://raw.githubusercontent.com/microsoft/vscode/1.104.0/src/vs/editor/common/model/pieceTreeTextBuffer/pieceTreeBase.ts).
+
+Vim 9.1.0000 stores pointer blocks and packed line data blocks with offsets. Oversized lines can span pages. Its memory-file layer manages cached blocks backed by a file. This explains why a file-backed paging editor and a resident JavaScript editor have different memory behavior; it does not provide Xi with paging automatically or dictate Xi's multi-selection/history architecture. [memline.c](https://raw.githubusercontent.com/vim/vim/v9.1.0000/src/memline.c), [memfile.c](https://raw.githubusercontent.com/vim/vim/v9.1.0000/src/memfile.c).
+
+WebKit's inspected `StringImpl` supports 8-bit/16-bit storage, substring-backed sharing and an implementation length ceiling. This is upstream research at `webkitgtk-2.48.0`, **not a claim that the installed Bun includes precisely that revision**. Avoid deriving an exact Bun maximum string size from it. Source-of-truth bytes, JSC string wrappers and their backing buffers must all appear in memory measurements. [Pinned StringImpl.h](https://raw.githubusercontent.com/WebKit/WebKit/webkitgtk-2.48.0/Source/WTF/wtf/text/StringImpl.h).
+
+Ropey's chunk-oriented UTF-8 design illustrates that byte-packed text can expose character/line indexes and efficient chunk access. It is a comparison candidate and API inspiration, not an imported dependency or proof that Rust/WASM wins across Xi's JS boundary. [Ropey documentation](https://docs.rs/ropey/latest/ropey/).
+
+### Profiling, workers and parsing
+
+Bun documents JavaScript and native memory separately, explicit GC diagnostics, CPU profiles and heap tools. The installed `bun --help` confirms the CPU/heap flags named in spec 12. Forced-GC retained snapshots and normal GC-inclusive latency are different measurements. [Bun benchmarking](https://bun.com/docs/project/benchmarking).
+
+Current `bun:jsc` documentation says `heapSize` and `heapCapacity` already include `extraMemorySize`; summing them again double-counts external string/ArrayBuffer memory. Its object counts describe live/recently collected objects, not total allocation over an operation. T106 must verify the pinned runtime's exports/accounting and add allocation profiling rather than treating a GC delta as bytes allocated. [HeapStats reference](https://bun.com/reference/bun/jsc/HeapStats).
+
+Bun workers are separate JavaScript instances sharing process resources; current documentation marks termination behavior experimental and describes structured cloning and specialized messaging paths. That supports explicit shutdown/resync tests. Current documentation advertises Bun 1.4.2, while Xi pins 1.3.13: messaging fast-path performance is not assumed to apply unchanged. Measure actual clone/transfer and scheduling on the pinned binary. [Workers documentation](https://bun.com/docs/runtime/workers).
+
+Tree-sitter supports custom read callbacks and incremental tree edits; a flat whole-document string is not inherent to incremental parsing. The specific `web-tree-sitter` 0.25.10 callback encoding and tree deletion/cancellation behavior must be verified locally. Xi needs versioned chunk replicas, explicit tree lifetime and native/WASM accounting. [Tree-sitter parsing](https://tree-sitter.github.io/tree-sitter/using-parsers/2-basic-parsing.html).
+
+### SQLite decision
+
+Bun's SQLite API is synchronous. Putting SQL queries on the input isolate would add a new blocking path; the confirmed development-ledger use avoids it entirely. Python's stdlib is sufficient for this repository's existing planning toolchain; no editor dependency, runtime database or new background daemon is needed. [Bun SQLite](https://bun.com/docs/runtime/sqlite).
+
+SQLite page-cache settings are suggested cache limits, not a hard total RSS budget. mmap adds mapped memory; temporary data and statement resources need their own accounting. SQLite supports allocator accounting/limits at its C API, but those controls do not cap a Python/Bun process or replace measurement. The ledger uses bounded transactions, indexed queries, a small cache and mmap disabled. [PRAGMA reference](https://sqlite.org/pragma.html), [SQLite allocation](https://sqlite.org/malloc.html).
+
+WAL permits concurrent readers and a writer but checkpoints and long readers introduce additional lifetime/size considerations. A short-lived local ledger writer does not need WAL by default. The derived database can be rebuilt from JSON; runtime save durability is a separate document/persistence contract. [SQLite WAL](https://sqlite.org/wal.html).
+
+## Current-code audit and remediation map
+
+These are inspected code paths, not claims that every feature is connected to the CLI. Follow the owning ticket to audit callers and production integration.
+
+| Finding | Current path / boundary | Required work |
+|---|---|---|
+| Historical per-newline immutable treap, plus normalization arrays/segments | T107 replaces the EOL node/normalization path with packed persistent blocks; `packages/document/src/rope.ts` still owns the unpacked LF index | T108 packed rope indexes; T113 streaming ingestion |
+| LF index `number[]`, scalar metric object per iteration, persistent node/chunk metadata | `packages/document/src/rope.ts` `lineBreakOffsets/scalarWidthsAt/makeChunk` | T108 packed density/representation evidence; benchmark private and full public layers |
+| Fresh public snapshot wrapper, per-snapshot unbounded Map | `text-fidelity.ts` `snapshot`; `coordinates.ts` `lineBaseCache` | T109 stable version handles, byte-capped caches, old-snapshot correctness |
+| Full logical-line slice for Insert; rich whole-line cell maps on general motion path | `packages/vim/insert/index.ts` `readLineWindow`; `motions/index.ts` `readLine/measureDisplayCells` | T109 range/window traversal and cold Unicode/long-line matrix |
+| Text-unit/entry-count history policy misses step/vector/root costs | `packages/document/src/undo.ts` `UNDO_HISTORY_POLICY`; Insert repeat and registers | T110 full retained accounting, long-group coalescing and giant delete/undo |
+| Object cells, per-cell target records and string-keyed display positions | `packages/layout/src/index.ts` materialization/projected frames | T111 packed visible spans, generation-safe leases, native renderer stays UI-owned |
+| Syntax pump defaults to `queueMicrotask`, full/incremental helpers split full request text | `packages/services/syntax/index.ts` scheduler and parse functions | T112 real yielding/worker isolation, measured replicas and quotas |
+| Full text strings in language sync contract/helper | `packages/services/language/sync.ts` `LanguageSyncDocument/readSnapshotText` | T117 bounded delta/full-sync policy and streaming serialization |
+| Recovery checkpoint materializes document and EOL array, then retains checkpoint history | `packages/services/persistence/index.ts` `checkpoint` | T113 incremental journals, streaming snapshots and bounded dirty age |
+| CLI owns substantial session/Vim command orchestration | `apps/xi/src/main.ts` launch/command handlers | T116 move state/coordinator to workbench/Vim owners, retain thin composition CLI and genuine PTY tests |
+| Baseline argument is only logged; aggregate scripts are not threshold/coverage proof | `tools/verify-suite.ts`, `package.json` `verify:release` | T106 comparator + T115 exact production/reference-host coverage; preserve unproven status |
+| Owner-local caps lack a simultaneous memory/CPU envelope | Scattered service/cache/history limits | T114 aggregate accounting/admission; keep features and unsaved data correct under pressure |
+
+The architecture's typed ports, document-only mutations, branded positions and owned selection composition remain appropriate. The missing distinction is between immutable public values and private reusable storage, and between logically asynchronous work and CPU isolation. Those distinctions are now explicit in spec 12 and the skills. OpenTUI remains exclusively the UI adapter; workbench owns scheduling policy, platform owns worker/process/IO mechanisms, each service owns its read replica/cache. Document snapshots are read capabilities, not service permission to mutate buffers.
+
+## Follow-up audit, 2026-09-15
+
+The original table is a historical inspection. The lint remediation now uses a
+timer between syntax requests, bounded quote/paragraph reads and geometric
+forward grapheme windows; it does not establish the complete T109/T112 budgets.
+Inferred string rebuilding (including `joinLines`), backward/full-line fallbacks,
+single-parse CPU duration and full replica costs still require owner work.
+The new adapter catalog declares obligations, not executed production coverage.
+Broader oracle recapture also exposed host `+`/`*` register contamination; the
+failure must be repaired in the harness, not accepted by omitting register state.
+
+T107's compact EOL slice is now implemented in the shared worktree: uniform
+blocks store one code, mixed blocks store two-bit codes, and normalization uses
+a packed builder. The 1 MiB dense public diagnostic fell from the historical
+roughly 1.5 s / 248 MiB RSS growth to about 0.26 s / 56 MiB RSS growth on the
+same shared host. The 10 MiB public result remains dominated by the rope's
+unpacked line-break index; this is a diagnostic observation and keeps T107 and
+T108's release gates unproven until controlled production adapters exist.
+
+[Spec 14](14-remediation-handoff.md) binds these findings to concrete acceptance
+checks. T120 owns lint hardening; T121 owns hermetic oracle initialization and
+explained golden repair. T108/T109/T111/T112/T116 retain production work and
+T106/T115 retain measurement and qualification. No reference budget is certified
+by this follow-up.
+
+## Diagnostic reproduction
+
+Executed `bun run bench/performance/planning-probe.ts <public|rope> <normal|dense|long> 1048576` in six fresh children. Normal uses 79 `x` plus LF; dense uses `x` plus LF; long is all `x`. The public path calls `openTextDocument`; the private comparator calls `RopeDocument.create`. Both verify successful length; source SHA-256, line count, memory snapshots, CPU and max RSS are retained in `.artifacts/performance-planning/open-probe.json`. Source generation is outside open wall time but inside the recorded CPU interval. Imported modules are present in the pre-open baseline. Full fidelity correctness still requires owner tests.
+
+| 1 MiB fixture | Rope open ms | Public open ms | Rope reported heap growth MiB | Public reported heap growth MiB | Public RSS growth MiB |
+|---|---:|---:|---:|---:|---:|
+| Normal 80-byte lines | 25.07 | 39.05 | 0.00 | 8.38 | 53.12 |
+| Dense `x\n` | 128.16 | 1500.08 | 19.41 | 137.12 | 248.22 |
+| One line | 15.09 | 16.93 | 0.00 | 0.00 | 30.12 |
+
+These are **one sample per case**, GC/RSS diagnostics on a shared VM, not p95, a release pass, or an exact allocator census. Zero reported retained growth does not establish zero allocation. Nevertheless, the density-dependent public-path expansion plus source inspection justifies immediate structural remediation; the older repeated-middle-insert benchmark contains no newlines and cannot expose this workload. A CPU profile was also collected with the installed Bun profiler; inspect it through the evidence report before making function-level attribution claims.
+
+The pinned SQLite amalgamation was downloaded as public research data. Version 3.50.4 archive SHA-256 `1d3049dd0f830a025a53105fc79fd2ab9431aea99e137809d064d8ee8356b032`; extracted `sqlite3.c` SHA-256 `e3f5d6901e7492af4a1fc8c4d745cae84c264942524c3fbfc02b82a5ca8818c8`, 9,282,866 bytes and 262,899 LF bytes. This provides a reproducible real-code workload instead of relying on the attachment's approximate historical size. [SQLite 3.50.4 archive](https://sqlite.org/2025/sqlite-amalgamation-3500400.zip).
+
+## Source provenance and limits
+
+Pinned downloaded source hashes are retained in [performance-sources.json](performance-sources.json). Large originals and profile traces live under `.artifacts/performance-planning/`; URLs/revisions/hashes make the source audit reproducible. One optional WebKit `WTFString.h` fetch returned HTTP 429; conclusions above use the successfully retrieved `StringImpl.h`, not the unavailable file. Current Bun/SQLite/Tree-sitter web documentation was read on the review date; version-specific APIs still require pinned local probes. No unverified worker speedup, hard string limit, native allocation counter, or zero-copy guarantee is promoted to a requirement.
+
+This refinement chooses constraints and experiment criteria now. It does not claim to have performed T107–T118 refactors, certified a dedicated runner, met all resource budgets, or completed all Xi command families. Their explicit tickets and release dependencies are the deliverable for the requested plan refinement; measurable production completion remains gated separately.

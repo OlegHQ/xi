@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "ticket": "T098",
+  "benchmark": "snapshot-bound Vim positional coordinate index and bounded cancellation",
+  "environment": {
+    "platform": "linux",
+    "architecture": "arm64",
+    "bun": "1.3.13",
+    "terminal": "in-process only"
+  },
+  "method": {
+    "warmupSamples": 3,
+    "measuredSamples": 30,
+    "timer": "performance.now; each sample uses a fresh pure evaluator session",
+    "thresholds": null,
+    "eventLoopYield": false
+  },
+  "workload": {
+    "textUtf16Length": 2052,
+    "trailingScalars": [
+      "😀",
+      "\t",
+      "中"
+    ],
+    "stepBudgetFailure": 128,
+    "cancellationResumeSlice": 8
+  },
+  "measurements": [
+    {
+      "id": "regular-nfa-position-and-virtual-index",
+      "pattern": "\\%1v.",
+      "textUtf16Length": 2052,
+      "warmupSamples": 3,
+      "measuredSamples": 30,
+      "p50Microseconds": 6050.248,
+      "p95Microseconds": 19029.827,
+      "p99Microseconds": 26350.491,
+      "maxMicroseconds": 26350.491,
+      "observation": {
+        "steps": 6159,
+        "matches": 1,
+        "engine": "nfa"
+      }
+    },
+    {
+      "id": "bounded-backreference-position-and-virtual-index",
+      "pattern": "\\v\\%1v(a)\\1",
+      "textUtf16Length": 2052,
+      "warmupSamples": 3,
+      "measuredSamples": 30,
+      "p50Microseconds": 4591.332,
+      "p95Microseconds": 11324.163,
+      "p99Microseconds": 11586.205,
+      "maxMicroseconds": 11586.205,
+      "observation": {
+        "steps": 10258,
+        "matches": 1,
+        "engine": "backtracking"
+      }
+    }
+  ],
+  "boundedBehavior": {
+    "budget": {
+      "code": "step-budget-exceeded",
+      "steps": 129,
+      "source": {
+        "start": 0,
+        "end": 4
+      }
+    },
+    "cancellation": {
+      "code": "cancelled",
+      "steps": 9,
+      "source": {
+        "start": 0,
+        "end": 4
+      }
+    },
+    "snapshotVersionBefore": 1,
+    "snapshotVersionAfter": 1,
+    "snapshotTextPreserved": true,
+    "cursorRepeatStatePreserved": true
+  },
+  "limitations": [
+    "Exploratory same-host in-process measurements; no latency threshold is claimed.",
+    "The evaluator returns to its caller between resume slices but does not schedule an event-loop turn.",
+    "No editor command dispatch, screen paint, or terminal input latency is measured."
+  ]
+}

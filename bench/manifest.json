@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "suite": "bench",
+  "fixtures": [
+    "core",
+    "picker",
+    "selections",
+    "vim"
+  ],
+  "executables": [
+    "bench/core/t015-qualification.ts",
+    "bench/document/t009-fragmentation-probe.ts",
+    "bench/document/t009-storage.ts",
+    "bench/layout/t014-viewport.ts",
+    "bench/selections/t089-qualification.ts",
+    "bench/syntax/t053-incremental.ts",
+    "bench/t039-picker.bench.ts",
+    "bench/t043-search.bench.ts",
+    "bench/vim/t026-integrated.ts",
+    "bench/vim/t026-pattern.ts",
+    "bench/vim/t097-pattern.ts",
+    "bench/vim/t098-position.ts",
+    "bench/vim/t100-composing.ts",
+    "bench/vim/t109-long-line.ts"
+  ]
+}

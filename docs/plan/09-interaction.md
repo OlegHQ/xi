@@ -1,0 +1,87 @@
+# Discoverable commands, mouse and motion paint
+
+These interactions are initial-release requirements. They share [selection semantics](08-selections.md), [ownership](01-architecture.md) and [extensibility contracts](10-extensibility.md). Recommendations below are Xi decisions informed by [upstream research](11-interaction-research.md); they do not assert Helix or VS Code behavior is Vim-compatible.
+
+## Command discovery
+
+Separate a passive prefix-help view from command-line completion. Prefix help reads the active mapping trie plus the Vim parser's legal continuations; command-line completion reads parsed Ex context plus contributed Xi command metadata. Neither UI surface owns a second command parser. Help shows active profile, keys, description, aliases, argument hints, current selection scope and unavailable reasons from the same immutable registry generation used by dispatch.
+
+In the Xi profile, display prefix help after 250 ms by default, configurable independently of mapping timeout. It must not introduce any wait for an unambiguous command. Never choose a continuation automatically because a hint was visible. A pending `d`, `2d3`, `g`, `z`, `Ctrl-W`, leader or text-object prefix can show appropriate continuations; after `f` or `r`, show a literal-character prompt without hijacking the next character for filtering. Native grammar prefixes wait according to native semantics, not the 500 ms user-mapping timeout. No countdown executes a dangerous action. Strict mapping resolution uses pinned options; help may be enabled there as presentation without timing changes.
+
+The panel is passive, anchored away from the cursor and bounded to available rows. It does not steal focus, cause scrolling, or require dismissal before completing a key sequence. Missing space yields a compact status hint and an explicit full-help command. On reload, either finish a pending sequence against its captured old config/registry generation or explicitly cancel it; never resolve half the sequence under each. The chosen default is finish against the captured generation, then switch. Disablement/disposal of the target cancels instead. Operator-prefix state is not reset by diagnostic updates or by rendering help.
+
+Command-line completion understands command position, range, bang, arguments, paths and separators. The command `:q` displays `quit` and its exact meaning with `Enter: execute · Tab: complete · Esc: cancel`. Typed `:q` + Enter executes `:q`, even if a different row is highlighted; selecting/completing a row must first visibly replace the input. No suggestion adds `!`, performs IO, or changes a register. Native Ex abbreviations use Vim's command resolution, not fuzzy matching or generic unique-prefix lookup. Unknown commands show an error; fuzzy suggestions require explicit acceptance.
+
+| Surface | Required behavior |
+|---|---|
+| `:q`, `:quit` | Native close-window/last-window quit semantics and dirty-buffer errors; no automatic save or force |
+| `:w`, `:write`, `:wq`, `:x`, `:qa` | Preserve each native operation, including `:x` writing only if modified |
+| `:Xi <command> [args]` | Exact namespaced Xi dispatcher, available without changing native Ex names |
+| Xi-profile `:buffer-next`, `:buffer-previous`, `:theme`, `:config-open`, `:config-reload` | Human-readable exact aliases backed by stable IDs; collision audit against the pinned Ex inventory required |
+| Xi-profile `:write-quit`, `:quit-all`, `:write-all` | Exact friendly aliases for Xi's native `:wq`, `:qa`, `:wa` implementations |
+| Palette/help | Search labels, aliases and keys; show command ID and origin on inspection; execute the same handler |
+
+Do not copy Helix `:o`, `:g`, `:bc` or another short alias over a native Ex command or abbreviation. Proposed friendly aliases that collide are rejected at registry/config compilation and remain available under `:Xi`. Native names and valid abbreviations are reserved in every profile; friendly aliases match exactly and do not enter native abbreviation resolution. Core aliases and user aliases carry a validated argument schema, allowed bang/range policy and recursion/cycle limit. A string alias is not arbitrary shell or Ex evaluation. `:Xi` itself is reserved for Xi and documented as an extension.
+
+Suggested normal/Visual Xi defaults live under `Space m`: `a` add next occurrence, `s` skip occurrence, `A` all occurrences, `j/k` add below/above, `l` split lines, `r` regex selections, `f` keep matching, `p` keep primary, `d` remove primary, `n/b` rotate primary next/previous, `c` collapse, `o` flip, `u` selection undo, `m` merge. They are config declarations, not hardcoded UI shortcuts. Context-specific collisions must fail validation. All remain accessible through `:Xi selection.…`; no Alt/Ctrl terminal chord is the only path. Config can remap them without changing the underlying selection semantics.
+
+After a failed dirty-buffer quit, retain the editor and show “Unsaved changes. `:w` saves; `:q!` discards this buffer when closing.” A help action explains affected views/buffers and native hidden/argument-list rules. Do not substitute a misleading “exit app” label for close-view semantics. Keyboard and mouse close-button workflows may show a Save/Keep/Discard review, but executing native `:q` retains native error behavior.
+
+## Mouse protocol and dispatch
+
+Mouse is enabled by default in Xi and personal profiles; strict uses its pinned mouse option. Supported terminal input is an explicit capability matrix, not a promise that terminals expose every desktop gesture. Required modern baseline is button-motion reporting plus SGR cell-coordinate encoding (1002 + 1006), including press, drag, release and wheel. Enable all-motion 1003 only when needed for a configured hover feature and its cost is measured. X10/legacy support has tested coordinate limits and degraded gesture descriptions. Pixel protocol 1016 is not assumed: if enabled later, it needs a distinct pixel-to-cell contract.
+
+The OpenTUI adapter is the single terminal-byte decoder owner; inspect its pinned parser/renderer behavior before adapting it. Do not register both a raw stdin mouse listener and OpenTUI callbacks. Platform terminal-capability effects are implemented by the UI terminal adapter, so renderer and application cannot race to enable/reset modes. Normalize zero-based `CellPoint`, modifiers, button, event kind, wheel direction/delta, timestamp and terminal generation. Bound coordinate values and incomplete input; malformed reports never become text or editor commands. Preserve byte order with keyboard/paste events. Reports beyond the screen are clipped/rejected before hit testing, not treated as document offsets.
+
+Layout owns `hitTest(frameId, cellPoint)` for a document viewport, returning `ViewId`, `documentVersion`, layout generation and an editor target: text boundary with bias/virtual-cell intent, gutter row, fold placeholder, virtual annotation or diff filler. Workbench owns panel/tree/tab/picker/results controls, scrollbar and split-separator geometry; T094 publishes those as typed cell-scoped targets through its input/UI boundary rather than treating them as document-layout rows. T086 owns editor pointer gestures and drag capture; T094 owns workbench control and splitter capture. The rendered frame, frame identity and editor hit map are immutable snapshots published together; caller-owned values retained by a frame are defensively copied before publication. Every nontext hit carries a typed identity and cell region scoped to its frame. Virtual-annotation and diff-filler IDs are nonempty, unique within their respective input collections, and at most 256 UTF-16 code units; gutter source-line and region coordinates are validated against the frame. A frame accepts at most 4,096 virtual annotations and 4,096 diff-filler rows; each annotation has nonempty text of at most 256 UTF-16 code units, with at most 65,536 annotation text units total. When virtual annotations share an anchor or filler rows share a line, order ties by UTF-16 code-unit ID order, independent of locale and input order. Invalid, stale-version or out-of-bounds records are rejected before a frame is published. A gutter hit identifies its source line and gutter region; a virtual-annotation hit identifies the annotation and anchor but never exposes an editable text boundary; a diff-filler row has a distinct row identity and no text boundary. These payloads are validated with the published frame so they cannot be mistaken for document text. A stale layout hit is recomputed only against a known current frame or cancelled; never apply an old row number to changed text. Wrapped rows, horizontal scroll, tabs, wide-glyph trailing cells, combining marks, folds, inline hints and diff filler lines have explicit targets. Text inside a wide glyph snaps to its leading semantic boundary; tabs return their cell displacement for block handling. An annotation cannot accidentally become editable text.
+
+UI routes the tagged target through workbench to a typed pointer intent. Vim resolves text placement, word/line selection, Visual/block conversion and pending-operator policy through its owned semantics. Widget controllers handle panel rows, controls and split geometry. Selection gestures must not manufacture `dw`, `v` or repeated `h/l` keystrokes. Native mouse fixtures in strict compare against the oracle where applicable; Xi gestures have explicit extension fixtures.
+
+## Gesture contract
+
+| Target / gesture | Xi behavior |
+|---|---|
+| Editor left click | Focus view and place primary; idle Normal keeps Normal and replaces secondary set; Insert places caret with an undo break and cancels snippets before moving |
+| Editor drag | Enter/extend character Visual selection from press anchor; started in Insert ends that insert group first |
+| Double / triple left click, then drag | Word / line selection via engine `iskeyword`/line semantics; click count uses same button, target and bounded time/cell distance |
+| Alt-left click | Add/remove a caret in Normal; in Visual add/remove a minimum selection of the current shared kind; duplicates toggle and final member remains |
+| Alt-Shift drag | Create a rectangular Visual block through engine cell/virtualedit rules; add a block if already in block Visual, otherwise explicitly replace the current selection set with this rectangle |
+| Shift-left click | Extend from primary anchor when delivered; terminal selection bypass can consume Shift before Xi sees it |
+| Wheel | Scroll panel/view under pointer without stealing keyboard focus; editor cursor clamping follows scroll policy/scrolloff; secondary cursors remain anchored |
+| Split separator drag | Resize with minimum dimensions; release commits layout, Esc restores initial geometry |
+| Sidebar, tabs, picker, results | Select/focus item; activate documented command on click; tree disclosure is a separate target; no row-index identity |
+| Gutter / fold marker / diagnostic | Select line, toggle fold, or open diagnostic details according to tagged target; no guessing from glyph text |
+| Scrollbar drag | Move viewport using stable row model; no content editing |
+| Right click | Context command menu at target; preserves an existing selection if hit inside it, otherwise retargets primary visibly |
+| Middle click | Off by default; optional explicit primary-clipboard paste policy, always text and never command execution |
+
+During operator-pending input, a text click/drag in Xi cancels that pending command before placing/selecting; it must never unexpectedly complete a delete. Strict follows the oracle's mouse behavior instead. A multi-cursor membership gesture from Insert closes its undo group and enters Normal before modifying membership; from Visual it preserves the shared Visual kind or explicitly converts the whole set. Alt-click chooses one boundary; it is not a hidden word selection. Focus transfers preserve inactive views' sets and follow the normal parser cancellation contract.
+
+Capture a drag at press to its view/control identity. Leaving the widget or crossing another split does not transfer ownership. Coalesce only intermediate moves for that capture; never discard press/release, text input or wheel totals. Autoscroll uses a bounded clock-driven rate while outside the captured content rectangle, projects to new rows, and stops on release/Esc/focus loss/suspend/view disposal. Unexpected lost release cancels capture on the next incompatible event or terminal focus reset. Resize cancels the gesture, retaining the last valid text selection and cancelling uncommitted splitter geometry. Cancel does not undo text previously typed. No idle timer remains after capture ends.
+
+Terminal-native copy selection is available through `mouse = false` and a searchable Toggle mouse command; document terminal/tmux-specific Shift bypass instead of claiming it always works. Reserved OS shortcuts get keyboard command alternatives. SGR mouse across SSH/tmux, 256+ columns, split byte reports and focus loss must be exercised on named supported terminals. Quit, crash, suspend/resume and partial startup failure restore mouse, paste, focus and cursor modes along with the screen.
+
+## Motion trail and selection paint
+
+The observed Helix highlight is not evidence for a separate upstream ghost-selection feature. Xi deliberately introduces a **motion trail** as an optional visual aid. Default Xi/personal setting is `motion-trail = "last-motion"`; strict is `"off"`. Both `off` and `last-motion` are required. The engine emits a versioned `MotionPreview` after a completed successful same-buffer motion, carrying source/destination, member ID and semantic extent. A trail spans visited semantic boundaries for that movement; it is not an operator range and cannot be promoted to one implicitly. `cw`, exclusive EOL and linewise operator exceptions still use the actual normalizer.
+
+Keep only the most recent completed motion's trail per member. It persists until the next command begins; clear on edit, mode change, pointer placement, failed motion, focus loss, view close or document revision change. Cross-buffer jumps clear it without painting intervening files. Viewport-only scroll does not invent a motion range. Pure Normal `w` can paint its traversal while leaving a Normal cursor at the Vim destination; a following `d` still waits for a motion and `x` deletes only its normal target. No fade animation or continuous frame loop. Reduced-motion mode uses the same static paint or disables it by preference.
+
+During operator-pending input, only paint an exact preview if the engine has already resolved a complete candidate without committing (for example an interactive search preview). Plain `d` cannot invent a range for a not-yet-typed motion. Completion ghost text, search preview, native Visual selection and motion trail use distinct read-model kinds and theme tokens. Visual and Insert modes suppress the motion trail.
+
+| Semantic token | Candidate light treatment | Required distinction |
+|---|---|---|
+| `selection.primary` | `#D6E5F2` background, readable foreground | Strongest selection fill |
+| `selection.secondary` | `#E4ECF3` background | Secondary selection fill, count visible |
+| `cursor.primary` | Dark block with contrasting glyph | Actual terminal cursor at primary |
+| `cursor.secondary` | Dark underline or contrasting cell with visible glyph | Software-painted secondary carets |
+| `motion.trail` | Quiet `#EEF2F4` fill | Weaker than actual selection, never replaces cursor |
+| `operator.preview` | Distinct underline plus subtle fill | Exact pending edit region only |
+
+Tokens are proposals requiring actual contrast checks and visual review, not accepted screenshots. Resolve styles by property: base/syntax foreground → diff/search background → trail → operator preview → secondary/primary Visual fill → secondary/primary cursor. Diagnostic underline remains unless it makes the cursor unreadable; active cursor wins at the same cell. Primary identity beats secondary on coincident projections. Draw full glyph clusters and explicit EOL/empty-line cursor cells; do not paint a wide glyph half-selected. In no-color mode use reverse/underline distinctions with textual selection count; disable decorative trail if it cannot be distinguished from a true selection. Clipping uses visible span indexes, not a scan across all selected text per frame.
+
+Required screenshots include forward/backward word motion, multiline motion, exclusive endpoints, Visual character/line/block, empty line/EOF, primary/secondary overlap, tabs/CJK/combining/ZWJ, search and diagnostics atop syntax, truecolor/256/no-color, focused/inactive views and 60x18. Inspect in a real terminal as well as cell/style snapshots. Motion-trail on/off must produce identical engine state and resulting bytes for the full applicable singleton and multi-cursor corpus.
+
+## Resource contract
+
+Pointer/hit maps use versioned frame leases; a bounded reusable frame cannot be read after recycling. Preserve press/release while coalescing replaceable moves. Hints/trails inherit both their existing timings and viewport allocation/cache budgets. See [performance engineering](12-performance.md).

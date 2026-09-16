@@ -1,0 +1,168 @@
+import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { NodeProcessPort } from '../../packages/platform/src/index';
+import {
+  InMemorySearchBackend,
+  RealtimeSearchService,
+  RipgrepSearchBackend,
+  type SearchBackend,
+  type SearchQuery,
+} from '../../packages/services/search/index';
+import { formatSearchLines } from '../../packages/ui/search/index';
+import { CancellationSource, type CancellationToken, type ProcessHandle, type ProcessPort, type ProcessSpec, type Result } from '../../packages/contracts/src/index';
+
+const query = (value: string, extra: Partial<SearchQuery> = {}): SearchQuery => ({ rootId: 'root', rootPath: '/workspace', query: value, ...extra });
+
+async function contentAndBufferSources(): Promise<void> {
+  const service = new RealtimeSearchService({ backend: new InMemorySearchBackend([
+    { rootId: 'root', path: 'src/a.ts', text: 'alpha\nbeta alpha', diskHash: 'a' },
+    { rootId: 'root', path: 'src/b.ts', text: 'alpha', diskHash: 'b' },
+  ]), debounceMilliseconds: 0, defaultLimit: 10 });
+  service.setBufferSources([{ rootId: 'root', path: 'src/a.ts', version: 7, text: 'dirty alpha' }]);
+  const result = await service.query(query('alpha'));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.matches[0]?.source, 'buffer', 'dirty open buffer replaces disk result');
+  assert.equal(result.value.totalMatches, 2);
+  assert.equal(result.value.matches[0]?.documentVersion, 7);
+  assert.match(formatSearchLines(result.value, 60, 4).join('\n'), /src\/a\.ts/);
+  service.dispose();
+}
+
+class DelayedBackend implements SearchBackend {
+  readonly requests: { readonly generation: number; readonly resolve: (result: Result<readonly [], never>) => void }[] = [];
+  search(_query: SearchQuery, _token: CancellationToken, generation: number): Promise<Result<readonly [], never>> {
+    return new Promise((resolve) => { this.requests.push({ generation, resolve }); });
+  }
+}
+
+async function staleGenerationIsRejected(): Promise<void> {
+  const backend = new DelayedBackend();
+  const service = new RealtimeSearchService({ backend, debounceMilliseconds: 0 });
+  const first = service.query(query('old'));
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  const second = service.query(query('new'));
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(backend.requests.length, 2);
+  backend.requests[0]?.resolve({ ok: true, value: Object.freeze([]) });
+  const stale = await first;
+  assert.equal(stale.ok, false);
+  if (!stale.ok) assert.equal(stale.error.kind, 'stale');
+  backend.requests[1]?.resolve({ ok: true, value: Object.freeze([]) });
+  const latest = await second;
+  assert.equal(latest.ok, true);
+  assert.equal(service.model.query.query, 'new');
+  service.dispose();
+}
+
+async function invalidRegexKeepsPriorResults(): Promise<void> {
+  const service = new RealtimeSearchService({ backend: new InMemorySearchBackend([{ rootId: 'root', path: 'x', text: 'needle' }]), debounceMilliseconds: 0 });
+  const valid = await service.query(query('needle'));
+  assert.equal(valid.ok, true);
+  const invalid = await service.query(query('[', { regex: true }));
+  assert.equal(invalid.ok, false);
+  if (!invalid.ok) assert.equal(invalid.error.kind, 'invalid-regex');
+  assert.equal(service.model.state, 'stale');
+  assert.equal(service.model.matches.length, 1);
+  service.cancel();
+  assert.equal(service.model.state, 'stale');
+  service.dispose();
+}
+
+async function productionRipgrepPath(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'xi-t043-search-'));
+  await mkdir(join(root, 'src'), { recursive: true });
+  await writeFile(join(root, 'src', 'unicode.txt'), 'Aé界🙂 needle\n', 'utf8');
+  await writeFile(join(root, '.hidden.txt'), 'needle hidden\n', 'utf8');
+  const invalidName = Buffer.concat([Buffer.from(root), Buffer.from([0x2f, 0x62, 0x61, 0x64, 0x2d, 0xff, 0x2e, 0x74, 0x78, 0x74])]);
+  await writeFile(invalidName, 'needle encoded\n');
+  const environment: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) if (value !== undefined) environment[key] = value;
+  const backend = new RipgrepSearchBackend({ process: new NodeProcessPort(), environment });
+  const cancellation = new CancellationSource();
+  const result = await backend.search(query('needle', { rootPath: root }), cancellation.token, 11);
+  cancellation.dispose();
+  assert.equal(result.ok, true, 'native ripgrep returns matches');
+  if (!result.ok) return;
+  const unicode = result.value.find((match) => match.path === 'src/unicode.txt');
+  assert.equal(unicode?.range.startUtf16, 6, 'rg byte offsets are converted to UTF-16 columns');
+  assert.equal(unicode?.range.endUtf16, 12);
+  assert.ok(result.value.some((match) => match.path.startsWith('base64:')), 'invalid filenames retain rg encoded paths');
+
+  const hiddenDefault = await backend.search(query('hidden', { rootPath: root }), new CancellationSource().token, 12);
+  assert.equal(hiddenDefault.ok, true);
+  if (hiddenDefault.ok) assert.equal(hiddenDefault.value.some((match) => match.path === '.hidden.txt'), false);
+  const hiddenEnabled = await backend.search(query('hidden', { rootPath: root, includeHidden: true }), new CancellationSource().token, 13);
+  assert.equal(hiddenEnabled.ok, true);
+  if (hiddenEnabled.ok) assert.equal(hiddenEnabled.value.some((match) => match.path === '.hidden.txt'), true);
+
+  await Promise.all(Array.from({ length: 90 }, (_, index) => writeFile(join(root, `flood-${index}.txt`), `${'needle '.repeat(80)}\n`, 'utf8')));
+  const flooded = new RipgrepSearchBackend({ process: new NodeProcessPort(), environment, maxOutputBytes: 4_096 });
+  const floodResult = await flooded.search(query('needle', { rootPath: root }), new CancellationSource().token, 14);
+  assert.equal(floodResult.ok, false, 'output flood is rejected at the bounded parser');
+  if (!floodResult.ok) assert.match('message' in floodResult.error ? floodResult.error.message : floodResult.error.kind, /output exceeded|backend/u);
+}
+
+async function cancelledDebounceResolves(): Promise<void> {
+  const backend = new InMemorySearchBackend([]);
+  const service = new RealtimeSearchService({ backend, debounceMilliseconds: 100 });
+  const pending = service.query(query('first'));
+  service.cancel();
+  const result = await pending;
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, 'stale', 'cancelled debounce does not leave a hanging promise');
+  service.dispose();
+}
+
+class LateOutputProcessPort implements ProcessPort {
+  readonly releases: Array<() => void> = [];
+
+  spawn(spec: ProcessSpec): Promise<Result<ProcessHandle, { readonly code: string; readonly message: string; readonly retryable: boolean }>> {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    this.releases.push(release);
+    spec.cancellation.onCancel(release);
+    const output = (async function* (): AsyncIterable<Uint8Array> {
+      await gate;
+      yield new TextEncoder().encode('{"type":"match","data":{"path":{"text":"late.txt"},"lines":{"text":"late needle\\n"},"line_number":1,"submatches":[{"start":5,"end":11}]}}\n');
+    })();
+    const exit = gate.then(() => ({ ok: true, value: { code: 0, signal: null } } as const));
+    const handle: ProcessHandle = {
+      stdin: null,
+      stdout: output,
+      stderr: (async function* (): AsyncIterable<Uint8Array> { })(),
+      exit,
+      terminate: async () => { release(); await exit; },
+      dispose: () => { release(); },
+    };
+    return Promise.resolve({ ok: true, value: handle });
+  }
+}
+
+async function processExitRaceRejectsLateOutput(): Promise<void> {
+  const process = new LateOutputProcessPort();
+  const service = new RealtimeSearchService({ backend: new RipgrepSearchBackend({ process }), debounceMilliseconds: 0 });
+  const first = service.query(query('first'));
+  for (let attempt = 0; attempt < 100 && process.releases.length < 1; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 1));
+  const second = service.query(query('second'));
+  for (let attempt = 0; attempt < 100 && process.releases.length < 2; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(process.releases.length, 2, 'replacement query launches a new process while the old one exits');
+  process.releases[1]?.();
+  const stale = await first;
+  assert.equal(stale.ok, false);
+  if (!stale.ok) assert.equal(stale.error.kind, 'stale', 'late output from the exiting process is rejected');
+  const latest = await second;
+  assert.equal(latest.ok, true);
+  service.dispose();
+}
+
+await contentAndBufferSources();
+await staleGenerationIsRejected();
+await invalidRegexKeepsPriorResults();
+await productionRipgrepPath();
+await cancelledDebounceResolves();
+await processExitRaceRejectsLateOutput();
+console.log('T043 search passed production ripgrep, encoded paths, UTF-16 ranges, output bounds, dirty-buffer replacement, regex flags and process-exit cancellation fixtures');

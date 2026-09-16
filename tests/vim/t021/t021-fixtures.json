@@ -1,0 +1,238 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "T021-ORACLE-CHAR-INCLUSIVE-01",
+      "title": "Inclusive characterwise selection",
+      "purpose": "Pin the active cursor, marks, selected register text/type and unchanged source text for inclusive Visual character mode.",
+      "modes": ["normal", "visual"],
+      "lines": ["alpha beta"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "visual-three-characters", "keys": "vll" },
+        { "label": "yank-selection", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-CHAR-EXCLUSIVE-01",
+      "title": "Exclusive characterwise selection",
+      "purpose": "Pin exclusive endpoint behavior and the resulting yank payload.",
+      "modes": ["normal", "visual"],
+      "lines": ["alpha beta"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "options": { "selection": "exclusive" },
+      "steps": [
+        { "label": "exclusive-visual", "keys": "vl" },
+        { "label": "exclusive-yank", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-CHAR-REVERSED-O-01",
+      "title": "Reverse characterwise active endpoint",
+      "purpose": "Pin `o` endpoint exchange and the backwards selection's bounds.",
+      "modes": ["normal", "visual"],
+      "lines": ["abcdef"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "extend-forward", "keys": "vll" },
+        { "label": "reverse-active-endpoint", "keys": "o" },
+        { "label": "yank-reversed-selection", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-LINE-INCLUSIVE-01",
+      "title": "Inclusive linewise selection",
+      "purpose": "Pin line selection across different line lengths and register type.",
+      "modes": ["normal", "visual"],
+      "lines": ["short", "a much longer line", "tail"],
+      "cursor": { "line": 1, "byteColumn0": 2 },
+      "steps": [
+        { "label": "two-lines", "keys": "Vj" },
+        { "label": "line-yank", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-LINE-REVERSED-O-01",
+      "title": "Reverse linewise active endpoint",
+      "purpose": "Pin linewise `o` restoring the original cursor's preferred column after a short-line clamp.",
+      "modes": ["normal", "visual"],
+      "lines": ["a long source line", "x"],
+      "cursor": { "line": 1, "byteColumn0": 7 },
+      "steps": [
+        { "label": "extend-linewise-to-short-row", "keys": "Vj" },
+        { "label": "reverse-linewise-active-endpoint", "keys": "o" },
+        { "label": "line-yank", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-BLOCK-RAGGED-01",
+      "title": "Block selection over ragged rows",
+      "purpose": "Pin block width, cursor and empty row payload when the rectangle extends past a short line.",
+      "modes": ["normal", "visual"],
+      "lines": ["abcd", "x", "wxyz"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "options": { "virtualedit": "block" },
+      "steps": [
+        { "label": "ragged-block", "keys": "<C-v>jjll" },
+        { "label": "ragged-yank", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-BLOCK-REVERSE-O-01",
+      "title": "Block corner exchange with O",
+      "purpose": "Pin horizontal-corner exchange separately from row exchange.",
+      "modes": ["normal", "visual"],
+      "lines": ["abcdef", "ghijkl", "mnopqr"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "extend-block", "keys": "<C-v>jll" },
+        { "label": "block-opposite-corner", "keys": "O" },
+        { "label": "block-yank", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-GV-RESELECT-01",
+      "title": "Reselect previous characterwise region",
+      "purpose": "Pin `gv` restoring prior selection shape, active endpoint, marks and payload.",
+      "modes": ["normal", "visual"],
+      "lines": ["alpha beta"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "leave-selection", "keys": "vll<Esc>" },
+        { "label": "reselect", "keys": "gv" },
+        { "label": "reselect-yank", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-GV-COUNT-01",
+      "title": "Counted previous-selection replay",
+      "purpose": "Pin the count-prefixed `gv` behavior against a known previous selection.",
+      "modes": ["normal", "visual"],
+      "lines": ["abcdefghij", "abcdefghij"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "leave-selection", "keys": "vll<Esc>" },
+        { "label": "counted-reselect", "keys": "2gv" },
+        { "label": "counted-reselect-yank", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-SELECT-TOGGLE-CHAR-01",
+      "title": "Select character mode toggle",
+      "purpose": "Pin gh entry and Ctrl-G transition between Select and Visual modes.",
+      "modes": ["normal", "visual"],
+      "lines": ["alpha beta"],
+      "cursor": { "line": 1, "byteColumn0": 2 },
+      "steps": [
+        { "label": "select-character-entry", "keys": "gh" },
+        { "label": "select-to-visual", "keys": "<C-g>" },
+        { "label": "visual-to-select", "keys": "<C-g>" },
+        { "label": "leave-select-mode", "keys": "<Esc>" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-SELECT-LINE-BLOCK-01",
+      "title": "Select line and block entry",
+      "purpose": "Pin gH and gCtrl-H select mode entry with their distinct selection kinds.",
+      "modes": ["normal", "visual"],
+      "lines": ["abcd", "xy", "mnop"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "select-line-entry", "keys": "gH" },
+        { "label": "leave-select-line", "keys": "<Esc>" },
+        { "label": "select-block-entry", "keys": "g<C-h>" },
+        { "label": "select-block-to-visual", "keys": "<C-g>" },
+        { "label": "extend-visual-block", "keys": "jll" },
+        { "label": "visual-block-yank", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-SELECT-REPLACE-01",
+      "title": "Typing replaces a Select-mode character",
+      "purpose": "Pin text and mode after replacing the active Select-mode character.",
+      "modes": ["normal", "visual", "insert"],
+      "lines": ["alpha beta"],
+      "cursor": { "line": 1, "byteColumn0": 2 },
+      "steps": [
+        { "label": "replace-selected-character", "keys": "ghX<Esc>" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-BLOCK-PARTIAL-TAB-DELETE-01",
+      "title": "Delete a block through a partial tab cell",
+      "purpose": "Pin tab expansion and preservation of unselected tab cells for a one-cell block.",
+      "modes": ["normal", "visual"],
+      "lines": ["   x", "\tY"],
+      "cursor": { "line": 1, "byteColumn0": 2 },
+      "options": { "virtualedit": "all", "tabstop": 8 },
+      "steps": [
+        { "label": "select-partial-tab-cell", "keys": "<C-v>j" },
+        { "label": "delete-partial-tab-cell", "keys": "d" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-BLOCK-WIDE-GLYPH-EDGE-01",
+      "title": "Block edit at a wide glyph edge",
+      "purpose": "Pin that a block cursor landing on a wide glyph continuation does not split its UTF-8 text.",
+      "modes": ["normal", "visual"],
+      "lines": ["界Y", "  x"],
+      "cursor": { "line": 2, "byteColumn0": 2 },
+      "options": { "virtualedit": "all" },
+      "steps": [
+        { "label": "wide-glyph-edge-block", "keys": "<C-v>k" },
+        { "label": "delete-wide-glyph-selection", "keys": "d" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-LINE-EMPTY-LAST-01",
+      "title": "Select empty final line",
+      "purpose": "Pin linewise selection of the empty final line and its register payload.",
+      "modes": ["normal", "visual"],
+      "lines": ["alpha", ""],
+      "cursor": { "line": 2, "byteColumn0": 0 },
+      "steps": [
+        { "label": "empty-final-line-selection", "keys": "V" },
+        { "label": "empty-final-line-yank", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-BLOCK-DELETE-BOUNDARIES-01",
+      "title": "Delete ragged block without splitting characters",
+      "purpose": "Pin deleted block text and the remaining ragged source lines.",
+      "modes": ["normal", "visual"],
+      "lines": ["a界cd", "x", "mnop"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "options": { "virtualedit": "block" },
+      "steps": [
+        { "label": "wide-ragged-block", "keys": "<C-v>jjll" },
+        { "label": "delete-wide-ragged-block", "keys": "d" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-BLOCK-CHANGE-TAB-01",
+      "title": "Change block through partial tab cells",
+      "purpose": "Pin block insertion after tab-safe replacement and confirm the resulting text boundaries.",
+      "modes": ["normal", "visual", "insert"],
+      "lines": ["   x", "\tY"],
+      "cursor": { "line": 1, "byteColumn0": 2 },
+      "options": { "virtualedit": "all", "tabstop": 8 },
+      "steps": [
+        { "label": "select-tab-change-block", "keys": "<C-v>j" },
+        { "label": "change-block-type", "keys": "cZ<Esc>" }
+      ]
+    },
+    {
+      "id": "T021-ORACLE-BLOCK-CHANGE-TAB-EDGE-01",
+      "title": "Change a block spanning a grapheme and partial tab",
+      "purpose": "Pin insertion before preserved trailing tab cells when one selected row contains both a grapheme and a partial tab.",
+      "modes": ["normal", "visual", "insert"],
+      "lines": ["A\tB", "A\tB"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "options": { "tabstop": 8, "virtualedit": "all" },
+      "steps": [
+        { "label": "select-through-tab-edge", "keys": "<C-v>j<Right>" },
+        { "label": "change-block-at-tab-edge", "keys": "cZ<Esc>" }
+      ]
+    }
+  ]
+}

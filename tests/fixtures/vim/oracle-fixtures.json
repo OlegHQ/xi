@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "ORC-RANGE-01",
+      "title": "Inclusive exclusive-end mutation sentinel",
+      "purpose": "Capture the oracle's exact dw deletion boundary for differential range tests.",
+      "modes": ["normal", "operator-pending"],
+      "lines": ["one two"],
+      "steps": [
+        {
+          "label": "dw deletes the first word and its following space",
+          "keys": "dw",
+          "expected": {
+            "lines": ["two"],
+            "cursor": { "line": 1, "byteColumn": 1 },
+            "mode": "n",
+            "registers": { "\"": { "lines": ["one "], "type": "v" } }
+          }
+        }
+      ]
+    },
+    {
+      "id": "ORC-BYTE-01",
+      "title": "UTF-8 byte-column sentinel",
+      "purpose": "Keep Neovim's one-based UTF-8 byte column distinct from Xi UTF-16 offsets and terminal cells.",
+      "modes": ["normal"],
+      "lines": ["éx"],
+      "steps": [
+        {
+          "label": "l advances over one multibyte character",
+          "keys": "l",
+          "expected": {
+            "lines": ["éx"],
+            "cursor": { "byteColumn": 3, "virtualColumn": 2, "screenColumn": 2 },
+            "mode": "n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ORC-MAPPING-01",
+      "title": "Typed normal mapping expansion",
+      "purpose": "Verify that remappable typed input expands a Normal-mode mapping before the drain barrier returns.",
+      "modes": ["normal"],
+      "lines": ["one", "two"],
+      "mappings": [
+        { "mode": "n", "lhs": "Q", "rhs": "dd", "remap": true }
+      ],
+      "steps": [
+        {
+          "label": "mapped Q deletes the first line",
+          "keys": "Q",
+          "expected": {
+            "lines": ["two"],
+            "cursor": { "line": 1, "byteColumn": 1 },
+            "mode": "n",
+            "registers": { "\"": { "lines": ["one"], "type": "V" } }
+          }
+        }
+      ]
+    },
+    {
+      "id": "ORC-INSERT-01",
+      "title": "Typed insert input and Escape",
+      "purpose": "Exercise literal typed insertion, mode exit and the final cursor byte column.",
+      "modes": ["insert"],
+      "lines": ["abc"],
+      "steps": [
+        {
+          "label": "insert X at the first byte and escape",
+          "keys": "iX<Esc>",
+          "expected": {
+            "lines": ["Xabc"],
+            "cursor": { "line": 1, "byteColumn": 1 },
+            "mode": "n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ORC-WRAP-01",
+      "title": "Fixed-width wrapped-line motion",
+      "purpose": "Capture gj using a controlled twelve-column Neovim window and screen position.",
+      "modes": ["normal"],
+      "lines": ["abcdefghijklmno"],
+      "options": { "columns": 12, "lines": 6, "number": false, "relativenumber": false, "wrap": true, "linebreak": false },
+      "steps": [
+        {
+          "label": "gj moves to the next wrapped screen row",
+          "keys": "gj",
+          "expected": {
+            "lines": ["abcdefghijklmno"],
+            "cursor": { "line": 1, "byteColumn": 13, "screenRow": 2 },
+            "geometry": { "columns": 12, "windowWidth": 12 },
+            "options": { "wrap": true },
+            "mode": "n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ORC-BARRIER-01",
+      "title": "Buffered input and explicit drain barrier",
+      "purpose": "Show an intentionally queued input before the barrier, then verify the x-flag drain processes it before snapshot.",
+      "modes": ["normal", "insert"],
+      "lines": ["abc"],
+      "steps": [
+        {
+          "label": "input remains queued without x barrier",
+          "keys": "iX<Esc>",
+          "barrier": false,
+          "expected": {
+            "lines": ["abc"],
+            "cursor": { "line": 1, "byteColumn": 1 },
+            "mode": "n"
+          }
+        },
+        {
+          "label": "explicit empty feedkeys x barrier drains prior typed input",
+          "drain": true,
+          "expected": {
+            "lines": ["Xabc"],
+            "cursor": { "line": 1, "byteColumn": 1 },
+            "mode": "n"
+          }
+        }
+      ]
+    }
+  ]
+}

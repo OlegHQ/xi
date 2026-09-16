@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import { SemanticTokenStore, type SemanticTokenLegend } from '../../packages/services/language/semantic-tokens';
+import { projectSemanticRow } from '../../packages/ui/editor/semantic-tokens';
+
+const legend: SemanticTokenLegend = { tokenTypes: ['keyword', 'function'], tokenModifiers: ['readonly'] };
+const store = new SemanticTokenStore();
+const full = store.apply({ documentId: 'doc', documentVersion: 1, generation: 1, legend, kind: 'full', resultId: 'r1', data: [0, 0, 5, 0, 0, 0, 6, 3, 1, 1] });
+assert.equal(full.ok, true, 'T054-FULL-01 full token stream accepted');
+if ('error' in full) throw new Error(String(full.error));
+assert.equal(full.value.spans[1]?.tokenType, 'function');
+const projected = projectSemanticRow({ documentVersion: 1, spans: full.value.spans.map((span) => ({ line: span.line, startUtf16: span.startUtf16, endUtf16: span.startUtf16 + span.lengthUtf16, tokenType: span.tokenType, modifiers: span.modifiers })) }, 0, 0, 20);
+assert.equal(projected.length, 2, 'T054-PROJECTION-01 semantic row is bounded and clipped');
+const delta = store.apply({ documentId: 'doc', documentVersion: 2, generation: 2, legend, kind: 'delta', previousResultId: 'r1', resultId: 'r2', edits: [{ start: 5, deleteCount: 5, data: [0, 7, 4, 1, 0] }] });
+assert.equal(delta.ok, true, 'T054-DELTA-01 delta accepted');
+if ('error' in delta) throw new Error(String(delta.error));
+assert.equal(delta.value.spans[1]?.tokenType, 'function');
+const stale = store.apply({ documentId: 'doc', documentVersion: 1, generation: 1, legend, kind: 'full', resultId: 'old', data: [] });
+assert.equal(stale.ok, false, 'T054-STALE-01 older version cannot repaint newer text');
+const invalid = store.apply({ documentId: 'doc', documentVersion: 3, generation: 3, legend, kind: 'delta', previousResultId: 'wrong', resultId: 'r3', edits: [] });
+assert.equal(invalid.ok, false, 'T054-DELTA-FAIL-01 mismatched baseline requests a full result');
+store.dispose();
+console.log('T054 semantic tokens passed full/delta equivalence, stale suppression, legend/range validation and bounded row projection');

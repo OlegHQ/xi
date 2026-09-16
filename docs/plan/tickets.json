@@ -4,7 +4,7 @@
     {
       "id": "T001",
       "title": "Pin toolchain and establish honest check commands",
-      "status": "todo",
+      "status": "done",
       "depends_on": [],
       "owner": "build",
       "paths": [
@@ -38,12 +38,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T001.md"
     },
     {
       "id": "T002",
       "title": "Prototype OpenTUI document rendering",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T001"
       ],
@@ -75,17 +75,18 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T002.md"
     },
     {
       "id": "T003",
       "title": "Build pinned Neovim oracle and compatibility inventory",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T001"
       ],
       "owner": "test-oracle",
       "paths": [
+        "package.json",
         "tests/oracle/",
         "tests/fixtures/vim/",
         "docs/compatibility/"
@@ -115,34 +116,41 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T003.md"
     },
     {
       "id": "T004",
       "title": "Measure piece tree versus rope",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T001"
       ],
       "owner": "document",
       "paths": [
+        "package.json",
         "spikes/buffer/",
         "bench/fixtures/",
-        "docs/decisions/"
+        "docs/decisions/",
+        "docs/plan/00-brief.md",
+        "docs/plan/01-architecture.md"
       ],
       "specs": [
+        "docs/plan/00-brief.md",
         "docs/plan/01-architecture.md",
-        "docs/plan/05-validation.md"
+        "docs/plan/05-validation.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Create deterministic corpora and reference edit traces",
         "Compare augmented piece tree and chunked rope for edits, line lookup, snapshots, anchors and undo retention",
-        "Measure 1MiB long line and 100k edit fragmentation; choose one layout with evidence"
+        "Measure 1MiB long line and 100k edit fragmentation; choose one layout with evidence",
+        "Include sorted/reversed 1–10000 simultaneous edits and anchor mapping in storage comparison"
       ],
       "acceptance": [
         "Both candidates match simple reference model",
         "Report p95/p99 latency and retained memory for identical workloads",
-        "Decision names complexity, units and rejection reasons"
+        "Decision names complexity, units and rejection reasons",
+        "Report batch work, cancellation and undo retention in addition to singleton edit traces"
       ],
       "failure_cases": [
         "Surrogate boundary edits",
@@ -153,12 +161,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T004.md"
     },
     {
       "id": "T005",
       "title": "Prototype owned Vim regex strategy",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T001",
         "T003"
@@ -174,14 +182,14 @@
         "docs/plan/02-vim.md"
       ],
       "steps": [
-        "Inventory Vim magic/capture/assertion/position requirements",
+        "Inventory full Vim pattern syntax, positional atoms, coordinate rules, replacements and command-level search requirements against pinned help",
         "Prototype parser/IR and bounded evaluator for hard patterns",
         "Compare oracle semantics and cancellation cost; record route for non-regular constructs"
       ],
       "acceptance": [
-        "Corpus includes magic switching, backrefs, lookaround, zero-width and zs/ze",
+        "Pinned corpus includes magic switching, backreferences, all four lookaround forms, zero-width, zs/ze, file/line/cursor positions and UTF-8 cursor-byte mapping",
         "No JS regex substitution presented as Vim parity",
-        "Unsupported constructs tracked with implementation requirements"
+        "Every pattern, replacement, coordinate and search requirement is inventoried with its production owner; unsupported constructs have explicit typed-error or extension-boundary requirements and representative unsupported syntax is rejected with a typed source-located error"
       ],
       "failure_cases": [
         "Catastrophic backtracking",
@@ -192,12 +200,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T005.md"
     },
     {
       "id": "T006",
       "title": "Prototype terminal key normalization",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T001",
         "T002",
@@ -207,7 +215,10 @@
       "paths": [
         "spikes/input/",
         "tests/fixtures/input/",
-        "docs/decisions/"
+        "docs/decisions/",
+        "docs/evidence/",
+        "docs/plan/01-architecture.md",
+        "docs/plan/03-ux.md"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
@@ -233,18 +244,19 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T006.md"
     },
     {
       "id": "T007",
       "title": "G0 feasibility decision",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T002",
         "T003",
         "T004",
         "T005",
-        "T006"
+        "T006",
+        "T084"
       ],
       "owner": "architecture",
       "paths": [
@@ -253,7 +265,9 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/00-brief.md"
+        "docs/plan/00-brief.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Review all prototype artifacts and unresolved incompatibilities",
@@ -263,7 +277,8 @@
       "acceptance": [
         "Every feasibility experiment has reproducible evidence",
         "Numeric gaps are reported against proposed targets",
-        "No prototype becomes production code without its owning contract tests"
+        "No prototype becomes production code without its owning contract tests",
+        "G0 includes pointer feasibility and selection-scaling buffer experiment; every required budget remains measured or explicitly unproven"
       ],
       "failure_cases": [
         "Unmeasured interaction latency",
@@ -275,12 +290,12 @@
         "Gate G0 report with all prerequisite results"
       ],
       "gate": "G0",
-      "report": null
+      "report": "docs/evidence/T007.md"
     },
     {
       "id": "T008",
       "title": "Establish package boundaries and lifecycle ports",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T007"
       ],
@@ -293,12 +308,14 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/01-architecture.md"
+        "docs/plan/08-selections.md",
+        "docs/plan/10-extensibility.md"
       ],
       "steps": [
         "Create only required packages/public entrypoints from dependency diagram",
         "Define typed process/filesystem/clock/clipboard/service ports and disposal",
-        "Enforce dependency graph and unknown-data validation rules"
+        "Enforce dependency graph and unknown-data validation rules",
+        "Add selections owner, inert command/provider contracts and scoped terminal adapter ownership to graph"
       ],
       "acceptance": [
         "Forbidden UI import into Vim and dependency cycle fail CI",
@@ -314,12 +331,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T008.md"
     },
     {
       "id": "T009",
       "title": "Implement chosen document storage",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T008"
       ],
@@ -330,17 +347,16 @@
         "bench/document/"
       ],
       "specs": [
-        "docs/plan/01-architecture.md",
         "docs/plan/01-architecture.md"
       ],
       "steps": [
-        "Implement chosen balanced chunk structure and aggregate indexes",
-        "Add slice/line/offset reads, snapshots and append storage",
+        "Implement selected chunked rope leaves capped at 1024 UTF-16 units with aggregate indexes",
+        "Add slice/line/offset reads, snapshots and bounded chunk split/coalescing",
         "Establish resource budget and safe compaction that preserves live snapshots"
       ],
       "acceptance": [
         "Random edits match reference model and tree invariants",
-        "100k-edit fragmentation trace stays within chosen measured budget",
+        "FC-T004-FRAGMENT-01 stays within 2048 live content chunks, 4 MiB retained heap growth and 80 MiB process RSS growth after GC on the pinned T004 Linux ARM64 environment",
         "Snapshots remain immutable after edits/compaction"
       ],
       "failure_cases": [
@@ -354,12 +370,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T009.md"
     },
     {
       "id": "T010",
       "title": "Implement coordinate and text-fidelity layer",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T009"
       ],
@@ -370,7 +386,6 @@
         "tests/document/"
       ],
       "specs": [
-        "docs/plan/01-architecture.md",
         "docs/plan/01-architecture.md"
       ],
       "steps": [
@@ -392,12 +407,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T010.md"
     },
     {
       "id": "T011",
       "title": "Implement transactions, anchors and revision stream",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T009",
         "T010"
@@ -405,11 +420,12 @@
       "owner": "document",
       "paths": [
         "packages/document/",
+        "packages/primitives/",
         "tests/document/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/01-architecture.md"
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Validate versioned nonoverlapping edit proposals and apply atomically in memory",
@@ -419,7 +435,8 @@
       "acceptance": [
         "Invalid batch leaves text/history untouched",
         "Multiple views consume one revision stream",
-        "Generated overlapping/deletion/insertion anchor cases match reference rules"
+        "Generated overlapping/deletion/insertion anchor cases match reference rules",
+        "Batch change-map API supports sorted endpoints; same-position insertion policy is explicit and invalid batches are rejected"
       ],
       "failure_cases": [
         "Stale expectedVersion",
@@ -431,29 +448,34 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T011.md"
     },
     {
       "id": "T012",
       "title": "Implement undo tree and groups",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
-        "T011"
+        "T011",
+        "T075"
       ],
       "owner": "document",
       "paths": [
         "packages/document/",
+        "packages/primitives/",
         "tests/document/",
-        "bench/document/"
+        "bench/document/",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/02-vim.md"
+        "docs/plan/02-vim.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Add undo branches and explicit group boundaries with before/after selections",
         "Track save identity and persistent serialization version",
-        "Bound snapshot/inverse retention with documented policy"
+        "Bound snapshot/inverse retention with documented policy",
+        "Retain inert serialized before/after selection values without document importing Vim/selections"
       ],
       "acceptance": [
         "Undo then edit retains alternate redo branch",
@@ -469,30 +491,40 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T012.md"
     },
     {
       "id": "T013",
       "title": "Implement canonical input and modal grammar",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
+        "T006",
         "T008",
-        "T010"
+        "T010",
+        "T074",
+        "T075"
       ],
       "owner": "vim",
       "paths": [
+        "packages/vim/src/",
         "packages/vim/input/",
         "packages/vim/parser/",
-        "tests/vim/"
+        "tests/vim/",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/02-vim.md"
+        "docs/plan/02-vim.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/10-extensibility.md"
       ],
       "steps": [
+        "Consume T006's canonical key/paste/focus event vocabulary; do not parse terminal bytes in Vim",
         "Define normalized key/paste events and deterministic clocks",
         "Parse modes, registers, prefixes, counts and literal arguments as typed states",
-        "Separate pending command from failed/consumed outcome"
+        "Separate pending command from failed/consumed outcome",
+        "Use selection-set session state from the outset and expose typed legal continuation metadata"
       ],
       "acceptance": [
         "Prefixes d, 2d3, quote-register and g survive incremental input",
@@ -509,30 +541,35 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T013.md"
     },
     {
       "id": "T014",
       "title": "Implement pure viewport and cell layout",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T009",
-        "T010"
+        "T010",
+        "T012",
+        "T075"
       ],
       "owner": "layout",
       "paths": [
         "packages/layout/",
         "tests/layout/",
-        "bench/layout/"
+        "bench/layout/",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/01-architecture.md"
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md"
       ],
       "steps": [
         "Implement line-to-screen rows, wrapping, tabs, folds and preferred columns",
         "Cache visible rows keyed by text/layout generation",
-        "Define cursor hit-testing and clipping independent of OpenTUI"
+        "Define cursor hit-testing and clipping independent of OpenTUI",
+        "Project immutable selection sets and retain frame/layout generations for hit testing"
       ],
       "acceptance": [
         "Round-trip text/cell mapping under tested policies",
@@ -549,36 +586,46 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T014.md"
     },
     {
       "id": "T015",
       "title": "G1 core qualification",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T011",
         "T012",
         "T013",
-        "T014"
+        "T014",
+        "T074",
+        "T075",
+        "T085"
       ],
       "owner": "architecture",
       "paths": [
         "docs/evidence/",
-        "tests/architecture/"
+        "tests/architecture/",
+        "bench/core/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/05-validation.md"
+        "docs/plan/05-validation.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/10-extensibility.md"
       ],
       "steps": [
         "Run strict/graph/document/property/layout/input suites",
         "Verify version and ownership boundaries with negative tests",
-        "Record core benchmarks and lifecycle evidence"
+        "Record core benchmarks and lifecycle evidence",
+        "Reject direct UI-to-document dependency and unitless public coordinates with explicit negative fixtures",
+        "Measure bounded scoped-subscription lifecycle cleanup and representative core operation costs"
       ],
       "acceptance": [
         "No invalid transaction partially applies",
         "UI cannot bypass document owner",
-        "All core contracts have deterministic fixtures and measured costs"
+        "All core contracts have deterministic fixtures and measured costs",
+        "Singleton selection-set path, command descriptors and versioned hit-map invariants pass core qualification"
       ],
       "failure_cases": [
         "Missing coordinate unit",
@@ -590,12 +637,12 @@
         "Gate G1 report with all prerequisite results"
       ],
       "gate": "G1",
-      "report": null
+      "report": "docs/evidence/T015.md"
     },
     {
       "id": "T016",
       "title": "Implement line and file motions",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T015",
         "T003"
@@ -603,7 +650,10 @@
       "owner": "vim",
       "paths": [
         "packages/vim/motions/",
-        "tests/vim/"
+        "packages/vim/src/index.ts",
+        "tests/vim/motions/",
+        "docs/compatibility/",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
@@ -629,19 +679,22 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T016.md"
     },
     {
       "id": "T017",
       "title": "Implement word and WORD motions",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T016"
       ],
       "owner": "vim",
       "paths": [
         "packages/vim/motions/",
-        "tests/vim/"
+        "packages/vim/src/index.ts",
+        "tests/vim/",
+        "docs/compatibility/",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
@@ -667,19 +720,22 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T017.md"
     },
     {
       "id": "T018",
       "title": "Implement find and till motions",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T016"
       ],
       "owner": "vim",
       "paths": [
         "packages/vim/motions/",
-        "tests/vim/"
+        "packages/vim/src/index.ts",
+        "tests/vim/",
+        "docs/compatibility/",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
@@ -692,7 +748,7 @@
       ],
       "acceptance": [
         "Oracle matches repeated till and reverse repeat cases",
-        "Missing targets do not corrupt prior state",
+        "Missing-target behavior matches Neovim for document/cursor/register/selection state and the next ;/, repeat target",
         "Combining/multibyte literal fixtures pass"
       ],
       "failure_cases": [
@@ -705,12 +761,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T018.md"
     },
     {
       "id": "T019",
       "title": "Implement range normalizer and core operators",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T016",
         "T017",
@@ -721,7 +777,9 @@
       "paths": [
         "packages/vim/ranges/",
         "packages/vim/operators/",
-        "tests/vim/"
+        "tests/vim/",
+        "docs/evidence/",
+        "packages/vim/src/index.ts"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
@@ -747,19 +805,22 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T019.md"
     },
     {
       "id": "T020",
       "title": "Implement built-in text objects",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T019"
       ],
       "owner": "vim",
       "paths": [
         "packages/vim/text-objects/",
-        "tests/vim/"
+        "packages/vim/operators/core.ts",
+        "packages/vim/src/",
+        "tests/vim/",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
@@ -768,10 +829,12 @@
       "steps": [
         "Add word/WORD/sentence/paragraph/quote/bracket/tag objects",
         "Centralize nesting, whitespace and count expansion",
-        "Model malformed/absent delimiters as oracle outcomes"
+        "Model malformed/absent delimiters as oracle outcomes",
+        "Integrate zero-width inner-object change behavior required by the pinned oracle"
       ],
       "acceptance": [
         "Inner/around product across d/c/y and visual matches oracle",
+        "Zero-width inner-object d/c/y behavior matches the pinned oracle, including ci on empty quotes",
         "Nested tags/brackets and escaped quotes covered",
         "Selection expansion respects existing anchor/direction"
       ],
@@ -785,12 +848,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T020.md"
     },
     {
       "id": "T021",
       "title": "Implement visual and Select semantics",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T019",
         "T020",
@@ -799,7 +862,12 @@
       "owner": "vim",
       "paths": [
         "packages/vim/visual/",
-        "tests/vim/"
+        "packages/vim/parser/",
+        "packages/vim/ranges/",
+        "packages/selections/src/",
+        "packages/vim/src/",
+        "tests/vim/",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
@@ -812,7 +880,8 @@
       ],
       "acceptance": [
         "Oracle snapshots compare selection type/width/cursor/text",
-        "Block delete/insert/put does not split valid text boundaries",
+        "Block delete/change plans preserve valid text boundaries across ragged rows, tabs, virtual cells and wide glyphs",
+        "Visual block register geometry (lines, type and width) is retained for T023's put implementation",
         "Exclusive/inclusive and reversed selection fixtures pass"
       ],
       "failure_cases": [
@@ -825,21 +894,24 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T021.md"
     },
     {
       "id": "T022",
       "title": "Implement insert and replace modes",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T019",
         "T012",
-        "T013"
+        "T013",
+        "T101"
       ],
       "owner": "vim",
       "paths": [
         "packages/vim/insert/",
-        "tests/vim/"
+        "packages/vim/src/",
+        "tests/vim/",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
@@ -865,12 +937,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T022.md"
     },
     {
       "id": "T023",
       "title": "Implement registers and put semantics",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T019",
         "T021",
@@ -906,12 +978,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T023.md"
     },
     {
       "id": "T024",
       "title": "Implement semantic dot repeat",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T021",
         "T022",
@@ -946,12 +1018,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T024.md"
     },
     {
       "id": "T025",
       "title": "Implement macro recording and execution",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T024",
         "T013"
@@ -985,35 +1057,42 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T025.md"
     },
     {
       "id": "T026",
-      "title": "Implement owned Vim pattern evaluator",
-      "status": "todo",
+      "title": "Integrate complete owned Vim pattern evaluator",
+      "status": "done",
       "depends_on": [
         "T015",
-        "T005"
+        "T005",
+        "T096",
+        "T097",
+        "T098"
       ],
       "owner": "vim",
       "paths": [
         "packages/vim/pattern/",
+        "packages/vim/src/index.ts",
         "tests/vim/pattern/",
-        "bench/vim/"
+        "bench/vim/",
+        "spikes/vim-pattern/",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
         "docs/plan/02-vim.md"
       ],
       "steps": [
-        "Implement parsed dialect/IR from feasibility decision",
-        "Add regular and backtracking feature families with source errors",
-        "Make expensive matching resumable/cancellable over immutable snapshots"
+        "Reconcile completed T096-T098 evidence against every owned pattern requirement row",
+        "Run the integrated pinned-oracle and adversarial corpus across regular, bounded-backtracking and positional pattern families",
+        "Verify timeout, cancellation and stale-context outcomes preserve document, cursor and repeat state"
       ],
       "acceptance": [
-        "Pinned pattern corpus matches oracle spans/captures/errors",
-        "Timeout preserves document/cursor/repeat state",
-        "No unsupported feature silently treated as literal or JS syntax"
+        "Integrated pinned pattern corpus matches oracle spans/captures/errors across VP-01–VP-11 and VP-15–VP-16",
+        "Timeout, cancellation and stale-context failures preserve document/cursor/repeat state",
+        "Every in-scope built-in VP-01–VP-11 and VP-15–VP-16 behavior is verified; only the specifically documented syntax-highlighting-only `\\z(` group remains outside the search evaluator",
+        "No required built-in behavior is deferred or silently converted to a literal, no-match or JavaScript syntax"
       ],
       "failure_cases": [
         "Zero-width repetition",
@@ -1025,12 +1104,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T026.md"
     },
     {
       "id": "T027",
       "title": "Implement buffer search and substitution",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T026",
         "T019",
@@ -1053,7 +1132,8 @@
       "acceptance": [
         "Oracle matches search/substitute state and resulting edits",
         "Cancel restores original view and cursor",
-        "Multiline/zero-width substitutions terminate with correct count"
+        "Multiline/zero-width substitutions terminate with correct count",
+        "All VP-12–VP-14 command/replacement rows are verified or carry an explicit extension boundary"
       ],
       "failure_cases": [
         "Empty pattern reuse",
@@ -1065,12 +1145,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T027.md"
     },
     {
       "id": "T028",
       "title": "Implement Ex parser and editing commands",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T027",
         "T025"
@@ -1083,17 +1163,21 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/02-vim.md"
+        "docs/plan/02-vim.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md"
       ],
       "steps": [
         "Parse ranges, marks, offsets, separators and escaped delimiters",
         "Add global/vglobal, normal, move/copy/delete/yank and repeated substitute",
-        "Emit typed host effects for write/open/quit rather than performing IO"
+        "Emit typed host effects for write/open/quit rather than performing IO",
+        "Expose parsed command-position/range/argument metadata and exact native abbreviation resolution for discovery"
       ],
       "acceptance": [
         "Oracle covers Ex editing addresses and command composition",
         "Unsupported scripting is explicit with no partial unintended write",
-        "Ex and normal edits share transactions/history"
+        "Ex and normal edits share transactions/history",
+        "Ex document/global/host effects execute once for multiple cursors with explicit primary range semantics"
       ],
       "failure_cases": [
         "Invalid range",
@@ -1105,15 +1189,19 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T028.md"
     },
     {
       "id": "T029",
-      "title": "Implement structural motions and remaining operators",
-      "status": "todo",
+      "title": "Coordinate structural motions and remaining operator parity",
+      "status": "done",
       "depends_on": [
         "T020",
-        "T026"
+        "T026",
+        "T102",
+        "T103",
+        "T104",
+        "T105"
       ],
       "owner": "vim",
       "paths": [
@@ -1127,31 +1215,28 @@
         "docs/plan/02-vim.md"
       ],
       "steps": [
-        "Add sentence/paragraph/section/bracket/percent families and match options",
-        "Add case/join/indent/format/filter/numeric/fold operator families",
-        "Use typed providers for indentation/tags/syntax dependencies; inventory unsupported extensions"
+        "Track the split structural-motion and operator-family implementations without narrowing the original Vim scope",
+        "Aggregate child evidence and close only after every original T029 acceptance and failure case is covered"
       ],
       "acceptance": [
-        "Oracle cases cover syntax/option-dependent movement and operator composition",
-        "Provider absence produces explicit behavior, no fallback guess",
-        "Relevant help families mapped to tests"
+        "All child tickets cover the original structural-motion and remaining-operator acceptance items",
+        "No operator family is silently omitted; unsupported provider behavior and help-family gaps remain explicit"
       ],
       "failure_cases": [
-        "Unmatched nesting",
-        "Counted percentage",
-        "joinspaces/nrformats variants"
+        "A child ticket reports an unmet original T029 behavior",
+        "Child evidence or dependency edges are missing"
       ],
       "evidence": [
         "Executed commands and actual outcomes for every acceptance item",
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T029.md"
     },
     {
       "id": "T030",
       "title": "Implement marks, jumps and change history",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T019",
         "T024"
@@ -1185,12 +1270,12 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T030.md"
     },
     {
       "id": "T031",
       "title": "Implement viewport-sensitive motions and scrolling",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T016",
         "T014",
@@ -1200,7 +1285,9 @@
       "paths": [
         "packages/vim/motions/",
         "packages/layout/",
-        "tests/vim/"
+        "tests/vim/",
+        "tests/oracle/pty-ui.py",
+        "docs/evidence/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
@@ -1226,16 +1313,16 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T031.md"
     },
     {
       "id": "T032",
       "title": "Implement mapping/option profiles and remaining direct changes",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T022",
         "T023",
-        "T029"
+        "T102"
       ],
       "owner": "vim",
       "paths": [
@@ -1267,19 +1354,29 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T032.md"
     },
     {
       "id": "T033",
       "title": "G2 editing preview qualification",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated after T092 completion: G2 PTY preview, strict oracle suite and multi-selection suite pass with the current tree. See docs/evidence/T033.md.",
       "depends_on": [
         "T028",
-        "T029",
+        "T102",
+        "T103",
+        "T104",
+        "T105",
         "T030",
         "T031",
         "T032",
-        "T025"
+        "T025",
+        "T077",
+        "T078",
+        "T079",
+        "T080",
+        "T092",
+        "T093"
       ],
       "owner": "vim",
       "paths": [
@@ -1290,7 +1387,8 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/05-validation.md"
+        "docs/plan/05-validation.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Run full current inventory and generated traces",
@@ -1300,7 +1398,8 @@
       "acceptance": [
         "Zero unexplained failures in implemented families",
         "Remaining parity work has concrete inventory entries and tickets",
-        "Engine preview has no Neovim runtime dependency"
+        "Engine preview has no Neovim runtime dependency",
+        "Editing preview includes atomic multi-cursor motion/Visual/Insert/register/repeat/macro/history fixtures; full final parity remains unproven"
       ],
       "failure_cases": [
         "Fixture-only correctness",
@@ -1312,12 +1411,13 @@
         "Gate G2 report with all prerequisite results"
       ],
       "gate": "G2",
-      "report": null
+      "report": "docs/evidence/T033.md"
     },
     {
       "id": "T034",
       "title": "Build light workbench shell and virtualized editor",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated after T033 completion: document-backed OpenTUI shell, frame matrix, ASCII/low-color/tiny states, resize cleanup and launch PTY pass. See docs/evidence/T034.md.",
       "depends_on": [
         "T033",
         "T002"
@@ -1330,12 +1430,15 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/03-ux.md"
+        "docs/plan/03-ux.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md"
       ],
       "steps": [
         "Connect real document/layout to custom OpenTUI renderable",
         "Add sidebar/editor/bottom/status layout and theme token system",
-        "Capture actual cells and screenshots across required sizes"
+        "Capture actual cells and screenshots across required sizes",
+        "Render primary/secondary set read models without storing editable cursors in widgets"
       ],
       "acceptance": [
         "UI uses document owner; no second mutable widget buffer",
@@ -1352,52 +1455,65 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T034.md"
     },
     {
       "id": "T035",
       "title": "Implement command registry and focus navigation",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated after T034 completion: exact-once dispatch, deterministic focus/overlay cancellation, capability reasons, UTF-8 and raw SGR/X10 byte handling pass. See docs/evidence/T035.md.",
       "depends_on": [
+        "T006",
         "T034",
-        "T032"
+        "T032",
+        "T074"
       ],
       "owner": "workbench",
       "paths": [
         "packages/workbench/",
         "packages/ui/input/",
-        "tests/workbench/"
+        "tests/workbench/",
+        "tests/fixtures/input/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/03-ux.md"
+        "docs/plan/03-ux.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/09-interaction.md"
       ],
       "steps": [
-        "Register typed commands with enablement/context/help metadata",
+        "Wire T074 typed registry to workbench command handlers",
+        "Adapt T006 normalized terminal events to the dispatcher exactly once",
         "Build deterministic focus graph and context dispatcher",
-        "Add palette/prefix help and inspectable key collisions"
+        "Expose palette and key inspection read models; T082/T083 own complete discovery UIs",
+        "Use foundation registry; wire focus and feature handlers without a second registry"
       ],
       "acceptance": [
         "One key reaches exactly one target",
+        "Raw protocol diagnostics preserve exact wire bytes for SGR and legacy X10 without UTF-8 re-encoding byte-string carriers",
+        "Valid split UTF-8 remains text past the OpenTUI parser timeout; invalid partial bytes become U+FFFD text, never command chords",
         "Overlay cancel restores prior valid focus",
         "Commands unavailable due to capability show reason"
       ],
       "failure_cases": [
         "Focus target disposed",
         "Operator pending while opening panel",
-        "Esc ambiguity"
+        "Esc ambiguity",
+        "UTF-8 continuation arrives after the OpenTUI parser timeout",
+        "Legacy X10 high-byte trace changes under UTF-8 re-encoding"
       ],
       "evidence": [
         "Executed commands and actual outcomes for every acceptance item",
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T035.md"
     },
     {
       "id": "T036",
       "title": "Implement TOML configuration and personal migration",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated after T035 completion: shipped TOML examples, schema diagnostics, provenance/atomic reload, profile isolation and executable trust fixtures pass. See docs/evidence/T036.md.",
       "depends_on": [
         "T035"
       ],
@@ -1409,12 +1525,16 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/04-services.md"
+        "docs/plan/04-services.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/10-extensibility.md"
       ],
       "steps": [
         "Validate proposed config/language/theme schemas with source diagnostics",
         "Implement merge/provenance, profile selection and atomic reload",
-        "Ship defaults and optional migration examples for observed keymaps/languages"
+        "Ship defaults and optional migration examples for observed keymaps/languages",
+        "Validate new selection/mouse/trail/hint settings and contribution-aware aliases with captured-generation reload policy"
       ],
       "acceptance": [
         "Example TOML validates and every command resolves",
@@ -1431,12 +1551,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T036.md"
     },
     {
       "id": "T037",
       "title": "Implement open/save and crash recovery",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated after T035 completion: exact UTF-8/EOL persistence, fault recovery, symlink/hardlink policy and restart divergence fixtures pass. See docs/evidence/T037.md.",
       "depends_on": [
         "T035",
         "T011",
@@ -1473,12 +1594,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T037.md"
     },
     {
       "id": "T038",
       "title": "Implement buffers, previews, splits and sessions",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated: WorkbenchSession is wired into the launcher; component and production PTY fixtures pass preview, shared split editing/history, resize and close/save behavior. See docs/evidence/T038.md.",
       "depends_on": [
         "T035",
         "T037"
@@ -1491,12 +1613,14 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/03-ux.md"
+        "docs/plan/03-ux.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Add buffer registry and per-view cursors/split tree",
         "Implement preview promotion, dirty close and jump integration",
-        "Persist/reload layout independently of recovery text"
+        "Persist/reload layout independently of recovery text",
+        "Use owned engine sessions per view and preserve versioned selection sets; T095 completes persistent recovery mapping"
       ],
       "acceptance": [
         "E02 and E11 pass through PTY",
@@ -1513,15 +1637,17 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T038.md"
     },
     {
       "id": "T039",
       "title": "Implement file/command/buffer fuzzy picker",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated: public launcher picker wiring, asynchronous workspace indexing, file preview/cancel restoration, buffer/command/theme/config modes, contribution activation and 100k-path benchmark pass through the production path. See docs/evidence/T039.md.",
       "depends_on": [
         "T036",
-        "T038"
+        "T038",
+        "T090"
       ],
       "owner": "navigation",
       "paths": [
@@ -1532,7 +1658,8 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/03-ux.md"
+        "docs/plan/03-ux.md",
+        "docs/plan/10-extensibility.md"
       ],
       "steps": [
         "Build incremental multi-root filename index and bounded fuzzy scoring",
@@ -1542,7 +1669,8 @@
       "acceptance": [
         "100k-path warm picker budget measured",
         "Preview/cancel returns original view",
-        "Duplicate relative names retain root identity"
+        "Duplicate relative names retain root identity",
+        "File picker and theme/config commands consume public contribution entrypoints"
       ],
       "failure_cases": [
         "Stale query result",
@@ -1554,12 +1682,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T039.md"
     },
     {
       "id": "T040",
       "title": "Implement Explorer tree",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated: launched Explorer panel now performs lazy native enumeration, focus/navigation/filtering, auto-reveal, watcher invalidation, external insertion/rename reconciliation and stable selection. See docs/evidence/T040.md.",
       "depends_on": [
         "T039"
       ],
@@ -1593,12 +1722,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T040.md"
     },
     {
       "id": "T041",
       "title": "Implement editable directory draft",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated after T040: anchored in-memory directory edits, reversible escaped names, located validation errors, review cancellation and focus restoration pass on the current worktree. See docs/evidence/T041.md.",
       "depends_on": [
         "T040",
         "T028"
@@ -1633,12 +1763,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T041.md"
     },
     {
       "id": "T042",
       "title": "Implement journaled filesystem operations",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated after T041: journaled preflight, cycle/case/cross-device execution, trash, durable partial retry, external-content protection and distinct restore semantics pass. See docs/evidence/T042.md.",
       "depends_on": [
         "T041",
         "T037"
@@ -1675,12 +1806,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T042.md"
     },
     {
       "id": "T043",
       "title": "Implement realtime workspace search",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16 revalidated: production launcher search now streams bounded ripgrep JSON through the typed process port, merges dirty buffers, preserves encoded paths, rejects late process output and passes 30-sample first-result/cancellation measurements. See docs/evidence/T043.md.",
       "depends_on": [
         "T039",
         "T037"
@@ -1716,12 +1848,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T043.md"
     },
     {
       "id": "T044",
       "title": "Implement workspace replace preview/apply/restore",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16 revalidated: production launcher search-to-replace now has generation-bound preview, dirty-buffer transactions, closed-file atomic apply, multiline/zero-width/capture/preserve-case checks, stale and overlap refusal, and per-file restore journals. See docs/evidence/T044.md.",
       "depends_on": [
         "T043",
         "T011",
@@ -1759,18 +1892,28 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T044.md"
     },
     {
       "id": "T045",
       "title": "G3 workbench qualification",
       "status": "todo",
+      "status_note": "2026-09-15 completion audit: G3 composition checks do not establish the required actual workbench journeys, complete screenshot review and navigation/search under typing load. See docs/evidence/2026-09-15-completion-audit.md.",
       "depends_on": [
         "T036",
         "T038",
         "T040",
         "T042",
-        "T044"
+        "T044",
+        "T081",
+        "T082",
+        "T083",
+        "T086",
+        "T087",
+        "T090",
+        "T091",
+        "T094",
+        "T095"
       ],
       "owner": "workbench",
       "paths": [
@@ -1779,7 +1922,10 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/05-validation.md"
+        "docs/plan/05-validation.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/10-extensibility.md"
       ],
       "steps": [
         "Run E01-E06,E11-E13,E15-E16 and visual review",
@@ -1789,7 +1935,8 @@
       "acceptance": [
         "Keyboard journeys require no mouse",
         "Recovery/file operations preserve data under injection",
-        "Required layout screenshots reviewed with findings fixed"
+        "Required layout screenshots reviewed with findings fixed",
+        "G3 includes first-class selection management, prefix/Ex discovery, mouse controls, motion paint and extensibility exercises"
       ],
       "failure_cases": [
         "Pretty snapshot with broken focus",
@@ -1801,19 +1948,27 @@
         "Gate G3 report with all prerequisite results"
       ],
       "gate": "G3",
-      "report": null
+      "report": "docs/evidence/T045.md"
     },
     {
       "id": "T046",
       "title": "Implement LSP byte transport",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "T015"
       ],
       "owner": "language",
       "paths": [
+        "apps/xi/src/main.ts",
         "packages/services/language/",
-        "tests/lsp/"
+        "tests/lsp/",
+        "docs/evidence/",
+        "package.json",
+        "bun.lock",
+        "docs/plan/01-architecture.md",
+        "tools/check-import-graph.ts",
+        "tests/architecture/contracts.ts",
+        "packages/services/src/index.ts"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
@@ -1839,12 +1994,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T046.md"
     },
     {
       "id": "T047",
       "title": "Implement LSP lifecycle and root resolution",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated: root resolution, asynchronous lifecycle, replay, identity isolation and failure health pass with T036 complete. See docs/evidence/T047.md.",
       "depends_on": [
         "T046",
         "T036"
@@ -1878,12 +2034,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T047.md"
     },
     {
       "id": "T048",
       "title": "Implement versioned document sync",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated: UTF-8/16/32 convergence, full-sync fallback, bounded coalescing, stale/close guards, astral conversion and restart replay pass. See docs/evidence/T048.md.",
       "depends_on": [
         "T047",
         "T011",
@@ -1896,12 +2053,14 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/04-services.md"
+        "docs/plan/04-services.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Connect committed document changes to open/change/close ordering",
         "Negotiate position encodings and correct incremental/full sync",
-        "Bound/coalesce queues while retaining valid server baselines"
+        "Bound/coalesce queues while retaining valid server baselines",
+        "Use documented command cardinality and view/selection-generation rules; T088 qualifies cross-feature multi-cursor integration"
       ],
       "acceptance": [
         "Fake peer text equals Xi after randomized edit stream",
@@ -1918,12 +2077,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T048.md"
     },
     {
       "id": "T049",
       "title": "Implement push diagnostics and Problems UX",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16 revalidated: production LanguageServerSession push diagnostics, version-bound stale rejection, close/server cleanup, bounded 10k Problems rendering and launched CLI Problems routing pass. See docs/evidence/T049.md.",
       "depends_on": [
         "T048",
         "T035"
@@ -1959,12 +2119,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T049.md"
     },
     {
       "id": "T050",
       "title": "Implement LSP navigation, hover and Outline",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16 revalidated: live TypeScript LSP definition/hover/document-symbol decoding, versioned stale suppression, explicit no-LSP state and launched Outline/hover PTY journeys pass. See docs/evidence/T050.md.",
       "depends_on": [
         "T048",
         "T040",
@@ -1979,12 +2140,14 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/03-ux.md"
+        "docs/plan/03-ux.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Add definition/type/implementation/declaration/reference and hover commands",
         "Normalize locations, peek/picker and jump-history integration",
-        "Add document/workspace symbols, Outline and breadcrumbs with capability states"
+        "Add document/workspace symbols, Outline and breadcrumbs with capability states",
+        "Use documented command cardinality and view/selection-generation rules; T088 qualifies cross-feature multi-cursor integration"
       ],
       "acceptance": [
         "E07 returns to original location and focus",
@@ -2001,12 +2164,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T050.md"
     },
     {
       "id": "T051",
       "title": "Implement completion and signature UI",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16 revalidated: native completion/resolve and signature transport, bounded documentation, Ctrl-N/P/Tab/Esc routing, validated LSP edits and live TypeScript PTY acceptance pass. See docs/evidence/T051.md.",
       "depends_on": [
         "T048",
         "T022",
@@ -2020,12 +2184,14 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/04-services.md"
+        "docs/plan/04-services.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Handle completion trigger/incomplete/resolve and signature requests",
         "Apply validated textEdit/insertReplace/additional edits",
-        "Implement explicit selection/acceptance with insert undo/repeat contract"
+        "Implement explicit selection/acceptance with insert undo/repeat contract",
+        "Use documented command cardinality and view/selection-generation rules; T088 qualifies cross-feature multi-cursor integration"
       ],
       "acceptance": [
         "Enter without selected item inserts newline",
@@ -2042,12 +2208,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T051.md"
     },
     {
       "id": "T052",
       "title": "Implement LSP workspace edits, actions and rename",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16 revalidated: dirty/open/closed multi-file rename, preflight rejection, resource chain resolution, command ordering/feedback and optional will/did file hooks pass through the production path. See docs/evidence/T052.md.",
       "depends_on": [
         "T048",
         "T044",
@@ -2058,17 +2225,20 @@
       "paths": [
         "packages/services/language/",
         "packages/workbench/",
+        "apps/xi/",
         "tests/lsp/",
         "tests/e2e/"
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/04-services.md"
+        "docs/plan/04-services.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Normalize document/resource edits with versions and change annotations",
         "Add prepareRename/action resolve/disabled reasons and exact preview",
-        "Coordinate will/did file hooks and server commands with partial-failure reporting"
+        "Coordinate will/did file hooks and server commands with partial-failure reporting",
+        "Use documented command cardinality and view/selection-generation rules; T088 qualifies cross-feature multi-cursor integration"
       ],
       "acceptance": [
         "E08 validates dirty/open/closed multi-file operations",
@@ -2085,12 +2255,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T052.md"
     },
     {
       "id": "T053",
       "title": "Implement incremental syntax highlighting",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated: incremental/full equality, stale suppression, bounded grammar/fallback behavior and oversized-resync input interleaving pass. Cooperative line and lexical slices remove the prior full-resync stall gap. See docs/evidence/T053.md.",
       "depends_on": [
         "T015",
         "T034"
@@ -2126,12 +2297,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T053.md"
     },
     {
       "id": "T054",
       "title": "Implement semantic tokens",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated: semantic full/delta equivalence, stale/baseline/legend guards and bounded row projection pass with T053 complete. See docs/evidence/T054.md.",
       "depends_on": [
         "T048",
         "T053"
@@ -2166,12 +2338,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T054.md"
     },
     {
       "id": "T055",
       "title": "Implement formatters and save pipeline",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16: real argv formatter, LSP/range adapter, versioned save integration, concurrent typing and failure PTY evidence passed.",
       "depends_on": [
         "T048",
         "T052",
@@ -2186,12 +2359,14 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/04-services.md"
+        "docs/plan/04-services.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Implement LSP/range/external formatter selection and ordered chains",
         "Apply output through versioned coordinator with cursor anchors/undo group",
-        "Coordinate explicit save/autosave without stale overwrite"
+        "Coordinate explicit save/autosave without stale overwrite",
+        "Use documented command cardinality and view/selection-generation rules; T088 qualifies cross-feature multi-cursor integration"
       ],
       "acceptance": [
         "Format twice is stable for pinned fixture tools",
@@ -2208,12 +2383,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T055.md"
     },
     {
       "id": "T056",
       "title": "G4 language qualification",
       "status": "todo",
+      "status_note": "2026-09-16 CLI audit: TypeScript Outline/hover/completion/rename/formatting and multi-cursor completion/snippet PTYs pass; the LSP fake-peer suite passes. Real Go/Rust CLI projects return language-server unavailable because the launcher routes only TypeScript. The CLI also has no syntax/Git refresh path, and client capabilities omit supported snippet completion. T123-T126 and T115 now gate the original E07/E08/E14 and all-language acceptance. See docs/evidence/T056.md.",
       "depends_on": [
         "T049",
         "T050",
@@ -2224,7 +2400,13 @@
         "T067",
         "T068",
         "T069",
-        "T070"
+        "T070",
+        "T088",
+        "T123",
+        "T124",
+        "T125",
+        "T126",
+        "T115"
       ],
       "owner": "language",
       "paths": [
@@ -2234,7 +2416,8 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/05-validation.md"
+        "docs/plan/05-validation.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Run fake-peer protocol matrix and real TS/Go/Rust projects",
@@ -2244,7 +2427,8 @@
       "acceptance": [
         "E07/E08/E14 pass through actual CLI",
         "Protocol capability advertisements match implemented support",
-        "All real server versions and fixture hashes recorded"
+        "All real server versions and fixture hashes recorded",
+        "Multi-cursor completion/snippets, shared additional edits and stale-selection protection pass MC11/E24"
       ],
       "failure_cases": [
         "Real server unavailable",
@@ -2256,12 +2440,13 @@
         "Gate G4 report with all prerequisite results"
       ],
       "gate": "G4",
-      "report": null
+      "report": "docs/evidence/T056.md"
     },
     {
       "id": "T057",
       "title": "Implement Git discovery, status and diff",
       "status": "todo",
+      "status_note": "2026-09-15 completion audit: The report qualifies porcelain parsing/cache only and defers diff rendering; actual temporary-repository comparison and E11 diff-selection UX remain unproven. See docs/evidence/2026-09-15-completion-audit.md.",
       "depends_on": [
         "T045"
       ],
@@ -2296,12 +2481,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T057.md"
     },
     {
       "id": "T058",
       "title": "Implement Git stage, unstage, discard and commit",
       "status": "todo",
+      "status_note": "2026-09-15 completion audit: Executor/argv fixtures do not establish actual index bytes, selected-hunk staging and E09 commit/draft behavior. See docs/evidence/2026-09-15-completion-audit.md.",
       "depends_on": [
         "T057",
         "T037"
@@ -2338,12 +2524,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T058.md"
     },
     {
       "id": "T059",
       "title": "Implement merge and history navigation",
       "status": "todo",
+      "status_note": "2026-09-15 completion audit: The report explicitly defers real-repository merge orchestration and diff hunk UI; E10 final file/unmerged-state and history focus journeys remain unproven. See docs/evidence/2026-09-15-completion-audit.md.",
       "depends_on": [
         "T058"
       ],
@@ -2378,12 +2565,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T059.md"
     },
     {
       "id": "T060",
       "title": "Implement task output and diagnostics",
       "status": "todo",
+      "status_note": "2026-09-15 completion audit: The report says no real child process is started by its fixture and defers problem matchers/E17. Reaping and loaded typing budgets remain unproven. See docs/evidence/2026-09-15-completion-audit.md.",
       "depends_on": [
         "T045",
         "T049"
@@ -2419,7 +2607,7 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T060.md"
     },
     {
       "id": "T061",
@@ -2429,7 +2617,15 @@
         "T033",
         "T038",
         "T053",
-        "T071"
+        "T071",
+        "T092",
+        "T099",
+        "T100",
+        "T109",
+        "T110",
+        "T116",
+        "T118",
+        "T121"
       ],
       "owner": "vim",
       "paths": [
@@ -2439,17 +2635,25 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/02-vim.md"
+        "docs/plan/02-vim.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md",
+        "docs/plan/14-remediation-handoff.md"
       ],
       "steps": [
         "Audit every pinned normal/motion/text-object/visual/insert help row, options and dependency",
         "Expand uncovered in-scope rows into individually owned tickets and complete them before closing this audit",
-        "Run exhaustive deterministic corpus plus seeded long traces and option matrices"
+        "Run exhaustive deterministic corpus plus seeded long traces and option matrices",
+        "Audit every command for selection cardinality/effect policy, native Ex reservations and applicable Xi fixtures",
+        "Classify upstream inventory against Xi initial requirements; unrelated Vim application/scripting commands do not expand scope automatically, while every already-required motion/edit family remains covered"
       ],
       "acceptance": [
         "All in-scope motion/composition rows verified; no partial/expected-failure escape hatch",
         "Zero unexplained oracle mismatches; minimized regressions retained",
-        "Strict versus personal and scripting boundaries stated accurately"
+        "Strict versus personal and scripting boundaries stated accurately",
+        "No in-scope motion/operator/edit family is excluded by a blanket multi-cursor limitation"
       ],
       "failure_cases": [
         "Unlisted command family",
@@ -2469,7 +2673,9 @@
       "depends_on": [
         "T056",
         "T065",
-        "T061"
+        "T061",
+        "T089",
+        "T115"
       ],
       "owner": "performance",
       "paths": [
@@ -2480,22 +2686,34 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/05-validation.md"
+        "docs/plan/05-validation.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md",
+        "docs/plan/15-keystroke-latency.md"
       ],
       "steps": [
         "Implement pinned profiling scripts and deterministic benchmark corpus generators",
         "Measure before/after native comparison, loaded typing, startup, long lines, memory and leaks",
+        "Retain and extend the T016 long-line motion matrix for 100k UTF-16 and 1 MiB single-line ASCII, tab, combining, wide-character and wrap cases; attribute and fix over-budget production paths",
         "Attribute and fix failures through owning packages; retain original results"
       ],
       "acceptance": [
         "All reference-host budgets in validation spec pass with sample counts/distributions",
+        "Long-line motion results cover both engine-step and full input-to-output boundaries, and no measured case exceeds its applicable typing budget",
         "CPU/GC/native/output traces explain outliers",
-        "No undocumented threshold relaxation or omitted subprocess cost"
+        "No undocumented threshold relaxation or omitted subprocess cost",
+        "Selection scale, pointer drag and hints/trail on/off budgets are measured across the required cardinalities",
+        "All spec 12 catalog/PF01-PF12 aggregate and per-owner resource budgets have current production evidence, including same-workload native comparison and allocation/CPU/RSS provenance",
+        "Spec 15 ordinary idle/loaded key response meets p50/p95/p99/max 4/8/16/25 ms; engine 0.5/1/2/4 ms and large-input 8/16/25/50 ms; all action/load conditions, open-loop arrivals and outliers retained."
       ],
       "failure_cases": [
         "Shared-runner noise",
         "Leaked native buffer",
-        "Output backpressure"
+        "Output backpressure",
+        "Long-line tab/Unicode/grapheme/wrap motion exceeds typing latency budget"
       ],
       "evidence": [
         "Executed commands and actual outcomes for every acceptance item",
@@ -2510,7 +2728,8 @@
       "status": "todo",
       "depends_on": [
         "T056",
-        "T065"
+        "T065",
+        "T089"
       ],
       "owner": "ui",
       "paths": [
@@ -2521,7 +2740,11 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/03-ux.md"
+        "docs/plan/03-ux.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/15-keystroke-latency.md"
       ],
       "steps": [
         "Review real terminal light/ASCII/256-color screenshots for every journey/state",
@@ -2531,7 +2754,9 @@
       "acceptance": [
         "All E01-E17 relevant visual states reviewed, defects fixed",
         "No mandatory mouse or Nerd Font",
-        "Empty/loading/error/recovery UI meets same review standard"
+        "Empty/loading/error/recovery UI meets same review standard",
+        "Named inspection of all motion/selection/mouse/discovery states and terminal accessibility variants passes",
+        "Spec 15 calibrated physical key-to-correct-pixels p50/p95/p99/max 20/35/50/75 ms passes for recorded reference terminal/display configurations; software frame callbacks cannot substitute for physical evidence."
       ],
       "failure_cases": [
         "Invisible selected diagnostic",
@@ -2551,7 +2776,9 @@
       "status": "todo",
       "depends_on": [
         "T056",
-        "T065"
+        "T065",
+        "T089",
+        "T122"
       ],
       "owner": "build",
       "paths": [
@@ -2563,7 +2790,10 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/05-validation.md"
+        "docs/plan/05-validation.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/10-extensibility.md"
       ],
       "steps": [
         "Validate distribution strategy and bundled OpenTUI native assets per target",
@@ -2573,7 +2803,8 @@
       "acceptance": [
         "E18 passes on every advertised platform",
         "License/dependency/grammar notices and checksums included",
-        "Terminal restored on clean/error/signal exit"
+        "Terminal restored on clean/error/signal exit",
+        "Packaged no-Neovim CLI runs E19–E25 including required pointer and multi-cursor workflows"
       ],
       "failure_cases": [
         "Missing native dylib",
@@ -2591,6 +2822,7 @@
       "id": "T065",
       "title": "G5 tooling and integrity qualification",
       "status": "todo",
+      "status_note": "2026-09-15 completion audit: G5 cannot qualify the required Git/task/integrity journeys from component fixtures while their required production journeys remain incomplete. See docs/evidence/2026-09-15-completion-audit.md.",
       "depends_on": [
         "T059",
         "T060",
@@ -2626,7 +2858,7 @@
         "Gate G5 report with all prerequisite results"
       ],
       "gate": "G5",
-      "report": null
+      "report": "docs/evidence/T065.md"
     },
     {
       "id": "T066",
@@ -2638,7 +2870,9 @@
         "T063",
         "T064",
         "T065",
-        "T056"
+        "T056",
+        "T089",
+        "T029"
       ],
       "owner": "release",
       "paths": [
@@ -2648,7 +2882,12 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/05-validation.md"
+        "docs/plan/05-validation.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md"
       ],
       "steps": [
         "Run full release verification against packaged revision",
@@ -2658,7 +2897,8 @@
       "acceptance": [
         "G0-G5 and complete parity inventory pass",
         "Required PTY/real-server/performance/visual/no-Neovim checks pass",
-        "No open in-scope blockers or unmeasured mandatory budgets"
+        "No open in-scope blockers or unmeasured mandatory budgets",
+        "Every release-scope ticket is complete or represented by a reviewed scope-preserving split with evidence; T089/T091 integration and evolution checks pass"
       ],
       "failure_cases": [
         "Passing source but broken package",
@@ -2675,7 +2915,8 @@
     {
       "id": "T067",
       "title": "Implement folding, selection ranges, hints and code lens",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16: validated nested/malformed folds and selection ranges, bounded hint/lens reads, stale/out-of-order resolution and explicit execution; folded screen motion, cursor relocation and layout target checks passed.",
       "depends_on": [
         "T048",
         "T054",
@@ -2690,12 +2931,14 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/04-services.md"
+        "docs/plan/04-services.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Validate nested fold and selection ranges before layout/visual integration",
         "Add viewport-limited hints/code lens with lazy resolve and explicit execution",
-        "Keep quiet defaults and stable decorations across edits"
+        "Keep quiet defaults and stable decorations across edits",
+        "Use documented command cardinality and view/selection-generation rules; T088 qualifies cross-feature multi-cursor integration"
       ],
       "acceptance": [
         "Invalid/overlapping folds rejected or normalized by explicit policy",
@@ -2711,12 +2954,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T067.md"
     },
     {
       "id": "T068",
       "title": "Implement pull diagnostics and refresh requests",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16: document/workspace pull requests, exact result-ID reuse, stale/cancelled/partial barriers, unified push/pull source ownership and restart cleanup passed live framed transport evidence.",
       "depends_on": [
         "T049",
         "T047"
@@ -2750,12 +2994,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T068.md"
     },
     {
       "id": "T069",
       "title": "Implement snippets and completion editing integration",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16: validated nested placeholders, choices, mirrors and transforms; workbench-owned completion edits, Insert-group handoff, selection reanchor, cancellation, stale guards and Vim undo continuity passed.",
       "depends_on": [
         "T051",
         "T024"
@@ -2769,12 +3014,14 @@
       ],
       "specs": [
         "docs/plan/01-architecture.md",
-        "docs/plan/04-services.md"
+        "docs/plan/04-services.md",
+        "docs/plan/08-selections.md"
       ],
       "steps": [
         "Parse advertised snippet grammar with tabstops/placeholders/mirrors/transforms",
         "Track placeholder anchors through document transactions",
-        "Specify Tab priority, cancellation, undo/dot and multi-line indentation"
+        "Specify Tab priority, cancellation, undo/dot and multi-line indentation",
+        "Use documented command cardinality and view/selection-generation rules; T088 qualifies cross-feature multi-cursor integration"
       ],
       "acceptance": [
         "Mirrored edits and final stop produce exact fixture text",
@@ -2791,12 +3038,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T069.md"
     },
     {
       "id": "T070",
       "title": "Implement hierarchy and document-link navigation",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16: validated lazy call/type hierarchy decoding, stable cycle handling, cancellation/stale barriers, capability states, safe explicit document links, native resolve routing and bounded UI rows.",
       "depends_on": [
         "T050"
       ],
@@ -2830,17 +3078,21 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T070.md"
     },
     {
       "id": "T071",
       "title": "Implement host-dependent native navigation commands",
-      "status": "todo",
+      "status": "done",
+      "status_note": "2026-09-16: validated typed gf/gF, tags, include boundaries, nested Ctrl-W host commands, cross-buffer pinned oracle behavior, production PTY navigation, and editor-window focus ownership.",
       "depends_on": [
         "T038",
         "T040",
         "T030",
-        "T029"
+        "T102",
+        "T103",
+        "T104",
+        "T105"
       ],
       "owner": "vim-host",
       "paths": [
@@ -2874,12 +3126,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T071.md"
     },
     {
       "id": "T072",
       "title": "Implement explicit Git branch, remote and stash commands",
       "status": "todo",
+      "status_note": "2026-09-15 completion audit: Completion is withdrawn because prerequisite acceptance was reopened: T058. Existing component evidence is retained; this is not a newly observed defect in this ticket's implementation. See docs/evidence/2026-09-15-completion-audit.md.",
       "depends_on": [
         "T058"
       ],
@@ -2913,12 +3166,13 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
-      "report": null
+      "report": "docs/evidence/T072.md"
     },
     {
       "id": "T073",
       "title": "Qualify multi-root, ignore and platform filesystem behavior",
       "status": "todo",
+      "status_note": "2026-09-15 completion audit: Completion is withdrawn because prerequisite acceptance was reopened: T042, T044, T057. Existing component evidence is retained; this is not a newly observed defect in this ticket's implementation. See docs/evidence/2026-09-15-completion-audit.md.",
       "depends_on": [
         "T042",
         "T044",
@@ -2955,7 +3209,2603 @@
         "Reproduction/fixture IDs for listed failure cases"
       ],
       "gate": null,
+      "report": "docs/evidence/T073.md"
+    },
+    {
+      "id": "T074",
+      "title": "Establish typed command descriptors and atomic registry",
+      "status": "done",
+      "depends_on": [
+        "T008"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "packages/contracts/",
+        "packages/workbench/commands/",
+        "tests/workbench/commands/",
+        "packages/workbench/src/index.ts"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Define stable command IDs, validated arguments, selection/effect/undo/replay policy and availability",
+        "Build immutable registry generations with deterministic registration and disposable handles",
+        "Expose metadata without importing workbench into Vim"
+      ],
+      "acceptance": [
+        "Registration rejects missing selection policy, duplicate ID, alias cycle and native Ex collision without replacing last-good registry",
+        "Headless dispatch and inspection share one descriptor and execute a handler once",
+        "Forbidden reverse imports fail architecture checks"
+      ],
+      "failure_cases": [
+        "Ambiguous alias",
+        "Provider disposed during invocation",
+        "Unknown argument data"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families EX01, EX04; retain minimized failures and relevant artifacts",
+        "docs/evidence/T074.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T074.md"
+    },
+    {
+      "id": "T075",
+      "title": "Implement immutable versioned selection sets",
+      "status": "done",
+      "depends_on": [
+        "T011"
+      ],
+      "owner": "selections",
+      "paths": [
+        "packages/selections/",
+        "packages/primitives/",
+        "tests/selections/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Implement branded per-kind endpoints, stable IDs, primary identity and generation",
+        "Canonicalize compatible selections with explicit collision maps",
+        "Batch-map through document changes without storing text"
+      ],
+      "acceptance": [
+        "MC02 covers nonempty set, merge direction/primary, adjacent ranges, EOF and duplicate carets",
+        "Mapping laws preserve UTF-16/semantic/virtual-cell distinctions and explicit affinities",
+        "Selection-only updates leave document version, dirty state and history unchanged"
+      ],
+      "failure_cases": [
+        "Primary absorbed by overlap",
+        "Backward selection through deletion",
+        "Incompatible block shapes"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC02, MC04; retain minimized failures and relevant artifacts",
+        "docs/evidence/T075.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T075.md"
+    },
+    {
+      "id": "T076",
+      "title": "Implement atomic multi-command preparation",
+      "status": "done",
+      "depends_on": [
+        "T015",
+        "T019"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/transactions/",
+        "packages/workbench/editing/",
+        "tests/vim/multi/",
+        "packages/document/src/",
+        "packages/vim/src/",
+        "packages/workbench/src/",
+        "packages/contracts/src/",
+        "docs/plan/01-architecture.md",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Resolve member intents against one immutable base using shared grammar policy",
+        "Prepare combined text and register/mode/selection outcomes before commit",
+        "Deduplicate identical edits, union pure deletes and reject conflicting replacements"
+      ],
+      "acceptance": [
+        "MC03 verifies one coherent revision/event for a text-changing command and native undo grouping; selection/register-only commands do not create text revisions",
+        "Injected failure at each preparation stage leaves all text/register/repeat/mode state unchanged",
+        "Yield/cancel and stale selection/document generation cannot publish partial edits"
+      ],
+      "failure_cases": [
+        "Different inserts at same position",
+        "Intersecting changes",
+        "Observer tries reentrant edit"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC03; retain minimized failures and relevant artifacts",
+        "docs/evidence/T076.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T076.md"
+    },
+    {
+      "id": "T077",
+      "title": "Compose Vim motions, operators and Visual selections",
+      "status": "done",
+      "depends_on": [
+        "T076",
+        "T021",
+        "T102",
+        "T103",
+        "T104",
+        "T105",
+        "T031",
+        "T032",
+        "T027",
+        "T030"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/",
+        "tests/vim/multi/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/02-vim.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Apply typed motion/range outcomes across sets with one parser and per-member desired columns",
+        "Handle multiple character/line/block selections and per-command failure policies",
+        "Assign policies and Xi fixtures to local motion/operator families",
+        "Implement explicit reduction for shared search/find state, primary scalar marks/jumps and per-member previous Visual shapes",
+        "Emit immutable versioned MotionPreview for completed motions without changing edit semantics"
+      ],
+      "acceptance": [
+        "MC01/MC04 preserve singleton oracle results and compare independent members with isolated oracle snapshots",
+        "Counts, cw/exclusive EOL, reversed text objects, partial tabs, folds and block overlaps pass",
+        "Nonmutating failures keep failed members; mutating failures reject the whole batch",
+        "Search cancel restores full set; marks/jump lists update once and gv does not guess missing member history",
+        "MotionPreview state is presentation-only; on/off consumers cannot affect semantic outcomes"
+      ],
+      "failure_cases": [
+        "One member has no find target",
+        "Two cursors share an operator range",
+        "Ragged blocks with wide glyphs"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC01, MC03, MC04; retain minimized failures and relevant artifacts",
+        "docs/evidence/T077.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T077.md"
+    },
+    {
+      "id": "T078",
+      "title": "Implement multi-cursor Insert and Replace",
+      "status": "done",
+      "depends_on": [
+        "T076",
+        "T022"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/insert/",
+        "tests/vim/multi/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Broadcast text/paste via one prepared edit batch with per-member indent",
+        "Keep per-member replace stacks under shared mode and undo-group intent",
+        "Handle insert controls, counts, Esc/Ctrl-C and member convergence"
+      ],
+      "acceptance": [
+        "MC05 covers Unicode/newlines/literal paste/replace-backspace with singleton oracle equivalence",
+        "One failed destructive backspace cannot alter other members",
+        "Insert state and changed ranges agree after merge and external position transforms"
+      ],
+      "failure_cases": [
+        "Cursor merge inside Replace",
+        "Paste includes terminal escapes",
+        "Different indentation and short lines"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC01, MC05; retain minimized failures and relevant artifacts",
+        "docs/evidence/T078.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T078.md"
+    },
+    {
+      "id": "T079",
+      "title": "Implement typed multi-register capture and put",
+      "status": "done",
+      "depends_on": [
+        "T077",
+        "T078",
+        "T023"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/registers/",
+        "tests/vim/multi/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Store ordered typed fragment vectors beside primary scalar register values",
+        "Implement one rotation/append per command and explicit scalar/vector put policies",
+        "Route joined clipboard export and text-only import through existing port"
+      ],
+      "acceptance": [
+        "MC06 verifies black-hole, numbered rotation, named append, visual source preservation and line/block metadata",
+        "Equal arity distributes in canonical order; mismatch rejects before mutation; singleton uses native scalar",
+        "Clipboard failure is reported distinctly from a committed document edit"
+      ],
+      "failure_cases": [
+        "Mixed register types",
+        "Arity mismatch",
+        "Singleton register overwrite after multi-yank"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC01, MC06; retain minimized failures and relevant artifacts",
+        "docs/evidence/T079.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T079.md"
+    },
+    {
+      "id": "T080",
+      "title": "Implement semantic multi-cursor dot repeat",
+      "status": "done",
+      "depends_on": [
+        "T077",
+        "T078",
+        "T079",
+        "T024",
+        "T093"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/repeat/",
+        "tests/vim/multi/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Store shared or per-member semantic recipes without old offsets",
+        "Replay at current set with native count replacement and explicit arity checks",
+        "Preserve service and selection-only actions as distinct repeat policies"
+      ],
+      "acceptance": [
+        "MC07 covers ciw plus insert then dot at different cursor counts and positions",
+        "Selection creation does not become dot target; incompatible recipes reject without changing last target",
+        "Singleton native corpus remains unchanged and retained Xi repeat targets are labeled"
+      ],
+      "failure_cases": [
+        "Different per-member insert recipes",
+        "Collapse to one cursor before dot",
+        "Failed repeat after service edit"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC01, MC07; retain minimized failures and relevant artifacts",
+        "docs/evidence/T080.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T080.md"
+    },
+    {
+      "id": "T081",
+      "title": "Implement selection creation and manipulation commands",
+      "status": "done",
+      "status_note": "Implemented and validated selection creation/manipulation through the owned Vim path and standalone launcher; see docs/evidence/T081.md.",
+      "depends_on": [
+        "T077",
+        "T079",
+        "T027",
+        "T074",
+        "T093"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/selections/",
+        "packages/workbench/commands/",
+        "tests/vim/multi/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Implement all required creation/filter/primary/shape/history command IDs from spec 08",
+        "Use owned regex on versioned snapshots with cancellable all-or-nothing membership updates",
+        "Publish count/limit/progress without changing native search registers"
+      ],
+      "acceptance": [
+        "MC09 covers next/skip/all occurrence, above/below frontier, split lines, regex zero-width, keep/remove and primary rotation",
+        "10000 limit has explicit failure without silent truncation; empty filtering keeps prior set",
+        "Keyboard commands work independently of mouse or unavailable terminal modifiers"
+      ],
+      "failure_cases": [
+        "No matches",
+        "EOF zero-width match",
+        "Edit while select-all is pending"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC09, MC12; retain minimized failures and relevant artifacts",
+        "docs/evidence/T081.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T081.md"
+    },
+    {
+      "id": "T082",
+      "title": "Implement passive context-sensitive prefix help",
+      "status": "done",
+      "status_note": "2026-09-16 functional and production PTY acceptance completed; see evidence report.",
+      "depends_on": [
+        "T035",
+        "T036",
+        "T081",
+        "T090"
+      ],
+      "owner": "ui",
+      "paths": [
+        "packages/ui/help/",
+        "packages/workbench/commands/",
+        "tests/ui/",
+        "tests/e2e/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Render active mapping and parser continuation metadata with contextual descriptions",
+        "Use independent hint timer and captured registry/config generations",
+        "Support compact/narrow help without changing focus or dispatch"
+      ],
+      "acceptance": [
+        "E20 shows legal hints for d/count/g/Ctrl-W/leader and literal prompts for f/r",
+        "Completed commands execute with hints on/off at identical semantic timing; native prefixes do not time out due to help",
+        "Reload/disposal, remaps, missing capability and narrow screen retain truthful hints"
+      ],
+      "failure_cases": [
+        "Config changes between two prefix keys",
+        "Delayed help appears after completed command",
+        "Diagnostic update during operator"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families E20, EX01, EX04; retain minimized failures and relevant artifacts",
+        "docs/evidence/T082.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T082.md"
+    },
+    {
+      "id": "T083",
+      "title": "Implement Ex discovery and native-safe aliases",
+      "status": "done",
+      "status_note": "2026-09-16 functional and production PTY acceptance completed; see evidence report.",
+      "depends_on": [
+        "T035",
+        "T036",
+        "T037",
+        "T038",
+        "T028",
+        "T090"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "packages/workbench/commands/",
+        "packages/ui/commandline/",
+        "tests/workbench/",
+        "tests/e2e/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Complete parsed Ex command/range/bang/argument context without a UI parser",
+        "Register namespaced Xi commands and collision-checked exact friendly aliases",
+        "Keep native close/write errors distinct from explicit workbench close reviews"
+      ],
+      "acceptance": [
+        "E20 verifies typed :q Enter is executed even with another suggestion highlighted; no automatic bang/save",
+        "Pinned native q/wq/x/qa and abbreviation/range/separator fixtures retain correct scope",
+        "Alias collision/cycle diagnostics preserve last-good registry; Tab acceptance is visible before execution"
+      ],
+      "failure_cases": [
+        "Helix short alias shadows native command",
+        "Unsaved buffers in other views",
+        "Path with escaped separator"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families E20, EX04; retain minimized failures and relevant artifacts",
+        "docs/evidence/T083.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T083.md"
+    },
+    {
+      "id": "T084",
+      "title": "Prototype terminal pointer protocol and lifecycle",
+      "status": "done",
+      "depends_on": [
+        "T002",
+        "T006"
+      ],
+      "owner": "input",
+      "paths": [
+        "prototypes/pointer/",
+        "tests/fixtures/input/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Inspect pinned OpenTUI parser and renderer with actual PTY reports",
+        "Probe SGR button motion, legacy limits, modifiers, chunking and shutdown/suspend restoration",
+        "Record named terminal/tmux/SSH matrix and integration defects with reproductions"
+      ],
+      "acceptance": [
+        "G0 report includes real press/drag/release/wheel traces at more than 255 columns and split byte boundaries",
+        "Exactly one decoding path; no mouse packet becomes text or duplicate event",
+        "Failure/quit/suspend restoration and unsupported capability behavior are observed, not inferred"
+      ],
+      "failure_cases": [
+        "Lost release",
+        "Malformed/oversized coordinates",
+        "Terminal consumes modifier"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MP01, MP02, E12; retain minimized failures and relevant artifacts",
+        "docs/evidence/T084.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T084.md"
+    },
+    {
+      "id": "T085",
+      "title": "Implement versioned cell hit testing",
+      "status": "done",
+      "depends_on": [
+        "T014",
+        "T075",
+        "T084"
+      ],
+      "owner": "layout",
+      "paths": [
+        "packages/layout/",
+        "tests/layout/",
+        "docs/evidence/",
+        "docs/plan/09-interaction.md"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Publish immutable frame/hit-map snapshots and identities with text and nontext targets",
+        "Resolve cell hits through wrapping/folds/scroll/Unicode/virtual annotations",
+        "Return semantic bias/virtual-cell intent to engine without word/range algorithms",
+        "Define bounded and validated frame-scoped target identities/payloads for gutters, virtual annotations and diff filler rows",
+        "Order equal-anchor annotations and equal-line filler rows by locale-independent UTF-16 ID order",
+        "Keep editor hit testing separate from workbench panel/control/scrollbar/split geometry, which T094 owns"
+      ],
+      "acceptance": [
+        "MP03 round-trips visible cursor projection and hit boundaries for text plus empty/EOF cells",
+        "Stale frame/version hits recompute only from a valid frame or cancel",
+        "Tabs, wide trailing cells, combining/ZWJ, folds, gutters and diff filler have distinct validated targets"
+      ],
+      "failure_cases": [
+        "Resize before click dispatch",
+        "Inlay hint occupies text row",
+        "Wide glyph trailing cell",
+        "Oversized, duplicate or stale-version nontext target metadata",
+        "Caller mutates a viewport anchor after frame publication"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MP03; retain minimized failures and relevant artifacts",
+        "docs/evidence/T085.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T085.md"
+    },
+    {
+      "id": "T086",
+      "title": "Implement editor pointer gestures and capture",
+      "status": "done",
+      "status_note": "2026-09-16 production OpenTUI SGR mouse PTY and strict pointer lifecycle checks passed; see docs/evidence/T086.md.",
+      "depends_on": [
+        "T035",
+        "T038",
+        "T077",
+        "T078",
+        "T081",
+        "T085"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/pointer/",
+        "packages/workbench/input/",
+        "packages/ui/input/",
+        "tests/e2e/",
+        "tests/vim/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Adapt single-decoder pointer events to engine selection intents",
+        "Implement editor click/drag/word/line/Alt-add/block gestures, wheel and primary behavior",
+        "Manage drag capture, bounded autoscroll, focus/resize/disposal cancellation"
+      ],
+      "acceptance": [
+        "E21/E22 exercise actual PTY gestures with correct resulting text and selection state",
+        "Strict supported gestures compare to oracle; Xi operator pending cancels before pointer placement",
+        "Captured drag cannot migrate between views and always stops after release/focus loss; keyboard alternatives work"
+      ],
+      "failure_cases": [
+        "Pointer outside terminal",
+        "Insert snippet active on click",
+        "Lost release across resize"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MP01–MP04, E21, E22; retain minimized failures and relevant artifacts",
+        "docs/evidence/T086.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T086.md"
+    },
+    {
+      "id": "T087",
+      "title": "Render motion trails and distinct selection layers",
+      "status": "done",
+      "status_note": "2026-09-16 motion-paint unit, T034 regression and inspected real-terminal screenshot matrix passed; see docs/evidence/T087.md.",
+      "depends_on": [
+        "T034",
+        "T077",
+        "T085"
+      ],
+      "owner": "ui",
+      "paths": [
+        "packages/ui/editor/",
+        "packages/ui/theme/",
+        "tests/ui/",
+        "tests/e2e/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Consume versioned motion previews emitted by T077 without computing semantic ranges in UI",
+        "Render visible primary/secondary cursors, selections, trail and exact operator preview with precedence",
+        "Implement off/last-motion, lifecycle clearing, no-color fallback and static reduced-motion behavior"
+      ],
+      "acceptance": [
+        "E23 on/off equivalence keeps text, mode, marks, registers, repeat and selections identical",
+        "Named visual review covers all spec 09 screenshot cases including Unicode, EOL, narrow and truecolor/256/no-color",
+        "Paint clips to visible span index; idle trail has no continuous render loop"
+      ],
+      "failure_cases": [
+        "Trail mistaken for Visual range",
+        "Diagnostics hide cursor",
+        "Old preview after document edit"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families E23, MC01, MC04; retain minimized failures and relevant artifacts",
+        "docs/evidence/T087.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T087.md"
+    },
+    {
+      "id": "T088",
+      "title": "Integrate multiple selections with language edits and snippets",
+      "status": "done",
+      "status_note": "2026-09-16 production PTY passed equivalent multi-cursor completion, synchronized snippets, incompatible-context rejection and explicit primary-only retention.",
+      "depends_on": [
+        "T048",
+        "T052",
+        "T055",
+        "T067",
+        "T069",
+        "T079",
+        "T080",
+        "T095"
+      ],
+      "owner": "language",
+      "paths": [
+        "packages/services/language/",
+        "packages/workbench/editing/",
+        "tests/services/",
+        "tests/e2e/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/04-services.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Validate view/selection generations for completion and positional requests",
+        "Compose compatible completion/snippet edits, one shared import/command and per-member placeholders",
+        "Apply formatting/workspace edits once and preserve sets; explicit incompatible-context action"
+      ],
+      "acceptance": [
+        "MC11/E24 cover primary request, equivalent local replacements, additional edit deduplication and synchronized snippet Tab",
+        "Moving/rotating/removing cursor without editing invalidates pending acceptance",
+        "Incompatible server ranges/topologies fail before editing; explicit primary-only action maps and retains secondary cursors"
+      ],
+      "failure_cases": [
+        "Additional edits overlap another cursor",
+        "Server edit arrives after snippet cancellation",
+        "Two views with same document version"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC10, MC11, E24; retain minimized failures and relevant artifacts",
+        "docs/evidence/T088.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T088.md"
+    },
+    {
+      "id": "T089",
+      "title": "Qualify selection composition and scale",
+      "status": "todo",
+      "depends_on": [
+        "T081",
+        "T086",
+        "T087",
+        "T088",
+        "T091",
+        "T092",
+        "T094",
+        "T095",
+        "T061"
+      ],
+      "owner": "validation",
+      "paths": [
+        "tests/vim/multi/",
+        "tests/e2e/",
+        "bench/",
+        "docs/evidence/",
+        "docs/compatibility/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Audit all inventory rows for command cardinality/selection policy and Xi fixture coverage",
+        "Run MC01–MC12, MP01–MP04 and E19–E25 through production paths",
+        "Measure 1–10000 selection creation/edit/mapping/render/cancel/retention workloads"
+      ],
+      "acceptance": [
+        "No missing local editing policy or unexplained singleton/extension mismatch remains",
+        "All mandatory selection/pointer/discovery/extension budgets and screenshot reviews have actual evidence",
+        "Failure injection proves no partial batches, stale apply or unbounded cursor-by-edit mapping"
+      ],
+      "failure_cases": [
+        "Quadratic reverse-order anchors",
+        "10000 member history retained after view close",
+        "Scalar tests pass but multi-policy missing"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC01–MC12, MP01–MP04, EX01–EX05, E19–E25; retain minimized failures and relevant artifacts",
+        "docs/evidence/T089.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
       "report": null
+    },
+    {
+      "id": "T090",
+      "title": "Implement scoped built-in feature contributions",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated after T035 completion: public contribution ports, example activation, deterministic arbitration, cancellation, disposal and last-good registry fixtures pass. See docs/evidence/T090.md.",
+      "depends_on": [
+        "T074",
+        "T035"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "packages/workbench/contributions/",
+        "packages/contracts/",
+        "apps/xi/",
+        "tests/architecture/",
+        "tests/workbench/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Register commands, picker/panel models and needed providers through explicit module scopes",
+        "Implement deterministic capability arbitration, origin, cancellation and disposal",
+        "Expose public integration entrypoints for file-picker/theme/config consumers in T039; implement example contribution now and qualify real consumers in T091"
+      ],
+      "acceptance": [
+        "EX01/EX02/EX05 use public ports for read-only and edit-proposal contributions",
+        "Example commands activate once through registry dispatch; feature UIs and real consumers are integration-tested in T091",
+        "Duplicate/failed module activation retains last-good registry and cannot bypass mutation/trust boundary"
+      ],
+      "failure_cases": [
+        "Late disposed provider",
+        "Reentrant commit from event listener",
+        "Undeclared deep import"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families EX01, EX02, EX05; retain minimized failures and relevant artifacts",
+        "docs/evidence/T090.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T090.md"
+    },
+    {
+      "id": "T091",
+      "title": "Qualify contribution lifecycle and schema evolution",
+      "status": "done",
+      "status_note": "2026-09-16 contribution lifecycle and schema evolution suite passed after prerequisite revalidation; see docs/evidence/T091.md.",
+      "depends_on": [
+        "T090",
+        "T036",
+        "T039",
+        "T082",
+        "T083",
+        "T095"
+      ],
+      "owner": "architecture",
+      "paths": [
+        "tests/architecture/",
+        "tests/workbench/",
+        "tests/persistence/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Exercise example contribution across public entrypoints and compare real built-in consumers",
+        "Run repeated activation/disposal/reload with in-flight work and migration fixtures",
+        "Document stable ID/deprecation/version changes and provider arbitration"
+      ],
+      "acceptance": [
+        "EX01–EX05 pass without changing Vim parser/document internals/central UI switch to add the example",
+        "1000 cycles satisfy retention budget with no stale handlers, requests or views",
+        "Prior schema migrates; unknown future schema preserves original bytes; label changes do not break command IDs"
+      ],
+      "failure_cases": [
+        "Pending key crosses registry generations",
+        "Conflicting providers of equal priority",
+        "Old alias silently becomes no-op"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families EX01–EX05, E25; retain minimized failures and relevant artifacts",
+        "docs/evidence/T091.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T091.md"
+    },
+    {
+      "id": "T092",
+      "title": "Implement multi-cursor macro execution",
+      "status": "done",
+      "status_note": "2026-09-15 revalidated after T081 completion: one-stream multi-selection macro dispatch, failure/cancel boundaries and pinned singleton oracle replay pass. See docs/evidence/T092.md.",
+      "depends_on": [
+        "T080",
+        "T025",
+        "T081"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/macros/",
+        "tests/vim/multi/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Record one input stream and dispatch each playback command once by its policy",
+        "Support selection membership changes, nested/count macros and bounded execution",
+        "Reject vector-register macro playback with explicit scalar conversion path"
+      ],
+      "acceptance": [
+        "MC08 verifies no per-cursor whole-macro sequential replay and no multiplied global effects",
+        "Failure/cancel preserves prior committed commands and never half-commits current command",
+        "Singleton macro oracle and multi-selection replay fixtures both pass"
+      ],
+      "failure_cases": [
+        "Macro adds cursors recursively",
+        "Quit/save repeated per member",
+        "Arity changes before a recorded put"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC01, MC08; retain minimized failures and relevant artifacts",
+        "docs/evidence/T092.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T092.md"
+    },
+    {
+      "id": "T093",
+      "title": "Implement multi-selection history and undo restoration",
+      "status": "done",
+      "depends_on": [
+        "T076",
+        "T012",
+        "T075"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/history/",
+        "packages/workbench/editing/",
+        "packages/vim/src/",
+        "packages/workbench/src/",
+        "tests/vim/multi/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Associate validated before/after immutable sets with origin view and undo group",
+        "Request document undo/redo once and restore/map views according to origin rules",
+        "Implement bounded selection-only history independently of document dirty/undo state"
+      ],
+      "acceptance": [
+        "MC07 covers change-plus-insert grouping, undo branches, origin and other-view invocation",
+        "Closed originating view is not resurrected and active unrelated sets only map",
+        "Selection undo has no text or register side effects and diagnoses unmappable history"
+      ],
+      "failure_cases": [
+        "Origin view closes before undo",
+        "Service edit between selection history entries",
+        "Undo then edit with new primary"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC07, MC10; retain minimized failures and relevant artifacts",
+        "docs/evidence/T093.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T093.md"
+    },
+    {
+      "id": "T094",
+      "title": "Implement mouse workbench controls and terminal restoration",
+      "status": "in_progress",
+      "status_note": "2026-09-16: production split geometry/drag/rollback and Linux PTY terminal restoration pass, including SIGTERM and suspend/resume. Sidebar controls work; panel rows/results, scrollbars and context menus remain incomplete. See docs/evidence/T094.md.",
+      "depends_on": [
+        "T086",
+        "T039",
+        "T040",
+        "T043",
+        "T084"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "packages/workbench/input/",
+        "packages/ui/",
+        "tests/e2e/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Implement panel/tree/tab/picker/results targets, scrollbars, splitter capture and context menus",
+        "Expose mouse toggle and keyboard equivalents with terminal-bypass documentation",
+        "Validate production renderer lifecycle through quit/crash/suspend/partial startup"
+      ],
+      "acceptance": [
+        "E21/E22 exercise click/focus/activate plus splitter Escape rollback/minimum sizes without text loss",
+        "Control identity survives result/tree updates; disabled actions do not execute",
+        "Named terminal matrix proves mode restoration and no stuck drag/autoscroll or idle timer"
+      ],
+      "failure_cases": [
+        "Tree row inserted under pointer",
+        "Release on another split",
+        "Crash while mouse modes enabled"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MP01–MP04, E21, E22; retain minimized failures and relevant artifacts",
+        "docs/evidence/T094.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T094.md"
+    },
+    {
+      "id": "T095",
+      "title": "Persist and restore independent view selection sets",
+      "status": "done",
+      "status_note": "2026-09-16 functional and production PTY acceptance completed; see evidence report.",
+      "depends_on": [
+        "T038",
+        "T081",
+        "T093"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "packages/workbench/",
+        "packages/services/persistence/",
+        "tests/persistence/",
+        "tests/e2e/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/10-extensibility.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Store versioned selection values per view separately from recovery text",
+        "Restore against content identity or verified recovery maps with stale-state diagnostics",
+        "Retain full source sets for workbench navigation return without altering Vim jump semantics"
+      ],
+      "acceptance": [
+        "MC10/E19 preserve independent primary/member/scroll state in split views across save/session/recovery",
+        "Unknown schema, closed target and changed disk cannot restore invalid offsets or erase text",
+        "Focus return cancels incompatible prefixes but retains sets; selection-only moves create no didChange"
+      ],
+      "failure_cases": [
+        "External file changes while Xi closed",
+        "Lost origin view during async navigation",
+        "Invalid persisted virtual-cell value"
+      ],
+      "evidence": [
+        "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
+        "Fixture families MC10, E19, EX04; retain minimized failures and relevant artifacts",
+        "docs/evidence/T095.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T095.md"
+    },
+    {
+      "id": "T096",
+      "title": "Implement core regular Vim pattern dialect and NFA execution",
+      "status": "done",
+      "depends_on": [
+        "T015",
+        "T005"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/pattern/",
+        "packages/vim/src/index.ts",
+        "tests/vim/pattern/",
+        "bench/vim/",
+        "spikes/vim-pattern/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md"
+      ],
+      "steps": [
+        "Implement exact magic-mode tables and pattern-local case controls with source-span diagnostics",
+        "Implement core regular Vim syntax: concatenation, alternation and captures; all quantifiers; built-in atoms/classes; newline matching; anchors; and reported spans for VP-01–VP-07 and regular VP-09",
+        "Execute the regular language through an ordered NFA with deterministic work/output budgets, resumability and cancellation over immutable versioned snapshots"
+      ],
+      "acceptance": [
+        "Pinned Neovim matrices verify magic modes, regular operators and precedence, built-in regular classes/atoms, multiline behavior, capture spans, anchors, zero-width progression and source errors for the assigned rows",
+        "Regular patterns execute through the NFA path with deterministic budget exhaustion, resumability and cancellation evidence, including oversized and adversarial inputs",
+        "Syntax assigned to T097/T098 may return typed source-spanned intermediate errors, but no regular feature assigned to T096 is left as a permanent unsupported boundary or silently treated as literal/no-match/JavaScript syntax"
+      ],
+      "failure_cases": [
+        "Zero-width repetition and global advancement",
+        "Magic-mode switches and quantifier precedence",
+        "Multiline classes and oversized regular workloads"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "VP-row matrix and fixture IDs for regular-dialect coverage and explicit unsupported errors",
+        "Measured resource-budget results and artifact paths"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T096.md"
+    },
+    {
+      "id": "T097",
+      "title": "Implement bounded Vim pattern extensions and lookaround",
+      "status": "done",
+      "depends_on": [
+        "T096"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/pattern/",
+        "tests/vim/pattern/",
+        "bench/vim/",
+        "spikes/vim-pattern/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md"
+      ],
+      "steps": [
+        "Add branch intersection, optional-atom sequences and bounded backreferences over the established pattern IR and capture semantics",
+        "Implement positive/negative lookaround and atomic behavior with Vim-compatible width, line and numeric-limit rules",
+        "Implement Vim combining and code-point atom behavior and observable engine-selector semantics without any runtime Neovim dependency; keep only syntax-highlighting-only groups at the documented boundary"
+      ],
+      "acceptance": [
+        "Pinned oracle tests compare spans, captures, errors and behavior for the advanced VP-03, VP-07, VP-08 and VP-11 constructs",
+        "Bounded fallback terminates adversarial backreferences with deterministic work/output limits and preserves source spans in errors",
+        "All in-scope built-in engine-selector, combining and code-point behavior is verified without selecting or starting a Neovim runtime"
+      ],
+      "failure_cases": [
+        "Backreference explosion",
+        "Capture clearing under alternation and repetition",
+        "Variable-width and line-bounded lookbehind"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Pinned-oracle fixture IDs and exact VP-row coverage",
+        "Bounded-fallback performance and termination artifacts"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T097.md"
+    },
+    {
+      "id": "T098",
+      "title": "Implement positional Vim patterns and coordinate-aware evaluation",
+      "status": "done",
+      "depends_on": [
+        "T097"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/pattern/",
+        "packages/vim/src/index.ts",
+        "tests/vim/pattern/",
+        "bench/vim/",
+        "spikes/vim-pattern/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md"
+      ],
+      "steps": [
+        "Implement cursor, selection, mark, line and virtual-column pattern context with snapshot/version binding",
+        "Enforce UTF-8 oracle byte columns, UTF-16 document offsets, pattern source spans and virtual-cell coordinates at explicit boundaries",
+        "Complete deterministic budgets, resumability and cancellation across regular and bounded execution paths"
+      ],
+      "acceptance": [
+        "Pinned oracle fixtures verify VP-10 positional forms and VP-16 coordinates across astral/combining text, tabs and wide cells",
+        "Context from a stale document version returns a typed error without mutating document, cursor or repeat state",
+        "Regular and bounded paths honor work/output budgets and cooperative cancellation while preserving command state on timeout"
+      ],
+      "failure_cases": [
+        "Cursor/selection/mark context from a stale snapshot",
+        "UTF-8 byte columns inside multibyte scalars",
+        "Virtual-column comparisons across tabs and wide cells"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "VP-10/VP-15/VP-16 fixture IDs and coordinate conversions",
+        "Measured budget, cancellation and state-preservation evidence with artifact paths"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T098.md"
+    },
+    {
+      "id": "T099",
+      "title": "Repair Unicode handling in the Neovim oracle harness",
+      "status": "done",
+      "depends_on": [
+        "T003",
+        "T018"
+      ],
+      "owner": "test-oracle",
+      "paths": [
+        "tests/oracle/",
+        "tests/vim/motions/",
+        "docs/compatibility/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Preserve literal UTF-8 runs while expanding only recognized terminal key notation in headless oracle input",
+        "Make PTY readiness matching robust to UTF-8 scalar boundaries and ANSI styling between visible characters",
+        "Retain regressions for raw supplementary input, mapped special keys, drain barriers, snapshots and terminal restoration"
+      ],
+      "acceptance": [
+        "Headless oracle returns correct state for raw supplementary-character motion and insert input while special key expansion and mapped input still work",
+        "PTY oracle recognizes full Unicode content in rendered output without matching partial UTF-8 byte sequences or requiring styled glyphs to be contiguous",
+        "Regression fixtures reproduce the previous corruption/timeout and pass through the production oracle helpers",
+        "Terminal state is restored after success, marker timeout and oracle failure"
+      ],
+      "failure_cases": [
+        "Supplementary scalar adjacent to ASCII and a special key token",
+        "Style escape sequence between ASCII and multibyte glyphs",
+        "Readiness timeout and subprocess failure during PTY restoration"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Reproduction fixture IDs, pinned oracle identity, artifact paths and source manifest"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T099.md"
+    },
+    {
+      "id": "T100",
+      "title": "Complete remaining VP-11 composing and NUL atom semantics",
+      "status": "done",
+      "depends_on": [
+        "T096",
+        "T099"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/pattern/",
+        "tests/vim/pattern/",
+        "tests/oracle/",
+        "docs/compatibility/",
+        "spikes/vim-pattern/",
+        "bench/vim/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md",
+        "spikes/vim-pattern/requirements.md"
+      ],
+      "steps": [
+        "Probe and implement bare composing-mark literals and default literal, dot and character-class behavior over base-plus-mark clusters",
+        "Verify match and capture span behavior for composed, precomposed, multiple-mark and pattern-leading-mark cases across built-in selectors",
+        "Exercise NUL code-point atoms against real Neovim buffer contents without passing NUL through a Lua string oracle API",
+        "Update the VP-11 inventory, fixtures, bounded-path evidence and any T097 source-manifest ripple"
+      ],
+      "acceptance": [
+        "Pinned Neovim fixtures compare match spans, captures and errors for bare combining literals, dot, classes, \\\\Z and \\\\%C across selector modes 0/1/2 where supported",
+        "Composed, precomposed, multiple-mark and pattern-leading-mark behavior is covered with retained minimized fixture IDs",
+        "NUL and other code-point atom boundaries are verified through actual buffer/search behavior, with UTF-8 byte columns and source spans checked at valid boundaries",
+        "Regular and bounded paths retain deterministic budgets, cancellation, resumability and source-aware failures after Unicode changes",
+        "T097’s remaining VP-11 acceptance is covered by this ticket and is not closed until T100 evidence passes"
+      ],
+      "failure_cases": [
+        "Bare combining mark detached from versus attached to a base character",
+        "Precomposed mismatch and multiple composing marks at match/capture boundaries",
+        "NUL code-point matching through file-loaded buffer content",
+        "Selector-specific behavior diverges for composing or code-point atoms"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Pinned-oracle fixture IDs, exact VP-11 inventory rows and minimized regressions",
+        "T097 source-manifest ripple, environment and any benchmark artifacts"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T100.md"
+    },
+    {
+      "id": "T101",
+      "title": "Add explicit literal-control document edit intent",
+      "status": "done",
+      "depends_on": [
+        "T010"
+      ],
+      "owner": "document",
+      "paths": [
+        "packages/document/",
+        "tests/document/",
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md"
+      ],
+      "steps": [
+        "Add typed edit intent that distinguishes literal U+000D content from ordinary line-ending and paste payloads",
+        "Define an explicit fileformat/reopen policy for literal CR content, legacy CR line endings and ambiguous raw bytes; retain T010 behavior for existing no-options callers",
+        "Verify line indexing, anchors, undo/redo, serialization and reopen behavior while preserving existing T010 normalization"
+      ],
+      "acceptance": [
+        "A typed literal-CR edit stores U+000D inside the current logical line without changing LF line boundaries",
+        "Untagged edit and paste payloads retain T010 CR/CRLF-to-LF normalization",
+        "Serialization and reopen round-trip literal CR under an explicit fileformat policy; strict auto detection preserves bytes and returns typed ambiguity/read-only for lone CR, while T010 legacy-default behavior remains unchanged",
+        "NUL remains editable in the live document but raw NUL-containing files remain lossless and read-only until explicit conversion"
+      ],
+      "failure_cases": [
+        "Literal CR at EOF versus a trailing legacy CR line ending",
+        "Mixed CRLF endings with literal CR content",
+        "Generic paste of CR and CRLF",
+        "Undo/redo and anchor mapping across a literal-CR edit"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Reproduction fixture IDs for literal versus line-ending CR and ambiguous reopen behavior",
+        "docs/evidence/T101.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T101.md"
+    },
+    {
+      "id": "T102",
+      "title": "Complete structural motion parity",
+      "status": "done",
+      "depends_on": [
+        "T020",
+        "T026"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/motions/",
+        "packages/vim/src/",
+        "tests/vim/motions/",
+        "docs/compatibility/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Complete %, counted %, sentence, paragraph, section and bracket motion families with matchpairs, sections and paragraph option matrices",
+        "Localize structural reads behind bounded document indexes or explicit typed scan failures; preserve UTF-16 and version contracts",
+        "Add pinned Neovim differential fixtures, compatibility rows and the public Vim export"
+      ],
+      "acceptance": [
+        "Oracle cases cover syntax/option-dependent structural movement and match option variants",
+        "Unmatched nesting and counted percentage return explicit native-compatible outcomes",
+        "Relevant structural help families are mapped to retained tests and compatibility rows"
+      ],
+      "failure_cases": [
+        "Unmatched nesting",
+        "Counted percentage",
+        "joinspaces or structural option variation",
+        "Scan budget or stale document"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Pinned fixture IDs, compatibility rows, performance evidence and source manifest"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T102.md"
+    },
+    {
+      "id": "T103",
+      "title": "Implement core text-transform operators",
+      "status": "done",
+      "depends_on": [
+        "T020",
+        "T026",
+        "T102"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/operators/",
+        "packages/contracts/",
+        "tests/vim/operators/",
+        "docs/compatibility/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Implement case, join, indent and format operator families including gu/gU/g~, J/gJ, </>/=, gq/gw",
+        "Produce typed document edit plans with register/history effects and singleton composition behavior",
+        "Cover joinspaces, line/block ranges, provider contracts and explicit unsupported outcomes"
+      ],
+      "acceptance": [
+        "Oracle cases cover operator composition for case, join, indent and format families",
+        "joinspaces and range-kind variants match pinned Neovim behavior",
+        "Provider absence produces explicit behavior without fallback guesses"
+      ],
+      "failure_cases": [
+        "joinspaces variation",
+        "Ragged or block ranges",
+        "Missing indentation or syntax provider",
+        "Operator cancellation"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Pinned fixture IDs, provider-failure reproductions, compatibility rows and source manifest"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T103.md"
+    },
+    {
+      "id": "T104",
+      "title": "Implement provider-backed filter fold and numeric operators",
+      "status": "done",
+      "depends_on": [
+        "T020",
+        "T026",
+        "T102",
+        "T103"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/operators/",
+        "packages/contracts/",
+        "tests/vim/operators/",
+        "docs/compatibility/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md",
+        "docs/plan/04-services.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Implement filter and external-command boundaries, fold operators and numeric Ctrl-A/Ctrl-X changes through typed providers",
+        "Implement nrformats and numeric option matrices with UTF-16-safe transactions and history/register integration",
+        "Define provider absence, cancellation, output limits and no-fallback behavior for filter, format, indent and fold paths"
+      ],
+      "acceptance": [
+        "Provider absence produces explicit behavior and never a guessed edit",
+        "Oracle cases cover syntax/provider-dependent operators and nrformats variants",
+        "Filter, fold and numeric edits preserve transaction, register and history invariants"
+      ],
+      "failure_cases": [
+        "Missing external provider",
+        "Filter output flood or cancellation",
+        "Fold provider unavailable",
+        "nrformats variation",
+        "Numeric overflow"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Pinned fixture IDs, provider and cancellation artifacts, compatibility rows and source manifest"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T104.md"
+    },
+    {
+      "id": "T105",
+      "title": "Qualify structural and operator parity split",
+      "status": "done",
+      "depends_on": [
+        "T102",
+        "T103",
+        "T104"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/",
+        "tests/vim/",
+        "docs/compatibility/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Run the cross-family differential matrix and minimize syntax, option, provider and composition failures",
+        "Reconcile the pinned help-family inventory and link every original T029 behavior to child evidence or a concrete follow-up ticket",
+        "Publish the aggregate report that closes T029 only when every child acceptance is proven"
+      ],
+      "acceptance": [
+        "Oracle cases cover syntax/option-dependent movement and operator composition across all T029 child families",
+        "Unmatched nesting, counted percentage, joinspaces and nrformats failure rows are retained and pass",
+        "Relevant help families are mapped to tests; no original T029 requirement is silently dropped"
+      ],
+      "failure_cases": [
+        "Cross-family range mismatch",
+        "Option matrix regression",
+        "Unexplained help-family gap",
+        "Missing child evidence"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Aggregate fixture inventory, minimized failures, environment/revision and source manifest"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T105.md"
+    },
+    {
+      "id": "T106",
+      "title": "Enforce performance catalog, provenance and real baseline comparison",
+      "status": "in_progress",
+      "depends_on": [
+        "T001"
+      ],
+      "owner": "performance",
+      "paths": [
+        "tools/perf.py",
+        "tools/verify-suite.ts",
+        "tests/performance/",
+        "bench/performance/",
+        "docs/plan/performance-budgets.json",
+        "docs/evidence/",
+        "bench/manifest.json",
+        "docs/plan/performance-adapters.json"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md",
+        "docs/plan/14-remediation-handoff.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Extend the working SQLite catalog/observation ledger with exact fixture/environment/source/metric compatibility and a real baseline resolver",
+        "Implement pinned CPU, allocation, native/RSS and work-counter adapters; deterministic corpus generators including dense EOL, 10 MiB long lines and pinned SQLite amalgamation",
+        "Add catalog coverage and sample/CI/noise/regression enforcement; correct selector and manifest discovery so missing required fixtures fail",
+        "Implement spec 14's obligation matrix and missing-cell negative checks; distinguish declared/runnable/observed/qualified coverage without claiming T115 production adapters exist."
+      ],
+      "acceptance": [
+        "PF12 100k-row import/query/memory budgets measured on reference host; malformed/nonfinite/unit-mismatch/stale/artifact-missing input rejected",
+        "Missing baseline, mismatched workload or insufficient samples cannot pass; greater than 10 percent significant p95 regression fails even within absolute target",
+        "Allocation accounting distinguishes wrapper counters, JSC live heap, extra memory, native RSS, workers and total allocation; signed deltas retained",
+        "All 55 initial catalog operations and their required metrics have explicit production adapter obligations; a zero-observation ledger reports unproven",
+        "Every required workload variant and metric/statistic has an explicit obligation; a package entrypoint, first PF family or declared adapter alone cannot satisfy observation coverage. Unsupported allocation sources remain unproven.",
+        "Spec 15 p50/max/key_to_photon/interactive_stall obligations, per-action/load coverage and session-correlated samples are represented honestly; absent physical instrumentation or open-loop timing cannot qualify."
+      ],
+      "failure_cases": [
+        "Only printing --baseline",
+        "Forged pass from diagnostic host",
+        "Double-counting JSC extra memory",
+        "Empty selector or stale hash",
+        "SQL import partial failure"
+      ],
+      "evidence": [
+        "docs/evidence/T106.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T106.md"
+    },
+    {
+      "id": "T107",
+      "title": "Replace per-newline EOL objects with packed persistent metadata",
+      "status": "todo",
+      "depends_on": [
+        "T106",
+        "T010",
+        "T011"
+      ],
+      "owner": "document",
+      "paths": [
+        "packages/document/",
+        "tests/document/",
+        "bench/document/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md"
+      ],
+      "steps": [
+        "Reproduce PF03 through public open and retain baseline CPU/heap/RSS profile",
+        "Implement uniform/run/packed EOL storage with bounded persistent edits and mixed-ending fallback; avoid intermediate per-line normalization records",
+        "Expose private accounting for EOL payload/index/structural allocations without leaking writable storage"
+      ],
+      "acceptance": [
+        "DOC-EOL bound holds for uniform and alternating endings on 1/10 MiB dense fixtures; no object per newline",
+        "Mixed LF/CRLF/CR, explicit literal CR, BOM, NUL/read-only, no final newline, insert/delete/undo/save/reopen retain exact bytes",
+        "Retained old snapshots survive EOL edits and compaction; public-path open/commit metrics recorded against baseline"
+      ],
+      "failure_cases": [
+        "Alternating endings defeat sparse exceptions",
+        "Deleting across chunk boundary",
+        "Recycling a block retained by undo",
+        "All-newline file"
+      ],
+      "evidence": [
+        "docs/evidence/T107.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T107.md"
+    },
+    {
+      "id": "T108",
+      "title": "Requalify document representation and pack storage indexes",
+      "status": "todo",
+      "depends_on": [
+        "T106",
+        "T107",
+        "T009"
+      ],
+      "owner": "document",
+      "paths": [
+        "packages/document/",
+        "tests/document/",
+        "bench/document/",
+        "spikes/buffer/",
+        "docs/decisions/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md",
+        "docs/plan/14-remediation-handoff.md"
+      ],
+      "steps": [
+        "Compare current rope, packed bounded chunk variant and coalescing UTF-8 piece/block candidate on identical public operations and retained history",
+        "Record a decision including UTF-16 public coordinate stability, byte conversions, adversarial height and native-boundary alternatives only if measured",
+        "Implement the selected storage/index refinement only; retire disposable candidate implementations from production imports"
+      ],
+      "acceptance": [
+        "PF01-PF06 density/time/peak/retained/copy/fragmentation distributions meet DOC-STORAGE/DOC-LOCAL/DOC-SCRATCH, with original T009 fragmentation gate preserved",
+        "Reference edits, multi-batch ordering, snapshots and encoding/position invariants pass; no whole-document scan on ordinary edit",
+        "Packed integer fields check bounds; persistent nodes never recycled while reachable; expected/worst-case balancing and compaction work measured",
+        "Selection remains evidence-driven and no prototype result is generalized to all ropes/piece trees; no parallel writable text authority",
+        "Spec 14 candidate comparison accounts UTF conversion, backing-store retention, EOL/index metadata, temporary copies and history at identical public boundaries; saved bytes and UTF-16/version contracts stay exact."
+      ],
+      "failure_cases": [
+        "Piece-per-keystroke fragmentation",
+        "Adversarial treap height",
+        "Shared substring retains huge backing string",
+        "Unicode/offset overflow",
+        "Compaction pauses input"
+      ],
+      "evidence": [
+        "docs/evidence/T108.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T109",
+      "title": "Bound semantic reads, coordinate caches and snapshot lifetimes",
+      "status": "todo",
+      "depends_on": [
+        "T108",
+        "T016",
+        "T019",
+        "T098",
+        "T119",
+        "T120"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/document/",
+        "packages/vim/",
+        "packages/layout/",
+        "tests/document/",
+        "tests/vim/",
+        "bench/vim/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md",
+        "docs/plan/14-remediation-handoff.md"
+      ],
+      "steps": [
+        "Add private bounded forward/backward/window reads and stable per-version public snapshot handles",
+        "Refactor Insert/local motion and coordinate paths to avoid full logical-line materialization and per-scalar temporary records",
+        "Bound coordinate/display checkpoints by bytes and immutable identity; audit cold/warm and cross-view invalidation",
+        "Resolve owned T119 lint findings and classify remediated H0 kernels with budget-linked operation annotations; add only bounded, explained next-line exceptions.",
+        "Audit both forward and backward grapheme windows and existing full-line fallbacks; measure read/copied units over geometric PF02 sizes and preserve atomic scan-limit errors."
+      ],
+      "acceptance": [
+        "PF02 1/10 MiB ASCII/tab/combining/wide/emoji cold and warm head/middle/end edits/motions meet ENGINE-STEP/ENGINE-MOVE-ALLOC/DOC-COORDINATES/INPUT-LARGE as applicable",
+        "Exact singleton oracle and Xi multi-selection state preserved; no truncation of long graphemes or substituted display semantics",
+        "Ordinary read work excludes unrelated line/document length; old versions/options and repeated snapshot calls do not bypass cache bounds",
+        "General Unicode path measured, not inferred from printable-ASCII fast path",
+        "Owned production paths pass check:lint; syntactic lint success does not replace the listed runtime measurements.",
+        "Long combining/ZWJ clusters, regional indicators and surrogate window edges remain exact in both directions; repeated-join or inferred-string rewrites cannot hide superlinear copying. Spec 14 work-counter evidence covers cold/warm and retained versions."
+      ],
+      "failure_cases": [
+        "10 MiB line copied for one insert",
+        "WeakMap cache retained by undo",
+        "Repeated wrapper identities defeat cache",
+        "Unbounded combining cluster",
+        "Stale checkpoint after edit"
+      ],
+      "evidence": [
+        "docs/evidence/T109.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T110",
+      "title": "Account and bound history, registers and selection retention",
+      "status": "todo",
+      "depends_on": [
+        "T108",
+        "T079",
+        "T080",
+        "T081"
+      ],
+      "owner": "document",
+      "paths": [
+        "packages/document/",
+        "packages/vim/",
+        "packages/selections/",
+        "packages/workbench/editing/",
+        "tests/document/",
+        "tests/vim/",
+        "tests/selections/",
+        "bench/selections/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md"
+      ],
+      "steps": [
+        "Account complete roots, forward/inverse edits, EOL patches, step arrays, selection vectors, registers and repeat data",
+        "Coalesce long Insert groups and retain shared chunks for large delete/register/history payload instead of flattening",
+        "Preserve atomic publication and history policies while adding bounded allocation/retention and sorted mapping counters"
+      ],
+      "acceptance": [
+        "PF05 million-character single group and 100k edits/branches meet HISTORY and ENGINE-EDIT-ALLOC without quadratic copying",
+        "PF06 100 MiB ggVGd then undo restores exact bytes/EOLs and both views; history limit does not silently remove undo or reject required workload",
+        "HISTORY-LARGE and SELECTION-MAP bounds pass; shared roots counted once; 1/10/100/1000/10000 members covered",
+        "Reference release, branch eviction and register replacement release obsolete buffers; no dangling reused scratch"
+      ],
+      "failure_cases": [
+        "Entry cap hides unbounded open group",
+        "Full inverse string on large delete",
+        "Repeat text concat is quadratic",
+        "S times E mapping",
+        "Saved identity changes on compaction"
+      ],
+      "evidence": [
+        "docs/evidence/T110.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T111",
+      "title": "Pack visible layout and bound render/output work",
+      "status": "todo",
+      "depends_on": [
+        "T109",
+        "T014",
+        "T087",
+        "T094",
+        "T119",
+        "T120"
+      ],
+      "owner": "layout",
+      "paths": [
+        "packages/layout/",
+        "packages/ui/",
+        "packages/workbench/input/",
+        "tests/layout/",
+        "tests/ui/",
+        "tests/e2e/",
+        "bench/layout/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md",
+        "docs/plan/14-remediation-handoff.md"
+      ],
+      "steps": [
+        "Replace per-cell transient records/string-key maps with packed visible geometry and immutable frame leases",
+        "Bound dirty rows, cached frames, Unicode/wrap checkpoints and overscan; retain OpenTUI native diff/output ownership",
+        "Add explicit terminal backpressure, cursor-only/row damage evidence and disposal checks",
+        "Resolve owned T119 lint findings and classify remediated H0 kernels with budget-linked operation annotations; add only bounded, explained next-line exceptions."
+      ],
+      "acceptance": [
+        "RENDER-120/RENDER-240/LAYOUT-CACHE/OUTPUT/POINTER/HINTS-TRAIL budgets pass with actual UI and correct VT output",
+        "PF02/PF07 Unicode wrapping, wide-cell erasure, cold far seek, resize, stale pointer hit and two views preserve semantic state",
+        "No permanent idle loop, per-cell transient allocation or duplicate writable native text buffer",
+        "Visually inspect real terminal snapshots and preserve original E20-E23 requirements",
+        "Owned production paths pass check:lint; syntactic lint success does not replace the listed runtime measurements.",
+        "Layout segmentation and input byte formatting satisfy spec 14's allocation/copy review; replacing a string accumulator with per-scalar arrays or repeated joins is not a compliant H0 fix."
+      ],
+      "failure_cases": [
+        "Reused frame observed by old pointer event",
+        "Full screen repaint on j",
+        "Native buffer leak",
+        "Output blockage loses release event",
+        "Cursor trail changes text semantics"
+      ],
+      "evidence": [
+        "docs/evidence/T111.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T112",
+      "title": "Isolate service CPU and bound worker/message queues",
+      "status": "todo",
+      "depends_on": [
+        "T106",
+        "T053",
+        "T027",
+        "T119",
+        "T120"
+      ],
+      "owner": "platform",
+      "paths": [
+        "packages/contracts/",
+        "packages/platform/",
+        "packages/services/",
+        "packages/workbench/",
+        "tests/services/",
+        "tests/syntax/",
+        "tests/search/",
+        "bench/performance/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md",
+        "docs/plan/14-remediation-handoff.md"
+      ],
+      "steps": [
+        "Introduce typed worker/task scheduling and aggregate byte/request credits with cancellation and generation acknowledgments",
+        "Move/slice syntax/search CPU with measured replicas and deltas; replace recursive microtask work with genuine input-yielding scheduling",
+        "Measure worker startup, clone/transfer/resync, native/WASM memory, overload and termination",
+        "Resolve owned T119 lint findings and classify remediated H0 kernels with budget-linked operation annotations; add only bounded, explained next-line exceptions."
+      ],
+      "acceptance": [
+        "WORKERS/QUEUES/MAIN-STALL/SYNTAX/WORKSPACE-SEARCH budgets pass under PF09 while original E14 input bounds hold",
+        "No canonical buffer transfer/detach or service mutation; missing delta causes one bounded resync and no stale publication",
+        "Slow workers/results maintain byte caps; press/release/text edits/acks never dropped; cancellable preparation leaves coherent document",
+        "All workers and subprocess groups terminate on initialization failure, crash and shutdown",
+        "Owned production paths pass check:lint; syntactic lint success does not replace the listed runtime measurements.",
+        "A single oversized parse and a full resync under concurrent input meet MAIN-STALL and loaded E14, in addition to request storms; timer scheduling alone is not CPU isolation. Flush/disposal/cancellation settle correctly at all scheduling phases."
+      ],
+      "failure_cases": [
+        "Microtask starvation",
+        "Full snapshot each edit",
+        "Unbounded queued payload despite count cap",
+        "Worker termination hangs",
+        "Detached canonical ArrayBuffer"
+      ],
+      "evidence": [
+        "docs/evidence/T112.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T113",
+      "title": "Stream file ingestion, save and incremental recovery",
+      "status": "todo",
+      "depends_on": [
+        "T108",
+        "T112",
+        "T059"
+      ],
+      "owner": "persistence",
+      "paths": [
+        "packages/document/",
+        "packages/contracts/",
+        "packages/platform/",
+        "packages/services/persistence/",
+        "packages/services/formatting/",
+        "tests/document/",
+        "tests/persistence/",
+        "tests/formatting/",
+        "bench/performance/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md"
+      ],
+      "steps": [
+        "Stream UTF validation/decoding and EOL metadata construction without full transient line arrays",
+        "Stream versioned snapshot encoding through platform writes and recovery deltas; incremental checkpoints/compaction",
+        "Bound dirty age/bytes and formatter patch integration; preserve save/external-change/data-loss policy"
+      ],
+      "acceptance": [
+        "DOC-OPEN/DOC-OPEN-10/DOC-OPEN-100/PERSISTENCE/FORMAT and peak storage budgets measured through production path",
+        "PF11 fault injection preserves BOM, mixed endings, no-final-newline, permissions and external changes through save/recovery",
+        "Normal recovery age <=1s on reference storage; delayed storage exposes unsynced age without silent loss or per-key fsync",
+        "Cancel/partial IO never reports a durable save early or leaves a half-applied edit"
+      ],
+      "failure_cases": [
+        "Whole document JSON checkpoint each cadence",
+        "Corrupt journal",
+        "UTF8 sequence split across IO chunks",
+        "Checkpoint races save",
+        "Disk slower than dirty queue"
+      ],
+      "evidence": [
+        "docs/evidence/T113.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T114",
+      "title": "Enforce aggregate resource pressure and service lifetimes",
+      "status": "todo",
+      "depends_on": [
+        "T110",
+        "T111",
+        "T112",
+        "T113",
+        "T091"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "packages/contracts/",
+        "packages/workbench/",
+        "packages/services/",
+        "packages/platform/",
+        "tests/services/",
+        "tests/workbench/",
+        "bench/performance/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md"
+      ],
+      "steps": [
+        "Add typed owner accounting, workspace admission and priority cache eviction without text mutation",
+        "Enforce service catalog envelopes for picker/navigation/diagnostics/completion/Git/files/tasks/config and shared parent caps",
+        "Measure ordinary/large profiles and 1000 lifecycle cycles with process/native/workers and external processes separately"
+      ],
+      "acceptance": [
+        "RSS-SMALL <=150 MiB, RSS-LARGE formula, IDLE and RETENTION bounds hold including all live buffers/views/workers",
+        "Every service has CPU/integration, retained cache, in-flight and disposal evidence against its catalog rows; child caps do not override aggregate limit",
+        "At 80 percent pressure discard reconstructible speculative work first; hard exhaustion rejects expensive work atomically and keeps unsaved text correct",
+        "PF10 disposed roots/listeners/watchers/tasks/native frames are released; pressure recovery does not silently truncate required results"
+      ],
+      "failure_cases": [
+        "Ten buffers each consumes workspace allowance",
+        "External process omitted",
+        "Huge diagnostic publication blocks input",
+        "Undo/register data discarded to meet RSS",
+        "Resource sampling on every key"
+      ],
+      "evidence": [
+        "docs/evidence/T114.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T115",
+      "title": "Wire full production performance matrix into qualification",
+      "status": "todo",
+      "depends_on": [
+        "T106",
+        "T107",
+        "T108",
+        "T109",
+        "T110",
+        "T111",
+        "T112",
+        "T113",
+        "T114",
+        "T116",
+        "T117",
+        "T118",
+        "T121",
+        "T122",
+        "T123",
+        "T124",
+        "T125",
+        "T126"
+      ],
+      "owner": "performance",
+      "paths": [
+        "bench/",
+        "tests/e2e/",
+        "tools/",
+        "package.json",
+        "docs/evidence/",
+        "docs/plan/performance-adapters.json"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md",
+        "docs/plan/14-remediation-handoff.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Implement exact production selectors/adapters for PF01-PF12 and all original performance/MC/E14 journeys",
+        "Run paired randomized candidate/baseline/clean Neovim on recorded reference host and correct-output boundaries",
+        "Make release gate consume verified source/corpus/environment/metric coverage and preserve all failed/noisy trials"
+      ],
+      "acceptance": [
+        "All catalog metrics plus original validation thresholds have measured evidence or the gate fails/unproven; no print-only baseline",
+        "30 independent open/startup/batch trials and >=10000 input events per interaction workload; p50/p95/p99/max, CPU, CI, allocation, GC and native/worker memory",
+        "Whole loaded editor and packaged path match owner correctness; no test-only optimized implementation",
+        "Missing oracle, physical-frame review, terminal matrix or reference host stays explicitly unproven rather than inferred from kernel probes",
+        "Spec 14's executable coverage matrix binds every required variant/metric to a concrete production producer, correctness assertion and raw artifact; declared adapters and representative-only PF coverage cannot certify the matrix.",
+        "Implement all spec 15 actual-CLI action/load/cold/held/burst conditions and calibrated physical capture; enforce ordinary idle and loaded 4/8/16/25 ms output limits plus physical 20/35/50/75 ms, without coordinated omission or percentile pooling."
+      ],
+      "failure_cases": [
+        "Aggregate bench prints passed despite unmet budget",
+        "Frame marker before actual correct output",
+        "Different fixture sizes/versions compared",
+        "Negative memory delta treated as zero allocation",
+        "Baseline selected from only favorable trials"
+      ],
+      "evidence": [
+        "docs/evidence/T115.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T116",
+      "title": "Restore thin CLI and owned editing-session orchestration",
+      "status": "todo",
+      "depends_on": [
+        "T106",
+        "T038",
+        "T035",
+        "T036",
+        "T119",
+        "T120"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "apps/xi/",
+        "packages/workbench/",
+        "packages/vim/",
+        "packages/contracts/",
+        "tests/architecture/",
+        "tests/distribution/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md",
+        "docs/plan/14-remediation-handoff.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Move long-lived edit/session state and command coordination from CLI into owning workbench/Vim APIs",
+        "Keep composition root limited to construction/CLI/lifecycle; integrate real renderer and services through typed ports",
+        "Add meaningful import/ownership checks and reuse genuine PTY functional journeys",
+        "Resolve owned T119 lint findings and classify remediated H0 kernels with budget-linked operation annotations; add only bounded, explained next-line exceptions."
+      ],
+      "acceptance": [
+        "Initial CLI editing/write/quit/history/multi-selection behavior unchanged through actual input and files",
+        "No second cursor/text owner or UI semantics; STARTUP-WARM/STARTUP-COLD budgets measured after refactor",
+        "Production performance harness launches same composition path as distribution; no stateful proxy masquerades as full CLI",
+        "Owned production paths pass check:lint; syntactic lint success does not replace the listed runtime measurements.",
+        "Dispatch byte formatting and called helpers pass spec 14's copy/allocation audit without execution-class downgrades or hidden whole-text reads.",
+        "Spec 15 arrow/hjkl/Insert/Replace/Visual/Escape and repeated-input streams reach the owned engine exactly once in order; no input debounce, service wait or test-only acknowledgment hides queue/decoder latency."
+      ],
+      "failure_cases": [
+        "CLI owns mutable Vim session",
+        "Test harness bypasses coordinator",
+        "Eager syntax/LSP startup blocks first frame"
+      ],
+      "evidence": [
+        "docs/evidence/T116.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null,
+      "status_note": "2026-09-16 revalidated: 30 filesystem-warm PTY launches measured STARTUP-WARM wall p95 208.43 ms and child CPU p95 294.07 ms against the 150 ms budget. A standalone pinned OpenTUI import took 152.4 ms. Keep todo until startup and the full production input matrix qualify; see docs/evidence/T116.md."
+    },
+    {
+      "id": "T117",
+      "title": "Bound language sync and protocol serialization work",
+      "status": "todo",
+      "depends_on": [
+        "T109",
+        "T112",
+        "T049"
+      ],
+      "owner": "language",
+      "paths": [
+        "packages/services/language/",
+        "packages/contracts/",
+        "packages/workbench/",
+        "tests/lsp/",
+        "bench/performance/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md"
+      ],
+      "steps": [
+        "Generate incremental changes from versioned edit spans; cap queued bytes and stale generations",
+        "Make didOpen/full-sync serialization and replica resync explicit background operations with size/capability policy",
+        "Audit ownership and allocation across completion/diagnostics/semantic-token range mapping"
+      ],
+      "acceptance": [
+        "LSP-SYNC and loaded E14 bounds pass for incremental and full-sync-only peers with honest large-file degradation",
+        "Negotiated UTF8/UTF16/UTF32 positions, two-view versions, slow peers and edit storms preserve exact server document",
+        "No main-loop full flatten/stringify per keystroke; payload/replica bytes included in aggregate pressure",
+        "External server CPU/RSS and process lifecycle reported, not counted as Xi heap or omitted"
+      ],
+      "failure_cases": [
+        "Full sync hidden behind async notify",
+        "Stale resync overwrites server version",
+        "Malformed positions allocate unbounded cache",
+        "Server backpressure"
+      ],
+      "evidence": [
+        "docs/evidence/T117.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T118",
+      "title": "Qualify bounded chunk search and regex working memory",
+      "status": "todo",
+      "depends_on": [
+        "T109",
+        "T112",
+        "T026",
+        "T027"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/pattern/",
+        "packages/vim/search/",
+        "packages/vim/selections/",
+        "tests/vim/",
+        "tests/oracle/",
+        "bench/vim/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/13-performance-research.md"
+      ],
+      "steps": [
+        "Audit owned evaluator reads and work accounting across chunk boundaries, captures/lookaround/backrefs and no-match scans",
+        "Implement resumable range access and bounded working memory without fixed-overlap semantic shortcuts",
+        "Integrate cancellation/search preview/all-match coherent selection construction under same versioned protocol"
+      ],
+      "acceptance": [
+        "VIM-SEARCH/SELECTION-ALL and original cancellation budgets pass on PF08/MC with oracle coverage for owned syntax",
+        "All work including failed branches and character-class/position reads is counted; no budget-exhaustion as no-match",
+        "Cancellation restores preview, cursor, scroll, repeat and selection state; stale snapshot cannot apply results",
+        "100 MiB scans report full/no-match throughput and working memory without flattening; ordinary input stays responsive"
+      ],
+      "failure_cases": [
+        "Unbounded pattern crosses chunk overlap",
+        "Catastrophic backtracking",
+        "Zero-width loop",
+        "Capture retains whole flattened document",
+        "Cancellation during all-match publication"
+      ],
+      "evidence": [
+        "docs/evidence/T118.md using the evidence template; exact commands, source/corpus hashes, environment and actual outcomes",
+        "Applicable catalog budget IDs; CPU/wall distributions, sample counts, allocations/retention/peak RSS and structural work counters",
+        "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T119",
+      "title": "Enforce execution-class performance styles with justified Oxlint exceptions",
+      "status": "done",
+      "depends_on": [
+        "T001"
+      ],
+      "owner": "build",
+      "paths": [
+        ".oxlintrc.json",
+        "package.json",
+        "bun.lock",
+        "tools/lint/",
+        "tests/lint/",
+        "packages/document/src/rope.ts",
+        "docs/plan/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md"
+      ],
+      "steps": [
+        "Pin Oxlint and implement execution-class rules with conservative owner defaults and operation annotations",
+        "Require next-line rule-specific budget-linked explanations; reject native blanket suppressions and unused exceptions",
+        "Wire lint into check, exercise real CLI fixtures, and record existing findings against owner remediation tickets without blanket waivers"
+      ],
+      "acceptance": [
+        "Pinned frozen install and strict TypeScript check pass",
+        "Real Oxlint fixtures reject H0 temporary allocations, H1 string accumulation/materialization, hot synchronous IO and B microtask scheduling; scalar loops and cold code pass",
+        "Valid next-line explanations pass; missing reasons, unknown budgets/rules, stale exceptions, misplaced annotations and native suppression attempts fail",
+        "Repository gate runs and reports every existing finding honestly; current debt is retained for owner remediation, not accepted as performance qualification",
+        "Plan and performance catalog validators pass; evidence records commands, versions, limitations and findings"
+      ],
+      "failure_cases": [
+        "Blanket disable conceals its own audit",
+        "Exception silently survives removal of offending expression",
+        "H1 immutable outcomes or numeric counters incorrectly rejected",
+        "Cold package contains an H0 operation",
+        "Existing debt silently baseline-suppressed"
+      ],
+      "evidence": [
+        "docs/evidence/T119.md using the evidence template",
+        "Real CLI fixtures and production lint findings with source identity"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T119.md"
+    },
+    {
+      "id": "T120",
+      "title": "Reject repeated-copy lint evasions and document analysis limits",
+      "status": "done",
+      "depends_on": [
+        "T119"
+      ],
+      "owner": "build",
+      "paths": [
+        "tools/lint/",
+        "tests/lint/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/14-remediation-handoff.md",
+        "docs/plan/12-performance.md"
+      ],
+      "steps": [
+        "Add minimized real-CLI regressions for inferred local string accumulators, assignment concatenation and repeated joins of a growing local parts array.",
+        "Extend bounded local AST/data-flow checks without claiming whole-program inference; document helper/member/dynamic cases requiring production work counters.",
+        "Run bun run test:lint and bun run check; preserve any newly surfaced production findings for their named owner tickets without suppressions."
+      ],
+      "acceptance": [
+        "Real CLI rejects the three adversarial rebuilding forms in H0/H1 with actionable rule locations; nested scopes and unrelated arrays do not confuse the analysis.",
+        "Numeric counters, cold code, bounded H1 immutable results and one final join outside the loop remain accepted; existing exception/suppression rejection fixtures pass.",
+        "Rule fixtures include both positive and negative cases from spec 14. Lint documentation states uncovered cases and that syntactic success cannot establish copying/allocation budgets.",
+        "Production gate is executed and every newly discovered finding is recorded against T109/T111/T112/T116 or another explicit owner; infrastructure completion does not waive that owner's failing gate."
+      ],
+      "failure_cases": [
+        "Per-iteration join replaces += and still passes",
+        "String returned by a local initializer escapes the rule",
+        "Numeric accumulation falsely rejected",
+        "Helper rename or class downgrade used to conceal production debt"
+      ],
+      "evidence": [
+        "docs/evidence/T120.md using the evidence template; exact commands, source identity, environment, fixture IDs, actual failures and rerun outcomes"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T120.md"
+    },
+    {
+      "id": "T121",
+      "title": "Isolate oracle clipboard state and audit contaminated goldens",
+      "status": "done",
+      "depends_on": [
+        "T003",
+        "T099"
+      ],
+      "owner": "test-oracle",
+      "paths": [
+        "tests/oracle/",
+        "tests/fixtures/vim/",
+        "tests/vim/",
+        "tests/lint/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/14-remediation-handoff.md",
+        "docs/plan/02-vim.md"
+      ],
+      "steps": [
+        "Reproduce clipboard-dependent snapshot differences using disposable provider sentinels without reading or modifying the real clipboard.",
+        "Install explicit per-fixture clipboard state before any capture/provider discovery in both headless and UI oracle startup; reset state and preserve register semantics.",
+        "Audit affected expected snapshots with minimized field-level explanations; change only explained contamination and retain unrelated failures.",
+        "Run bun run check, strict singleton oracle, UI oracle self-tests and all affected recapture suites; record exact selectors and pinned oracle identity."
+      ],
+      "acceptance": [
+        "Repeated fixtures and shuffled fixture order produce identical complete snapshots under differing fake external clipboard environments; fake OS clipboard executables are never invoked.",
+        "Explicit +/* copy/paste, independent register contents/types and unnamed-register interactions agree with pinned Neovim; headless and UI startup are both covered.",
+        "All affected golden comparisons pass after individually explained initialization changes; no blanket register omission, broad rebaseline or unexplained state change.",
+        "tests/vim/motions/t017-oracle.test.ts, tests/vim/t020/t020-oracle.test.ts, tests/vim/t021/t021-oracle.test.ts and tests/vim/operators/t103-oracle.test.ts are rerun; missing oracle or remaining mismatch leaves acceptance unproven.",
+        "No personal configuration executes and no private clipboard payload enters new tracked evidence; existing failures are summarized by fixture and field path."
+      ],
+      "failure_cases": [
+        "Provider initialized after first capture",
+        "Host +/* leaked into golden",
+        "State survives between fixtures",
+        "Register type or unnamed semantics masked",
+        "Unrelated mismatch approved during re-record"
+      ],
+      "evidence": [
+        "docs/evidence/T121.md using the evidence template; exact commands, source identity, environment, fixture IDs, actual failures and rerun outcomes"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T121.md"
+    },
+    {
+      "id": "T122",
+      "title": "Reduce OpenTUI startup binding cost through a pinned fork",
+      "status": "in_progress",
+      "depends_on": [
+        "T001",
+        "T002",
+        "T006"
+      ],
+      "owner": "ui",
+      "paths": [
+        "vendor/opentui/",
+        ".gitmodules",
+        "package.json",
+        "bun.lock",
+        "bench/performance/",
+        "tests/distribution/",
+        "docs/installation/",
+        "docs/plan/",
+        "docs/evidence/",
+        "apps/xi/",
+        "packages/ui/",
+        "packages/services/src/entrypoints/",
+        "tools/package-release.ts",
+        "tests/e2e/t086-pointer-pty.py"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Profile unchanged production startup and isolate OpenTUI native binding cost.",
+        "Pin the OpenTUI 0.5.11 fork as a submodule and generate a reproducible Bun dependency patch from fork source.",
+        "Bind unused native functions on demand, cache direct functions, and preserve callback/library lifetime and supported runtime behavior.",
+        "Measure source and compiled production startup and first input; run UI, PTY, distribution and dependency lifecycle checks.",
+        "Enable ESM bytecode in production and tested release builds; expose a shared-identity renderer entrypoint; load optional surfaces/services on demand with formatting and first-input regression coverage."
+      ],
+      "acceptance": [
+        "Fork source and generated patch are reproducible from a recorded upstream revision; fresh frozen installation uses the patch.",
+        "Native bindings preserve arguments/results, function identity, callbacks, missing-symbol errors and deterministic close behavior, including failures.",
+        "Source and compiled Xi edit/save/quit, Unicode, mouse and terminal restoration journeys pass with all features enabled.",
+        "Report at least 30 diagnostic startup samples per configuration against unchanged Xi, Helix and pinned clean Neovim; report first-use risks and leave unmeasured release gates unproven.",
+        "Xi static checks and affected upstream Bun/Node and distribution checks are executed with truthful limitations."
+      ],
+      "failure_cases": [
+        "Native bindings all compiled eagerly through enumeration",
+        "Deferred cost creates first-key stall",
+        "Library or callback leak/double close",
+        "Unpinned or unapplied patch",
+        "Feature removal used to make startup faster"
+      ],
+      "evidence": [
+        "docs/evidence/T122.md using the evidence template; profiles, source identities, commands, outcomes, raw traces and limitations"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T122.md"
+    },
+    {
+      "id": "T123",
+      "title": "Route configured language servers through the production CLI",
+      "status": "todo",
+      "depends_on": [
+        "T036",
+        "T046",
+        "T047",
+        "T116",
+        "T122"
+      ],
+      "owner": "language",
+      "paths": [
+        "apps/xi/",
+        "packages/services/config/",
+        "packages/services/src/entrypoints/",
+        "tests/config/",
+        "tests/e2e/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/04-services.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Resolve file language, language-server command, arguments and root markers from the validated effective language configuration instead of a TypeScript-only launcher branch.",
+        "Start the selected LSP asynchronously through the owned process/session ports; keep the first editable viewport independent of server readiness and dispose the process on every exit path.",
+        "Exercise configured TypeScript, Go and Rust projects through the real CLI with installed real servers; include missing-server, malformed/untrusted configuration and unsupported-capability behavior."
+      ],
+      "acceptance": [
+        "Configured .ts/.tsx, .go and .rs files resolve their declared language and launch the selected server with the correct workspace root, document URI and language ID.",
+        "The editor reaches a usable input-ready state before LSP initialization completes; delayed, missing and failed servers leave editing available with a clear feature-specific state.",
+        "Workspace executable trust rules are enforced, malformed config preserves the last-good state, and project server settings cannot execute before trust is granted.",
+        "Real TypeScript, Go and Rust CLI journeys record server versions, executable hashes, fixture hashes, capabilities and exact outcomes; no mock substitutes for a real-server result.",
+        "LSP processes terminate on normal quit, startup failure, crash and cancellation without a second document or cursor owner."
+      ],
+      "failure_cases": [
+        "Unknown file type selects an unrelated server",
+        "Untrusted workspace command executes",
+        "Slow server blocks first input",
+        "Server exits while documents are open",
+        "Root marker resolves outside the workspace"
+      ],
+      "evidence": [
+        "docs/evidence/T123.md using the evidence template; exact PTY commands, server versions/hashes, project fixture hashes, cleanup outcomes and limitations"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T123.md"
+    },
+    {
+      "id": "T124",
+      "title": "Align LSP client capability claims with implemented support",
+      "status": "done",
+      "depends_on": [
+        "T046",
+        "T047",
+        "T049",
+        "T050",
+        "T051",
+        "T052",
+        "T054",
+        "T067",
+        "T068",
+        "T069",
+        "T070",
+        "T088"
+      ],
+      "owner": "language",
+      "paths": [
+        "packages/services/language/",
+        "tests/lsp/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/04-services.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/08-selections.md"
+      ],
+      "steps": [
+        "Inventory each implemented LSP client feature against the pinned 3.17 client-capability schema and current Xi request/edit behavior.",
+        "Advertise only capabilities Xi implements, including the completion/snippet support currently missing from initialize parameters; remove or correct unsupported claims.",
+        "Capture initialize requests and capability-gated behavior with adversarial fake peers that omit, partially advertise, dynamically register and unregister providers."
+      ],
+      "acceptance": [
+        "A reviewed capability matrix maps every advertised client capability to a production handler and behavioral fixture; unsupported behavior is not advertised.",
+        "Snippet, completion edit, workspace edit, sync encoding, diagnostics, semantic token, folding, navigation and hierarchy claims match Xi behavior and negotiated server support.",
+        "Absent or partial server providers produce explicit unavailable behavior and do not receive unsupported requests; dynamic capability changes update availability safely.",
+        "Malformed capability payloads and unknown registrations fail safely without changing document or selection state."
+      ],
+      "failure_cases": [
+        "Server receives a capability Xi cannot honor",
+        "Supported snippet behavior is hidden from real servers",
+        "Unsupported provider request is issued",
+        "Late dynamic unregister leaves stale UI state"
+      ],
+      "evidence": [
+        "docs/evidence/T124.md using the evidence template; capability matrix, fake-peer traces, fixture IDs and exact commands"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T124.md"
+    },
+    {
+      "id": "T125",
+      "title": "Wire syntax highlighting into the production editor",
+      "status": "todo",
+      "depends_on": [
+        "T053",
+        "T116",
+        "T122",
+        "T123"
+      ],
+      "owner": "syntax",
+      "paths": [
+        "apps/xi/",
+        "packages/services/src/entrypoints/",
+        "packages/services/syntax/",
+        "packages/ui/editor/",
+        "tests/e2e/",
+        "tests/syntax/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/03-ux.md",
+        "docs/plan/04-services.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Connect the syntax owner to the production CLI and editor decoration read model using configured language/grammar selection.",
+        "Keep grammar loading, parsing, cancellation and result publication outside the ordinary input path; render only current-version visible ranges.",
+        "Exercise real CLI syntax output, grammar failure, stale parse cancellation, large-file behavior and typing while syntax is active."
+      ],
+      "acceptance": [
+        "A real CLI PTY journey visibly styles the configured source language and confirms correct file text and cursor state.",
+        "Missing grammar, unsupported language and parse failure leave editing usable with a clear syntax-unavailable state.",
+        "Stale or cancelled parses cannot style a newer document version; no full-file parse or grammar load blocks first input.",
+        "Typing and render work under syntax load are measured on the assigned reference path; all relevant resource budgets and limitations are reported without claiming T115/T062 qualification early."
+      ],
+      "failure_cases": [
+        "Late parse styles newer text",
+        "Grammar load blocks input",
+        "Whole-document parse occurs on a key",
+        "Unsupported language displays misleading highlights"
+      ],
+      "evidence": [
+        "docs/evidence/T125.md using the evidence template; actual CLI output, fixture hashes, language/grammar identity, commands and performance limitations"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T125.md"
+    },
+    {
+      "id": "T126",
+      "title": "Wire Git status refresh into the production workbench",
+      "status": "todo",
+      "depends_on": [
+        "T057",
+        "T094",
+        "T116",
+        "T122"
+      ],
+      "owner": "git",
+      "paths": [
+        "apps/xi/",
+        "packages/workbench/",
+        "packages/ui/",
+        "packages/ui/git/",
+        "packages/services/git/",
+        "tests/e2e/",
+        "tests/git/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/03-ux.md",
+        "docs/plan/04-services.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Compose the Git status owner and read-only status surface into the launched workbench with an explicit keyboard route and correct control target.",
+        "Refresh repository identity/status asynchronously and publish bounded immutable rows; keep Git subprocesses and output separate from the input loop.",
+        "Run an actual CLI PTY journey against a temporary Git repository while typing, then refresh after an external index/worktree change and verify status and buffer bytes."
+      ],
+      "acceptance": [
+        "The production CLI opens and refreshes the correct repository status through a documented workbench control; focus returns to the prior editor view.",
+        "External file/index changes appear after refresh with accurate status identity, and dirty buffer text remains independent from worktree/index state.",
+        "Typing remains correct while refresh is delayed or cancelled; stale generations cannot replace newer repository status.",
+        "Git processes and subscriptions are disposed on normal quit, startup failure and cancellation; no network mutation is started by the status route."
+      ],
+      "failure_cases": [
+        "Nested repository status is attributed to the wrong root",
+        "Slow refresh blocks typing",
+        "Stale status overwrites newer results",
+        "Git panel control opens the Problems surface"
+      ],
+      "evidence": [
+        "docs/evidence/T126.md using the evidence template; CLI PTY traces, temporary repo identity, exact index/worktree outcomes and cleanup"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T126.md"
     }
   ]
 }

@@ -1,0 +1,60 @@
+schema-version = 1
+profile = "xi"
+
+[editor]
+theme = "xi-light"
+line-number = "absolute"
+scrolloff = 5
+wrap = false
+motion-trail = "last-motion"
+selection-limit = 10000
+selection-history-limit = 100
+
+[editor.cursor-shape]
+normal = "block"
+insert = "block"
+visual = "block"
+
+[editor.lsp]
+enable = true
+inlay-hints = false
+
+[editor.mouse]
+enabled = true
+modifier = "none"
+scroll-lines = 3
+
+[editor.hints]
+delay-ms = 250
+
+[search]
+debounce-ms = 40
+max-visible-results = 10000
+hidden = true
+follow-symlinks = false
+
+[keys.normal.space]
+f = "files.pick"
+b = "buffers.pick"
+"/" = "search.workspace"
+o = "files.edit-directory"
+O = "files.edit-buffer-directory"
+t = "theme.pick"
+a = "lsp.code-action"
+r = "lsp.rename"
+
+[keys.normal.space.v]
+f = "panel.files.focus"
+s = "panel.search.focus"
+g = "panel.git.focus"
+o = "panel.outline.focus"
+
+[aliases]
+buffer-next = "buffer.next"
+buffer-previous = "buffer.previous"
+theme = "theme.pick"
+config-open = "config.open"
+config-reload = "config.reload"
+write-quit = "write.quit"
+quit-all = "quit.all"
+write-all = "write.all"

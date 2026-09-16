@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 1,
+  "oracle": { "name": "Neovim", "version": "0.12.4" },
+  "cases": [
+    {
+      "id": "PATT-MAGIC-01",
+      "title": "Very-magic groups, alternatives and greedy repetition",
+      "lines": ["foobar foo bar"],
+      "pattern": "\\v(foo|bar)+",
+      "replacement": "[&]",
+      "expectedLines": ["[foobar] [foo] [bar]"]
+    },
+    {
+      "id": "PATT-MAGIC-SWITCH-01",
+      "title": "Magic mode changes within a pattern",
+      "lines": ["foo.bar+ fooXbar+"],
+      "pattern": "\\v(foo)\\V.bar\\m+",
+      "replacement": "\\1!",
+      "expectedLines": ["foo! fooXbar+"]
+    },
+    {
+      "id": "PATT-BACKREF-01",
+      "title": "Captured word reused by a backreference",
+      "lines": ["cat cat dog fox fox"],
+      "pattern": "\\v(\\w+)\\s+\\1",
+      "replacement": "[&]",
+      "expectedLines": ["[cat cat] dog [fox fox]"]
+    },
+    {
+      "id": "PATT-LOOKAHEAD-01",
+      "title": "Positive lookahead consumes no match text",
+      "lines": ["foobar fooqux"],
+      "pattern": "foo\\(bar\\)\\@=",
+      "replacement": "X",
+      "expectedLines": ["Xbar fooqux"]
+    },
+    {
+      "id": "PATT-NEGATIVE-LOOKAHEAD-01",
+      "title": "Negative lookahead consumes no match text",
+      "lines": ["foobar fooqux"],
+      "pattern": "foo\\(bar\\)\\@!",
+      "replacement": "X",
+      "expectedLines": ["foobar Xqux"]
+    },
+    {
+      "id": "PATT-LOOKBEHIND-01",
+      "title": "Positive lookbehind starts at the following text",
+      "lines": ["foobar bar"],
+      "pattern": "\\(foo\\)\\@<=bar",
+      "replacement": "X",
+      "expectedLines": ["fooX bar"]
+    },
+    {
+      "id": "PATT-NEGATIVE-LOOKBEHIND-01",
+      "title": "Negative lookbehind starts at the following text",
+      "lines": ["foobar bar"],
+      "pattern": "\\(foo\\)\\@<!bar",
+      "replacement": "X",
+      "expectedLines": ["foobar X"]
+    },
+    {
+      "id": "PATT-ZS-01",
+      "title": "\\zs moves the reported start without changing consumed input",
+      "lines": ["foobar foo"],
+      "pattern": "foo\\zsbar",
+      "replacement": "X",
+      "expectedLines": ["fooX foo"]
+    },
+    {
+      "id": "PATT-ZE-01",
+      "title": "\\ze moves the reported end without changing consumed input",
+      "lines": ["foobar foo"],
+      "pattern": "foo\\zebar",
+      "replacement": "X",
+      "expectedLines": ["Xbar foo"]
+    },
+    {
+      "id": "PATT-ZERO-01",
+      "title": "Line-start zero-width substitute on nonempty and empty lines",
+      "lines": ["ab", "", "cd"],
+      "pattern": "^",
+      "replacement": ">",
+      "expectedLines": [">ab", ">", ">cd"]
+    },
+    {
+      "id": "PATT-NEWLINE-01",
+      "title": "Newline-inclusive whitespace matches across buffer lines",
+      "lines": ["foo", "bar foo bar"],
+      "pattern": "foo\\_s\\+bar",
+      "replacement": "X",
+      "expectedLines": ["X X"]
+    },
+    {
+      "id": "PATT-EMPTY-01",
+      "title": "Global zero-width substitute advances and terminates",
+      "lines": ["ab", "c"],
+      "pattern": "\\v\\ze",
+      "replacement": "x",
+      "expectedLines": ["xaxb", "xc"]
+    },
+    {
+      "id": "PATT-POSITION-FILE-01",
+      "title": "File-start position atom matches only the first location",
+      "lines": ["foo", "foo"],
+      "pattern": "\\%^foo",
+      "replacement": "X",
+      "expectedLines": ["X", "foo"]
+    },
+    {
+      "id": "PATT-POSITION-LINE-01",
+      "title": "Line-number position atom constrains the match location",
+      "lines": ["foo", "foo foo", "foo"],
+      "pattern": "\\%2lfoo",
+      "replacement": "X",
+      "expectedLines": ["foo", "X X", "foo"]
+    },
+    {
+      "id": "PATT-POSITION-CURSOR-01",
+      "title": "Cursor position atom uses the supplied document offset",
+      "lines": ["abc", "def"],
+      "pattern": "\\%#",
+      "replacement": "X",
+      "cursor": { "line": 2, "byteColumn0": 1 },
+      "expectedLines": ["abc", "dXef"]
+    },
+    {
+      "id": "PATT-POSITION-CURSOR-UNICODE-01",
+      "title": "Cursor byte column maps to the evaluator UTF-16 boundary",
+      "lines": ["café!"],
+      "pattern": "\\%#",
+      "replacement": "X",
+      "cursor": { "line": 1, "byteColumn0": 5 },
+      "expectedLines": ["caféX!"]
+    }
+  ],
+  "safetyFixtures": [
+    {
+      "id": "PATT-CATASTROPHIC-01",
+      "title": "Nested repetition on a failing suffix obeys deterministic budget",
+      "pattern": "\\v(a+)+b",
+      "textPrefix": "a",
+      "textLength": 64,
+      "suffix": "",
+      "stepBudget": 50000,
+      "expectedCode": "step-budget-exceeded"
+    },
+    {
+      "id": "PATT-UNSUPPORTED-ENGINE-01",
+      "title": "Unsupported Vim engine selector is not reinterpreted as literal text",
+      "pattern": "\\%#=2",
+      "expectedCode": "unsupported-construct"
+    },
+    {
+      "id": "PATT-ZERO-LOOP-01",
+      "title": "Multiline empty matches advance by one code point",
+      "pattern": "\\v\\ze",
+      "lines": ["a", "b"],
+      "maximumMatches": 4,
+      "expectedOffsets": [0, 2]
+    }
+  ]
+}

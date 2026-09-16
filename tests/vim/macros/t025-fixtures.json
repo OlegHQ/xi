@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "T025-ORACLE-RECORD-PLAY-01",
+      "title": "record and play a macro, then repeat it with @@",
+      "purpose": "Pin recording, @a playback and @@ last-register behavior.",
+      "modes": ["normal", "insert"],
+      "lines": ["one two three"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "record-insert", "keys": "qaiX<Esc>q" },
+        { "label": "play-a", "keys": "0@a" },
+        { "label": "repeat-last", "keys": "l@@" }
+      ]
+    },
+    {
+      "id": "T025-ORACLE-NESTED-01",
+      "title": "nested macro invokes another register",
+      "purpose": "Pin one logical nested @a invocation through macro b.",
+      "modes": ["normal", "insert"],
+      "lines": ["one two"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "record-a", "keys": "qaiX<Esc>q" },
+        { "label": "record-b-calling-a", "keys": "qb@aq" },
+        { "label": "play-b", "keys": "0@b" }
+      ]
+    },
+    {
+      "id": "T025-ORACLE-MAPPING-01",
+      "title": "record a mapped key and expand it once on playback",
+      "purpose": "Pin that macro replay enters the mapping layer without double expansion.",
+      "modes": ["normal", "insert"],
+      "lines": ["one two"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "mappings": [
+        { "mode": "n", "lhs": "<F5>", "rhs": "iX<Esc>", "remap": false }
+      ],
+      "steps": [
+        { "label": "record-mapped-key", "keys": "qa<F5>q" },
+        { "label": "play-mapped-key", "keys": "0@a" }
+      ]
+    }
+  ]
+}

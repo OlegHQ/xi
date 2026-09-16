@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "T018-FIND-COUNT-AND-TILL-01",
+      "title": "Literal find/till motions honor direction and counts",
+      "purpose": "Capture f/F/t/T on a line with repeated literal targets and their cursor columns.",
+      "modes": ["normal"],
+      "lines": ["aXbXcXdXeXfXg"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "start", "drain": true },
+        { "label": "f-first", "keys": "fX" },
+        { "label": "f-count-two", "keys": "2fX" },
+        { "label": "t-next", "keys": "tX" },
+        { "label": "F-previous", "keys": "FX" },
+        { "label": "T-previous-till", "keys": "TX" },
+        { "label": "f-count-after-till", "keys": "2fX" }
+      ]
+    },
+    {
+      "id": "T018-FIND-REPEAT-DIRECTION-01",
+      "title": "Semicolon repeats the find and comma reverses it",
+      "purpose": "Capture repeated till behavior and verify comma reversal does not overwrite the original find direction.",
+      "modes": ["normal"],
+      "lines": ["a-X--b-X--c-X--d-X--e"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "t-first", "keys": "tX" },
+        { "label": "semicolon-repeats-till", "keys": ";" },
+        { "label": "comma-reverses-till", "keys": "," },
+        { "label": "semicolon-still-repeats-original-direction", "keys": ";" },
+        { "label": "f-switches-last-find", "keys": "fX" },
+        { "label": "semicolon-repeats-forward-find", "keys": ";" },
+        { "label": "counted-comma-reverses-find", "keys": "2," },
+        { "label": "semicolon-after-reverse", "keys": ";" }
+      ]
+    },
+    {
+      "id": "T018-FIND-MISSING-STATE-01",
+      "title": "A missing target preserves the previous successful find",
+      "purpose": "A failed direct literal replaces the repeat target: subsequent ; and , do not rediscover the earlier X.",
+      "modes": ["normal"],
+      "lines": ["X-a-X-b-X-c"],
+      "cursor": { "line": 1, "byteColumn0": 2 },
+      "steps": [
+        { "label": "successful-find-X", "keys": "fX" },
+        { "label": "missing-target-Z", "keys": "fZ" },
+        { "label": "semicolon-repeats-failed-Z", "keys": ";" },
+        { "label": "comma-reverses-failed-Z", "keys": "," }
+      ]
+    },
+    {
+      "id": "T018-FIND-ADJACENT-OPERATOR-01",
+      "title": "Adjacent till is a no-op motion but remains a valid operator",
+      "purpose": "Capture normal and operator effects when the target is the immediately following character.",
+      "modes": ["normal", "operator-pending"],
+      "lines": ["ab"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "adjacent-till", "keys": "tb" },
+        { "label": "adjacent-till-delete", "keys": "dtb" }
+      ]
+    },
+    {
+      "id": "T018-FIND-OPERATOR-FAILURE-01",
+      "title": "A failed find inside an operator leaves text and registers unchanged",
+      "purpose": "Capture failed operator-pending find recovery and preservation of preexisting register contents.",
+      "modes": ["normal", "operator-pending"],
+      "lines": ["abc"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "seed-register", "keys": "\"ayy" },
+        { "label": "failed-delete-find", "keys": "dfZ" },
+        { "label": "repeat-failed-operator-find-forward", "keys": ";" },
+        { "label": "repeat-failed-operator-find-reverse", "keys": "," }
+      ]
+    },
+    {
+      "id": "T018-FIND-VISUAL-FAILURE-01",
+      "title": "A failed find in Visual mode preserves the selection",
+      "purpose": "Capture Visual mode, cursor, and anchor marks after a missing find target.",
+      "modes": ["normal", "visual"],
+      "lines": ["abcd"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "enter-visual", "keys": "v" },
+        { "label": "failed-visual-find", "keys": "fZ" },
+        { "label": "repeat-failed-visual-find-forward", "keys": ";" },
+        { "label": "repeat-failed-visual-find-reverse", "keys": "," }
+      ]
+    },
+    {
+      "id": "T018-FIND-MULTIBYTE-COMBINING-01",
+      "title": "Literal find accepts multibyte and combining grapheme targets",
+      "purpose": "Capture find/count positions for a composed combining character and supplementary emoji.",
+      "modes": ["normal"],
+      "lines": ["é-x-é-é-é"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "find-composed-grapheme", "keys": "fé" },
+        { "label": "find-multibyte-scalar", "keys": "fé" },
+        { "label": "counted-find-multibyte-scalar", "keys": "2fé" }
+      ]
+    },
+    {
+      "id": "T018-FIND-BASE-COMBINING-01",
+      "title": "An uncomposed base literal finds a grapheme with a composing mark",
+      "purpose": "Verify Neovim's documented base-character matching behavior for decomposed text.",
+      "modes": ["normal"],
+      "lines": ["x-é-y"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "find-base-with-composing-mark", "keys": "fe" }
+      ]
+    },
+    {
+      "id": "T018-FIND-SUPPLEMENTARY-MAPPED-01",
+      "title": "Literal supplementary-character find through a Neovim mapping",
+      "purpose": "Capture `f` and counted repeat with a supplementary Unicode target through a mapped command input, avoiding the oracle helper's raw step corruption.",
+      "modes": ["normal"],
+      "lines": ["a😀b😀c😀d"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "mappings": [
+        { "mode": "n", "lhs": "<F5>", "rhs": "f😀", "remap": false },
+        { "mode": "n", "lhs": "<F6>", "rhs": "2f😀", "remap": false }
+      ],
+      "steps": [
+        { "label": "start", "drain": true },
+        { "label": "find-supplementary-scalar", "keys": "<F5>" },
+        { "label": "counted-find-supplementary-scalar", "keys": "<F6>" }
+      ]
+    }
+  ]
+}

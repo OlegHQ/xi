@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "T103-ORACLE-GU-CHAR-01",
+      "title": "gu lowercases a characterwise word",
+      "purpose": "Pin case conversion over a word with mixed ASCII case.",
+      "modes": ["normal", "operator-pending"],
+      "lines": ["One TWO"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [{ "label": "gu-word", "keys": "guw" }]
+    },
+    {
+      "id": "T103-ORACLE-GU-LINE-01",
+      "title": "gu lowercases a linewise motion",
+      "purpose": "Pin case conversion across a linewise motion and its following line.",
+      "modes": ["normal", "operator-pending"],
+      "lines": ["One TWO", "Three FOUR"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [{ "label": "gu-next-line", "keys": "guj" }]
+    },
+    {
+      "id": "T103-ORACLE-GU-UPPER-CHAR-01",
+      "title": "gU uppercases a characterwise word",
+      "purpose": "Pin uppercase conversion over a characterwise word.",
+      "modes": ["normal", "operator-pending"],
+      "lines": ["one TWO"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [{ "label": "gU-word", "keys": "gUw" }]
+    },
+    {
+      "id": "T103-ORACLE-GU-BLOCK-01",
+      "title": "gU uppercases a rectangular block",
+      "purpose": "Pin blockwise case conversion over two columns and two rows.",
+      "modes": ["normal", "visual", "operator-pending"],
+      "lines": ["abCD", "efGH"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [{ "label": "uppercase-block", "keys": "<C-v>jlgU" }]
+    },
+    {
+      "id": "T103-ORACLE-GTILDE-01",
+      "title": "g~ swaps case in a word",
+      "purpose": "Pin case inversion over a characterwise word.",
+      "modes": ["normal", "operator-pending"],
+      "lines": ["AbC xYz"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [{ "label": "swapcase-word", "keys": "g~w" }]
+    },
+    {
+      "id": "T103-ORACLE-J-JOINSPACES-01",
+      "title": "J joins sentences using joinspaces",
+      "purpose": "Pin sentence spacing and whitespace trimming for J.",
+      "modes": ["normal"],
+      "lines": ["Hello.  ", "  world", "next"],
+      "options": { "joinspaces": true },
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [{ "label": "join-first-two", "keys": "J" }]
+    },
+    {
+      "id": "T103-ORACLE-J-SINGLESPACE-01",
+      "title": "J joins sentences with one space",
+      "purpose": "Pin joinspaces=false behavior for the same sentence boundary.",
+      "modes": ["normal"],
+      "lines": ["Hello.", "world"],
+      "options": { "joinspaces": false },
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [{ "label": "join-single-space", "keys": "J" }]
+    },
+    {
+      "id": "T103-ORACLE-GJ-NOSPACES-01",
+      "title": "gJ joins lines without inserting a separator",
+      "purpose": "Pin gJ's direct concatenation behavior.",
+      "modes": ["normal"],
+      "lines": ["left", "right"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [{ "label": "join-no-space", "keys": "gJ" }]
+    },
+    {
+      "id": "T103-ORACLE-INDENT-01",
+      "title": ">> shifts a line right",
+      "purpose": "Pin default shiftwidth indentation.",
+      "modes": ["normal"],
+      "lines": ["one", "  two"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [{ "label": "shift-right", "keys": ">>" }]
+    },
+    {
+      "id": "T103-ORACLE-DEDENT-01",
+      "title": "<< shifts a line left",
+      "purpose": "Pin removal of one shiftwidth from an indented line.",
+      "modes": ["normal"],
+      "lines": ["        one"],
+      "cursor": { "line": 1, "byteColumn0": 3 },
+      "steps": [{ "label": "shift-left", "keys": "<<" }]
+    },
+    {
+      "id": "T103-ORACLE-FORMAT-01",
+      "title": "gq formats a paragraph through Vim's formatter",
+      "purpose": "Pin format operator range composition and textwidth wrapping.",
+      "modes": ["normal", "operator-pending"],
+      "lines": ["one two three four five six seven", "eight nine ten"],
+      "options": { "textwidth": 12 },
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [{ "label": "format-lines", "keys": "gqj" }]
+    },
+    {
+      "id": "T103-ORACLE-FORMAT-PRESERVE-01",
+      "title": "gw formats while preserving the cursor",
+      "purpose": "Pin format-preserve behavior and cursor intent.",
+      "lines": ["one two three four five six seven", "eight nine ten"],
+      "options": { "textwidth": 12 },
+      "cursor": { "line": 1, "byteColumn0": 4 },
+      "modes": ["normal", "operator-pending"],
+      "steps": [{ "label": "format-preserve-lines", "keys": "gwj" }]
+    }
+  ]
+}

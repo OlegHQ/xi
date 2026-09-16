@@ -1,0 +1,10 @@
+schema-version = 1
+name = "xi-light"
+
+[tokens]
+"selection.primary" = "#D6E5F2"
+"selection.secondary" = "#E4ECF3"
+"cursor.primary" = "#263238"
+"cursor.secondary" = "#455A64"
+"motion.trail" = "#EEF2F4"
+"operator.preview" = "#B0BEC5"

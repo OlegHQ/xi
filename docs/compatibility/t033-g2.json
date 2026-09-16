@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "ticket": "T033",
+  "gate": "G2-engine-preview",
+  "oracle": {
+    "name": "Neovim",
+    "version": "0.12.4",
+    "binarySha256": "d9635db0b272b7c81cd705ef0d8bbf16edfeb05b08b36b4228ab0d6a92ec384f",
+    "runtimeDocsSha256": "79b80909bf8f5fe1d89a0fb66200388e651c88d49d565fdc51780ef4b24d7b1e",
+    "role": "development-oracle-only"
+  },
+  "families": [
+    {
+      "family": "atomic multi-cursor command publication",
+      "status": "verified-preview",
+      "fixtureIds": ["T076-MC03-COMMIT-01", "T077-MC03-L-MOTION-01", "T077-MC03-VISUAL-01"],
+      "failureRows": ["stale document", "stale selection", "overlapping replacement", "cancellation"],
+      "evidence": "docs/evidence/T076.md"
+    },
+    {
+      "family": "multi-cursor Insert and Replace",
+      "status": "verified-preview",
+      "fixtureIds": ["T078-MC01-SINGLETON-INSERT-01", "T078-MC05-PASTE-01", "T078-MC05-REPLACE-02", "T078-MC05-MERGE-01"],
+      "failureRows": ["member backspace isolation", "duplicate caret", "mixed exit", "stale change map"],
+      "evidence": "docs/evidence/T078.md"
+    },
+    {
+      "family": "register vectors and multi-put",
+      "status": "verified-preview",
+      "fixtureIds": ["T079-MC06-01", "T079-MC06-10", "T079-MC06-17", "T079-MC06-24"],
+      "failureRows": ["vector arity mismatch", "clipboard denied", "black-hole register"],
+      "evidence": "docs/evidence/T079.md"
+    },
+    {
+      "family": "semantic dot replay",
+      "status": "verified-preview",
+      "fixtureIds": ["T080-MC08-DOT-01", "T080-MC08-COUNT-01", "T080-MC08-INCOMPATIBLE-01"],
+      "failureRows": ["stale selection", "incompatible recipe", "count override"],
+      "evidence": "docs/evidence/T080.md"
+    },
+    {
+      "family": "selection commands",
+      "status": "verified-preview",
+      "fixtureIds": ["T081-MC09-FIRST-01", "T081-MC09-REGEX-LIMIT-01", "T081-MC09-ROTATE-01"],
+      "failureRows": ["empty filter", "regex limit", "stale selection"],
+      "evidence": "docs/evidence/T081.md"
+    },
+    {
+      "family": "one-stream macro dispatch",
+      "status": "verified-preview",
+      "fixtureIds": ["T092-MC11-DISPATCH-01", "T092-MC11-FAILURE-01", "T092-MC11-CANCEL-01"],
+      "failureRows": ["second dispatch failure", "cancellation", "partial publication"],
+      "evidence": "docs/evidence/T092.md"
+    },
+    {
+      "family": "document and selection history",
+      "status": "verified-preview",
+      "fixtureIds": ["T093-MC07-UNDO-01", "T093-MC07-BRANCH-01", "T093-MC10-CLOSED-ORIGIN-01"],
+      "failureRows": ["unmappable history", "closed origin", "selection-only undo"],
+      "evidence": "docs/evidence/T093.md"
+    },
+    {
+      "family": "real terminal editing preview",
+      "status": "verified-preview",
+      "fixtureIds": ["T033-PTY-MULTI-INSERT-01", "T033-PTY-ROUTING-01", "T033-PTY-TERMINAL-01"],
+      "failureRows": ["terminal readiness", "terminal restoration", "document version mismatch"],
+      "evidence": "docs/evidence/T033.md"
+    },
+    {
+      "family": "launchable OpenTUI editor UI",
+      "status": "partial",
+      "fixtureIds": [],
+      "failureRows": ["no production editor loop", "no file-open/save flow", "no workbench layout"],
+      "ownerTicket": "T034"
+    },
+    {
+      "family": "complete Vim compatibility inventory",
+      "status": "partial",
+      "fixtureIds": [],
+      "failureRows": ["597 seed rows remain unimplemented or unverified", "option matrices remain unexpanded", "provider-backed rows"],
+      "ownerTicket": "T061"
+    },
+    {
+      "family": "release PTY, visual and performance gates",
+      "status": "unimplemented",
+      "fixtureIds": [],
+      "failureRows": ["loaded typing", "scale budgets", "visual review", "packaged smoke"],
+      "ownerTickets": ["T062", "T087", "T089"]
+    }
+  ],
+  "preview": {
+    "path": "spikes/editor/t033-preview.ts",
+    "ptyDriver": "spikes/editor/t033-pty.py",
+    "textOwner": "TextFileDocument",
+    "renderSource": "immutable document snapshot",
+    "neovimRuntimeDependency": false,
+    "singletonOracleUse": "tests only"
+  },
+  "limitations": [
+    "The preview is a disposable PTY engine path and is not a launchable editor UI.",
+    "The preview exercises two insertion carets; multi-cursor scale and loaded-system budgets remain downstream validation.",
+    "The generated 597-row inventory remains a seed until T061 expands and reconciles every option matrix.",
+    "Full final Vim parity, workbench services, file persistence, language features and release packaging remain unproven."
+  ]
+}

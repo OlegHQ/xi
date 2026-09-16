@@ -1,0 +1,17 @@
+packages/layout/src/index.ts:1242:7: error xi(performance): [strings] Repeated string rebuilding in an interactive loop needs a bounded representation or explicit justification.
+packages/services/syntax/index.ts:504:53: error xi(performance): [microtask] Microtasks are not CPU isolation; use budgeted task-queue slices or a worker.
+packages/services/syntax/index.ts:536:44: error xi(performance): [microtask] Microtasks are not CPU isolation; use budgeted task-queue slices or a worker.
+packages/ui/input/adapter.ts:320:29: error xi(performance): [strings] Repeated string rebuilding in an interactive loop needs a bounded representation or explicit justification.
+packages/vim/motions/index.ts:590:5: error xi(performance): [strings] Repeated string rebuilding in an interactive loop needs a bounded representation or explicit justification.
+packages/vim/motions/word.ts:453:7: error xi(performance): [strings] Repeated string rebuilding in an interactive loop needs a bounded representation or explicit justification.
+packages/vim/operators/direct-changes.ts:362:5: error xi(performance): [strings] Repeated string rebuilding in an interactive loop needs a bounded representation or explicit justification.
+packages/vim/operators/text-transform.ts:308:5: error xi(performance): [strings] Repeated string rebuilding in an interactive loop needs a bounded representation or explicit justification.
+packages/vim/ranges/normalize.ts:282:7: error xi(performance): [strings] Repeated string rebuilding in an interactive loop needs a bounded representation or explicit justification.
+packages/vim/ranges/normalize.ts:290:25: error xi(performance): [strings] Repeated string rebuilding in an interactive loop needs a bounded representation or explicit justification.
+packages/vim/ranges/normalize.ts:291:25: error xi(performance): [strings] Repeated string rebuilding in an interactive loop needs a bounded representation or explicit justification.
+packages/vim/text-objects/index.ts:624:16: error xi(performance): [materialize] Review allocating text/line materialization; use bounded document windows or explain the bound.
+packages/vim/text-objects/index.ts:637:18: error xi(performance): [materialize] Review allocating text/line materialization; use bounded document windows or explain the bound.
+packages/vim/text-objects/index.ts:656:18: error xi(performance): [materialize] Review allocating text/line materialization; use bounded document windows or explain the bound.
+packages/vim/text-objects/index.ts:664:18: error xi(performance): [materialize] Review allocating text/line materialization; use bounded document windows or explain the bound.
+packages/vim/text-objects/index.ts:702:16: error xi(performance): [materialize] Review allocating text/line materialization; use bounded document windows or explain the bound.
+packages/workbench/dispatch/index.ts:499:29: error xi(performance): [strings] Repeated string rebuilding in an interactive loop needs a bounded representation or explicit justification.

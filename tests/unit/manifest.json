@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "suite": "unit",
+  "fixtures": ["architecture", "config", "document", "layout", "persistence", "selections", "workbench"]
+}

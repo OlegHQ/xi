@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import { LanguagePresentationFeatures } from '../../packages/services/language/folding';
+
+const features = new LanguagePresentationFeatures();
+const valid = features.applyFolds({ documentId: 'd', documentVersion: 1, generation: 1, folds: [{ startLine: 0, endLine: 5 }, { startLine: 1, endLine: 3 }] });
+assert.equal(valid.ok, true, 'T067-FOLD-01 nested folds accepted');
+assert.equal(features.applyFolds(null as unknown as never).ok, false, 'T067-FOLD-FAIL-02 malformed protocol envelopes are rejected without throwing');
+const crossing = features.applyFolds({ documentId: 'd', documentVersion: 2, generation: 2, folds: [{ startLine: 0, endLine: 3 }, { startLine: 2, endLine: 5 }] });
+assert.equal(crossing.ok, false, 'T067-FOLD-FAIL-01 crossing folds rejected');
+assert.equal(features.applyFolds({ documentId: 'd', documentVersion: 3, generation: 3, folds: [null as unknown as never] }).ok, false, 'T067-FOLD-FAIL-03 malformed fold entries are rejected without throwing');
+const hints = features.applyHints({ documentId: 'd', documentVersion: 2, generation: 2, hints: [{ id: 'h', line: 1, utf16: 2, label: ': number' }], lenses: [{ id: 'l', line: 0, command: 'test', title: 'Run' }] });
+assert.equal(hints.ok, true);
+const ranges = features.applySelectionRanges({ documentId: 'd', documentVersion: 2, generation: 2, ranges: [{ startLine: 1, startUtf16: 0, endLine: 1, endUtf16: 2, parent: { startLine: 0, startUtf16: 0, endLine: 3, endUtf16: 0 } }] });
+assert.equal(ranges.ok, true, 'T067-SELECTION-01 nested selection ranges are retained by request order');
+const visible = features.visibleHints('d', 0, 1, 1);
+assert.equal(visible?.lenses.length, 1, 'T067-VIEWPORT-01 hint/lens reads are bounded to the visible line window');
+const stale = features.applyHints({ documentId: 'd', documentVersion: 1, generation: 1, hints: [], lenses: [] });
+assert.equal(stale.ok, false, 'T067-STALE-01 hints cannot shift newer selection');
+
+let firstResolve!: (value: { ok: true; value: { readonly id: string; readonly line: number; readonly command: string; readonly title: string } }) => void;
+let secondResolve!: (value: { ok: true; value: { readonly id: string; readonly line: number; readonly command: string; readonly title: string } }) => void;
+const first = features.resolveLens('d', 'l', 2, () => new Promise((resolve) => { firstResolve = resolve; }));
+const second = features.resolveLens('d', 'l', 2, () => new Promise((resolve) => { secondResolve = resolve; }));
+secondResolve({ ok: true, value: { id: 'l', line: 0, command: 'resolved-second', title: 'Run second' } });
+assert.equal((await second).ok, true, 'T067-LENS-01 newest lazy lens resolution is applied');
+firstResolve({ ok: true, value: { id: 'l', line: 0, command: 'resolved-first', title: 'Run first' } });
+const outOfOrder = await first;
+assert.equal(outOfOrder.ok, false, 'T067-LENS-FAIL-01 out-of-order lens resolution cannot replace newer state');
+const resolverFailure = await features.resolveHint('d', 'h', 2, async () => { throw new Error('resolver exploded'); });
+assert.equal(resolverFailure.ok, false, 'T067-LENS-FAIL-02 resolver exceptions become typed failures');
+let executed = '';
+const execution = await features.executeLens('d', 'l', 2, async (command) => { executed = command; return { ok: true, value: undefined }; });
+assert.equal(execution.ok && executed, 'resolved-second', 'T067-LENS-02 explicit lens execution uses the resolved command exactly once');
+const executionFailure = await features.executeLens('d', 'l', 2, async () => { throw new Error('executor exploded'); });
+assert.equal(executionFailure.ok, false, 'T067-LENS-FAIL-03 executor exceptions cannot escape the presentation owner');
+features.dispose();
+console.log('T067 folding/hints/lenses passed nested-range policy, crossing rejection and stale-result suppression');

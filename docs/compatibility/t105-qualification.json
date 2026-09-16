@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "ticket": "T105",
+  "originalTicket": "T029",
+  "oracle": {
+    "name": "Neovim",
+    "version": "0.12.4",
+    "binarySha256": "d9635db0b272b7c81cd705ef0d8bbf16edfeb05b08b36b4228ab0d6a92ec384f",
+    "runtimeDocsSha256": "79b80909bf8f5fe1d89a0fb66200388e651c88d49d565fdc51780ef4b24d7b1e"
+  },
+  "families": [
+    {
+      "ownerTicket": "T102",
+      "family": "structural motions",
+      "status": "verified-bounded",
+      "helpTags": ["%", "percent", "matchpairs", "(", ")", "{", "}", "[[", "]]", "[]", "][", "sections", "paragraphs"],
+      "fixtureIds": [
+        "T102-STRUCT-PERCENT-NESTED-01",
+        "T102-STRUCT-PERCENT-CLOSING-01",
+        "T102-STRUCT-PERCENT-CUSTOM-PAIR-01",
+        "T102-STRUCT-SENTENCE-FORWARD-01",
+        "T102-STRUCT-SENTENCE-BACKWARD-01",
+        "T102-STRUCT-PARAGRAPH-FORWARD-01",
+        "T102-STRUCT-PARAGRAPH-BACKWARD-01",
+        "T102-STRUCT-PARAGRAPH-MACRO-OPTION-01",
+        "T102-STRUCT-PERCENT-COUNT-02",
+        "T102-STRUCT-SECTION-FORWARD-01",
+        "T102-STRUCT-SECTION-BACKWARD-01",
+        "T102-STRUCT-SECTION-END-BACKWARD-01",
+        "T102-STRUCT-SECTION-END-FORWARD-01",
+        "T102-STRUCT-SECTION-CUSTOM-OPTION-01"
+      ],
+      "failureRows": ["unmatched nesting", "counted percentage", "stale document", "scan budget"],
+      "evidence": "docs/evidence/T102.md"
+    },
+    {
+      "ownerTicket": "T103",
+      "family": "case, join, indent and format operators",
+      "status": "verified-with-provider-boundaries",
+      "helpTags": ["gu", "gU", "g~", "J", "gJ", ">", "<", "=", "gq", "gw", "joinspaces"],
+      "fixtureIds": [
+        "T103-ORACLE-GU-CHAR-01",
+        "T103-ORACLE-GU-LINE-01",
+        "T103-ORACLE-GU-BLOCK-01",
+        "T103-ORACLE-GU-UPPER-CHAR-01",
+        "T103-ORACLE-GTILDE-01",
+        "T103-ORACLE-J-JOINSPACES-01",
+        "T103-ORACLE-J-SINGLESPACE-01",
+        "T103-ORACLE-GJ-NOSPACES-01",
+        "T103-ORACLE-INDENT-01",
+        "T103-ORACLE-DEDENT-01",
+        "T103-ORACLE-FORMAT-01",
+        "T103-ORACLE-FORMAT-PRESERVE-01"
+      ],
+      "failureRows": ["joinspaces variation", "ragged/block ranges", "missing indent provider", "missing format provider", "operator cancellation"],
+      "providerBoundaries": ["= requires indent provider", "gq/gw require format provider"],
+      "evidence": "docs/evidence/T103.md"
+    },
+    {
+      "ownerTicket": "T104",
+      "family": "filter, fold and numeric operators",
+      "status": "verified-with-provider-boundaries",
+      "helpTags": ["!", "zf", "zF", "zD", "zE", "CTRL-A", "CTRL-X", "nrformats"],
+      "fixtureIds": [
+        "T104-FILTER-01",
+        "T104-FILTER-02",
+        "T104-FILTER-03",
+        "T104-FILTER-04",
+        "T104-FOLD-01",
+        "T104-FOLD-02",
+        "T104-NUMBER-01",
+        "T104-NUMBER-02",
+        "T104-NUMBER-03",
+        "T104-NUMBER-04",
+        "T104-ORACLE-NRFORMATS-HEX-01",
+        "T104-ORACLE-NRFORMATS-DECIMAL-01"
+      ],
+      "failureRows": ["missing filter provider", "filter output flood/cancellation", "missing fold provider", "nrformats variation", "numeric overflow"],
+      "providerBoundaries": ["! requires filter provider", "zf/zF/zD/zE require fold provider"],
+      "evidence": "docs/evidence/T104.md"
+    }
+  ],
+  "qualification": {
+    "crossFamilyComposition": "Each child retains one-base, versioned operator plans; T103 composes normalized structural ranges and T104 composes the same transaction/provider boundaries.",
+    "unmatchedNesting": "typed unmatched-structure failure retained by T102",
+    "countedPercentage": "T102-STRUCT-PERCENT-COUNT-02",
+    "joinspaces": "T103-ORACLE-J-JOINSPACES-01 and T103-ORACLE-J-SINGLESPACE-01",
+    "nrformats": "T104-ORACLE-NRFORMATS-HEX-01 and T104-ORACLE-NRFORMATS-DECIMAL-01",
+    "omittedOriginalRequirement": false
+  },
+  "limitations": [
+    "Provider-backed filter, fold, indent and format rows preserve pinned Neovim behavior but require an injected Xi provider; provider absence is a typed failure.",
+    "T102's help-family note and the generated 597-row inventory remain subject to the exhaustive T061 audit; this qualification does not claim all Vim help rows are complete.",
+    "No external process, filesystem IO or Neovim runtime dependency is present in the Xi operator paths."
+  ]
+}

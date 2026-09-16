@@ -1,0 +1,39 @@
+{
+  "reviewed": "2026-09-15",
+  "sources": [
+    {
+      "file": ".artifacts/performance-planning/sources/vscode-piece-tree.ts",
+      "url": "https://raw.githubusercontent.com/microsoft/vscode/1.104.0/src/vs/editor/common/model/pieceTreeTextBuffer/pieceTreeBase.ts",
+      "sha256": "c7d50f3bf469ea21887c86c375ea7a66f163d31c1887684ef141f9ea850378d1",
+      "bytes": 58485
+    },
+    {
+      "file": ".artifacts/performance-planning/sources/vim-memline.c",
+      "url": "https://raw.githubusercontent.com/vim/vim/v9.1.0000/src/memline.c",
+      "sha256": "7009943c9cc5811fccecc82617263012ad7a98440601bd0747f979ab6e4f78da",
+      "bytes": 164321
+    },
+    {
+      "file": ".artifacts/performance-planning/sources/vim-memfile.c",
+      "url": "https://raw.githubusercontent.com/vim/vim/v9.1.0000/src/memfile.c",
+      "sha256": "435295dde62650a7d5221e3a3e9a4c4eafe39e92c717a0fea59bd574522dc54e",
+      "bytes": 37919
+    },
+    {
+      "url": "https://raw.githubusercontent.com/WebKit/WebKit/webkitgtk-2.48.0/Source/WTF/wtf/text/WTFString.h",
+      "error": "HTTP Error 429: Too Many Requests"
+    },
+    {
+      "file": ".artifacts/performance-planning/sources/jsc-StringImpl.h",
+      "url": "https://raw.githubusercontent.com/WebKit/WebKit/webkitgtk-2.48.0/Source/WTF/wtf/text/StringImpl.h",
+      "sha256": "33c5ed6e63eee43dd5a18e92d77793539c7dc3112129169f7e28fe83d64372bf",
+      "bytes": 60809
+    },
+    {
+      "file": ".artifacts/performance-planning/sources/sqlite-amalgamation.zip",
+      "url": "https://sqlite.org/2025/sqlite-amalgamation-3500400.zip",
+      "sha256": "1d3049dd0f830a025a53105fc79fd2ab9431aea99e137809d064d8ee8356b032",
+      "bytes": 2845716
+    }
+  ]
+}

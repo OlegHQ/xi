@@ -1,0 +1,2096 @@
+{
+  "fixtures": [
+    {
+      "id": "T018-FIND-COUNT-AND-TILL-01",
+      "input": [
+        {
+          "drain": true,
+          "label": "start"
+        },
+        {
+          "keys": "fX",
+          "label": "f-first"
+        },
+        {
+          "keys": "2fX",
+          "label": "f-count-two"
+        },
+        {
+          "keys": "tX",
+          "label": "t-next"
+        },
+        {
+          "keys": "FX",
+          "label": "F-previous"
+        },
+        {
+          "keys": "TX",
+          "label": "T-previous-till"
+        },
+        {
+          "keys": "2fX",
+          "label": "f-count-after-till"
+        }
+      ],
+      "purpose": "Capture f/F/t/T on a line with repeated literal targets and their cursor columns.",
+      "snapshots": [
+        {
+          "cursor": {
+            "byteColumn": 1,
+            "coladd": 0,
+            "desiredColumn": 0,
+            "line": 1,
+            "screenColumn": 1,
+            "screenRow": 1,
+            "virtualColumn": 1
+          },
+          "error": "",
+          "label": "start",
+          "lines": [
+            "aXbXcXdXeXfXg"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 2,
+            "coladd": 0,
+            "desiredColumn": 1,
+            "line": 1,
+            "screenColumn": 2,
+            "screenRow": 1,
+            "virtualColumn": 2
+          },
+          "error": "",
+          "label": "f-first",
+          "lines": [
+            "aXbXcXdXeXfXg"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 6,
+            "coladd": 0,
+            "desiredColumn": 5,
+            "line": 1,
+            "screenColumn": 6,
+            "screenRow": 1,
+            "virtualColumn": 6
+          },
+          "error": "",
+          "label": "f-count-two",
+          "lines": [
+            "aXbXcXdXeXfXg"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 7,
+            "coladd": 0,
+            "desiredColumn": 6,
+            "line": 1,
+            "screenColumn": 7,
+            "screenRow": 1,
+            "virtualColumn": 7
+          },
+          "error": "",
+          "label": "t-next",
+          "lines": [
+            "aXbXcXdXeXfXg"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 6,
+            "coladd": 0,
+            "desiredColumn": 5,
+            "line": 1,
+            "screenColumn": 6,
+            "screenRow": 1,
+            "virtualColumn": 6
+          },
+          "error": "",
+          "label": "F-previous",
+          "lines": [
+            "aXbXcXdXeXfXg"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 5,
+            "coladd": 0,
+            "desiredColumn": 4,
+            "line": 1,
+            "screenColumn": 5,
+            "screenRow": 1,
+            "virtualColumn": 5
+          },
+          "error": "",
+          "label": "T-previous-till",
+          "lines": [
+            "aXbXcXdXeXfXg"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 8,
+            "coladd": 0,
+            "desiredColumn": 7,
+            "line": 1,
+            "screenColumn": 8,
+            "screenRow": 1,
+            "virtualColumn": 8
+          },
+          "error": "",
+          "label": "f-count-after-till",
+          "lines": [
+            "aXbXcXdXeXfXg"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "title": "Literal find/till motions honor direction and counts"
+    },
+    {
+      "id": "T018-FIND-REPEAT-DIRECTION-01",
+      "input": [
+        {
+          "keys": "tX",
+          "label": "t-first"
+        },
+        {
+          "keys": ";",
+          "label": "semicolon-repeats-till"
+        },
+        {
+          "keys": ",",
+          "label": "comma-reverses-till"
+        },
+        {
+          "keys": ";",
+          "label": "semicolon-still-repeats-original-direction"
+        },
+        {
+          "keys": "fX",
+          "label": "f-switches-last-find"
+        },
+        {
+          "keys": ";",
+          "label": "semicolon-repeats-forward-find"
+        },
+        {
+          "keys": "2,",
+          "label": "counted-comma-reverses-find"
+        },
+        {
+          "keys": ";",
+          "label": "semicolon-after-reverse"
+        }
+      ],
+      "purpose": "Capture repeated till behavior and verify comma reversal does not overwrite the original find direction.",
+      "snapshots": [
+        {
+          "cursor": {
+            "byteColumn": 2,
+            "coladd": 0,
+            "desiredColumn": 1,
+            "line": 1,
+            "screenColumn": 2,
+            "screenRow": 1,
+            "virtualColumn": 2
+          },
+          "error": "",
+          "label": "t-first",
+          "lines": [
+            "a-X--b-X--c-X--d-X--e"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 7,
+            "coladd": 0,
+            "desiredColumn": 6,
+            "line": 1,
+            "screenColumn": 7,
+            "screenRow": 1,
+            "virtualColumn": 7
+          },
+          "error": "",
+          "label": "semicolon-repeats-till",
+          "lines": [
+            "a-X--b-X--c-X--d-X--e"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 4,
+            "coladd": 0,
+            "desiredColumn": 3,
+            "line": 1,
+            "screenColumn": 4,
+            "screenRow": 1,
+            "virtualColumn": 4
+          },
+          "error": "",
+          "label": "comma-reverses-till",
+          "lines": [
+            "a-X--b-X--c-X--d-X--e"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 7,
+            "coladd": 0,
+            "desiredColumn": 6,
+            "line": 1,
+            "screenColumn": 7,
+            "screenRow": 1,
+            "virtualColumn": 7
+          },
+          "error": "",
+          "label": "semicolon-still-repeats-original-direction",
+          "lines": [
+            "a-X--b-X--c-X--d-X--e"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 8,
+            "coladd": 0,
+            "desiredColumn": 7,
+            "line": 1,
+            "screenColumn": 8,
+            "screenRow": 1,
+            "virtualColumn": 8
+          },
+          "error": "",
+          "label": "f-switches-last-find",
+          "lines": [
+            "a-X--b-X--c-X--d-X--e"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 13,
+            "coladd": 0,
+            "desiredColumn": 12,
+            "line": 1,
+            "screenColumn": 13,
+            "screenRow": 1,
+            "virtualColumn": 13
+          },
+          "error": "",
+          "label": "semicolon-repeats-forward-find",
+          "lines": [
+            "a-X--b-X--c-X--d-X--e"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 3,
+            "coladd": 0,
+            "desiredColumn": 2,
+            "line": 1,
+            "screenColumn": 3,
+            "screenRow": 1,
+            "virtualColumn": 3
+          },
+          "error": "",
+          "label": "counted-comma-reverses-find",
+          "lines": [
+            "a-X--b-X--c-X--d-X--e"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 8,
+            "coladd": 0,
+            "desiredColumn": 7,
+            "line": 1,
+            "screenColumn": 8,
+            "screenRow": 1,
+            "virtualColumn": 8
+          },
+          "error": "",
+          "label": "semicolon-after-reverse",
+          "lines": [
+            "a-X--b-X--c-X--d-X--e"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "title": "Semicolon repeats the find and comma reverses it"
+    },
+    {
+      "id": "T018-FIND-MISSING-STATE-01",
+      "input": [
+        {
+          "keys": "fX",
+          "label": "successful-find-X"
+        },
+        {
+          "keys": "fZ",
+          "label": "missing-target-Z"
+        },
+        {
+          "keys": ";",
+          "label": "semicolon-repeats-failed-Z"
+        },
+        {
+          "keys": ",",
+          "label": "comma-reverses-failed-Z"
+        }
+      ],
+      "purpose": "A failed direct literal replaces the repeat target: subsequent ; and , do not rediscover the earlier X.",
+      "snapshots": [
+        {
+          "cursor": {
+            "byteColumn": 5,
+            "coladd": 0,
+            "desiredColumn": 4,
+            "line": 1,
+            "screenColumn": 5,
+            "screenRow": 1,
+            "virtualColumn": 5
+          },
+          "error": "",
+          "label": "successful-find-X",
+          "lines": [
+            "X-a-X-b-X-c"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 5,
+            "coladd": 0,
+            "desiredColumn": 4,
+            "line": 1,
+            "screenColumn": 5,
+            "screenRow": 1,
+            "virtualColumn": 5
+          },
+          "error": "",
+          "label": "missing-target-Z",
+          "lines": [
+            "X-a-X-b-X-c"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 5,
+            "coladd": 0,
+            "desiredColumn": 4,
+            "line": 1,
+            "screenColumn": 5,
+            "screenRow": 1,
+            "virtualColumn": 5
+          },
+          "error": "",
+          "label": "semicolon-repeats-failed-Z",
+          "lines": [
+            "X-a-X-b-X-c"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 5,
+            "coladd": 0,
+            "desiredColumn": 4,
+            "line": 1,
+            "screenColumn": 5,
+            "screenRow": 1,
+            "virtualColumn": 5
+          },
+          "error": "",
+          "label": "comma-reverses-failed-Z",
+          "lines": [
+            "X-a-X-b-X-c"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "title": "A missing target preserves the previous successful find"
+    },
+    {
+      "id": "T018-FIND-ADJACENT-OPERATOR-01",
+      "input": [
+        {
+          "keys": "tb",
+          "label": "adjacent-till"
+        },
+        {
+          "keys": "dtb",
+          "label": "adjacent-till-delete"
+        }
+      ],
+      "purpose": "Capture normal and operator effects when the target is the immediately following character.",
+      "snapshots": [
+        {
+          "cursor": {
+            "byteColumn": 1,
+            "coladd": 0,
+            "desiredColumn": 0,
+            "line": 1,
+            "screenColumn": 1,
+            "screenRow": 1,
+            "virtualColumn": 1
+          },
+          "error": "",
+          "label": "adjacent-till",
+          "lines": [
+            "ab"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 1,
+            "coladd": 0,
+            "desiredColumn": 0,
+            "line": 1,
+            "screenColumn": 1,
+            "screenRow": 1,
+            "virtualColumn": 1
+          },
+          "error": "",
+          "label": "adjacent-till-delete",
+          "lines": [
+            "b"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "\"": {
+              "lines": [
+                "a"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "-": {
+              "lines": [
+                "a"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "title": "Adjacent till is a no-op motion but remains a valid operator"
+    },
+    {
+      "id": "T018-FIND-OPERATOR-FAILURE-01",
+      "input": [
+        {
+          "keys": "\"ayy",
+          "label": "seed-register"
+        },
+        {
+          "keys": "dfZ",
+          "label": "failed-delete-find"
+        },
+        {
+          "keys": ";",
+          "label": "repeat-failed-operator-find-forward"
+        },
+        {
+          "keys": ",",
+          "label": "repeat-failed-operator-find-reverse"
+        }
+      ],
+      "purpose": "Capture failed operator-pending find recovery and preservation of preexisting register contents.",
+      "snapshots": [
+        {
+          "cursor": {
+            "byteColumn": 1,
+            "coladd": 0,
+            "desiredColumn": 0,
+            "line": 1,
+            "screenColumn": 1,
+            "screenRow": 1,
+            "virtualColumn": 1
+          },
+          "error": "",
+          "label": "seed-register",
+          "lines": [
+            "abc"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "\"": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "A": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            },
+            "a": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 1,
+            "coladd": 0,
+            "desiredColumn": 0,
+            "line": 1,
+            "screenColumn": 1,
+            "screenRow": 1,
+            "virtualColumn": 1
+          },
+          "error": "",
+          "label": "failed-delete-find",
+          "lines": [
+            "abc"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "\"": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "A": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            },
+            "a": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 1,
+            "coladd": 0,
+            "desiredColumn": 0,
+            "line": 1,
+            "screenColumn": 1,
+            "screenRow": 1,
+            "virtualColumn": 1
+          },
+          "error": "",
+          "label": "repeat-failed-operator-find-forward",
+          "lines": [
+            "abc"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "\"": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "A": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            },
+            "a": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 1,
+            "coladd": 0,
+            "desiredColumn": 0,
+            "line": 1,
+            "screenColumn": 1,
+            "screenRow": 1,
+            "virtualColumn": 1
+          },
+          "error": "",
+          "label": "repeat-failed-operator-find-reverse",
+          "lines": [
+            "abc"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "\"": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "A": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            },
+            "a": {
+              "lines": [
+                "abc"
+              ],
+              "type": "V"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "title": "A failed find inside an operator leaves text and registers unchanged"
+    },
+    {
+      "id": "T018-FIND-VISUAL-FAILURE-01",
+      "input": [
+        {
+          "keys": "v",
+          "label": "enter-visual"
+        },
+        {
+          "keys": "fZ",
+          "label": "failed-visual-find"
+        },
+        {
+          "keys": ";",
+          "label": "repeat-failed-visual-find-forward"
+        },
+        {
+          "keys": ",",
+          "label": "repeat-failed-visual-find-reverse"
+        }
+      ],
+      "purpose": "Capture Visual mode, cursor, and anchor marks after a missing find target.",
+      "snapshots": [
+        {
+          "cursor": {
+            "byteColumn": 2,
+            "coladd": 0,
+            "desiredColumn": 1,
+            "line": 1,
+            "screenColumn": 2,
+            "screenRow": 1,
+            "virtualColumn": 2
+          },
+          "error": "",
+          "label": "enter-visual",
+          "lines": [
+            "abcd"
+          ],
+          "mode": "v",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 2,
+            "coladd": 0,
+            "desiredColumn": 1,
+            "line": 1,
+            "screenColumn": 2,
+            "screenRow": 1,
+            "virtualColumn": 2
+          },
+          "error": "",
+          "label": "failed-visual-find",
+          "lines": [
+            "abcd"
+          ],
+          "mode": "v",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 2,
+            "coladd": 0,
+            "desiredColumn": 1,
+            "line": 1,
+            "screenColumn": 2,
+            "screenRow": 1,
+            "virtualColumn": 2
+          },
+          "error": "",
+          "label": "repeat-failed-visual-find-forward",
+          "lines": [
+            "abcd"
+          ],
+          "mode": "v",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 2,
+            "coladd": 0,
+            "desiredColumn": 1,
+            "line": 1,
+            "screenColumn": 2,
+            "screenRow": 1,
+            "virtualColumn": 2
+          },
+          "error": "",
+          "label": "repeat-failed-visual-find-reverse",
+          "lines": [
+            "abcd"
+          ],
+          "mode": "v",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "title": "A failed find in Visual mode preserves the selection"
+    },
+    {
+      "id": "T018-FIND-MULTIBYTE-COMBINING-01",
+      "input": [
+        {
+          "keys": "fé",
+          "label": "find-composed-grapheme"
+        },
+        {
+          "keys": "fé",
+          "label": "find-multibyte-scalar"
+        },
+        {
+          "keys": "2fé",
+          "label": "counted-find-multibyte-scalar"
+        }
+      ],
+      "purpose": "Capture find/count positions for a composed combining character and supplementary emoji.",
+      "snapshots": [
+        {
+          "cursor": {
+            "byteColumn": 7,
+            "coladd": 0,
+            "desiredColumn": 4,
+            "line": 1,
+            "screenColumn": 5,
+            "screenRow": 1,
+            "virtualColumn": 5
+          },
+          "error": "",
+          "label": "find-composed-grapheme",
+          "lines": [
+            "é-x-é-é-é"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 11,
+            "coladd": 0,
+            "desiredColumn": 6,
+            "line": 1,
+            "screenColumn": 7,
+            "screenRow": 1,
+            "virtualColumn": 7
+          },
+          "error": "",
+          "label": "find-multibyte-scalar",
+          "lines": [
+            "é-x-é-é-é"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 11,
+            "coladd": 0,
+            "desiredColumn": 6,
+            "line": 1,
+            "screenColumn": 7,
+            "screenRow": 1,
+            "virtualColumn": 7
+          },
+          "error": "",
+          "label": "counted-find-multibyte-scalar",
+          "lines": [
+            "é-x-é-é-é"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "title": "Literal find accepts multibyte and combining grapheme targets"
+    },
+    {
+      "id": "T018-FIND-BASE-COMBINING-01",
+      "input": [
+        {
+          "keys": "fe",
+          "label": "find-base-with-composing-mark"
+        }
+      ],
+      "purpose": "Verify Neovim's documented base-character matching behavior for decomposed text.",
+      "snapshots": [
+        {
+          "cursor": {
+            "byteColumn": 3,
+            "coladd": 0,
+            "desiredColumn": 2,
+            "line": 1,
+            "screenColumn": 3,
+            "screenRow": 1,
+            "virtualColumn": 3
+          },
+          "error": "",
+          "label": "find-base-with-composing-mark",
+          "lines": [
+            "x-é-y"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "title": "An uncomposed base literal finds a grapheme with a composing mark"
+    },
+    {
+      "id": "T018-FIND-SUPPLEMENTARY-MAPPED-01",
+      "input": [
+        {
+          "drain": true,
+          "label": "start"
+        },
+        {
+          "keys": "<F5>",
+          "label": "find-supplementary-scalar"
+        },
+        {
+          "keys": "<F6>",
+          "label": "counted-find-supplementary-scalar"
+        }
+      ],
+      "mappings": [
+        {
+          "lhs": "<F5>",
+          "mode": "n",
+          "remap": false,
+          "rhs": "f😀"
+        },
+        {
+          "lhs": "<F6>",
+          "mode": "n",
+          "remap": false,
+          "rhs": "2f😀"
+        }
+      ],
+      "purpose": "Capture `f` and counted repeat with a supplementary Unicode target through a mapped command input, avoiding the oracle helper's raw step corruption.",
+      "snapshots": [
+        {
+          "cursor": {
+            "byteColumn": 1,
+            "coladd": 0,
+            "desiredColumn": 0,
+            "line": 1,
+            "screenColumn": 1,
+            "screenRow": 1,
+            "virtualColumn": 1
+          },
+          "error": "",
+          "label": "start",
+          "lines": [
+            "a😀b😀c😀d"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 2,
+            "coladd": 0,
+            "desiredColumn": 1,
+            "line": 1,
+            "screenColumn": 2,
+            "screenRow": 1,
+            "virtualColumn": 3
+          },
+          "error": "",
+          "label": "find-supplementary-scalar",
+          "lines": [
+            "a😀b😀c😀d"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "cursor": {
+            "byteColumn": 12,
+            "coladd": 0,
+            "desiredColumn": 7,
+            "line": 1,
+            "screenColumn": 8,
+            "screenRow": 1,
+            "virtualColumn": 9
+          },
+          "error": "",
+          "label": "counted-find-supplementary-scalar",
+          "lines": [
+            "a😀b😀c😀d"
+          ],
+          "mode": "n",
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "visualEnd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "visualStart": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "title": "Literal supplementary-character find through a Neovim mapping"
+    }
+  ],
+  "harnessRegression": {
+    "id": "T018-HARNESS-RAW-SUPPLEMENTARY-REPRO-01",
+    "initialLines": [
+      "a😀b😀c"
+    ],
+    "inputMethod": "oracle-runner raw step with keys=\"f😀\"",
+    "observed": {
+      "cursor": {
+        "byteColumn": 2,
+        "coladd": 0,
+        "desiredColumn": 1,
+        "line": 1,
+        "screenColumn": 2,
+        "screenRow": 1,
+        "virtualColumn": 3
+      },
+      "lines": [
+        "a😀b😀c"
+      ],
+      "mode": "n",
+      "registers": {}
+    },
+    "resolution": "T099 fixed terminal-token expansion so literal UTF-8 is preserved; the raw helper case now matches the first emoji without changing text or registers."
+  },
+  "oracle": {
+    "binarySha256": "d9635db0b272b7c81cd705ef0d8bbf16edfeb05b08b36b4228ab0d6a92ec384f",
+    "name": "Neovim",
+    "profile": {
+      "ambiwidth": "single",
+      "config": "--clean -u NONE -i NONE --noplugin with isolated HOME and XDG roots",
+      "encoding": "utf-8",
+      "fileformat": "unix",
+      "filetype": "plain buffer; filetype plugins and indent scripts disabled",
+      "input": "feedkeys(termcode-expanded input, 'xt') drains typed input including mappings before snapshot",
+      "locale": "C.UTF-8"
+    },
+    "runtimeDocsSha256": "79b80909bf8f5fe1d89a0fb66200388e651c88d49d565fdc51780ef4b24d7b1e",
+    "version": "0.12.4"
+  },
+  "schemaVersion": 1,
+  "ticket": "T018"
+}

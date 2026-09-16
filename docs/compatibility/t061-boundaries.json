@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "ticket": "T061",
+  "oracle": {
+    "name": "Neovim",
+    "version": "0.12.4",
+    "binarySha256": "d9635db0b272b7c81cd705ef0d8bbf16edfeb05b08b36b4228ab0d6a92ec384f",
+    "runtimeDocsSha256": "79b80909bf8f5fe1d89a0fb66200388e651c88d49d565fdc51780ef4b24d7b1e"
+  },
+  "rows": [
+    { "helpTag": "CTRL-G", "status": "excluded-with-boundary", "boundary": "workbench status/message surface", "reason": "The command reports the active file and cursor; it has no buffer effect and requires the UI status port." },
+    { "helpTag": "CTRL-Z", "status": "excluded-with-boundary", "boundary": "platform process control", "reason": "Suspending and resuming the host process belongs to the platform port." },
+    { "helpTag": "do", "status": "excluded-with-boundary", "boundary": "diff provider", "reason": "Diffget requires a versioned diff provider and a selected source hunk." },
+    { "helpTag": "dp", "status": "excluded-with-boundary", "boundary": "diff provider", "reason": "Diffput requires a versioned diff provider and a writable target hunk." },
+    { "helpTag": "<F1>", "status": "excluded-with-boundary", "boundary": "help provider and UI surface", "reason": "Help opens a workbench help view rather than changing Vim document state." },
+    { "helpTag": "<Help>", "status": "excluded-with-boundary", "boundary": "help provider and UI surface", "reason": "Help opens a workbench help view rather than changing Vim document state." },
+    { "helpTag": "[#", "status": "excluded-with-boundary", "boundary": "syntax/preprocessor provider", "reason": "Unmatched preprocessor navigation depends on syntax-aware include and conditional context." },
+    { "helpTag": "[star", "status": "excluded-with-boundary", "boundary": "syntax provider", "reason": "C comment navigation requires a syntax provider." },
+    { "helpTag": "[/", "status": "excluded-with-boundary", "boundary": "syntax provider", "reason": "C comment navigation requires a syntax provider." },
+    { "helpTag": "[D", "status": "excluded-with-boundary", "boundary": "include/define provider", "reason": "Define listing requires an include and symbol provider." },
+    { "helpTag": "[I", "status": "excluded-with-boundary", "boundary": "include provider", "reason": "Include listing requires a language-aware include provider." },
+    { "helpTag": "[f", "status": "excluded-with-boundary", "boundary": "include provider", "reason": "File navigation requires a language-aware include provider." },
+    { "helpTag": "[i", "status": "excluded-with-boundary", "boundary": "include provider", "reason": "Include lookup requires a language-aware include provider." },
+    { "helpTag": "[m", "status": "excluded-with-boundary", "boundary": "syntax/member provider", "reason": "Member navigation requires syntax or language-server structure." },
+    { "helpTag": "[s", "status": "excluded-with-boundary", "boundary": "spelling provider", "reason": "Misspelling navigation requires a spelling provider." },
+    { "helpTag": "]#", "status": "excluded-with-boundary", "boundary": "syntax/preprocessor provider", "reason": "Unmatched preprocessor navigation depends on syntax-aware include and conditional context." },
+    { "helpTag": "]star", "status": "excluded-with-boundary", "boundary": "syntax provider", "reason": "C comment navigation requires a syntax provider." },
+    { "helpTag": "]/", "status": "excluded-with-boundary", "boundary": "syntax provider", "reason": "C comment navigation requires a syntax provider." },
+    { "helpTag": "]I", "status": "excluded-with-boundary", "boundary": "include provider", "reason": "Include listing requires a language-aware include provider." },
+    { "helpTag": "]f", "status": "excluded-with-boundary", "boundary": "include provider", "reason": "File navigation requires a language-aware include provider." },
+    { "helpTag": "]i", "status": "excluded-with-boundary", "boundary": "include provider", "reason": "Include lookup requires a language-aware include provider." },
+    { "helpTag": "]m", "status": "excluded-with-boundary", "boundary": "syntax/member provider", "reason": "Member navigation requires syntax or language-server structure." },
+    { "helpTag": "]s", "status": "excluded-with-boundary", "boundary": "spelling provider", "reason": "Misspelling navigation requires a spelling provider." },
+    { "helpTag": "g8", "status": "partial", "boundary": "workbench status/message surface", "fixtureIds": ["T061-CHAR-UTF8-01", "T061-g8-ORACLE-01"], "reason": "Vim-owned UTF-8 metadata is available; rendering the message remains a UI port concern." },
+    { "helpTag": "ga", "status": "partial", "boundary": "workbench status/message surface", "fixtureIds": ["T061-CHAR-CODEPOINT-01", "T061-ga-ORACLE-01"], "reason": "Vim-owned code-point metadata is available; rendering the message remains a UI port concern." },
+    { "helpTag": "gs", "status": "excluded-with-boundary", "boundary": "platform scheduler", "reason": "The documented sleep command has no editing effect and would block the keypress path without a platform scheduler port." },
+    { "helpTag": "gx", "status": "excluded-with-boundary", "boundary": "host application launcher", "reason": "Launching an external application requires an injected host provider." },
+    { "helpTag": "g@", "status": "excluded-with-boundary", "boundary": "operatorfunc scripting provider", "reason": "Arbitrary Vimscript operatorfunc execution is outside Xi's runtime boundary; a typed Xi provider is required." },
+    { "helpTag": "z=", "status": "excluded-with-boundary", "boundary": "spelling provider and UI surface", "reason": "Spelling suggestions require an injected dictionary provider and a picker/message surface." }
+  ],
+  "note": "This file accounts for every row still routed to T061 after pure direct, structural, parser and byte-motion fixes. Seed inventory rows intentionally retain status unimplemented until a complete owner-level audit changes the generator policy. Partial rows have production read-model semantics and still need UI dispatch evidence."
+}

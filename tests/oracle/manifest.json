@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "name": "Neovim",
+    "version": "0.12.4",
+    "tag": "v0.12.4",
+    "releaseUrl": "https://github.com/neovim/neovim/releases/tag/v0.12.4",
+    "platform": "linux-arm64",
+    "asset": {
+      "fileName": "nvim-linux-arm64.tar.gz",
+      "url": "https://github.com/neovim/neovim/releases/download/v0.12.4/nvim-linux-arm64.tar.gz",
+      "sha256": "ceb7e88c6b681f0515d135dcdfad54f5eb4373b25ce6172197cd9a69c758063f"
+    },
+    "binaryPath": "nvim-linux-arm64/bin/nvim",
+    "binarySha256": "d9635db0b272b7c81cd705ef0d8bbf16edfeb05b08b36b4228ab0d6a92ec384f",
+    "versionOutput": [
+      "NVIM v0.12.4",
+      "Build type: Release",
+      "LuaJIT 2.1.1774638290",
+      "Run \"nvim -V1 -v\" for more info"
+    ],
+    "runtimePath": "nvim-linux-arm64/share/nvim/runtime",
+    "runtimeDocs": {
+      "path": "doc",
+      "fileCount": 136,
+      "sha256": "79b80909bf8f5fe1d89a0fb66200388e651c88d49d565fdc51780ef4b24d7b1e",
+      "criticalFiles": {
+        "index.txt": "cb40843ab29b40768f07e7d4acbc78c9b3f17bdc955c45d2f0cbec02c431297e",
+        "options.txt": "7a566e094b0490649827b5683ba6ad67deb506b9499d9df4477304339bd01e45",
+        "motion.txt": "c47195456ad1f97fd51ff205d2a868bccb552188f9beff3b6cf17533184ff966",
+        "visual.txt": "aef449bf8f2f65208c34a696b0be00a43c1a996baa662ac17a4d9fe7dff1b168",
+        "insert.txt": "6c2d179f3157e441ed5697681900c4e67256ab1d7fc8c4fa889d294752bb7305",
+        "change.txt": "cc2e10af894313c379c201c14d4bf6ebef62b064094586ec07b9bce4e5fc32a9",
+        "map.txt": "d029920354fa90adf446de7892adc085b000d1c5565aaa1809adb0a1bc266d77"
+      }
+    }
+  },
+  "runtimeProfile": {
+    "config": "--clean -u NONE -i NONE --noplugin with isolated HOME and XDG roots",
+    "locale": "C.UTF-8",
+    "filetype": "plain buffer; filetype plugins and indent scripts disabled",
+    "encoding": "utf-8",
+    "fileformat": "unix",
+    "ambiwidth": "single",
+    "input": "feedkeys(termcode-expanded input, 'xt') drains typed input including mappings before snapshot"
+  }
+}

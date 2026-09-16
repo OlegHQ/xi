@@ -1,0 +1,6 @@
+a03bbab4aff137dae6c6125b3377806d61d0719ae0e921eab1d51222b2240089  docs/compatibility/t018-find-till.json
+0e8e47fc04ea0b186a16b9774564c1ef5c6cc7cc36caa62fe748478a14d3ee5a  packages/vim/motions/find.ts
+8023796dce0d425cd10254785fb305237ebfe8d673c37ad334e9c9efc8be6a13  packages/vim/src/index.ts
+58313f096d66a24704e83f37836f5076cd4d1d62938bf923f55edb00cf27c44b  tests/vim/motions/t018-find-cases.json
+bef4e609103d485d68d0f6483b2525b6bcff77b805c069167cc3fcf1e897f583  tests/vim/motions/t018-find.test.ts
+d2d21a09046504221731ae5d66d396c669d2a6f3ab7750aeb0dbef84d49d3f2a  tests/vim/motions/t018-oracle-probe.ts

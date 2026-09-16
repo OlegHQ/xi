@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "fixtureSet": "T004-v1",
+  "seed": 41027,
+  "corpora": [
+    {
+      "id": "T004-LONG-1M",
+      "generator": "repeat-ascii",
+      "parameters": { "character": "x", "utf16Length": 1048576, "lineBreaks": 0 }
+    },
+    {
+      "id": "T004-BATCH-1M",
+      "generator": "fixed-lines",
+      "parameters": { "lineContent": "a", "contentLength": 1023, "lineBreak": "\\n", "lineCount": 1024, "utf16Length": 1048576 }
+    },
+    {
+      "id": "T004-UNICODE-2K",
+      "generator": "seeded-source-lines",
+      "parameters": { "lineCount": 2000, "seed": 41027, "includes": ["tab", "é", "界", "🙂", "LF"] }
+    },
+    {
+      "id": "T004-MIDDLE-SEED",
+      "generator": "repeat-ascii",
+      "parameters": { "character": "a", "utf16Length": 8192, "lineBreaks": 0 }
+    }
+  ],
+  "traces": [
+    { "id": "T004-REF-250", "kind": "seeded-single-range-edits", "seed": 41027, "operations": 250 },
+    { "id": "T004-SMALL-10K", "kind": "middle-insert-delete-pairs", "samples": 10000 },
+    { "id": "T004-MIDDLE-100K", "kind": "repeated-middle-insert", "operations": 100000 },
+    { "id": "T004-BATCH-1-10K", "kind": "nonoverlapping-insert-batches", "counts": [1, 10, 100, 1000, 10000], "orders": ["sorted", "reversed"] },
+    { "id": "T004-ANCHOR-1-10K", "kind": "anchor-map-through-insert-batch", "counts": [1, 10, 100, 1000, 10000], "orders": ["sorted", "reversed"] },
+    { "id": "T004-UNDO-1K", "kind": "persistent-root-undo-retention", "operations": 1000 },
+    { "id": "T004-CANCEL-10K", "kind": "cancel-batch-preparation", "operations": 10000, "cancelAfter": 5000 }
+  ],
+  "failureFixtures": [
+    { "id": "FC-T004-SURROGATE-01", "kind": "insert-inside-surrogate-pair", "text": "A😀B", "invalidUtf16Offset": 2, "expected": "reject-without-text-or-version-change" },
+    { "id": "FC-T004-CANCEL-01", "kind": "cancel-preparation", "requestedEdits": 10000, "cancelAfterPrepared": 5000, "expected": "no-partial-publication" },
+    { "id": "FC-T004-FRAGMENT-01", "kind": "same-middle-insert", "seedCorpus": "T004-MIDDLE-SEED", "operations": 100000, "expectedUtf16Length": 108192, "expectedSha256": "39e8e9fdf7d3e87aee21b8a8ab56670f99fe8887bc6c9b9d0118b4a6e9afbb27" }
+  ]
+}

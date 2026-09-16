@@ -1,16 +1,16 @@
 # Validation gates and performance
 
-All gates below are future acceptance requirements. The planning repository has not executed editor tests or benchmarks. Test success must refer to a specific revision, environment and fixture corpus. A gate is failed if any mandatory prerequisite is missing, and unproven if it has not been run; neither state can be reported as passed.
+The gates below are acceptance requirements. The current worktree has implementation and evidence; consult tickets/reports for actual outcomes rather than the original planning-only baseline. The new [performance contract](12-performance.md) and [budget catalog](performance-budgets.json) add unmeasured obligations; historical component passes do not certify them. Test success must refer to a specific revision, environment and fixture corpus. A gate is failed if any mandatory prerequisite is missing, and unproven if it has not been run; neither state can be reported as passed.
 
 ## Gate definitions
 
 | Gate | Required evidence | Blocks |
 |---|---|---|
-| G0 feasibility | Pinned stack/platform probe; OpenTUI visible-row/input prototype; buffer and regex experiments; functioning Neovim oracle | Production architecture lock and feature implementation |
-| G1 core | Strict typecheck and import graph; document/position/transaction/history invariants; deterministic input and layout fixtures | Broad engine/UI feature work |
-| G2 engine preview | Seed family fixtures and generated traces; documented compatibility inventory; native editor behavior without Neovim runtime | Daily-editor preview label; does not certify final parity |
-| G3 workbench | Files/pickers/directory/search/replace/restore journeys through PTY; failure and focus checks; visual review | Workbench completion |
-| G4 language | Adversarial fake server, real TS/Go/Rust server tests, capability matrix, stale-edit protection, diagnostics and actions | LSP completion |
+| G0 feasibility | Pinned stack/platform probe; OpenTUI visible-row/key/pointer prototype; buffer including multi-edit scale and regex experiments; functioning Neovim oracle | Production architecture lock and feature implementation |
+| G1 core | Strict typecheck/import graph; versioned selection sets and command descriptors; document/position/transaction/history invariants; deterministic input, layout and hit maps | Broad engine/UI feature work |
+| G2 engine preview | Seed fixtures and generated traces; singleton and multi-cursor composition/register/repeat/macro/history checks; compatibility inventory; no Neovim runtime | Daily-editor preview label; does not certify final parity |
+| G3 workbench | Files/pickers/directory/search/replace/restore plus selection/discovery/mouse/trail journeys through PTY; contributions/evolution; focus and visual review | Workbench completion |
+| G4 language | Adversarial/real servers, capability matrix, stale text/selection protection, diagnostics/actions and multi-cursor completion/snippets | LSP completion |
 | G5 tools/data integrity | Git index/worktree fixtures, file operations/recovery failures, tasks, mutation/error UX | Tooling completion |
 | G6 release | G0–G5 evidence, complete in-scope parity inventory, performance thresholds, UX/accessibility/platform review, packaged no-Neovim smoke | Release/parity/performance claims |
 
@@ -27,9 +27,9 @@ Each gate report names the tickets it covers, exact commands and results, baseli
 
 Use Bun test for TypeScript suites and explicit pinned TypeScript `tsc --noEmit` for typechecking. T001 chooses test/property/parser dependencies after compatibility checks. A maintained VT parser/headless terminal can serve the PTY harness; assess Unicode handling against the release terminal matrix. Do not invent a PTY library API. CI should use a genuine OS PTY and provide an alternate tmux/script-based local capture path where needed.
 
-### Future command contract
+### Required command contract
 
-These commands are **required scripts to implement in T001 and their owning tickets**, not commands currently available. A missing suite must fail clearly, never pass because it discovered zero tests.
+These are required script contracts. Some scripts now exist; their names and successful discovery do not prove that every required test, baseline comparator or threshold is implemented. Inspect the current adapters and evidence. A missing suite must fail clearly, never pass because it discovered zero tests.
 
 ```text
 bun run check             # typecheck + lint + import boundaries
@@ -43,6 +43,8 @@ bun run verify:release
 ```
 
 `verify:release` checks actual reports/manifests and runs required suites; it must not merely read manually checked boxes. Ordinary feature work runs relevant subsets; release validation runs the complete release contract. Lockfile installation is frozen in CI. Type suppression, ignored errors and expected failures require explicit reasons and cannot conceal in-scope gate failures.
+
+Add required suite selectors under these scripts: `bun run test:vim -- --profile xi --suite multi-selection --seed 41027`, `bun run test:e2e -- --suite interaction`, `bun run test:unit -- --suite contributions`, and `bun run bench -- --suite selections --baseline <revision>`. Their current implementation must be checked against the owning evidence; selectors alone do not certify coverage. MC01–MC12 are specified in [selections](08-selections.md); EX01–EX05 in [extensibility](10-extensibility.md). MP01 is protocol/ordering, MP02 terminal lifecycle/capability fallback, MP03 coordinate hit testing, MP04 gesture/capture/focus. Each family expands into identified success, failure and cancellation fixtures; a selector discovering zero cases fails.
 
 ## PTY journey corpus
 
@@ -59,13 +61,20 @@ bun run verify:release
 | E09 | Git stage hunk, unstage, commit with failing hook | Actual index diff correct; draft preserved; no network operation |
 | E10 | Merge resolve base/ours/theirs and external index change | Correct result, conflict state validated, stale stage refused |
 | E11 | Resize 160x50 → 80x24 → 60x18 → restore | No text loss or orphan focus; unified diff; hidden layout restored |
-| E12 | Legacy/enhanced keys, bracketed paste, mouse optional | One event delivery, no pasted commands, no Ctrl-C accidental exit |
+| E12 | Legacy/enhanced keys, bracketed paste, required supported mouse protocols | One event delivery, no pasted commands, no Ctrl-C accidental exit; limitations recorded by terminal |
 | E13 | Crash after edit/save/directory-step then restart | Bounded recovery loss, external disk changes preserved, journal actionable |
 | E14 | Slow LSP + huge search + Git refresh while typing | Functional correctness and loaded interaction latency budget |
 | E15 | Read-only/permission errors, missing rg/Git/server | Clear degraded state; plain editing works |
 | E16 | Theme preview/cancel, ASCII/256-color, narrow popups | Token consistency, cursor visible, no layout corruption |
 | E17 | Task launch, output flood, cancel and quit | Bounded output, accurate exit status, child processes reaped |
 | E18 | Packaged CLI with Neovim absent and empty HOME-like test config | All core workflows work; no external editor engine dependency |
+| E19 | Create/skip/filter multiple selections, edit, dot, macro, undo/redo, split and restore | Correct text, one batch per command, primary/count and independent sets survive; selection undo changes no text |
+| E20 | Prefix hints, remap/reload, Ex completion/aliases and dirty `:q` | No input delay/focus theft; typed command executes; native abbreviations and write/quit distinctions preserved |
+| E21 | Text/word/line/block/multi-cursor drag across wrapped Unicode, wheel and controls | Correct semantic ranges through real terminal reports; one target per event; no unexpected operator completion |
+| E22 | Splitter/autoscroll capture, stale layout, focus loss, resize, suspend and quit | Capture stops; no stuck timers/buttons; text retained; terminal modes restored; keyboard fallback works |
+| E23 | Motion trail on/off with Visual/search/diagnostics and multiple cursors | Identical semantic state/bytes; distinct reviewed paint in truecolor/256/no-color, EOL/Unicode/narrow views |
+| E24 | Multi-completion/snippets/imports, move-only staleness and formatter edits | One coherent transaction, additional import once, generation guards, explicit incompatible-context action |
+| E25 | Add/dispose/reload contribution, aliases and old session/config migration | Real production registration path, one handler invocation, no stale action/leak, original future-schema bytes preserved |
 
 Fixtures include spaces, tabs/newlines in POSIX filenames, leading dashes, apostrophes, Unicode normalization variants, symlinks and loops, case-only renames, hidden/ignored files, multi-root duplicates, invalid UTF-8, CRLF/mixed EOL, no final newline, 1 MiB single line, empty file, binary file, nested Git repos, submodules/worktrees, permission errors and external modifications. Platform-specific cases must be tagged, not silently skipped on supported platforms.
 
@@ -75,20 +84,27 @@ Fixtures include spaces, tabs/newlines in POSIX filenames, leading dashes, apost
 
 Initial reference host: choose and record a dedicated Linux machine (the planning host is aarch64, but not yet a benchmark-certified runner), CPU model/cores, RAM, kernel, power mode, storage, locale, terminal/version, font, refresh rate, tmux/version, Bun/OpenTUI/native artifact/compiler versions and repository revisions. Use the same machine for before/after measurements. Add macOS qualification before claiming support; Windows remains a separately gated target.
 
-### Proposed release thresholds
+### Resource coverage and catalog
+
+[Spec 12](12-performance.md) extends these thresholds with per-owner CPU, transient allocation, retained/peak memory, history/register/replica/queue and pressure limits; it preserves every original target below. [Spec 13](13-performance-research.md) records source-backed design tradeoffs and actual current-code defects. PF01–PF12 add 10 MiB single lines, newline-dense and mixed-EOL files, pinned SQLite source, long history groups, giant delete/undo, CPU isolation and resource-pressure workloads. `python3 tools/perf.py check/build/status` validates/indexes the development catalog and reports missing observations; it cannot certify runtime behavior. T106/T115 implement real comparison/coverage, and T062/G6 remain unproven until their entire contract passes.
+
+### Mandatory release thresholds
+
+[Spec 15](15-keystroke-latency.md) defines the binding keystroke action/load matrix, p50 and observed maxima, physical capture, open-loop scheduling and per-session evidence rules. The 2026-09-15 product decision tightens ordinary loaded typing to the same limits as idle typing; prior measurements remain historical, not passes for these requirements.
 
 | Metric | Target on reference host | Measurement boundary |
 |---|---|---|
-| Keystroke engine step, small source file | p95 ≤ 1 ms; p99 ≤ 2 ms | Decoded event to committed state; ordinary local edit/motion |
-| Input to terminal-output completion | p95 ≤ 8 ms; p99 ≤ 16 ms | PTY injection/arrival to output containing correct cursor/text update |
+| Keystroke engine step, small source file | p50 ≤ 0.5 ms; p95 ≤ 1 ms; p99 ≤ 2 ms; max ≤ 4 ms | Decoded event to committed state; ordinary local edit/motion |
+| Input to terminal-output completion | p50 ≤ 4 ms; p95 ≤ 8 ms; p99 ≤ 16 ms; max ≤ 25 ms | PTY injection/arrival to output containing correct cursor/text update |
 | Overhead against clean Neovim | p95 ≤ Neovim p95 + 3 ms | Same source fixture/keys/viewport/output boundary |
-| Loaded typing (LSP/search/Git active) | p95 ≤ 12 ms; p99 ≤ 25 ms | Same terminal-output boundary under E14 |
-| App-attributable main-loop stall | No > 50 ms stall in interactive traces | Exclude documented explicit large operations, report all outliers |
+| Loaded typing (LSP/search/Git/syntax/tasks active) | p50 ≤ 4 ms; p95 ≤ 8 ms; p99 ≤ 16 ms; max ≤ 25 ms | Same terminal-output boundary under E14; individual and simultaneous loads |
+| Physical key to correct visible pixels, idle and loaded | p50 ≤ 20 ms; p95 ≤ 35 ms; p99 ≤ 50 ms; max ≤ 75 ms | Calibrated hardware actuation to photons on qualified reference terminal/display |
+| App-attributable main-loop stall | Ordinary interactive max ≤ 8 ms; global max ≤ 50 ms | Include GC and atomic publication; explicit batch slices retain their own bounds; report all outliers |
 | Warm startup to editable first file | p95 ≤ 150 ms | Process spawn to correct visible editable file; no LSP ready wait |
 | Process-cold startup, filesystem warm | p95 ≤ 300 ms | New process/module state; distinguish from cold OS page cache |
 | Open 1 MiB source | p95 ≤ 100 ms | Command dispatch to usable viewport |
 | Open 10 MiB normal-line file | p95 ≤ 250 ms | Usable viewport; lazy parse deferred explicitly |
-| 100 MiB large-file mode | First viewport ≤ 1 s; later typing p95 ≤ 16 ms | Limits apply, no full-file parse/index on foreground |
+| 100 MiB large-file mode | First viewport ≤ 1 s; later typing p50 ≤ 8 ms; p95 ≤ 16 ms; p99 ≤ 25 ms; max ≤ 50 ms | Limits apply, no full-file parse/index on foreground; INPUT-LARGE also covers giant lines |
 | File picker warm / 100k paths | First useful result ≤ 30 ms; p95 update ≤ 50 ms | Query dispatch, separate index warm/cold |
 | Content search / 100k files, 1 GiB corpus | Warm first match p95 ≤ 100 ms; cancel reflected ≤ 50 ms | Include debounce; no-match completion measured separately |
 | Render at 120x40 / 240x70 | p95 ≤ 4 ms / 8 ms for ordinary frame | Layout/style/raster/output enqueue; report terminal separately |
@@ -97,6 +113,25 @@ Initial reference host: choose and record a dedicated Linux machine (the plannin
 | Memory retention | < 10 MiB retained growth after 1,000 open/close/picker cycles | Stabilized GC windows and native memory included |
 
 These are demanding design budgets, not achieved results. T007 must determine feasibility early. If a budget fails, capture attribution and fix the bottleneck or leave the gate failed. Revising a target requires an explicit documented product decision with original results retained; an implementation agent cannot silently relax it.
+
+### Selection and interaction scale requirements
+
+These additional budgets are mandatory release targets with the same reference-host/noise rules. One-cursor editing retains every original latency requirement with the selection-set path enabled. Neovim comparison applies to matching singleton behavior, not invented native multi-cursor support. Record 1/10/100/1,000/10,000 members, sorted/reversed creation, overlaps, Visual blocks, mixed Unicode, short and long lines, and two views of one document.
+
+| Workload | Required target / measurement |
+|---|---|
+| 10 cursors, ordinary insert/motion | Input-to-output p95 ≤ 12 ms; p99 ≤ 25 ms |
+| 100 cursors, ordinary insert/motion | Input-to-output p95 ≤ 16 ms; p99 ≤ 32 ms |
+| 1,000 cursors, ordinary insert/motion | Input-to-output p95 ≤ 50 ms; p99 ≤ 100 ms |
+| 10,000 cursors, explicit batch edit on 1 MiB normal-line fixture | Complete coherent output p95 ≤ 500 ms; p99 ≤ 1 s; cancellable preparation, no intermediate partial text |
+| Selection all-match creation on 1 MiB fixture up to 10,000 matches | Complete set p95 ≤ 500 ms; progress and cancel reflected ≤ 50 ms; zero-match completion measured |
+| Main-loop work during explicit large selection operations | Cooperative preparation slices ≤ 8 ms target; no app-attributable > 50 ms stall, including atomic publication |
+| Pointer selection and splitter drag at 120x40 / 240x70 | Latest event-to-correct output p95 ≤ 16 ms / 25 ms; press/release never dropped; loaded typing still meets E14 |
+| Prefix help | Default display at 250 ms ± 50 ms on controlled integration runner; completed command latency unchanged within measured noise; fake-clock boundary checks |
+| Motion trail on/off | Original frame/typing/idle budgets pass in both modes; no permanent render loop or >10% unexplained p95 regression |
+| Selection mapping | Sorted endpoint traversal bounded by selections + edits; instrument operation counts and adversarial growth to detect per-cursor full edit scans |
+
+Selection and contribution state is included in original process RSS/retention budgets, not excluded as overhead. Exercise 1,000 selection-create/collapse, view-close and contribution-dispose cycles with histories populated. Bound selection undo history and release snapshots/ID maps when no live owner/history entry needs them. T004/T084 expose feasibility risks early, T089 qualifies composition/scale, and T062 verifies final loaded-system results. A maximum-count limit is a visible product policy, not permission to benchmark fewer cursors or silently truncate requested results.
 
 The PTY output boundary is not physical key-to-photon latency: OS input queues, emulator rendering and display scanout contribute additional delay. Also measure real terminal visible-frame response via instrumented emulator capture or camera/high-speed measurement for final UX qualification. Report those measurements separately; do not relabel process timestamps as photons.
 

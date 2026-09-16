@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "suite": "e2e",
+  "fixtures": ["session", "picker", "explorer", "workbench", "distribution"]
+}

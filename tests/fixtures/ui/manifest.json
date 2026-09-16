@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "suite": "ui",
+  "fixtures": ["workbench", "contrast", "surface-matrix", "visual-matrix", "prefix-help", "motion-paint"]
+}

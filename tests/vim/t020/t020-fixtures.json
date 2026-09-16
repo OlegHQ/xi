@@ -1,0 +1,488 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "T020-ORACLE-DIW-WORD-01",
+      "title": "Delete inner small word",
+      "purpose": "Pin iw boundaries and register text from within a keyword run.",
+      "modes": ["normal"],
+      "lines": ["alpha beta_gamma !"],
+      "cursor": { "line": 1, "byteColumn0": 8 },
+      "steps": [{ "label": "diw", "keys": "diw" }]
+    },
+    {
+      "id": "T020-ORACLE-DAW-WHITESPACE-01",
+      "title": "Around word on whitespace",
+      "purpose": "Pin aw selection when the cursor is on the whitespace before a word.",
+      "modes": ["normal"],
+      "lines": ["one two three"],
+      "cursor": { "line": 1, "byteColumn0": 3 },
+      "steps": [{ "label": "daw-on-space", "keys": "daw" }]
+    },
+    {
+      "id": "T020-ORACLE-YIW-WORD-01",
+      "title": "Yank inner word",
+      "purpose": "Pin yiw payload, register type, and unchanged text/cursor.",
+      "modes": ["normal"],
+      "lines": ["alpha beta"],
+      "cursor": { "line": 1, "byteColumn0": 7 },
+      "steps": [{ "label": "yiw", "keys": "yiw" }]
+    },
+    {
+      "id": "T020-ORACLE-CIW-WORD-01",
+      "title": "Change inner word",
+      "purpose": "Pin ciw deletion and Insert-mode replacement boundary.",
+      "modes": ["normal"],
+      "lines": ["alpha beta tail"],
+      "cursor": { "line": 1, "byteColumn0": 7 },
+      "steps": [{ "label": "ciw-replace", "keys": "ciwX<Esc>" }]
+    },
+    {
+      "id": "T020-ORACLE-DIW-WHITESPACE-01",
+      "title": "Inner word from whitespace",
+      "purpose": "Pin the text object outcome at whitespace, including cursor and register behavior.",
+      "modes": ["normal"],
+      "lines": ["one   two"],
+      "cursor": { "line": 1, "byteColumn0": 4 },
+      "steps": [{ "label": "diw-on-space", "keys": "diw" }]
+    },
+    {
+      "id": "T020-ORACLE-D2IW-COUNT-01",
+      "title": "Count expands inner word",
+      "purpose": "Pin counted word-object expansion across adjacent words and separator whitespace.",
+      "modes": ["normal"],
+      "lines": ["one two three four"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [{ "label": "d2iw", "keys": "d2iw" }]
+    },
+    {
+      "id": "T020-ORACLE-D3IW-COUNT-01",
+      "title": "Higher count expands inner word",
+      "purpose": "Pin how count expansion treats the word and intervening whitespace units.",
+      "modes": ["normal"],
+      "lines": ["one two three four"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [{ "label": "d3iw", "keys": "d3iw" }]
+    },
+    {
+      "id": "T020-ORACLE-D4IW-COUNT-01",
+      "title": "Even count expands inner word through the following separator",
+      "purpose": "Pin the alternating word/whitespace boundary at a larger even count.",
+      "modes": ["normal"],
+      "lines": ["one two three four five six"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [{ "label": "d4iw", "keys": "d4iw" }]
+    },
+    {
+      "id": "T020-ORACLE-D5IW-COUNT-01",
+      "title": "Odd count expands inner word through the last selected word",
+      "purpose": "Pin the alternating word/whitespace boundary at a larger odd count.",
+      "modes": ["normal"],
+      "lines": ["one two three four five six"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [{ "label": "d5iw", "keys": "d5iw" }]
+    },
+    {
+      "id": "T020-ORACLE-D2AW-COUNT-01",
+      "title": "Count expands around words",
+      "purpose": "Pin around-word count semantics including trailing whitespace.",
+      "modes": ["normal"],
+      "lines": ["one two three four"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [{ "label": "d2aw", "keys": "d2aw" }]
+    },
+    {
+      "id": "T020-ORACLE-DIW-UNSET-ISKEYWORD-01",
+      "title": "Inner word follows iskeyword",
+      "purpose": "Pin punctuation grouping for the default iskeyword option.",
+      "modes": ["normal"],
+      "lines": ["foo.bar/baz tail"],
+      "cursor": { "line": 1, "byteColumn0": 4 },
+      "steps": [{ "label": "diw-punctuation", "keys": "diw" }]
+    },
+    {
+      "id": "T020-ORACLE-DIS-SENTENCE-01",
+      "title": "Delete inner sentence",
+      "purpose": "Pin sentence boundary and preservation of following spacing.",
+      "modes": ["normal"],
+      "lines": ["First sentence.  Second sentence!  Third?"],
+      "cursor": { "line": 1, "byteColumn0": 23 },
+      "steps": [{ "label": "dis-second", "keys": "dis" }]
+    },
+    {
+      "id": "T020-ORACLE-DAS-SENTENCE-01",
+      "title": "Delete around sentence",
+      "purpose": "Pin sentence plus trailing whitespace selection.",
+      "modes": ["normal"],
+      "lines": ["First sentence.  Second sentence!  Third?"],
+      "cursor": { "line": 1, "byteColumn0": 23 },
+      "steps": [{ "label": "das-second", "keys": "das" }]
+    },
+    {
+      "id": "T020-ORACLE-YIS-SENTENCE-01",
+      "title": "Yank inner sentence",
+      "purpose": "Pin sentence object register contents and characterwise type.",
+      "modes": ["normal"],
+      "lines": ["First sentence.  Second sentence!  Third?"],
+      "cursor": { "line": 1, "byteColumn0": 23 },
+      "steps": [{ "label": "yis-second", "keys": "yis" }]
+    },
+    {
+      "id": "T020-ORACLE-VAS-SENTENCE-01",
+      "title": "Select around sentence",
+      "purpose": "Pin visual sentence selection endpoints and active cursor direction.",
+      "modes": ["normal", "visual"],
+      "lines": ["First sentence.  Second sentence!  Third?"],
+      "cursor": { "line": 1, "byteColumn0": 23 },
+      "steps": [
+        { "label": "vas-second", "keys": "vas" },
+        { "label": "yank-selected-sentence", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T020-ORACLE-DIP-PARAGRAPH-01",
+      "title": "Delete inner paragraph",
+      "purpose": "Pin paragraph text range without consuming separator blank lines.",
+      "modes": ["normal"],
+      "lines": ["before", "", "First paragraph", "continues here.", "", "Second paragraph", "", "after"],
+      "cursor": { "line": 4, "byteColumn0": 4 },
+      "steps": [{ "label": "dip-first", "keys": "dip" }]
+    },
+    {
+      "id": "T020-ORACLE-DAP-PARAGRAPH-01",
+      "title": "Delete around paragraph",
+      "purpose": "Pin paragraph and adjacent blank-line selection.",
+      "modes": ["normal"],
+      "lines": ["before", "", "First paragraph", "continues here.", "", "Second paragraph", "", "after"],
+      "cursor": { "line": 4, "byteColumn0": 4 },
+      "steps": [{ "label": "dap-first", "keys": "dap" }]
+    },
+    {
+      "id": "T020-ORACLE-YIP-PARAGRAPH-01",
+      "title": "Yank inner paragraph",
+      "purpose": "Pin paragraph register lines and linewise type.",
+      "modes": ["normal"],
+      "lines": ["before", "", "First paragraph", "continues here.", "", "Second paragraph", "", "after"],
+      "cursor": { "line": 4, "byteColumn0": 4 },
+      "steps": [{ "label": "yip-first", "keys": "yip" }]
+    },
+    {
+      "id": "T020-ORACLE-VIP-PARAGRAPH-01",
+      "title": "Select inner paragraph",
+      "purpose": "Pin visual paragraph selection kind, endpoints and cursor direction.",
+      "modes": ["normal", "visual"],
+      "lines": ["before", "", "First paragraph", "continues here.", "", "Second paragraph", "", "after"],
+      "cursor": { "line": 4, "byteColumn0": 4 },
+      "steps": [
+        { "label": "vip-first", "keys": "vip" },
+        { "label": "yank-selected-paragraph", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T020-ORACLE-DIQUOTE-01",
+      "title": "Delete inner double-quoted string",
+      "purpose": "Pin inner quote boundaries and register contents.",
+      "modes": ["normal"],
+      "lines": ["let x = \"hello world\"; tail"],
+      "cursor": { "line": 1, "byteColumn0": 14 },
+      "steps": [{ "label": "di-double-quote", "keys": "di\"" }]
+    },
+    {
+      "id": "T020-ORACLE-DA-SINGLE-QUOTE-01",
+      "title": "Delete around single-quoted string",
+      "purpose": "Pin quote-inclusive range and following punctuation.",
+      "modes": ["normal"],
+      "lines": ["call('alpha beta', next)"],
+      "cursor": { "line": 1, "byteColumn0": 10 },
+      "steps": [{ "label": "da-single-quote", "keys": "da'" }]
+    },
+    {
+      "id": "T020-ORACLE-DIQUOTE-ESCAPED-01",
+      "title": "Escaped quote is not the object boundary",
+      "purpose": "Pin how escaped double quotes are skipped when finding a quote pair.",
+      "modes": ["normal"],
+      "lines": ["say \"alpha \\\"quoted\\\" omega\" tail"],
+      "cursor": { "line": 1, "byteColumn0": 17 },
+      "steps": [{ "label": "di-escaped-double-quote", "keys": "di\"" }]
+    },
+    {
+      "id": "T020-ORACLE-CIQUOTE-EMPTY-01",
+      "title": "Change empty quotes",
+      "purpose": "Pin empty inner quote behavior and insertion cursor placement.",
+      "modes": ["normal"],
+      "lines": ["before \"\" after"],
+      "cursor": { "line": 1, "byteColumn0": 7 },
+      "steps": [{ "label": "ci-empty-double-quote", "keys": "ci\"X<Esc>" }]
+    },
+    {
+      "id": "T020-ORACLE-DI-PAREN-NESTED-01",
+      "title": "Delete inner nested parentheses",
+      "purpose": "Pin innermost matching parentheses while ignoring the outer pair.",
+      "modes": ["normal"],
+      "lines": ["call outer(inner(one), two) tail"],
+      "cursor": { "line": 1, "byteColumn0": 17 },
+      "steps": [{ "label": "di-nested-paren", "keys": "di(" }]
+    },
+    {
+      "id": "T020-ORACLE-DA-BRACKET-01",
+      "title": "Delete around square bracket pair",
+      "purpose": "Pin around bracket delimiters and selected register text.",
+      "modes": ["normal"],
+      "lines": ["left [one [two] three] right"],
+      "cursor": { "line": 1, "byteColumn0": 14 },
+      "steps": [{ "label": "da-square-bracket", "keys": "da[" }]
+    },
+    {
+      "id": "T020-ORACLE-D2A-PAREN-COUNT-01",
+      "title": "Count expands to enclosing parentheses",
+      "purpose": "Pin counted object expansion through nested parenthesis pairs.",
+      "modes": ["normal"],
+      "lines": ["outer(inner(value)) tail"],
+      "cursor": { "line": 1, "byteColumn0": 12 },
+      "steps": [{ "label": "d2a-parentheses", "keys": "d2a(" }]
+    },
+    {
+      "id": "T020-ORACLE-CI-BRACE-01",
+      "title": "Change inner braces",
+      "purpose": "Pin change operator composition with inner curly braces.",
+      "modes": ["normal"],
+      "lines": ["left {old value} right"],
+      "cursor": { "line": 1, "byteColumn0": 9 },
+      "steps": [{ "label": "ci-brace-insert", "keys": "ci{new<Esc>" }]
+    },
+    {
+      "id": "T020-ORACLE-DI-PAREN-UNCLOSED-01",
+      "title": "Unclosed bracket is an object failure",
+      "purpose": "Pin no-pair result when the opening parenthesis has no closer.",
+      "modes": ["normal"],
+      "lines": ["call (unfinished"],
+      "cursor": { "line": 1, "byteColumn0": 8 },
+      "steps": [{ "label": "di-unclosed-paren", "keys": "di(" }]
+    },
+    {
+      "id": "T020-ORACLE-DIQUOTE-EMPTY-01",
+      "title": "Inner empty quotes are an object failure",
+      "purpose": "Pin no-content behavior for an empty quote pair under delete.",
+      "modes": ["normal"],
+      "lines": ["before \"\" after"],
+      "cursor": { "line": 1, "byteColumn0": 7 },
+      "steps": [{ "label": "di-empty-double-quote", "keys": "di\"" }]
+    },
+    {
+      "id": "T020-ORACLE-DIQUOTE-EMPTY-REGISTER-01",
+      "title": "Delete empty inner quotes preserves seeded registers",
+      "purpose": "Pin zero-width delete as a no-op that preserves existing named and unnamed register state.",
+      "modes": ["normal"],
+      "lines": ["before \"\" after", "seed"],
+      "cursor": { "line": 2, "byteColumn0": 0 },
+      "steps": [
+        { "label": "seed-register-a", "keys": "\"ayiw" },
+        { "label": "delete-empty-object", "keys": "ggf\"di\"" }
+      ]
+    },
+    {
+      "id": "T020-ORACLE-YIQUOTE-EMPTY-REGISTER-01",
+      "title": "Yank empty inner quotes preserves seeded registers",
+      "purpose": "Pin zero-width yank as a no-op that preserves existing named and unnamed register state.",
+      "modes": ["normal"],
+      "lines": ["before \"\" after", "seed"],
+      "cursor": { "line": 2, "byteColumn0": 0 },
+      "steps": [
+        { "label": "seed-register-a", "keys": "\"ayiw" },
+        { "label": "yank-empty-object", "keys": "ggf\"yi\"" }
+      ]
+    },
+    {
+      "id": "T020-ORACLE-CIQUOTE-EMPTY-REGISTER-01",
+      "title": "Change empty inner quotes preserves seeded registers",
+      "purpose": "Pin zero-width change entering Insert at the gap without altering existing registers.",
+      "modes": ["normal"],
+      "lines": ["before \"\" after", "seed"],
+      "cursor": { "line": 2, "byteColumn0": 0 },
+      "steps": [
+        { "label": "seed-register-a", "keys": "\"ayiw" },
+        { "label": "change-empty-object", "keys": "ggf\"ci\"X<Esc>" }
+      ]
+    },
+    {
+      "id": "T020-ORACLE-DIT-NESTED-TAG-01",
+      "title": "Delete inner nested tag body",
+      "purpose": "Pin inner tag selection in nested HTML-like elements.",
+      "modes": ["normal"],
+      "lines": ["<div><span>alpha</span><span>beta</span></div> tail"],
+      "cursor": { "line": 1, "byteColumn0": 30 },
+      "steps": [{ "label": "dit-nested-span", "keys": "dit" }]
+    },
+    {
+      "id": "T020-ORACLE-DAT-NESTED-TAG-01",
+      "title": "Delete around nested tag block",
+      "purpose": "Pin around tag boundaries for the current nested element.",
+      "modes": ["normal"],
+      "lines": ["<div><span>alpha</span><span>beta</span></div> tail"],
+      "cursor": { "line": 1, "byteColumn0": 30 },
+      "steps": [{ "label": "dat-nested-span", "keys": "dat" }]
+    },
+    {
+      "id": "T020-ORACLE-D2AT-TAG-COUNT-01",
+      "title": "Count expands to enclosing tag block",
+      "purpose": "Pin counted tag-object expansion from span to containing div.",
+      "modes": ["normal"],
+      "lines": ["<div><span>alpha</span><span>beta</span></div> tail"],
+      "cursor": { "line": 1, "byteColumn0": 30 },
+      "steps": [{ "label": "d2at-nested-tags", "keys": "d2at" }]
+    },
+    {
+      "id": "T020-ORACLE-VIW-EXPAND-FORWARD-01",
+      "title": "Visual inner word expands existing forward selection",
+      "purpose": "Pin anchor retention and forward selection expansion to a word boundary.",
+      "modes": ["normal", "visual"],
+      "lines": ["alpha beta gamma"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "visual-iw-forward", "keys": "vlllllliw" },
+        { "label": "yank-forward-selection", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T020-ORACLE-VIW-EXPAND-BACKWARD-01",
+      "title": "Visual inner word expands existing backward selection",
+      "purpose": "Pin anchor retention and reverse direction while extending a selection.",
+      "modes": ["normal", "visual"],
+      "lines": ["alpha beta gamma"],
+      "cursor": { "line": 1, "byteColumn0": 15 },
+      "steps": [
+        { "label": "visual-iw-backward", "keys": "vbbiw" },
+        { "label": "yank-backward-selection", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T020-ORACLE-VAT-NESTED-TAG-01",
+      "title": "Visual around tag expands existing selection",
+      "purpose": "Pin visual tag-object selection direction and enclosing tag boundary.",
+      "modes": ["normal", "visual"],
+      "lines": ["<div><span>alpha</span><b>beta</b></div>"],
+      "cursor": { "line": 1, "byteColumn0": 27 },
+      "steps": [
+        { "label": "visual-at-tag", "keys": "vat" },
+        { "label": "yank-selected-tag", "keys": "\"ay" }
+      ]
+    },
+    {
+      "id": "T020-ORACLE-DAW-WORD-01",
+      "title": "Around word includes following whitespace",
+      "purpose": "Pin the preferred whitespace side when a word has trailing blanks.",
+      "modes": ["normal"],
+      "lines": ["one two   three"],
+      "cursor": { "line": 1, "byteColumn0": 5 },
+      "steps": [{ "label": "daw-trailing-space", "keys": "daw" }]
+    },
+    {
+      "id": "T020-ORACLE-DAW-WORD-LEADING-SPACE-01",
+      "title": "Around final word includes preceding whitespace",
+      "purpose": "Pin fallback to leading blanks when the final word has no trailing whitespace.",
+      "modes": ["normal"],
+      "lines": ["one two"],
+      "cursor": { "line": 1, "byteColumn0": 5 },
+      "steps": [{ "label": "daw-leading-space", "keys": "daw" }]
+    },
+    {
+      "id": "T020-ORACLE-DIW-BIGWORD-01",
+      "title": "Delete inner WORD",
+      "purpose": "Pin punctuation grouping under iW.",
+      "modes": ["normal"],
+      "lines": ["foo.bar/baz tail"],
+      "cursor": { "line": 1, "byteColumn0": 4 },
+      "steps": [{ "label": "diW-punctuation", "keys": "diW" }]
+    },
+    {
+      "id": "T020-ORACLE-DAW-BIGWORD-01",
+      "title": "Delete around WORD",
+      "purpose": "Pin aW extent and whitespace inclusion for a punctuation-containing WORD.",
+      "modes": ["normal"],
+      "lines": ["left foo.bar/baz   tail"],
+      "cursor": { "line": 1, "byteColumn0": 9 },
+      "steps": [{ "label": "daW-word", "keys": "daW" }]
+    },
+    {
+      "id": "T020-ORACLE-D2IS-SENTENCE-COUNT-01",
+      "title": "Count expands inner sentence",
+      "purpose": "Pin a two-sentence inner object and the inter-sentence whitespace boundary.",
+      "modes": ["normal"],
+      "lines": ["One.  Two!  Three.  Four?"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [{ "label": "d2is", "keys": "d2is" }]
+    },
+    {
+      "id": "T020-ORACLE-D2AP-PARAGRAPH-COUNT-01",
+      "title": "Count expands around paragraphs",
+      "purpose": "Pin counted paragraph expansion across a blank-line separator.",
+      "modes": ["normal"],
+      "lines": ["First paragraph", "line two", "", "Second paragraph", "line two", "", "Third paragraph"],
+      "cursor": { "line": 1, "byteColumn0": 2 },
+      "steps": [{ "label": "d2ap", "keys": "d2ap" }]
+    },
+    {
+      "id": "T020-ORACLE-DI-BACKTICK-01",
+      "title": "Delete inner backtick string",
+      "purpose": "Pin the third built-in quote delimiter family.",
+      "modes": ["normal"],
+      "lines": ["run `alpha beta` now"],
+      "cursor": { "line": 1, "byteColumn0": 9 },
+      "steps": [{ "label": "di-backtick", "keys": "di`" }]
+    },
+    {
+      "id": "T020-ORACLE-DA-BACKTICK-01",
+      "title": "Delete around backtick string",
+      "purpose": "Pin backtick delimiter inclusion and adjacent whitespace.",
+      "modes": ["normal"],
+      "lines": ["run `alpha`   now"],
+      "cursor": { "line": 1, "byteColumn0": 6 },
+      "steps": [{ "label": "da-backtick", "keys": "da`" }]
+    },
+    {
+      "id": "T020-ORACLE-YI-PAREN-01",
+      "title": "Yank inner block",
+      "purpose": "Pin y operator composition with a nested inner parenthesis object.",
+      "modes": ["normal"],
+      "lines": ["call outer(inner(value), other)"],
+      "cursor": { "line": 1, "byteColumn0": 18 },
+      "steps": [{ "label": "yi-parentheses", "keys": "yi(" }]
+    },
+    {
+      "id": "T020-ORACLE-CIT-TAG-01",
+      "title": "Change inner tag body",
+      "purpose": "Pin change operator composition with a nested tag object.",
+      "modes": ["normal"],
+      "lines": ["<div><span>old</span><b>tail</b></div>"],
+      "cursor": { "line": 1, "byteColumn0": 13 },
+      "steps": [{ "label": "ci-tag-replace", "keys": "citnew<Esc>" }]
+    },
+    {
+      "id": "T020-ORACLE-DI-ANGLE-NESTED-01",
+      "title": "Delete inner nested angle block",
+      "purpose": "Pin the <> delimiter family inside nested angle blocks.",
+      "modes": ["normal"],
+      "lines": ["left <one <two> three> right"],
+      "cursor": { "line": 1, "byteColumn0": 13 },
+      "steps": [{ "label": "di-angle-nested", "keys": "di<" }]
+    },
+    {
+      "id": "T020-ORACLE-DA-ANGLE-01",
+      "title": "Delete around angle block",
+      "purpose": "Pin angle delimiters and an inner/around pair without HTML tag syntax.",
+      "modes": ["normal"],
+      "lines": ["left <one <two> three> right"],
+      "cursor": { "line": 1, "byteColumn0": 13 },
+      "steps": [{ "label": "da-angle-nested", "keys": "da<" }]
+    },
+    {
+      "id": "T020-ORACLE-DIT-UNCLOSED-TAG-01",
+      "title": "Unclosed tag is an object failure",
+      "purpose": "Pin no-match behavior for a tag without a closing element.",
+      "modes": ["normal"],
+      "lines": ["<div><span>unfinished"],
+      "cursor": { "line": 1, "byteColumn0": 15 },
+      "steps": [{ "label": "dit-unclosed-tag", "keys": "dit" }]
+    }
+  ]
+}

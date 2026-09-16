@@ -1,0 +1,2514 @@
+{
+  "schema_version": 1,
+  "specification": "docs/plan/12-performance.md",
+  "adapters": [
+    {
+      "budget_id": "ENGINE-STEP",
+      "id": "adapter.engine-step",
+      "owner": "vim",
+      "entrypoint": "packages/vim/src/index.ts",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF01",
+      "metrics": [
+        "cpu:p95",
+        "wall:max",
+        "wall:p50",
+        "wall:p95",
+        "wall:p99"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.engine-step",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "spec-15:10000-events-per-action-load-condition-across-30-sessions; open-loop; session-block-confidence; all-outliers-retained"
+      }
+    },
+    {
+      "budget_id": "ENGINE-MOVE-ALLOC",
+      "id": "adapter.engine-move-alloc",
+      "owner": "vim",
+      "entrypoint": "packages/vim/src/index.ts",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF01",
+      "metrics": [
+        "allocated:p95",
+        "temporary_per_scalar:max"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.engine-move-alloc",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "ENGINE-EDIT-ALLOC",
+      "id": "adapter.engine-edit-alloc",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF01",
+      "metrics": [
+        "allocated:p95",
+        "temporary_per_scalar:max"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.engine-edit-alloc",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "DOC-OPEN",
+      "id": "adapter.doc-open",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF01",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert",
+        "PF03-1MiB-LF-dense",
+        "PF03-1MiB-mixed-EOL",
+        "PF03-10MiB-LF-dense",
+        "PF03-10MiB-mixed-EOL"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.doc-open",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "DOC-OPEN-10",
+      "id": "adapter.doc-open-10",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF01",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert",
+        "PF02-1MiB-ascii",
+        "PF02-1MiB-tabs",
+        "PF02-1MiB-combining",
+        "PF02-1MiB-wide-emoji",
+        "PF02-10MiB-ascii",
+        "PF02-10MiB-tabs",
+        "PF02-10MiB-combining",
+        "PF02-10MiB-wide-emoji",
+        "PF03-1MiB-LF-dense",
+        "PF03-1MiB-mixed-EOL",
+        "PF03-10MiB-LF-dense",
+        "PF03-10MiB-mixed-EOL"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.doc-open-10",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "DOC-OPEN-100",
+      "id": "adapter.doc-open-100",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF01",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.doc-open-100",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "DOC-STORAGE",
+      "id": "adapter.doc-storage",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF01",
+      "metrics": [
+        "peak_storage:max",
+        "retained:max"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert",
+        "PF06-100MiB-giant-delete-undo"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.doc-storage",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "DOC-EOL",
+      "id": "adapter.doc-eol",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "scalar-loop-to-measured-counter",
+      "fixture": "PF03",
+      "metrics": [
+        "retained_eol:max",
+        "temporary_per_newline:max"
+      ],
+      "workload_variants": [
+        "PF03-1MiB-LF-dense",
+        "PF03-1MiB-mixed-EOL",
+        "PF03-10MiB-LF-dense",
+        "PF03-10MiB-mixed-EOL"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.doc-eol",
+        "start": "scalar",
+        "end": "scalar-loop-to-measured-counter",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "DOC-LOCAL",
+      "id": "adapter.doc-local",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF01",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95",
+        "wall:p99"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.doc-local",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "DOC-SCRATCH",
+      "id": "adapter.doc-scratch",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "scalar-loop-to-measured-counter",
+      "fixture": "PF01",
+      "metrics": [
+        "scratch:max",
+        "temporary_per_unit:max"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert",
+        "PF02-1MiB-ascii",
+        "PF02-1MiB-tabs",
+        "PF02-1MiB-combining",
+        "PF02-1MiB-wide-emoji",
+        "PF02-10MiB-ascii",
+        "PF02-10MiB-tabs",
+        "PF02-10MiB-combining",
+        "PF02-10MiB-wide-emoji"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.doc-scratch",
+        "start": "scalar",
+        "end": "scalar-loop-to-measured-counter",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "DOC-COORDINATES",
+      "id": "adapter.doc-coordinates",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "scalar-loop-to-measured-counter",
+      "fixture": "PF02",
+      "metrics": [
+        "cpu:p95",
+        "retained_cache:max",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF02-1MiB-ascii",
+        "PF02-1MiB-tabs",
+        "PF02-1MiB-combining",
+        "PF02-1MiB-wide-emoji",
+        "PF02-10MiB-ascii",
+        "PF02-10MiB-tabs",
+        "PF02-10MiB-combining",
+        "PF02-10MiB-wide-emoji"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.doc-coordinates",
+        "start": "scalar",
+        "end": "scalar-loop-to-measured-counter",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "HISTORY",
+      "id": "adapter.history",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF05",
+      "metrics": [
+        "bookkeeping_cpu:p95",
+        "retained:max"
+      ],
+      "workload_variants": [
+        "PF05-100k-adjacent-edits",
+        "PF05-100k-random-edits",
+        "PF05-10k-insert-undo",
+        "PF05-1M-insert-group",
+        "PF05-selection-10",
+        "PF05-selection-100",
+        "PF05-selection-1000",
+        "PF05-selection-10000"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.history",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "HISTORY-LARGE",
+      "id": "adapter.history-large",
+      "owner": "document",
+      "entrypoint": "packages/document/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF06",
+      "metrics": [
+        "cancel:max",
+        "retained_private:max",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF06-100MiB-giant-delete-undo"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.history-large",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "SELECTION-MAP",
+      "id": "adapter.selection-map",
+      "owner": "selections",
+      "entrypoint": "packages/selections/src/index.ts",
+      "boundary": "scalar-loop-to-measured-counter",
+      "fixture": "PF05",
+      "metrics": [
+        "retained:max",
+        "visits:max"
+      ],
+      "workload_variants": [
+        "PF05-100k-adjacent-edits",
+        "PF05-100k-random-edits",
+        "PF05-10k-insert-undo",
+        "PF05-1M-insert-group",
+        "PF05-selection-10",
+        "PF05-selection-100",
+        "PF05-selection-1000",
+        "PF05-selection-10000"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.selection-map",
+        "start": "scalar",
+        "end": "scalar-loop-to-measured-counter",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "SELECTION-10",
+      "id": "adapter.selection-10",
+      "owner": "vim",
+      "entrypoint": "packages/vim/src/index.ts",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF05",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95",
+        "wall:p99"
+      ],
+      "workload_variants": [
+        "PF05-100k-adjacent-edits",
+        "PF05-100k-random-edits",
+        "PF05-10k-insert-undo",
+        "PF05-1M-insert-group",
+        "PF05-selection-10",
+        "PF05-selection-100",
+        "PF05-selection-1000",
+        "PF05-selection-10000"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.selection-10",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "SELECTION-100",
+      "id": "adapter.selection-100",
+      "owner": "vim",
+      "entrypoint": "packages/vim/src/index.ts",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF05",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95",
+        "wall:p99"
+      ],
+      "workload_variants": [
+        "PF05-100k-adjacent-edits",
+        "PF05-100k-random-edits",
+        "PF05-10k-insert-undo",
+        "PF05-1M-insert-group",
+        "PF05-selection-10",
+        "PF05-selection-100",
+        "PF05-selection-1000",
+        "PF05-selection-10000"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.selection-100",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "SELECTION-1000",
+      "id": "adapter.selection-1000",
+      "owner": "vim",
+      "entrypoint": "packages/vim/src/index.ts",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF05",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95",
+        "wall:p99"
+      ],
+      "workload_variants": [
+        "PF05-100k-adjacent-edits",
+        "PF05-100k-random-edits",
+        "PF05-10k-insert-undo",
+        "PF05-1M-insert-group",
+        "PF05-selection-10",
+        "PF05-selection-100",
+        "PF05-selection-1000",
+        "PF05-selection-10000"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.selection-1000",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "SELECTION-10000",
+      "id": "adapter.selection-10000",
+      "owner": "vim",
+      "entrypoint": "packages/vim/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF05",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95",
+        "wall:p99"
+      ],
+      "workload_variants": [
+        "PF05-100k-adjacent-edits",
+        "PF05-100k-random-edits",
+        "PF05-10k-insert-undo",
+        "PF05-1M-insert-group",
+        "PF05-selection-10",
+        "PF05-selection-100",
+        "PF05-selection-1000",
+        "PF05-selection-10000"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.selection-10000",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "SELECTION-ALL",
+      "id": "adapter.selection-all",
+      "owner": "selections",
+      "entrypoint": "packages/selections/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF08",
+      "metrics": [
+        "cancel:max",
+        "cpu:p95",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF08-literal",
+        "PF08-multiline",
+        "PF08-zero-width",
+        "PF08-adversarial"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.selection-all",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "INPUT-OUTPUT",
+      "id": "adapter.input-output",
+      "owner": "ui",
+      "entrypoint": "apps/xi/src/main.ts",
+      "boundary": "scheduled-input-arrival-to-externally-observed-correct-terminal-output",
+      "fixture": "PF07",
+      "metrics": [
+        "key_to_photon:max",
+        "key_to_photon:p50",
+        "key_to_photon:p95",
+        "key_to_photon:p99",
+        "wall:max",
+        "wall:p50",
+        "wall:p95",
+        "wall:p99"
+      ],
+      "workload_variants": [
+        "PF07-120x40-hold-j",
+        "PF07-240x70-hold-j",
+        "PF07-10k-120x40",
+        "PF07-10k-240x70"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.input-output",
+        "start": "scheduled-and-actual-input-arrival-before-decode-or-queue",
+        "end": "scheduled-input-arrival-to-externally-observed-correct-terminal-output; key_to_photon ends at calibrated correct visible pixels",
+        "metric_source": "pending:T115:external-PTY-grid-timestamps-for-wall-and-calibrated-hardware-actuation-to-photons-for-key_to_photon",
+        "sample_policy": "spec-15:10000-events-per-action-load-condition-across-30-sessions; open-loop; session-block-confidence; all-outliers-retained"
+      }
+    },
+    {
+      "budget_id": "INPUT-LOADED",
+      "id": "adapter.input-loaded",
+      "owner": "workbench",
+      "entrypoint": "apps/xi/src/main.ts",
+      "boundary": "scheduled-input-arrival-to-externally-observed-correct-terminal-output",
+      "fixture": "PF09",
+      "metrics": [
+        "key_to_photon:max",
+        "key_to_photon:p50",
+        "key_to_photon:p95",
+        "key_to_photon:p99",
+        "wall:max",
+        "wall:p50",
+        "wall:p95",
+        "wall:p99"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.input-loaded",
+        "start": "scheduled-and-actual-input-arrival-before-decode-or-queue",
+        "end": "scheduled-input-arrival-to-externally-observed-correct-terminal-output; key_to_photon ends at calibrated correct visible pixels",
+        "metric_source": "pending:T115:external-PTY-grid-timestamps-for-wall-and-calibrated-hardware-actuation-to-photons-for-key_to_photon",
+        "sample_policy": "spec-15:10000-events-per-action-load-condition-across-30-sessions; open-loop; session-block-confidence; all-outliers-retained"
+      }
+    },
+    {
+      "budget_id": "INPUT-LARGE",
+      "id": "adapter.input-large",
+      "owner": "vim",
+      "entrypoint": "apps/xi/src/main.ts",
+      "boundary": "scheduled-input-arrival-to-externally-observed-correct-terminal-output",
+      "fixture": "PF01",
+      "metrics": [
+        "cpu:p95",
+        "wall:max",
+        "wall:p50",
+        "wall:p95",
+        "wall:p99"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert",
+        "PF02-1MiB-ascii",
+        "PF02-1MiB-tabs",
+        "PF02-1MiB-combining",
+        "PF02-1MiB-wide-emoji",
+        "PF02-10MiB-ascii",
+        "PF02-10MiB-tabs",
+        "PF02-10MiB-combining",
+        "PF02-10MiB-wide-emoji"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.input-large",
+        "start": "scheduled-and-actual-input-arrival-before-decode-or-queue",
+        "end": "scheduled-input-arrival-to-externally-observed-correct-terminal-output",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "spec-15:10000-events-per-action-load-condition-across-30-sessions; open-loop; session-block-confidence; all-outliers-retained"
+      }
+    },
+    {
+      "budget_id": "NATIVE-OVERHEAD",
+      "id": "adapter.native-overhead",
+      "owner": "performance",
+      "entrypoint": "tools/perf.py",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF07",
+      "metrics": [
+        "p95_overhead:p95"
+      ],
+      "workload_variants": [
+        "PF07-120x40-hold-j",
+        "PF07-240x70-hold-j",
+        "PF07-10k-120x40",
+        "PF07-10k-240x70"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.native-overhead",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "REGRESSION",
+      "id": "adapter.regression",
+      "owner": "performance",
+      "entrypoint": "tools/perf.py",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF12",
+      "metrics": [
+        "p95_regression:comparison"
+      ],
+      "workload_variants": [
+        "PF12-100k-import",
+        "PF12-1k-indexed-query",
+        "PF12-malformed-evidence",
+        "PF12-stale-evidence"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.regression",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "RENDER-120",
+      "id": "adapter.render-120",
+      "owner": "layout",
+      "entrypoint": "packages/layout/src/index.ts",
+      "boundary": "scalar-loop-to-measured-counter",
+      "fixture": "PF07",
+      "metrics": [
+        "allocated:p95",
+        "cpu:p95",
+        "temporary_per_cell:max",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF07-120x40-hold-j",
+        "PF07-240x70-hold-j",
+        "PF07-10k-120x40",
+        "PF07-10k-240x70"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.render-120",
+        "start": "scalar",
+        "end": "scalar-loop-to-measured-counter",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "RENDER-240",
+      "id": "adapter.render-240",
+      "owner": "layout",
+      "entrypoint": "packages/layout/src/index.ts",
+      "boundary": "scalar-loop-to-measured-counter",
+      "fixture": "PF07",
+      "metrics": [
+        "allocated:p95",
+        "cpu:p95",
+        "temporary_per_cell:max",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF07-120x40-hold-j",
+        "PF07-240x70-hold-j",
+        "PF07-10k-120x40",
+        "PF07-10k-240x70"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.render-240",
+        "start": "scalar",
+        "end": "scalar-loop-to-measured-counter",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "LAYOUT-CACHE",
+      "id": "adapter.layout-cache",
+      "owner": "layout",
+      "entrypoint": "packages/layout/src/index.ts",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF02",
+      "metrics": [
+        "frames_per_view:max",
+        "retained:max"
+      ],
+      "workload_variants": [
+        "PF02-1MiB-ascii",
+        "PF02-1MiB-tabs",
+        "PF02-1MiB-combining",
+        "PF02-1MiB-wide-emoji",
+        "PF02-10MiB-ascii",
+        "PF02-10MiB-tabs",
+        "PF02-10MiB-combining",
+        "PF02-10MiB-wide-emoji",
+        "PF07-120x40-hold-j",
+        "PF07-240x70-hold-j",
+        "PF07-10k-120x40",
+        "PF07-10k-240x70",
+        "PF10-1000-cycles",
+        "PF10-pressure-eviction"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.layout-cache",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "POINTER-120",
+      "id": "adapter.pointer-120",
+      "owner": "workbench",
+      "entrypoint": "packages/workbench/src/index.ts",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF07",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF07-120x40-hold-j",
+        "PF07-240x70-hold-j",
+        "PF07-10k-120x40",
+        "PF07-10k-240x70"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.pointer-120",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "POINTER-240",
+      "id": "adapter.pointer-240",
+      "owner": "workbench",
+      "entrypoint": "packages/workbench/src/index.ts",
+      "boundary": "input-or-command-to-coherent-state",
+      "fixture": "PF07",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF07-120x40-hold-j",
+        "PF07-240x70-hold-j",
+        "PF07-10k-120x40",
+        "PF07-10k-240x70"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.pointer-240",
+        "start": "input",
+        "end": "input-or-command-to-coherent-state",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-10000-independent-trials"
+      }
+    },
+    {
+      "budget_id": "HINTS-TRAIL",
+      "id": "adapter.hints-trail",
+      "owner": "ui",
+      "entrypoint": "packages/ui/src/index.ts",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF07",
+      "metrics": [
+        "hint_deviation:max",
+        "retained:max",
+        "trail_p95_overhead:comparison"
+      ],
+      "workload_variants": [
+        "PF07-120x40-hold-j",
+        "PF07-240x70-hold-j",
+        "PF07-10k-120x40",
+        "PF07-10k-240x70"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.hints-trail",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "STARTUP-WARM",
+      "id": "adapter.startup-warm",
+      "owner": "apps/xi",
+      "entrypoint": "apps/xi/src/composition.ts",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF11",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF11-startup-cold",
+        "PF11-startup-warm",
+        "PF11-open-save",
+        "PF11-recovery-delayed-disk",
+        "PF11-recovery-failing-disk",
+        "PF11-external-edit"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.startup-warm",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "STARTUP-COLD",
+      "id": "adapter.startup-cold",
+      "owner": "apps/xi",
+      "entrypoint": "apps/xi/src/composition.ts",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF11",
+      "metrics": [
+        "cpu:p95",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF11-startup-cold",
+        "PF11-startup-warm",
+        "PF11-open-save",
+        "PF11-recovery-delayed-disk",
+        "PF11-recovery-failing-disk",
+        "PF11-external-edit"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.startup-cold",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "MAIN-STALL",
+      "id": "adapter.main-stall",
+      "owner": "workbench",
+      "entrypoint": "packages/workbench/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "integration_slice:max",
+        "interactive_stall:max",
+        "large_preparation_slice:max",
+        "stall:max"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader",
+        "PF11-startup-cold",
+        "PF11-startup-warm",
+        "PF11-open-save",
+        "PF11-recovery-delayed-disk",
+        "PF11-recovery-failing-disk",
+        "PF11-external-edit"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.main-stall",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "spec-15:10000-events-per-action-load-condition-across-30-sessions; open-loop; session-block-confidence; all-outliers-retained"
+      }
+    },
+    {
+      "budget_id": "WORKERS",
+      "id": "adapter.workers",
+      "owner": "platform",
+      "entrypoint": "packages/platform/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "cancel:max",
+        "cpu_core_percent:mean",
+        "workers:max"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.workers",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "QUEUES",
+      "id": "adapter.queues",
+      "owner": "workbench",
+      "entrypoint": "packages/workbench/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "bytes:max",
+        "channel_bytes:max",
+        "channel_requests:max",
+        "requests:max"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.queues",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "OUTPUT",
+      "id": "adapter.output",
+      "owner": "ui",
+      "entrypoint": "packages/ui/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF07",
+      "metrics": [
+        "integration_slice:max",
+        "queued:max"
+      ],
+      "workload_variants": [
+        "PF07-120x40-hold-j",
+        "PF07-240x70-hold-j",
+        "PF07-10k-120x40",
+        "PF07-10k-240x70"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.output",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "SYNTAX",
+      "id": "adapter.syntax",
+      "owner": "syntax",
+      "entrypoint": "packages/services/syntax/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "cancel:max",
+        "cpu:p95",
+        "retained:max",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.syntax",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "VIM-SEARCH",
+      "id": "adapter.vim-search",
+      "owner": "vim",
+      "entrypoint": "packages/vim/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF08",
+      "metrics": [
+        "cancel:max",
+        "cpu:p95",
+        "literal_scan_cpu_per_mib:p95",
+        "retained_working:max",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF08-literal",
+        "PF08-multiline",
+        "PF08-zero-width",
+        "PF08-adversarial"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.vim-search",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "WORKSPACE-SEARCH",
+      "id": "adapter.workspace-search",
+      "owner": "search",
+      "entrypoint": "packages/services/search/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF08",
+      "metrics": [
+        "cancel:max",
+        "first_match:p95",
+        "full_scan_child_cpu:p95",
+        "integration_cpu:max",
+        "retained_results:max",
+        "warm_no_match_completion:p95"
+      ],
+      "workload_variants": [
+        "PF08-literal",
+        "PF08-multiline",
+        "PF08-zero-width",
+        "PF08-adversarial",
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.workspace-search",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "PICKER",
+      "id": "adapter.picker",
+      "owner": "search",
+      "entrypoint": "packages/services/search/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "cpu_update:p95",
+        "first_result:p95",
+        "retained:max",
+        "update:p95"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.picker",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "LSP-SYNC",
+      "id": "adapter.lsp-sync",
+      "owner": "language",
+      "entrypoint": "packages/services/language/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "cancel:max",
+        "integration_cpu:max",
+        "queued:max"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.lsp-sync",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "DIAGNOSTICS",
+      "id": "adapter.diagnostics",
+      "owner": "language",
+      "entrypoint": "packages/services/language/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "integration_cpu:max",
+        "retained:max"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.diagnostics",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "COMPLETION",
+      "id": "adapter.completion",
+      "owner": "language",
+      "entrypoint": "packages/services/language/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "integration_cpu:max",
+        "retained:max",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.completion",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "NAVIGATION",
+      "id": "adapter.navigation",
+      "owner": "workbench",
+      "entrypoint": "packages/workbench/src/index.ts",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF09",
+      "metrics": [
+        "integration_cpu:max",
+        "retained:max",
+        "wall:p95"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.navigation",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "GIT-DIFF",
+      "id": "adapter.git-diff",
+      "owner": "git",
+      "entrypoint": "packages/services/git/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "cancel:max",
+        "first_result:p95",
+        "integration_cpu:max",
+        "retained:max"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.git-diff",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "FORMAT",
+      "id": "adapter.format",
+      "owner": "formatting",
+      "entrypoint": "packages/services/formatting/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF11",
+      "metrics": [
+        "cancel:max",
+        "integration_cpu:max",
+        "queued:max"
+      ],
+      "workload_variants": [
+        "PF11-startup-cold",
+        "PF11-startup-warm",
+        "PF11-open-save",
+        "PF11-recovery-delayed-disk",
+        "PF11-recovery-failing-disk",
+        "PF11-external-edit"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.format",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "FILES",
+      "id": "adapter.files",
+      "owner": "files",
+      "entrypoint": "packages/services/files/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "cancel:max",
+        "integration_cpu:max",
+        "retained:max"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.files",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "TASKS",
+      "id": "adapter.tasks",
+      "owner": "tasks",
+      "entrypoint": "packages/services/tasks/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF09",
+      "metrics": [
+        "aggregate:max",
+        "cancel:max",
+        "integration_cpu:max",
+        "per_task:max"
+      ],
+      "workload_variants": [
+        "PF09-parse-flood",
+        "PF09-search-flood",
+        "PF09-lsp-flood",
+        "PF09-git-flood",
+        "PF09-full-resync-slow-reader"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.tasks",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "CONFIG-CONTRIBUTIONS",
+      "id": "adapter.config-contributions",
+      "owner": "workbench",
+      "entrypoint": "packages/workbench/src/index.ts",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF10",
+      "metrics": [
+        "cpu:p95",
+        "retained:max",
+        "retained_growth:max"
+      ],
+      "workload_variants": [
+        "PF10-1000-cycles",
+        "PF10-pressure-eviction"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.config-contributions",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "PERSISTENCE",
+      "id": "adapter.persistence",
+      "owner": "persistence",
+      "entrypoint": "packages/services/persistence/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF11",
+      "metrics": [
+        "cancel:max",
+        "dirty_queue:max",
+        "encoding_cpu_per_mib:p95",
+        "flush_age:max",
+        "slice_cpu:max"
+      ],
+      "workload_variants": [
+        "PF11-startup-cold",
+        "PF11-startup-warm",
+        "PF11-open-save",
+        "PF11-recovery-delayed-disk",
+        "PF11-recovery-failing-disk",
+        "PF11-external-edit"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.persistence",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "IDLE",
+      "id": "adapter.idle",
+      "owner": "platform",
+      "entrypoint": "packages/platform/src/index.ts",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF10",
+      "metrics": [
+        "cpu_core_percent:mean"
+      ],
+      "workload_variants": [
+        "PF10-1000-cycles",
+        "PF10-pressure-eviction"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.idle",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-1-independent-trials"
+      }
+    },
+    {
+      "budget_id": "RSS-SMALL",
+      "id": "adapter.rss-small",
+      "owner": "workbench",
+      "entrypoint": "packages/workbench/src/index.ts",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF10",
+      "metrics": [
+        "rss:max"
+      ],
+      "workload_variants": [
+        "PF10-1000-cycles",
+        "PF10-pressure-eviction"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.rss-small",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "RSS-LARGE",
+      "id": "adapter.rss-large",
+      "owner": "workbench",
+      "entrypoint": "packages/workbench/src/index.ts",
+      "boundary": "request-to-complete-or-cancel",
+      "fixture": "PF01",
+      "metrics": [
+        "rss_peak:max",
+        "rss_steady:max"
+      ],
+      "workload_variants": [
+        "PF01-2k-source",
+        "PF01-1MiB-normal",
+        "PF01-10MiB-normal",
+        "PF01-100MiB-normal",
+        "PF01-200k-lines",
+        "PF01-top-insert",
+        "PF06-100MiB-giant-delete-undo"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.rss-large",
+        "start": "request",
+        "end": "request-to-complete-or-cancel",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "RETENTION",
+      "id": "adapter.retention",
+      "owner": "workbench",
+      "entrypoint": "packages/workbench/src/index.ts",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF10",
+      "metrics": [
+        "retained_growth:max"
+      ],
+      "workload_variants": [
+        "PF10-1000-cycles",
+        "PF10-pressure-eviction"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.retention",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    },
+    {
+      "budget_id": "LEDGER",
+      "id": "adapter.ledger",
+      "owner": "performance",
+      "entrypoint": "tools/perf.py",
+      "boundary": "lifecycle-start-to-disposal",
+      "fixture": "PF12",
+      "metrics": [
+        "import:p95",
+        "lookup:p95",
+        "rss_peak:max"
+      ],
+      "workload_variants": [
+        "PF12-100k-import",
+        "PF12-1k-indexed-query",
+        "PF12-malformed-evidence",
+        "PF12-stale-evidence"
+      ],
+      "producer": {
+        "selector": "pending:T115:adapter.ledger",
+        "start": "lifecycle",
+        "end": "lifecycle-start-to-disposal",
+        "metric_source": "pending-runtime-instrumentation:T115",
+        "sample_policy": "catalog-minimum-30-independent-trials"
+      }
+    }
+  ],
+  "variant_catalog": [
+    {
+      "id": "PF01-2k-source",
+      "family": "PF01",
+      "description": "2,000-line source",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF01-2k-source"
+      },
+      "parameters": {
+        "input_bytes": 32768,
+        "pattern": "function f() { return 1; }\n"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF01-1MiB-normal",
+      "family": "PF01",
+      "description": "1 MiB normal source",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF01-1MiB-normal"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "let value = 1;\n"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF01-10MiB-normal",
+      "family": "PF01",
+      "description": "10 MiB normal source",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF01-10MiB-normal"
+      },
+      "parameters": {
+        "input_bytes": 10485760,
+        "pattern": "let value = 1;\n"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF01-100MiB-normal",
+      "family": "PF01",
+      "description": "100 MiB normal source",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF01-100MiB-normal"
+      },
+      "parameters": {
+        "input_bytes": 104857600,
+        "pattern": "let value = 1;\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF01-200k-lines",
+      "family": "PF01",
+      "description": "200,000-line source",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF01-200k-lines"
+      },
+      "parameters": {
+        "input_bytes": 400000,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "warm",
+        "loaded"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF01-top-insert",
+      "family": "PF01",
+      "description": "top insertion and random/far jumps",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF01-top-insert"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "let value = 1;\n"
+      },
+      "states": [
+        "cold",
+        "warm",
+        "loaded"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF02-1MiB-ascii",
+      "family": "PF02",
+      "description": "1 MiB single ASCII line",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF02-1MiB-ascii"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF02-1MiB-tabs",
+      "family": "PF02",
+      "description": "1 MiB single tabbed line",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF02-1MiB-tabs"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\t"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF02-1MiB-combining",
+      "family": "PF02",
+      "description": "1 MiB single combining line",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF02-1MiB-combining"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "é"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF02-1MiB-wide-emoji",
+      "family": "PF02",
+      "description": "1 MiB single wide and emoji line",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF02-1MiB-wide-emoji"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "界🙂"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF02-10MiB-ascii",
+      "family": "PF02",
+      "description": "10 MiB single ASCII line",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF02-10MiB-ascii"
+      },
+      "parameters": {
+        "input_bytes": 10485760,
+        "pattern": "x"
+      },
+      "states": [
+        "cold",
+        "warm",
+        "loaded"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF02-10MiB-tabs",
+      "family": "PF02",
+      "description": "10 MiB single tabbed line",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF02-10MiB-tabs"
+      },
+      "parameters": {
+        "input_bytes": 10485760,
+        "pattern": "x\t"
+      },
+      "states": [
+        "cold",
+        "warm",
+        "loaded"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF02-10MiB-combining",
+      "family": "PF02",
+      "description": "10 MiB single combining line",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF02-10MiB-combining"
+      },
+      "parameters": {
+        "input_bytes": 10485760,
+        "pattern": "é"
+      },
+      "states": [
+        "cold",
+        "warm",
+        "loaded"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF02-10MiB-wide-emoji",
+      "family": "PF02",
+      "description": "10 MiB single wide and emoji line",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF02-10MiB-wide-emoji"
+      },
+      "parameters": {
+        "input_bytes": 10485760,
+        "pattern": "界🙂"
+      },
+      "states": [
+        "cold",
+        "warm",
+        "loaded"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF03-1MiB-LF-dense",
+      "family": "PF03",
+      "description": "1 MiB LF-dense source",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF03-1MiB-LF-dense"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF03-1MiB-mixed-EOL",
+      "family": "PF03",
+      "description": "1 MiB alternating LF/CRLF source",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF03-1MiB-mixed-EOL"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\nx\r\n"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF03-10MiB-LF-dense",
+      "family": "PF03",
+      "description": "10 MiB LF-dense source",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF03-10MiB-LF-dense"
+      },
+      "parameters": {
+        "input_bytes": 10485760,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "warm",
+        "loaded"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF03-10MiB-mixed-EOL",
+      "family": "PF03",
+      "description": "10 MiB alternating LF/CRLF source",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF03-10MiB-mixed-EOL"
+      },
+      "parameters": {
+        "input_bytes": 10485760,
+        "pattern": "x\nx\r\n"
+      },
+      "states": [
+        "cold",
+        "warm",
+        "loaded"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF04-sqlite-3.50.4",
+      "family": "PF04",
+      "description": "Pinned SQLite 3.50.4 amalgamation",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF04-sqlite-3.50.4"
+      },
+      "parameters": {
+        "input_bytes": 9282866,
+        "line_feeds": 262899,
+        "sha256": "e3f5d6901e7492af4a1fc8c4d745cae84c264942524c3fbfc02b82a5ca8818c8"
+      },
+      "states": [
+        "cold",
+        "warm",
+        "loaded"
+      ],
+      "correctness": "source-hash-byte-fidelity-and-document-checksum"
+    },
+    {
+      "id": "PF05-100k-adjacent-edits",
+      "family": "PF05",
+      "description": "100,000 adjacent edits",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF05-100k-adjacent-edits"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "semantic-checksum-and-history-invariants"
+    },
+    {
+      "id": "PF05-100k-random-edits",
+      "family": "PF05",
+      "description": "100,000 random edits",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF05-100k-random-edits"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "seeded-semantic-checksum-and-history-invariants"
+    },
+    {
+      "id": "PF05-10k-insert-undo",
+      "family": "PF05",
+      "description": "10,000 inserts then undo-all",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF05-10k-insert-undo"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "semantic-checksum-and-history-invariants"
+    },
+    {
+      "id": "PF05-1M-insert-group",
+      "family": "PF05",
+      "description": "1,000,000 characters in one Insert group",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF05-1M-insert-group"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "semantic-checksum-and-history-invariants"
+    },
+    {
+      "id": "PF05-selection-10",
+      "family": "PF05",
+      "description": "10 selection members",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF05-selection-10"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "selection-and-document-checksum"
+    },
+    {
+      "id": "PF05-selection-100",
+      "family": "PF05",
+      "description": "100 selection members",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF05-selection-100"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "selection-and-document-checksum"
+    },
+    {
+      "id": "PF05-selection-1000",
+      "family": "PF05",
+      "description": "1,000 selection members",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF05-selection-1000"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "selection-and-document-checksum"
+    },
+    {
+      "id": "PF05-selection-10000",
+      "family": "PF05",
+      "description": "10,000 selection members",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF05-selection-10000"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "selection-and-document-checksum"
+    },
+    {
+      "id": "PF06-100MiB-giant-delete-undo",
+      "family": "PF06",
+      "description": "100 MiB giant delete and undo with registers/views",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF06-100MiB-giant-delete-undo"
+      },
+      "parameters": {
+        "input_bytes": 104857600,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "multi-view-selection-EOL-and-checksum"
+    },
+    {
+      "id": "PF07-120x40-hold-j",
+      "family": "PF07",
+      "description": "5 second controlled hold at 120x40",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF07-120x40-hold-j"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "screen-grid-and-file-checksum"
+    },
+    {
+      "id": "PF07-240x70-hold-j",
+      "family": "PF07",
+      "description": "5 second controlled hold at 240x70",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF07-240x70-hold-j"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "screen-grid-and-file-checksum"
+    },
+    {
+      "id": "PF07-10k-120x40",
+      "family": "PF07",
+      "description": "10,000 acknowledged input samples at 120x40",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF07-10k-120x40"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "screen-grid-and-ack-checksum"
+    },
+    {
+      "id": "PF07-10k-240x70",
+      "family": "PF07",
+      "description": "10,000 acknowledged input samples at 240x70",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF07-10k-240x70"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "screen-grid-and-ack-checksum"
+    },
+    {
+      "id": "PF08-literal",
+      "family": "PF08",
+      "description": "literal chunk-boundary search",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF08-literal"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "needle\n"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "match-set-and-no-match-checksum"
+    },
+    {
+      "id": "PF08-multiline",
+      "family": "PF08",
+      "description": "Vim multiline search",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF08-multiline"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "a\nb\n"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "match-set-and-no-match-checksum"
+    },
+    {
+      "id": "PF08-zero-width",
+      "family": "PF08",
+      "description": "zero-width search",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF08-zero-width"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "match-set-and-no-match-checksum"
+    },
+    {
+      "id": "PF08-adversarial",
+      "family": "PF08",
+      "description": "adversarial regex and cancellation",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF08-adversarial"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "(a*)*b"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "match-set-cancel-and-quota-checksum"
+    },
+    {
+      "id": "PF09-parse-flood",
+      "family": "PF09",
+      "description": "parse flood while typing",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF09-parse-flood"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "versioned-result-and-input-checksum"
+    },
+    {
+      "id": "PF09-search-flood",
+      "family": "PF09",
+      "description": "workspace search flood while typing",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF09-search-flood"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "versioned-result-and-input-checksum"
+    },
+    {
+      "id": "PF09-lsp-flood",
+      "family": "PF09",
+      "description": "LSP request flood while typing",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF09-lsp-flood"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "versioned-result-and-input-checksum"
+    },
+    {
+      "id": "PF09-git-flood",
+      "family": "PF09",
+      "description": "Git diff flood while typing",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF09-git-flood"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "versioned-result-and-input-checksum"
+    },
+    {
+      "id": "PF09-full-resync-slow-reader",
+      "family": "PF09",
+      "description": "full worker resync with slow reader",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF09-full-resync-slow-reader"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "versioned-resync-and-input-checksum"
+    },
+    {
+      "id": "PF10-1000-cycles",
+      "family": "PF10",
+      "description": "1,000 open/close/picker/view/contribution cycles",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF10-1000-cycles"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "retained-root-and-listener-counts"
+    },
+    {
+      "id": "PF10-pressure-eviction",
+      "family": "PF10",
+      "description": "repeated pressure eviction and recovery",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF10-pressure-eviction"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "retained-root-and-recovery-checksum"
+    },
+    {
+      "id": "PF11-startup-cold",
+      "family": "PF11",
+      "description": "cold startup",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF11-startup-cold"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold"
+      ],
+      "correctness": "first-frame-and-file-checksum"
+    },
+    {
+      "id": "PF11-startup-warm",
+      "family": "PF11",
+      "description": "warm startup",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF11-startup-warm"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "warm"
+      ],
+      "correctness": "first-frame-and-file-checksum"
+    },
+    {
+      "id": "PF11-open-save",
+      "family": "PF11",
+      "description": "open and save streaming path",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF11-open-save"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "saved-byte-checksum"
+    },
+    {
+      "id": "PF11-recovery-delayed-disk",
+      "family": "PF11",
+      "description": "delayed recovery disk",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF11-recovery-delayed-disk"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "recovery-byte-checksum-and-flush-age"
+    },
+    {
+      "id": "PF11-recovery-failing-disk",
+      "family": "PF11",
+      "description": "failing recovery disk",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF11-recovery-failing-disk"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "visible-failure-and-data-preservation"
+    },
+    {
+      "id": "PF11-external-edit",
+      "family": "PF11",
+      "description": "external edit and recovery",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF11-external-edit"
+      },
+      "parameters": {
+        "input_bytes": 1048576,
+        "pattern": "x\n"
+      },
+      "states": [
+        "cold",
+        "loaded"
+      ],
+      "correctness": "conflict-and-recovery-byte-checksum"
+    },
+    {
+      "id": "PF12-100k-import",
+      "family": "PF12",
+      "description": "100,000 observation import",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF12-100k-import"
+      },
+      "parameters": {
+        "input_bytes": 100000,
+        "pattern": "x"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF12-1k-indexed-query",
+      "family": "PF12",
+      "description": "1,000 indexed queries",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF12-1k-indexed-query"
+      },
+      "parameters": {
+        "input_bytes": 100000,
+        "pattern": "x"
+      },
+      "states": [
+        "cold",
+        "warm"
+      ],
+      "correctness": "sha256-and-production-semantic-check"
+    },
+    {
+      "id": "PF12-malformed-evidence",
+      "family": "PF12",
+      "description": "malformed and nonfinite evidence rejection",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF12-malformed-evidence"
+      },
+      "parameters": {
+        "input_bytes": 1024,
+        "pattern": "x"
+      },
+      "states": [
+        "cold"
+      ],
+      "correctness": "rejection-and-rollback"
+    },
+    {
+      "id": "PF12-stale-evidence",
+      "family": "PF12",
+      "description": "stale and missing artifact rejection",
+      "generator": {
+        "path": "bench/performance/workloads.py",
+        "selector": "PF12-stale-evidence"
+      },
+      "parameters": {
+        "input_bytes": 1024,
+        "pattern": "x"
+      },
+      "states": [
+        "cold"
+      ],
+      "correctness": "rejection-and-rollback"
+    }
+  ]
+}

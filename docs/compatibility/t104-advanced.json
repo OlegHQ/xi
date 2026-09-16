@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "ticket": "T104",
+  "oracle": { "name": "Neovim", "version": "0.12.4", "binarySha256": "d9635db0b272b7c81cd705ef0d8bbf16edfeb05b08b36b4228ab0d6a92ec384f", "runtimeDocsSha256": "79b80909bf8f5fe1d89a0fb66200388e651c88d49d565fdc51780ef4b24d7b1e" },
+  "rows": [
+    { "operator": "!", "status": "provider-boundary", "fixtureIds": ["T104-FILTER-01", "T104-FILTER-02", "T104-FILTER-03", "T104-FILTER-04"], "provider": "filter" },
+    { "operator": "zf/zF/zD/zE", "status": "provider-boundary", "fixtureIds": ["T104-FOLD-01", "T104-FOLD-02"], "provider": "fold" },
+    { "operator": "<C-A>/<C-X>", "status": "verified", "fixtureIds": ["T104-NUMBER-01", "T104-NUMBER-02", "T104-NUMBER-03", "T104-NUMBER-04", "T104-ORACLE-NRFORMATS-HEX-01", "T104-ORACLE-NRFORMATS-DECIMAL-01"] }
+  ],
+  "note": "Filter and fold behavior is provider-owned. Missing providers, provider failures, cancellation, malformed output and output limits are typed failures. Numeric changes are prepared locally with nrformats parsing and UTF-16 document coordinates."
+}

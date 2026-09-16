@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import { PointerGestureController, type PointerEnginePort, type PointerEvent } from '../../../packages/vim/pointer/index';
+import { WorkbenchPointerCapture } from '../../../packages/workbench/input/pointer-capture';
+
+const modifiers = { shift: false, alt: false, ctrl: false, meta: false };
+const events: string[] = [];
+const engine: PointerEnginePort = { cancelPendingOperator: () => { events.push('cancel'); }, place: (intent) => { events.push(`${intent.kind}:${intent.viewId}:${intent.head.row}`); }, scroll: (view, delta) => { events.push(`scroll:${view}:${delta}`); } };
+const pointer = new PointerGestureController(engine);
+const event = (phase: PointerEvent['phase'], viewId: string, row: number, column: number, overrides: Partial<PointerEvent> = {}): PointerEvent => ({ phase, viewId, cell: { row, column }, button: phase === 'wheel' ? null : 0, modifiers, wheelDelta: 0, frameId: 1, ...overrides });
+assert.equal(pointer.handle(event('down', 'one', 1, 1)), true);
+assert.equal(pointer.capturedViewId, 'one');
+assert.equal(pointer.handle(event('move', 'two', 2, 1)), false, 'T086-CAPTURE-01 drag cannot migrate between views');
+assert.equal(pointer.handle(event('move', 'one', 3, 1, { viewportHeight: 4 })), true);
+assert.equal(pointer.handle(event('up', 'one', 3, 1)), true);
+assert.equal(pointer.capturedViewId, undefined, 'T086-CAPTURE-02 release clears capture');
+assert.equal(pointer.handle(event('wheel', 'one', 0, 0, { wheelDelta: -3 })), true);
+pointer.handle(event('down', 'one', 1, 1)); pointer.cancel('focus-loss'); assert.equal(pointer.capturedViewId, undefined, 'T086-CAPTURE-03 focus loss cancels capture');
+const workbench = new WorkbenchPointerCapture(engine); workbench.dispatch(event('down', 'view', 0, 0)); workbench.cancel('resize'); workbench.dispose();
+assert.ok(events.some((entry) => entry.startsWith('drag:one')));
+console.log('T086 pointer gestures passed view-scoped capture, drag/release, wheel routing and focus/resize cancellation');

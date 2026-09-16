@@ -1,0 +1,5727 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "version": "0.12.4",
+    "binarySha256": "d9635db0b272b7c81cd705ef0d8bbf16edfeb05b08b36b4228ab0d6a92ec384f",
+    "runtimeDocsSha256": "79b80909bf8f5fe1d89a0fb66200388e651c88d49d565fdc51780ef4b24d7b1e"
+  },
+  "fixtureIds": [
+    "T019-ORACLE-COUNT-PRODUCT-01",
+    "T019-ORACLE-DOUBLED-LINEWISE-01",
+    "T019-ORACLE-D0-BACKWARD-EXCLUSIVE-01",
+    "T019-ORACLE-D-DOLLAR-INCLUSIVE-01",
+    "T019-ORACLE-BACKWARD-WORD-01",
+    "T019-ORACLE-BACKWARD-END-01",
+    "T019-ORACLE-EXCLUSIVE-NEXT-LINE-COLUMN-ZERO-01",
+    "T019-ORACLE-DW-INDENTED-EOF-01",
+    "T019-ORACLE-EMPTY-LAST-LINE-DELETE-01",
+    "T019-ORACLE-FORCED-CHARWISE-01",
+    "T019-ORACLE-FORCED-LINEWISE-01",
+    "T019-ORACLE-FORCED-BLOCKWISE-01",
+    "T019-ORACLE-FORCED-BLOCKWISE-TABS-01",
+    "T019-ORACLE-FORCED-BLOCKWISE-TAB-EDGE-EXPANSION-01",
+    "T019-ORACLE-FORCED-BLOCKWISE-WIDE-GRAPHEME-01",
+    "T019-ORACLE-CW-TRANSITION-01",
+    "T019-ORACLE-CW-COUNT-01",
+    "T019-ORACLE-CW-NEXT-LINE-COLUMN-ZERO-01",
+    "T019-ORACLE-CC-LINEWISE-TRANSITION-01",
+    "T019-ORACLE-CC-COUNTED-TRANSITION-01",
+    "T019-ORACLE-YANK-LINEWISE-01",
+    "T019-ORACLE-YANK-DOUBLED-COUNT-01",
+    "T019-ORACLE-FAILED-MOTION-REPEAT-01"
+  ],
+  "fixtures": [
+    {
+      "id": "T019-ORACLE-COUNT-PRODUCT-01",
+      "snapshots": [
+        {
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "col": 0,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "label": "2d3w",
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "view": {
+            "skipcol": 0,
+            "lnum": 1,
+            "curswant": 0,
+            "leftcol": 0,
+            "topfill": 0,
+            "topline": 1,
+            "col": 0,
+            "coladd": 0
+          },
+          "mode": "n",
+          "commandLine": "",
+          "blocking": false,
+          "geometry": {
+            "windowWidth": 80,
+            "columns": 80,
+            "lines": 24,
+            "windowHeight": 23
+          },
+          "cursor": {
+            "desiredColumn": 0,
+            "line": 1,
+            "screenRow": 1,
+            "screenColumn": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1
+          },
+          "error": "",
+          "buffer": {
+            "bomb": false,
+            "filetype": "",
+            "modifiable": true,
+            "modified": true,
+            "name": "",
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "endOfLine": true
+          },
+          "marks": {
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [],
+              "type": ""
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "-": {
+              "lines": [
+                "a b c d e f "
+              ],
+              "type": "v"
+            },
+            "\"": {
+              "lines": [
+                "a b c d e f "
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "lines": [
+            "g h i"
+          ],
+          "options": {
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-DOUBLED-LINEWISE-01",
+      "snapshots": [
+        {
+          "options": {
+            "timeout": true,
+            "wrap": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true
+          },
+          "error": "",
+          "commandLine": "",
+          "label": "2dd",
+          "marks": {
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              2,
+              2,
+              0
+            ]
+          },
+          "view": {
+            "curswant": 1,
+            "leftcol": 0,
+            "coladd": 0,
+            "col": 1,
+            "lnum": 2,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0
+                },
+                {
+                  "lnum": 2,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              2
+            ]
+          },
+          "jumpList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0,
+                  "bufnr": 1
+                }
+              ],
+              1
+            ]
+          },
+          "cursor": {
+            "screenRow": 2,
+            "screenColumn": 2,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1,
+            "line": 2
+          },
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "lines": [
+            "aa",
+            "dd"
+          ],
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [
+                "bb",
+                "cc"
+              ],
+              "type": "V"
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "-": {
+              "lines": [],
+              "type": ""
+            },
+            "\"": {
+              "lines": [
+                "bb",
+                "cc"
+              ],
+              "type": "V"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "buffer": {
+            "modified": true,
+            "name": "",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "filetype": "",
+            "bomb": false,
+            "modifiable": true
+          },
+          "blocking": false,
+          "geometry": {
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "lines": 24,
+            "columns": 80
+          },
+          "mode": "n"
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-D0-BACKWARD-EXCLUSIVE-01",
+      "snapshots": [
+        {
+          "error": "",
+          "blocking": false,
+          "geometry": {
+            "lines": 24,
+            "windowHeight": 23,
+            "windowWidth": 80,
+            "columns": 80
+          },
+          "commandLine": "",
+          "options": {
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "timeout": true,
+            "wrap": true,
+            "virtualedit": "",
+            "timeoutlen": 1000,
+            "tabstop": 8
+          },
+          "cursor": {
+            "line": 1,
+            "virtualColumn": 1,
+            "desiredColumn": 0,
+            "screenColumn": 1,
+            "screenRow": 1,
+            "coladd": 0,
+            "byteColumn": 1
+          },
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [],
+              "type": ""
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "-": {
+              "lines": [
+                "one "
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "\"": {
+              "lines": [
+                "one "
+              ],
+              "type": "v"
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            }
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "lnum": 1,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "label": "d0",
+          "marks": {
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ]
+          },
+          "mode": "n",
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "buffer": {
+            "fileEncoding": "utf-8",
+            "name": "",
+            "bomb": false,
+            "filetype": "",
+            "modifiable": true,
+            "modified": true,
+            "endOfLine": true,
+            "fileFormat": "unix"
+          },
+          "search": {
+            "highlighting": 1,
+            "forward": 1,
+            "pattern": ""
+          },
+          "lines": [
+            "two",
+            "next"
+          ],
+          "view": {
+            "leftcol": 0,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0,
+            "curswant": 0,
+            "lnum": 1,
+            "coladd": 0,
+            "col": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-D-DOLLAR-INCLUSIVE-01",
+      "snapshots": [
+        {
+          "view": {
+            "lnum": 1,
+            "skipcol": 0,
+            "coladd": 0,
+            "curswant": 3,
+            "topline": 1,
+            "topfill": 0,
+            "leftcol": 0,
+            "col": 3
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "v",
+              "lines": [
+                "two"
+              ]
+            },
+            "\"": {
+              "type": "v",
+              "lines": [
+                "two"
+              ]
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 4
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          },
+          "lines": [
+            "one ",
+            "next"
+          ],
+          "mode": "n",
+          "commandLine": "",
+          "blocking": false,
+          "geometry": {
+            "windowHeight": 23,
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "label": "d-dollar",
+          "options": {
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "timeout": true,
+            "wrap": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex"
+          },
+          "error": "",
+          "buffer": {
+            "filetype": "",
+            "bomb": false,
+            "modifiable": true,
+            "endOfLine": true,
+            "modified": true,
+            "name": "",
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8"
+          },
+          "cursor": {
+            "virtualColumn": 4,
+            "desiredColumn": 3,
+            "line": 1,
+            "screenRow": 1,
+            "screenColumn": 4,
+            "byteColumn": 4,
+            "coladd": 0
+          },
+          "marks": {
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              4,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-BACKWARD-WORD-01",
+      "snapshots": [
+        {
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 8,
+                  "lnum": 1,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "cursor": {
+            "line": 1,
+            "screenRow": 1,
+            "byteColumn": 9,
+            "coladd": 0,
+            "virtualColumn": 9,
+            "screenColumn": 9,
+            "desiredColumn": 8
+          },
+          "error": "",
+          "commandLine": "",
+          "search": {
+            "highlighting": 1,
+            "forward": 1,
+            "pattern": ""
+          },
+          "blocking": false,
+          "geometry": {
+            "lines": 24,
+            "windowHeight": 23,
+            "windowWidth": 80,
+            "columns": 80
+          },
+          "options": {
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8
+          },
+          "lines": [
+            "one two ree"
+          ],
+          "buffer": {
+            "modifiable": true,
+            "modified": true,
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "filetype": "",
+            "bomb": false,
+            "name": ""
+          },
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [],
+              "type": ""
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "\"": {
+              "lines": [
+                "th"
+              ],
+              "type": "v"
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "-": {
+              "lines": [
+                "th"
+              ],
+              "type": "v"
+            }
+          },
+          "label": "db-inside-word",
+          "marks": {
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              9,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "view": {
+            "leftcol": 0,
+            "lnum": 1,
+            "topline": 1,
+            "skipcol": 0,
+            "col": 8,
+            "curswant": 8,
+            "coladd": 0,
+            "topfill": 0
+          },
+          "mode": "n",
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-BACKWARD-END-01",
+      "snapshots": [
+        {
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          },
+          "geometry": {
+            "windowHeight": 23,
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "commandLine": "",
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 7,
+            "coladd": 0,
+            "virtualColumn": 7,
+            "screenColumn": 7,
+            "desiredColumn": 6,
+            "line": 1
+          },
+          "blocking": false,
+          "lines": [
+            "one twhree"
+          ],
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "coladd": 0,
+                  "col": 6,
+                  "lnum": 1
+                }
+              ],
+              1
+            ]
+          },
+          "options": {
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "timeout": true,
+            "wrap": true
+          },
+          "error": "",
+          "marks": {
+            ".": [
+              0,
+              1,
+              7,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "label": "dge-from-word-start",
+          "mode": "n",
+          "view": {
+            "leftcol": 0,
+            "col": 6,
+            "coladd": 0,
+            "lnum": 1,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0,
+            "curswant": 6
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "v",
+              "lines": [
+                "o t"
+              ]
+            },
+            "-": {
+              "type": "v",
+              "lines": [
+                "o t"
+              ]
+            }
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "buffer": {
+            "filetype": "",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "modifiable": true,
+            "bomb": false,
+            "modified": true,
+            "name": ""
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-EXCLUSIVE-NEXT-LINE-COLUMN-ZERO-01",
+      "snapshots": [
+        {
+          "error": "",
+          "options": {
+            "wrapscan": true,
+            "wrap": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "shiftwidth": 8,
+            "selection": "inclusive",
+            "timeout": true,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s"
+          },
+          "commandLine": "",
+          "buffer": {
+            "filetype": "",
+            "modifiable": true,
+            "modified": true,
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "name": "",
+            "fileEncoding": "utf-8",
+            "bomb": false
+          },
+          "cursor": {
+            "desiredColumn": 0,
+            "screenRow": 1,
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "screenColumn": 1
+          },
+          "marks": {
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "lines": [
+            "",
+            "second tail"
+          ],
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [],
+              "type": ""
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "-": {
+              "lines": [
+                "first"
+              ],
+              "type": "v"
+            },
+            "\"": {
+              "lines": [
+                "first"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "lnum": 1,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "highlighting": 1,
+            "pattern": "",
+            "forward": 1
+          },
+          "label": "dw-next-line-column-zero",
+          "mode": "n",
+          "view": {
+            "skipcol": 0,
+            "curswant": 0,
+            "lnum": 1,
+            "coladd": 0,
+            "col": 0,
+            "leftcol": 0,
+            "topfill": 0,
+            "topline": 1
+          },
+          "blocking": false,
+          "geometry": {
+            "columns": 80,
+            "windowWidth": 80,
+            "lines": 24,
+            "windowHeight": 23
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-DW-INDENTED-EOF-01",
+      "snapshots": [
+        {
+          "options": {
+            "timeout": true,
+            "wrap": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true
+          },
+          "error": "",
+          "commandLine": "",
+          "label": "dw-linewise-exception",
+          "lines": [
+            "  ",
+            ""
+          ],
+          "view": {
+            "col": 1,
+            "skipcol": 0,
+            "curswant": 1,
+            "coladd": 0,
+            "lnum": 1,
+            "topline": 1,
+            "leftcol": 0,
+            "topfill": 0
+          },
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 2
+                }
+              ],
+              1
+            ]
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "mode": "n",
+          "geometry": {
+            "lines": 24,
+            "windowHeight": 23,
+            "windowWidth": 80,
+            "columns": 80
+          },
+          "marks": {
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              2,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cursor": {
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1,
+            "line": 1,
+            "screenRow": 1,
+            "screenColumn": 2,
+            "byteColumn": 2
+          },
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [],
+              "type": ""
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "-": {
+              "lines": [
+                "first"
+              ],
+              "type": "v"
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "\"": {
+              "lines": [
+                "first"
+              ],
+              "type": "v"
+            }
+          },
+          "buffer": {
+            "name": "",
+            "filetype": "",
+            "bomb": false,
+            "modifiable": true,
+            "fileEncoding": "utf-8",
+            "modified": true,
+            "endOfLine": true,
+            "fileFormat": "unix"
+          },
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-EMPTY-LAST-LINE-DELETE-01",
+      "snapshots": [
+        {
+          "error": "",
+          "blocking": false,
+          "geometry": {
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "lines": 24,
+            "columns": 80
+          },
+          "buffer": {
+            "fileEncoding": "utf-8",
+            "filetype": "",
+            "name": "",
+            "modifiable": true,
+            "modified": true,
+            "bomb": false,
+            "endOfLine": true,
+            "fileFormat": "unix"
+          },
+          "commandLine": "",
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [
+                ""
+              ],
+              "type": "V"
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "\"": {
+              "lines": [
+                ""
+              ],
+              "type": "V"
+            },
+            "-": {
+              "lines": [],
+              "type": ""
+            }
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "lnum": 1,
+                  "coladd": 0
+                },
+                {
+                  "col": 0,
+                  "lnum": 2,
+                  "coladd": 0
+                }
+              ],
+              2
+            ]
+          },
+          "options": {
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "marks": {
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "label": "dd-empty-last-line",
+          "mode": "n",
+          "view": {
+            "col": 0,
+            "skipcol": 0,
+            "topline": 1,
+            "coladd": 0,
+            "curswant": 0,
+            "leftcol": 0,
+            "lnum": 1,
+            "topfill": 0
+          },
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          },
+          "cursor": {
+            "virtualColumn": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "line": 1,
+            "screenRow": 1,
+            "desiredColumn": 0,
+            "screenColumn": 1
+          },
+          "lines": [
+            "first"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-CHARWISE-01",
+      "snapshots": [
+        {
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 1
+                },
+                {
+                  "lnum": 2,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              2
+            ]
+          },
+          "mode": "n",
+          "cursor": {
+            "desiredColumn": 1,
+            "screenRow": 1,
+            "screenColumn": 2,
+            "line": 1,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "byteColumn": 2
+          },
+          "lines": [
+            "aef",
+            "ghi"
+          ],
+          "error": "",
+          "blocking": false,
+          "geometry": {
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "lines": 24
+          },
+          "commandLine": "",
+          "options": {
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "timeout": true,
+            "wrap": true
+          },
+          "search": {
+            "pattern": "",
+            "highlighting": 1,
+            "forward": 1
+          },
+          "buffer": {
+            "filetype": "",
+            "name": "",
+            "modifiable": true,
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "modified": true,
+            "bomb": false
+          },
+          "label": "dvj",
+          "marks": {
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              2,
+              0
+            ]
+          },
+          "view": {
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0,
+            "curswant": 1,
+            "coladd": 0,
+            "lnum": 1,
+            "col": 1,
+            "leftcol": 0
+          },
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [
+                "bc",
+                "d"
+              ],
+              "type": "v"
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "\"": {
+              "lines": [
+                "bc",
+                "d"
+              ],
+              "type": "v"
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "-": {
+              "lines": [],
+              "type": ""
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-LINEWISE-01",
+      "snapshots": [
+        {
+          "commandLine": "",
+          "error": "",
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "line": 1,
+            "screenColumn": 1,
+            "desiredColumn": 0,
+            "virtualColumn": 1
+          },
+          "marks": {
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "view": {
+            "topfill": 0,
+            "leftcol": 0,
+            "lnum": 1,
+            "col": 0,
+            "skipcol": 0,
+            "coladd": 0,
+            "topline": 1,
+            "curswant": 0
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "V",
+              "lines": [
+                "foo bar"
+              ]
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "foo bar"
+              ]
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "coladd": 0,
+                  "lnum": 1,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          },
+          "buffer": {
+            "name": "",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "filetype": "",
+            "bomb": false,
+            "modifiable": true,
+            "modified": true
+          },
+          "mode": "n",
+          "label": "dVw",
+          "blocking": false,
+          "geometry": {
+            "windowHeight": 23,
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "lines": [
+            "second"
+          ],
+          "options": {
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-BLOCKWISE-01",
+      "snapshots": [
+        {
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "col": 1,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "commandLine": "",
+          "buffer": {
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "name": "",
+            "filetype": "",
+            "bomb": false,
+            "modifiable": true,
+            "modified": true,
+            "fileEncoding": "utf-8"
+          },
+          "mode": "n",
+          "error": "",
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "lines": [
+            "ac",
+            "df",
+            "ghi"
+          ],
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          },
+          "marks": {
+            ".": [
+              0,
+              1,
+              2,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [
+                "b",
+                "e"
+              ],
+              "type": "\u00161"
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "-": {
+              "lines": [],
+              "type": ""
+            },
+            "\"": {
+              "lines": [
+                "b",
+                "e"
+              ],
+              "type": "\u00161"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "cursor": {
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "screenColumn": 2,
+            "line": 1,
+            "desiredColumn": 1,
+            "screenRow": 1
+          },
+          "blocking": false,
+          "geometry": {
+            "windowWidth": 80,
+            "columns": 80,
+            "lines": 24,
+            "windowHeight": 23
+          },
+          "label": "d-ctrl-v-j",
+          "options": {
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "wrapscan": true,
+            "wrap": true,
+            "whichwrap": "b,s",
+            "virtualedit": "",
+            "timeoutlen": 1000,
+            "startofline": false,
+            "tabstop": 8,
+            "timeout": true,
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0
+          },
+          "view": {
+            "coladd": 0,
+            "lnum": 1,
+            "leftcol": 0,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0,
+            "curswant": 1,
+            "col": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-BLOCKWISE-TABS-01",
+      "snapshots": [
+        {
+          "lines": [
+            "ab",
+            "ac"
+          ],
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "col": 1,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "options": {
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": ""
+          },
+          "commandLine": "",
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [
+                "\t",
+                "b\t"
+              ],
+              "type": "\u00167"
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "-": {
+              "lines": [],
+              "type": ""
+            },
+            "\"": {
+              "lines": [
+                "\t",
+                "b\t"
+              ],
+              "type": "\u00167"
+            }
+          },
+          "label": "block-delete-final-tab-cells",
+          "marks": {
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              2,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "view": {
+            "skipcol": 0,
+            "coladd": 0,
+            "curswant": 1,
+            "leftcol": 0,
+            "topfill": 0,
+            "lnum": 1,
+            "col": 1,
+            "topline": 1
+          },
+          "error": "",
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "buffer": {
+            "bomb": false,
+            "filetype": "",
+            "modifiable": true,
+            "modified": true,
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "name": ""
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "geometry": {
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23
+          },
+          "cursor": {
+            "desiredColumn": 1,
+            "screenColumn": 2,
+            "line": 1,
+            "screenRow": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2
+          },
+          "mode": "n",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-BLOCKWISE-TAB-EDGE-EXPANSION-01",
+      "snapshots": [
+        {
+          "lines": [
+            "",
+            "Y"
+          ],
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [
+                "abcdX",
+                "\t"
+              ],
+              "type": "\u00168"
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "\"": {
+              "lines": [
+                "abcdX",
+                "\t"
+              ],
+              "type": "\u00168"
+            },
+            "-": {
+              "lines": [],
+              "type": ""
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            }
+          },
+          "options": {
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "timeout": true,
+            "wrap": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true
+          },
+          "commandLine": "",
+          "buffer": {
+            "bomb": false,
+            "name": "",
+            "modifiable": true,
+            "filetype": "",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "modified": true
+          },
+          "label": "block-delete-one-tab-cell",
+          "marks": {
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ]
+          },
+          "view": {
+            "coladd": 0,
+            "topfill": 0,
+            "curswant": 0,
+            "topline": 1,
+            "leftcol": 0,
+            "lnum": 1,
+            "col": 0,
+            "skipcol": 0
+          },
+          "error": "",
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "col": 0,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          },
+          "mode": "n",
+          "cursor": {
+            "desiredColumn": 0,
+            "screenColumn": 1,
+            "screenRow": 1,
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1
+          },
+          "geometry": {
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23
+          },
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-BLOCKWISE-WIDE-GRAPHEME-01",
+      "snapshots": [
+        {
+          "commandLine": "",
+          "blocking": false,
+          "cursor": {
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0,
+            "line": 1,
+            "screenRow": 1,
+            "screenColumn": 1,
+            "byteColumn": 1
+          },
+          "error": "",
+          "options": {
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "wrap": true,
+            "timeout": true,
+            "startofline": false,
+            "tabstop": 8
+          },
+          "buffer": {
+            "name": "",
+            "fileEncoding": "utf-8",
+            "bomb": false,
+            "modifiable": true,
+            "filetype": "",
+            "modified": true,
+            "endOfLine": true,
+            "fileFormat": "unix"
+          },
+          "view": {
+            "col": 0,
+            "curswant": 0,
+            "lnum": 1,
+            "leftcol": 0,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0,
+            "coladd": 0
+          },
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "marks": {
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "mode": "n",
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "\u00162",
+              "lines": [
+                "😀",
+                "😀"
+              ]
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "\u00162",
+              "lines": [
+                "😀",
+                "😀"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            }
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "lnum": 1,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          },
+          "geometry": {
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "columns": 80,
+            "lines": 24
+          },
+          "label": "block-delete-wide-graphemes"
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-CW-TRANSITION-01",
+      "snapshots": [
+        {
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "coladd": 0,
+                  "lnum": 1
+                }
+              ],
+              1
+            ]
+          },
+          "lines": [
+            "NEW beta gamma"
+          ],
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [],
+              "type": ""
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "-": {
+              "lines": [
+                "alpha"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "\"": {
+              "lines": [
+                "alpha"
+              ],
+              "type": "v"
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            }
+          },
+          "commandLine": "",
+          "buffer": {
+            "filetype": "",
+            "modified": true,
+            "name": "",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "modifiable": true,
+            "bomb": false
+          },
+          "blocking": false,
+          "geometry": {
+            "columns": 80,
+            "windowWidth": 80,
+            "lines": 24,
+            "windowHeight": 23
+          },
+          "search": {
+            "highlighting": 1,
+            "pattern": "",
+            "forward": 1
+          },
+          "options": {
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true
+          },
+          "error": "",
+          "mode": "n",
+          "label": "cw-insert-text-and-escape",
+          "marks": {
+            ".": [
+              0,
+              1,
+              3,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "view": {
+            "curswant": 2,
+            "leftcol": 0,
+            "topfill": 0,
+            "lnum": 1,
+            "skipcol": 0,
+            "col": 2,
+            "coladd": 0,
+            "topline": 1
+          },
+          "cursor": {
+            "line": 1,
+            "screenRow": 1,
+            "screenColumn": 3,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-CW-COUNT-01",
+      "snapshots": [
+        {
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "v",
+              "lines": [
+                "one two"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "v",
+              "lines": [
+                "one two"
+              ]
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            }
+          },
+          "options": {
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false
+          },
+          "commandLine": "",
+          "lines": [
+            " three four"
+          ],
+          "cursor": {
+            "desiredColumn": 0,
+            "line": 1,
+            "screenRow": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "screenColumn": 1
+          },
+          "mode": "n",
+          "view": {
+            "curswant": 0,
+            "leftcol": 0,
+            "topfill": 0,
+            "lnum": 1,
+            "skipcol": 0,
+            "col": 0,
+            "coladd": 0,
+            "topline": 1
+          },
+          "marks": {
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "coladd": 0,
+                  "lnum": 1
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "pattern": "",
+            "highlighting": 1,
+            "forward": 1
+          },
+          "error": "",
+          "buffer": {
+            "filetype": "",
+            "modifiable": true,
+            "modified": true,
+            "endOfLine": true,
+            "name": "",
+            "fileEncoding": "utf-8",
+            "fileFormat": "unix",
+            "bomb": false
+          },
+          "label": "c2w",
+          "blocking": false,
+          "geometry": {
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "lines": 24
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-CW-NEXT-LINE-COLUMN-ZERO-01",
+      "snapshots": [
+        {
+          "cursor": {
+            "virtualColumn": 1,
+            "byteColumn": 1,
+            "line": 1,
+            "coladd": 0,
+            "screenRow": 1,
+            "desiredColumn": 0,
+            "screenColumn": 1
+          },
+          "error": "",
+          "commandLine": "",
+          "mode": "n",
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "\"": {
+              "type": "v",
+              "lines": [
+                "alpha"
+              ]
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "-": {
+              "type": "v",
+              "lines": [
+                "alpha"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          },
+          "options": {
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8
+          },
+          "blocking": false,
+          "geometry": {
+            "windowWidth": 80,
+            "lines": 24,
+            "windowHeight": 23,
+            "columns": 80
+          },
+          "label": "cw-cross-line-and-insert",
+          "marks": {
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "lines": [
+            "X",
+            "beta tail"
+          ],
+          "buffer": {
+            "fileEncoding": "utf-8",
+            "modifiable": true,
+            "name": "",
+            "filetype": "",
+            "modified": true,
+            "bomb": false,
+            "endOfLine": true,
+            "fileFormat": "unix"
+          },
+          "view": {
+            "lnum": 1,
+            "curswant": 0,
+            "skipcol": 0,
+            "col": 0,
+            "coladd": 0,
+            "leftcol": 0,
+            "topfill": 0,
+            "topline": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-CC-LINEWISE-TRANSITION-01",
+      "snapshots": [
+        {
+          "options": {
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true
+          },
+          "buffer": {
+            "filetype": "",
+            "modifiable": true,
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "modified": true,
+            "bomb": false,
+            "name": ""
+          },
+          "commandLine": "",
+          "search": {
+            "highlighting": 1,
+            "forward": 1,
+            "pattern": ""
+          },
+          "marks": {
+            ".": [
+              0,
+              1,
+              5,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "V",
+              "lines": [
+                "  alpha"
+              ]
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "  alpha"
+              ]
+            }
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "lines": [
+            "  NEW",
+            "beta"
+          ],
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 2,
+                  "lnum": 1,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "label": "cc-replace-and-escape",
+          "cursor": {
+            "line": 1,
+            "screenColumn": 5,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 5,
+            "screenRow": 1,
+            "desiredColumn": 4
+          },
+          "view": {
+            "topfill": 0,
+            "topline": 1,
+            "lnum": 1,
+            "curswant": 4,
+            "col": 4,
+            "skipcol": 0,
+            "coladd": 0,
+            "leftcol": 0
+          },
+          "mode": "n",
+          "blocking": false,
+          "geometry": {
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "columns": 80,
+            "lines": 24
+          },
+          "error": ""
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-CC-COUNTED-TRANSITION-01",
+      "snapshots": [
+        {
+          "marks": {
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              5,
+              0
+            ]
+          },
+          "view": {
+            "col": 4,
+            "curswant": 4,
+            "lnum": 1,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0,
+            "coladd": 0,
+            "leftcol": 0
+          },
+          "error": "",
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "mode": "n",
+          "lines": [
+            "  NEW",
+            "gamma"
+          ],
+          "commandLine": "",
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "lnum": 1,
+                  "coladd": 0
+                },
+                {
+                  "col": 2,
+                  "lnum": 1,
+                  "coladd": 0
+                }
+              ],
+              2
+            ]
+          },
+          "blocking": false,
+          "cursor": {
+            "coladd": 0,
+            "virtualColumn": 5,
+            "desiredColumn": 4,
+            "screenColumn": 5,
+            "screenRow": 1,
+            "byteColumn": 5,
+            "line": 1
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "V",
+              "lines": [
+                "  alpha",
+                "  beta"
+              ]
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "  alpha",
+                "  beta"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          },
+          "options": {
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "timeout": true,
+            "wrap": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true
+          },
+          "buffer": {
+            "fileEncoding": "utf-8",
+            "filetype": "",
+            "bomb": false,
+            "name": "",
+            "modifiable": true,
+            "modified": true,
+            "endOfLine": true,
+            "fileFormat": "unix"
+          },
+          "geometry": {
+            "windowWidth": 80,
+            "lines": 24,
+            "windowHeight": 23,
+            "columns": 80
+          },
+          "label": "2cc-replace-and-escape"
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-YANK-LINEWISE-01",
+      "snapshots": [
+        {
+          "marks": {
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              2,
+              2,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "mode": "n",
+          "error": "",
+          "jumpList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "bufnr": 1,
+                  "lnum": 1,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "lnum": 1,
+                  "coladd": 0
+                }
+              ],
+              1
+            ]
+          },
+          "buffer": {
+            "fileEncoding": "utf-8",
+            "filetype": "",
+            "bomb": false,
+            "modified": false,
+            "modifiable": true,
+            "name": "",
+            "endOfLine": true,
+            "fileFormat": "unix"
+          },
+          "cursor": {
+            "coladd": 0,
+            "virtualColumn": 2,
+            "line": 2,
+            "desiredColumn": 1,
+            "screenRow": 2,
+            "screenColumn": 2,
+            "byteColumn": 2
+          },
+          "commandLine": "",
+          "lines": [
+            "one",
+            "two",
+            "three"
+          ],
+          "blocking": false,
+          "label": "yy",
+          "search": {
+            "highlighting": 1,
+            "forward": 1,
+            "pattern": ""
+          },
+          "options": {
+            "nrformats": "bin,hex",
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "whichwrap": "b,s",
+            "virtualedit": "",
+            "timeoutlen": 1000,
+            "tabstop": 8,
+            "startofline": false,
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false
+          },
+          "registers": {
+            "0": {
+              "lines": [
+                "two"
+              ],
+              "type": "V"
+            },
+            "1": {
+              "lines": [],
+              "type": ""
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "\"": {
+              "lines": [
+                "two"
+              ],
+              "type": "V"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "-": {
+              "lines": [],
+              "type": ""
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          },
+          "geometry": {
+            "lines": 24,
+            "windowHeight": 23,
+            "windowWidth": 80,
+            "columns": 80
+          },
+          "view": {
+            "col": 1,
+            "topline": 1,
+            "skipcol": 0,
+            "coladd": 0,
+            "curswant": 1,
+            "topfill": 0,
+            "lnum": 2,
+            "leftcol": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-YANK-DOUBLED-COUNT-01",
+      "snapshots": [
+        {
+          "buffer": {
+            "endOfLine": true,
+            "name": "",
+            "fileEncoding": "utf-8",
+            "modifiable": true,
+            "bomb": false,
+            "filetype": "",
+            "modified": false,
+            "fileFormat": "unix"
+          },
+          "commandLine": "",
+          "cursor": {
+            "line": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "screenColumn": 2,
+            "desiredColumn": 1,
+            "byteColumn": 2,
+            "screenRow": 2
+          },
+          "blocking": false,
+          "geometry": {
+            "columns": 80,
+            "lines": 24,
+            "windowWidth": 80,
+            "windowHeight": 23
+          },
+          "error": "",
+          "options": {
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "timeout": true,
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "virtualedit": ""
+          },
+          "jumpList": {
+            "entries": [
+              [
+                {
+                  "coladd": 0,
+                  "bufnr": 1,
+                  "lnum": 1,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "marks": {
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              2,
+              2,
+              0
+            ]
+          },
+          "label": "2yy",
+          "mode": "n",
+          "view": {
+            "leftcol": 0,
+            "topfill": 0,
+            "lnum": 2,
+            "skipcol": 0,
+            "topline": 1,
+            "coladd": 0,
+            "curswant": 1,
+            "col": 1
+          },
+          "registers": {
+            "0": {
+              "type": "V",
+              "lines": [
+                "two",
+                "three"
+              ]
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "two",
+                "three"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            }
+          },
+          "lines": [
+            "one",
+            "two",
+            "three",
+            "four"
+          ],
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "coladd": 0,
+                  "lnum": 1,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FAILED-MOTION-REPEAT-01",
+      "snapshots": [
+        {
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "highlighting": 1,
+            "pattern": "",
+            "forward": 1
+          },
+          "error": "",
+          "commandLine": "",
+          "mode": "n",
+          "blocking": false,
+          "geometry": {
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "lines": 24
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "v",
+              "lines": [
+                "one "
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "\"": {
+              "type": "v",
+              "lines": [
+                "one "
+              ]
+            }
+          },
+          "options": {
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "timeout": true,
+            "wrapscan": true,
+            "wrap": true
+          },
+          "buffer": {
+            "filetype": "",
+            "modifiable": true,
+            "fileEncoding": "utf-8",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "name": "",
+            "modified": true,
+            "bomb": false
+          },
+          "lines": [
+            "two three"
+          ],
+          "label": "successful-dw-seeds-repeat",
+          "marks": {
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "view": {
+            "curswant": 0,
+            "lnum": 1,
+            "coladd": 0,
+            "leftcol": 0,
+            "topfill": 0,
+            "col": 0,
+            "skipcol": 0,
+            "topline": 1
+          },
+          "cursor": {
+            "desiredColumn": 0,
+            "screenRow": 1,
+            "screenColumn": 1,
+            "byteColumn": 1,
+            "line": 1,
+            "virtualColumn": 1,
+            "coladd": 0
+          }
+        },
+        {
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "highlighting": 1,
+            "pattern": "",
+            "forward": 1
+          },
+          "error": "",
+          "commandLine": "",
+          "mode": "n",
+          "blocking": false,
+          "geometry": {
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "lines": 24
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "v",
+              "lines": [
+                "one "
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "\"": {
+              "type": "v",
+              "lines": [
+                "one "
+              ]
+            }
+          },
+          "options": {
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "timeout": true,
+            "wrapscan": true,
+            "wrap": true
+          },
+          "buffer": {
+            "filetype": "",
+            "modifiable": true,
+            "fileEncoding": "utf-8",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "name": "",
+            "modified": true,
+            "bomb": false
+          },
+          "lines": [
+            "two three"
+          ],
+          "label": "failed-find-operator",
+          "marks": {
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "view": {
+            "curswant": 0,
+            "lnum": 1,
+            "coladd": 0,
+            "leftcol": 0,
+            "topfill": 0,
+            "col": 0,
+            "skipcol": 0,
+            "topline": 1
+          },
+          "cursor": {
+            "desiredColumn": 0,
+            "screenRow": 1,
+            "screenColumn": 1,
+            "byteColumn": 1,
+            "line": 1,
+            "virtualColumn": 1,
+            "coladd": 0
+          }
+        },
+        {
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "highlighting": 1,
+            "pattern": "",
+            "forward": 1
+          },
+          "error": "",
+          "commandLine": "",
+          "mode": "n",
+          "blocking": false,
+          "geometry": {
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "lines": 24
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "v",
+              "lines": [
+                "two "
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            },
+            "\"": {
+              "type": "v",
+              "lines": [
+                "two "
+              ]
+            }
+          },
+          "options": {
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "timeout": true,
+            "wrapscan": true,
+            "wrap": true
+          },
+          "buffer": {
+            "filetype": "",
+            "modifiable": true,
+            "fileEncoding": "utf-8",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "name": "",
+            "modified": true,
+            "bomb": false
+          },
+          "lines": [
+            "three"
+          ],
+          "label": "dot-repeats-prior-dw",
+          "marks": {
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "view": {
+            "curswant": 0,
+            "lnum": 1,
+            "coladd": 0,
+            "leftcol": 0,
+            "topfill": 0,
+            "col": 0,
+            "skipcol": 0,
+            "topline": 1
+          },
+          "cursor": {
+            "desiredColumn": 0,
+            "screenRow": 1,
+            "screenColumn": 1,
+            "byteColumn": 1,
+            "line": 1,
+            "virtualColumn": 1,
+            "coladd": 0
+          }
+        }
+      ]
+    }
+  ],
+  "note": "Pinned Neovim state snapshots for T019 fixtures only; no compatibility inventory rows are marked verified by this file."
+}

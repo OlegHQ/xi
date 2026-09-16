@@ -1,0 +1,327 @@
+{
+  "kind": "planning-diagnostics-not-release-qualification",
+  "date": "2026-09-15",
+  "base_revision": "555ed0ce3c2475a10844824468e6fddbb6e49755",
+  "environment": {
+    "platform": "Linux-6.8.0-139-generic-aarch64-with-glibc2.42",
+    "python": "3.13.15",
+    "bun": "1.3.13",
+    "terminal": "none; in-process diagnostic probes"
+  },
+  "open_probe": [
+    {
+      "diagnosticOnly": true,
+      "layer": "rope",
+      "shape": "normal",
+      "bytes": 1048576,
+      "sha256": "59cb4477a7716dd8503d060dc0dc0e6c28bd3e4328fa9a4c362e6d98ab0b1fa6",
+      "bun": "1.3.13",
+      "platform": "linux",
+      "arch": "arm64",
+      "lines": 13108,
+      "openMs": 25.071486,
+      "cpuMicrosIncludingFixture": 50891,
+      "before": {
+        "rss": 46399488,
+        "heapTotal": 3988480,
+        "heapUsed": 773024,
+        "external": 260122,
+        "arrayBuffers": 0
+      },
+      "beforeCollection": {
+        "rss": 71958528,
+        "heapTotal": 12705792,
+        "heapUsed": 773024,
+        "external": 1308810,
+        "arrayBuffers": 1048688
+      },
+      "retained": {
+        "rss": 72744960,
+        "heapTotal": 11262976,
+        "heapUsed": 773024,
+        "external": 2195495,
+        "arrayBuffers": 0
+      },
+      "heapGrowth": 0,
+      "rssGrowth": 26345472,
+      "maxRssKiB": 71040
+    },
+    {
+      "diagnosticOnly": true,
+      "layer": "rope",
+      "shape": "dense",
+      "bytes": 1048576,
+      "sha256": "06dd1a4a771f4e3dbb1f255c4195c285fd51dfd6aa3c4862c545a64a9230c472",
+      "bun": "1.3.13",
+      "platform": "linux",
+      "arch": "arm64",
+      "lines": 524289,
+      "openMs": 128.1555,
+      "cpuMicrosIncludingFixture": 150125,
+      "before": {
+        "rss": 47316992,
+        "heapTotal": 3988480,
+        "heapUsed": 772933,
+        "external": 260121,
+        "arrayBuffers": 0
+      },
+      "beforeCollection": {
+        "rss": 104595456,
+        "heapTotal": 18145280,
+        "heapUsed": 21127908,
+        "external": 20249764,
+        "arrayBuffers": 0
+      },
+      "retained": {
+        "rss": 105644032,
+        "heapTotal": 9034752,
+        "heapUsed": 21127908,
+        "external": 26575289,
+        "arrayBuffers": 0
+      },
+      "heapGrowth": 20354975,
+      "rssGrowth": 58327040,
+      "maxRssKiB": 103296
+    },
+    {
+      "diagnosticOnly": true,
+      "layer": "rope",
+      "shape": "long",
+      "bytes": 1048576,
+      "sha256": "8f990ba0b577b51cf009ea049368c16bbda1b21e1b93be07a824758bb253c39b",
+      "bun": "1.3.13",
+      "platform": "linux",
+      "arch": "arm64",
+      "lines": 1,
+      "openMs": 15.093482999999999,
+      "cpuMicrosIncludingFixture": 32284,
+      "before": {
+        "rss": 46923776,
+        "heapTotal": 3988480,
+        "heapUsed": 775759,
+        "external": 260504,
+        "arrayBuffers": 0
+      },
+      "beforeCollection": {
+        "rss": 74317824,
+        "heapTotal": 14540800,
+        "heapUsed": 775759,
+        "external": 1309192,
+        "arrayBuffers": 1048688
+      },
+      "retained": {
+        "rss": 74579968,
+        "heapTotal": 13491200,
+        "heapUsed": 775759,
+        "external": 1408387,
+        "arrayBuffers": 0
+      },
+      "heapGrowth": 0,
+      "rssGrowth": 27656192,
+      "maxRssKiB": 72832
+    },
+    {
+      "diagnosticOnly": true,
+      "layer": "public",
+      "shape": "normal",
+      "bytes": 1048576,
+      "sha256": "59cb4477a7716dd8503d060dc0dc0e6c28bd3e4328fa9a4c362e6d98ab0b1fa6",
+      "bun": "1.3.13",
+      "platform": "linux",
+      "arch": "arm64",
+      "lines": 13108,
+      "openMs": 39.049972,
+      "cpuMicrosIncludingFixture": 72975,
+      "before": {
+        "rss": 46661632,
+        "heapTotal": 3988480,
+        "heapUsed": 773024,
+        "external": 260125,
+        "arrayBuffers": 0
+      },
+      "beforeCollection": {
+        "rss": 101842944,
+        "heapTotal": 30400512,
+        "heapUsed": 9557390,
+        "external": 7261486,
+        "arrayBuffers": 2097376
+      },
+      "retained": {
+        "rss": 102367232,
+        "heapTotal": 23321600,
+        "heapUsed": 9557390,
+        "external": 2290235,
+        "arrayBuffers": 0
+      },
+      "heapGrowth": 8784366,
+      "rssGrowth": 55705600,
+      "maxRssKiB": 99968
+    },
+    {
+      "diagnosticOnly": true,
+      "layer": "public",
+      "shape": "dense",
+      "bytes": 1048576,
+      "sha256": "06dd1a4a771f4e3dbb1f255c4195c285fd51dfd6aa3c4862c545a64a9230c472",
+      "bun": "1.3.13",
+      "platform": "linux",
+      "arch": "arm64",
+      "lines": 524289,
+      "openMs": 1500.0799129999998,
+      "cpuMicrosIncludingFixture": 1716352,
+      "before": {
+        "rss": 47185920,
+        "heapTotal": 3988480,
+        "heapUsed": 772933,
+        "external": 260123,
+        "arrayBuffers": 0
+      },
+      "beforeCollection": {
+        "rss": 307421184,
+        "heapTotal": 164553728,
+        "heapUsed": 144553270,
+        "external": 6325193,
+        "arrayBuffers": 1048688
+      },
+      "retained": {
+        "rss": 307466240,
+        "heapTotal": 133815296,
+        "heapUsed": 144553270,
+        "external": 26672329,
+        "arrayBuffers": 0
+      },
+      "heapGrowth": 143780337,
+      "rssGrowth": 260280320,
+      "maxRssKiB": 300388
+    },
+    {
+      "diagnosticOnly": true,
+      "layer": "public",
+      "shape": "long",
+      "bytes": 1048576,
+      "sha256": "8f990ba0b577b51cf009ea049368c16bbda1b21e1b93be07a824758bb253c39b",
+      "bun": "1.3.13",
+      "platform": "linux",
+      "arch": "arm64",
+      "lines": 1,
+      "openMs": 16.934768,
+      "cpuMicrosIncludingFixture": 34607,
+      "before": {
+        "rss": 46137344,
+        "heapTotal": 3988480,
+        "heapUsed": 772939,
+        "external": 260123,
+        "arrayBuffers": 0
+      },
+      "beforeCollection": {
+        "rss": 76808192,
+        "heapTotal": 14607360,
+        "heapUsed": 772939,
+        "external": 2357499,
+        "arrayBuffers": 2097376
+      },
+      "retained": {
+        "rss": 77725696,
+        "heapTotal": 13622272,
+        "heapUsed": 772939,
+        "external": 1457312,
+        "arrayBuffers": 0
+      },
+      "heapGrowth": 0,
+      "rssGrowth": 31588352,
+      "maxRssKiB": 75904
+    }
+  ],
+  "ledger_before": {
+    "diagnostic_only": true,
+    "editor_observations": false,
+    "rows": 100000,
+    "import_trials": 1,
+    "import_wall_ms": 13901.292081020074,
+    "import_cpu_ms": 2827.899182,
+    "query_samples": 1000,
+    "query_p50_ms": 0.0065,
+    "query_p95_ms": 0.007333,
+    "query_p99_ms": 0.011167,
+    "query_max_ms": 0.079708,
+    "max_rss_kib": 26924,
+    "sqlite_version": "3.51.2",
+    "query_plan": [
+      [
+        3,
+        0,
+        60,
+        "SEARCH observation USING INDEX observation_lookup (catalog_hash=? AND budget_id=? AND metric=?)"
+      ]
+    ]
+  },
+  "ledger_after": {
+    "diagnostic_only": true,
+    "editor_observations": false,
+    "rows": 100000,
+    "import_trials": 1,
+    "import_wall_ms": 1427.3035720107146,
+    "import_cpu_ms": 1331.288662,
+    "query_samples": 1000,
+    "query_p50_ms": 0.007333,
+    "query_p95_ms": 0.008375,
+    "query_p99_ms": 0.013125,
+    "query_max_ms": 0.082583,
+    "max_rss_kib": 27052,
+    "sqlite_version": "3.51.2",
+    "query_plan": [
+      [
+        3,
+        0,
+        60,
+        "SEARCH observation USING INDEX observation_lookup (catalog_hash=? AND budget_id=? AND metric=?)"
+      ]
+    ]
+  },
+  "profile": {
+    "command": [
+      "bun",
+      "--cpu-prof-md",
+      "--cpu-prof-dir=.artifacts/performance-planning",
+      "--cpu-prof-name=dense-open.md",
+      "run",
+      "bench/performance/planning-probe.ts",
+      "public",
+      "dense",
+      "1048576"
+    ],
+    "artifact": ".artifacts/performance-planning/dense-open.md",
+    "sha256": "0352f7a550891d8cc74441ff613de30b991a07f0c5b172ebac4203727218a8f6",
+    "duration_seconds": 3.95,
+    "samples": 1563,
+    "top_self_percent": {
+      "freeze_native": 66.2,
+      "LineEndingSequence": 10.9,
+      "gc_native": 5.2
+    },
+    "limitation": "Profiler perturbs timings; full open path plus runtime/fixture setup, not a pure allocation census."
+  },
+  "ledger_after_first": {
+    "diagnostic_only": true,
+    "editor_observations": false,
+    "rows": 100000,
+    "import_trials": 1,
+    "import_wall_ms": 1206.4502089924645,
+    "import_cpu_ms": 1089.981997,
+    "query_samples": 1000,
+    "query_p50_ms": 0.006459,
+    "query_p95_ms": 0.007125,
+    "query_p99_ms": 0.008542,
+    "query_max_ms": 0.108,
+    "max_rss_kib": 27048,
+    "sqlite_version": "3.51.2",
+    "query_plan": [
+      [
+        3,
+        0,
+        60,
+        "SEARCH observation USING INDEX observation_lookup (catalog_hash=? AND budget_id=? AND metric=?)"
+      ]
+    ]
+  }
+}

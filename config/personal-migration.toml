@@ -1,0 +1,14 @@
+schema-version = 1
+profile = "personal"
+
+[editor]
+theme = "xi-light"
+motion-trail = "last-motion"
+
+[keys.normal.space]
+t = "theme.pick"
+
+[aliases]
+theme = "theme.pick"
+buffer-next = "buffer.next"
+buffer-previous = "buffer.previous"

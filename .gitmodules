@@ -1,0 +1,3 @@
+[submodule "vendor/opentui"]
+	path = vendor/opentui
+	url = https://github.com/OlegHQ/opentui.git

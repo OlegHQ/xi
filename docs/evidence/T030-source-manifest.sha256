@@ -1,0 +1,5 @@
+565522f16285140a2baf5bd63f25760b11001b38d840144d67771c60c62f1029  packages/vim/navigation/index.ts
+8023796dce0d425cd10254785fb305237ebfe8d673c37ad334e9c9efc8be6a13  packages/vim/src/index.ts
+8ced58587852a6d7e5625cbed2b314fabe967708ffa3330e4eb9a08740ad4bd0  tests/vim/navigation/t030-fixtures.json
+7de10aaeec65171e0111e2ee5a698bfd522cb871679b2c0c284994adc8b02b23  tests/vim/navigation/t030-navigation.test.ts
+a246214abb6151f492a3bdf4459ec30e98d57e6932c08bd48ecf292ccfde6cbe  tests/vim/navigation/t030-oracle.test.ts

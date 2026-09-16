@@ -1,0 +1,26 @@
+schema-version = 1
+
+[language-server.typescript]
+command = "typescript-language-server"
+args = ["--stdio"]
+root-markers = ["tsconfig.json", "package.json", ".git"]
+
+[language-server.rust]
+command = "rust-analyzer"
+args = []
+root-markers = ["Cargo.toml", ".git"]
+
+[[language]]
+name = "typescript"
+file-types = ["ts", "tsx"]
+language-servers = ["typescript"]
+indent = { tab-width = 2, unit = "\t" }
+formatter = { command = "biome", args = ["format", "--stdin-file-path", "{file}"] }
+auto-format = true
+
+[[language]]
+name = "rust"
+file-types = ["rs"]
+language-servers = ["rust"]
+indent = { tab-width = 4, unit = "    " }
+auto-format = false

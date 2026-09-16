@@ -1,0 +1,7 @@
+8777ebdb6d158ec7777023ea2cab6ec4bd95405da3cf64db92b18a1812798783  docs/compatibility/t103-text-transform.json
+757d86edf0f05af9071311eac3576262fc83bb663da7f2ab51c62b0bf5e33a52  packages/vim/operators/text-transform.ts
+8023796dce0d425cd10254785fb305237ebfe8d673c37ad334e9c9efc8be6a13  packages/vim/src/index.ts
+941f5f1d8956ae8e59d80e6fe2280c60e15ab2471162a2ce8a9e581fd6643ce7  tests/vim/operators/t103-fixtures.json
+6aa9a84a3053380a40686236d3d2537a0f4ca3d664bca055c4a4adc69cefaf5a  tests/vim/operators/t103-oracle-traces.json
+272bf14e3f8facb0bbe8e3559a828cfd9656f8f9a96022d11cf5843520ec44aa  tests/vim/operators/t103-oracle.test.ts
+77e27d9b438ecf7f1843bd520f11de3b76f080c375f01a1b68df6fd711da7a00  tests/vim/operators/t103-text-transform.test.ts

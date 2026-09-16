@@ -1,0 +1,148 @@
+{
+  "ticket": "T084",
+  "package": "@opentui/core@0.5.11",
+  "coordinateConvention": "SGR wire coordinates are one-based; OpenTUI RawMouseEvent x/y are zero-based terminal cells.",
+  "cases": [
+    {
+      "id": "MP01-SGR-LARGE-01",
+      "title": "SGR press at a zero-based column beyond 255",
+      "inputHex": "1b5b3c303b3235373b334d",
+      "expected": { "type": "down", "button": 0, "x": 256, "y": 2, "modifiers": { "shift": false, "alt": false, "ctrl": false } },
+      "path": "kernel PTY -> OpenTUI StdinParser -> renderer hit test -> BoxRenderable.onMouse"
+    },
+    {
+      "id": "MP01-SGR-DRAG-01",
+      "title": "Pressed SGR button motion normalizes as drag",
+      "inputHex": "1b5b3c33323b3235393b344d",
+      "expected": { "type": "drag", "button": 0, "x": 258, "y": 3 },
+      "requiresPrior": "MP01-SGR-LARGE-01"
+    },
+    {
+      "id": "MP01-SGR-RELEASE-01",
+      "title": "Captured SGR release reaches OpenTUI drag lifecycle",
+      "inputHex": "1b5b3c303b3236303b346d",
+      "expectedParserEvent": { "type": "up", "button": 0, "x": 259, "y": 3 },
+      "rendererCallbacks": ["drag-end", "up", "drop", "up"],
+      "canonicalPointerEvents": ["up"],
+      "note": "One decoded wire report fans out to four pinned renderer callbacks, including duplicate up; the prototype adapter coalesces these without registering a raw mouse decoder."
+    },
+    {
+      "id": "MP01-SGR-WHEEL-01",
+      "title": "SGR wheel-up and wheel-down each deliver one scroll event",
+      "inputHex": ["1b5b3c36343b3239393b31304d", "1b5b3c36353b3330303b31304d"],
+      "expected": [
+        { "type": "scroll", "button": 0, "x": 298, "y": 9, "scroll": { "direction": "up", "delta": 1 } },
+        { "type": "scroll", "button": 1, "x": 299, "y": 9, "scroll": { "direction": "down", "delta": 1 } }
+      ]
+    },
+    {
+      "id": "MP01-SGR-MODIFIERS-01",
+      "title": "SGR modifier bits preserve Shift, Alt and Ctrl",
+      "inputHex": ["1b5b3c343b3237303b31324d", "1b5b3c383b3237303b31324d", "1b5b3c31363b3237303b31324d"],
+      "expectedModifiers": ["shift", "alt", "ctrl"]
+    },
+    {
+      "id": "MP01-SGR-SPLIT-01",
+      "title": "SGR packet split at seven byte boundaries remains one event",
+      "splitAtByteOffsets": [1, 2, 3, 4, 6, 8, 10],
+      "gap": "continuation is sent immediately after the OS PTY confirms delivery of the prefix",
+      "expectedPerPacket": 1
+    },
+    {
+      "id": "MP01-X10-LIMIT-01",
+      "title": "Legacy X10 8-bit cell coordinates stop at zero-based 222",
+      "inputHex": "1b5b4d20ffff",
+      "expectedParserEvent": { "type": "down", "button": 0, "x": 222, "y": 222 },
+      "limitation": "X10 cannot report the required 300-column target; SGR 1006 is mandatory."
+    },
+    {
+      "id": "MP01-X10-MOTION-01",
+      "title": "Legacy X10 movement has no pressed-button drag state",
+      "inputHex": "1b5b4d402223",
+      "expectedParserEvent": { "type": "move", "x": 1, "y": 2 },
+      "limitation": "X10 reports motion as move; no drag semantics are inferred."
+    },
+    {
+      "id": "MP01-X10-RAW-HEX-01",
+      "title": "Legacy X10 raw trace must preserve exact input bytes (currently fails)",
+      "inputHex": "1b5b4d20ffff",
+      "observedCanonicalRawHex": "1b5b4d20c3bfc3bf",
+      "outcome": "defect-reproduced",
+      "cause": "The T006 normalizer UTF-8-encodes Latin-1 characters returned in StdinEvent.raw.",
+      "owner": "T035 canonical input adapter"
+    },
+    {
+      "id": "MP02-SUSPEND-RESUME-01",
+      "title": "Public renderer suspend releases raw and mouse modes, resume restores them",
+      "action": "renderer.suspend(); renderer.resume()",
+      "expected": { "suspendedRawMode": false, "suspendedMouse": false, "resumedRawMode": true, "resumedMouse": true }
+    },
+    {
+      "id": "MP02-LOST-RELEASE-01",
+      "title": "Suspend clears a held button after the terminal omits release",
+      "action": "SGR left-down; suspend/resume without release; send button motion then release",
+      "expectedCanonicalEvents": ["down", "move", "up"],
+      "failurePrevented": "Stale pressed-button state must not turn post-resume motion into drag."
+    },
+    {
+      "id": "MP02-QUIT-01",
+      "title": "Quit restores PTY raw mode and disables SGR/button-motion modes",
+      "action": "send q after pointer traffic",
+      "expected": { "rawModeRestored": true, "mouseTrackingReset": true, "rendererDestroyed": true }
+    },
+    {
+      "id": "MP02-UNSUPPORTED-01",
+      "title": "Explicitly disabled mouse mode consumes no pointer as text",
+      "action": "renderer configured with useMouse=false; inject SGR down then q",
+      "expected": { "mouseEvents": 0, "keyEventsBeforeQuit": 0, "trackingModesEnabled": false }
+    },
+    {
+      "id": "MP02-COORDINATE-OVERFLOW-01",
+      "title": "Oversized SGR decimal coordinate is not range-checked by OpenTUI 0.5.11",
+      "reproducer": "ESC[<0;999999999999999999999999999999999999;1M",
+      "outcome": "Parser converts the value to an enormous Number; native/layout boundary must reject it before hit testing.",
+      "owner": "T085 versioned cell hit testing"
+    },
+    {
+      "id": "E12-MOUSE-KEYBOARD-PASTE-01",
+      "title": "Keyboard and bracketed paste remain distinct around pointer traffic",
+      "inputHex": ["78", "1b5b3c303b3235373b334d", "1b5b3230307e781b5b410a711b5b3230317e"],
+      "expectedKinds": ["key", "mouse", "paste"],
+      "expectedPasteHex": "781b5b410a71"
+    },
+    {
+      "id": "MP02-HANDLER-FAILURE-01",
+      "title": "Renderable mouse handler failure is isolated and later quit restores terminal",
+      "action": "throw once from onMouse, observe handler:error, then q",
+      "expected": { "failureObserved": true, "processAliveUntilQuit": true, "rawModeRestored": true }
+    },
+    {
+      "id": "MP02-SIGTERM-01",
+      "title": "SIGTERM destroys renderer and restores PTY raw mode",
+      "action": "send SIGTERM to renderer process",
+      "expected": { "rendererDestroyed": true, "rawModeRestored": true }
+    },
+    {
+      "id": "MP02-JOBCONTROL-01",
+      "title": "SIGTSTP wrapper suspends before stop and SIGCONT restores renderer",
+      "action": "handle SIGTSTP with renderer.suspend(), stop process, resume renderer on SIGCONT",
+      "expected": { "mouseModesDisabledBeforeStop": true, "rawModeRestoredBeforeStop": true, "mouseModesRestoredOnContinue": true },
+      "limitation": "The application owns process-level signal integration; this behavior is not supplied automatically by OpenTUI."
+    },
+    {
+      "id": "MP02-MOUSE-MODES-01",
+      "title": "Button/drag mode keeps SGR without all-motion reporting by default",
+      "action": "createCliRenderer({useMouse:true,enableMouseMovement:false})",
+      "expectedEnabledModes": ["1000", "1002", "1006"],
+      "expectedAbsentMode": "1003",
+      "compare": "enableMouseMovement=true additionally enables 1003"
+    }
+  ],
+  "matrix": [
+    { "name": "Linux kernel PTY, TERM=xterm-256color", "status": "tested with injected protocol bytes", "limitation": "not an xterm emulator or physical terminal" },
+    { "name": "tmux 3.6a", "status": "available, not independently qualified", "limitation": "outer emulator identity/mouse path unavailable" },
+    { "name": "GNU Screen 4.09.01", "status": "available, not qualified", "limitation": "no attached client mouse path" },
+    { "name": "OpenSSH client 9.6p1", "status": "available, not qualified", "limitation": "no controlled named remote endpoint" },
+    { "name": "WezTerm, Kitty, xterm, foot", "status": "not installed", "limitation": "no emulator-specific claim" }
+  ]
+}

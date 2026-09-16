@@ -1,0 +1,275 @@
+import {
+  Renderable,
+  type OptimizedBuffer,
+  type RenderContext,
+  type RenderableOptions,
+  parseColor,
+} from '@opentui/core/renderer';
+import type { Disposable, Result } from '../../contracts/src/index.ts';
+import type { FocusGraph, FocusGraphFailure } from '../../workbench/src/index.ts';
+
+export type DirectoryDraftEntryKind = 'file' | 'directory' | 'symlink' | 'other';
+export type DirectoryDraftRowOrigin = 'base' | 'copy' | 'unbound';
+
+export interface DirectoryDraftMetadata {
+  readonly kind: DirectoryDraftEntryKind;
+  readonly stableIdentity: string | undefined;
+  readonly sizeBytes: number | undefined;
+  readonly modifiedMilliseconds: number | undefined;
+  readonly sourcePath: string;
+}
+
+export interface DirectoryDraftRow {
+  readonly id: string;
+  readonly sourceId: string | undefined;
+  readonly anchor: { readonly id: string; readonly offsetUtf16: number };
+  readonly line: number;
+  readonly escapedName: string;
+  readonly rawName: string | undefined;
+  readonly origin: DirectoryDraftRowOrigin;
+  readonly metadata: DirectoryDraftMetadata | undefined;
+}
+
+export interface DirectoryOperationPlan {
+  readonly contractVersion: 1;
+  readonly directoryPath: string;
+  readonly baseGeneration: number;
+  readonly operations: readonly DirectoryOperation[];
+}
+
+export type DirectoryOperation =
+  | { readonly kind: 'rename'; readonly rowId: string; readonly sourceId: string; readonly from: string; readonly to: string; readonly sourcePath: string; readonly destinationPath: string }
+  | { readonly kind: 'trash'; readonly rowId: string; readonly sourceId: string; readonly sourcePath: string }
+  | { readonly kind: 'copy'; readonly rowId: string; readonly sourceId: string; readonly sourcePath: string; readonly destinationPath: string };
+
+export interface DirectoryDraftError {
+  readonly rowId: string | undefined;
+  readonly line: number | undefined;
+  readonly column: number | undefined;
+  readonly kind: string;
+  readonly message: string;
+}
+
+export interface DirectoryDraftReadModel {
+  readonly contractVersion: 1;
+  readonly generation: number;
+  readonly directoryPath: string;
+  readonly text: string;
+  readonly rows: readonly DirectoryDraftRow[];
+  readonly dirty: boolean;
+  readonly focus: 'edit' | 'review';
+  readonly review: DirectoryOperationPlan | undefined;
+  readonly error: DirectoryDraftError | undefined;
+}
+
+export interface DirectoryDraftReadPort {
+  readonly model: DirectoryDraftReadModel;
+  subscribe(listener: (model: DirectoryDraftReadModel) => void): Disposable;
+}
+
+export interface DirectoryReviewTheme {
+  readonly background: string;
+  readonly surface: string;
+  readonly surfaceActive: string;
+  readonly foreground: string;
+  readonly muted: string;
+  readonly border: string;
+  readonly accent: string;
+  readonly error: string;
+  readonly rename: string;
+  readonly copy: string;
+  readonly trash: string;
+}
+
+export const DEFAULT_DIRECTORY_REVIEW_THEME: DirectoryReviewTheme = Object.freeze({
+  background: '#FAF9F6',
+  surface: '#F1F0EC',
+  surfaceActive: '#E7EDF4',
+  foreground: '#24292E',
+  muted: '#60666D',
+  border: '#D5D4CF',
+  accent: '#245A88',
+  error: '#A52A36',
+  rename: '#8A5A00',
+  copy: '#367C4A',
+  trash: '#A52A36',
+});
+
+export interface DirectoryReviewRenderableOptions extends RenderableOptions<DirectoryReviewRenderable> {
+  readonly draft: DirectoryDraftReadPort;
+  readonly theme?: DirectoryReviewTheme;
+  readonly maxRows?: number;
+}
+
+/**
+ * Compact review surface. It paints operation candidates and validation errors
+ * from a read model; it does not own the draft text or execute file effects.
+ */
+export class DirectoryReviewRenderable extends Renderable {
+  readonly #draft: DirectoryDraftReadPort;
+  readonly #theme: DirectoryReviewTheme;
+  readonly #maxRows: number;
+  readonly #subscription: Disposable;
+
+  constructor(ctx: RenderContext, options: DirectoryReviewRenderableOptions) {
+    super(ctx, {
+      width: options.width ?? '100%',
+      height: options.height ?? 12,
+      buffered: options.buffered ?? true,
+      ...(options.id === undefined ? {} : { id: options.id }),
+    });
+    this.#draft = options.draft;
+    this.#theme = options.theme ?? DEFAULT_DIRECTORY_REVIEW_THEME;
+    this.#maxRows = options.maxRows ?? 100;
+    if (!Number.isSafeInteger(this.#maxRows) || this.#maxRows < 3) throw new TypeError('directory-review-max-rows-must-be-at-least-three');
+    this.#subscription = this.#draft.subscribe(() => { if (!this.isDestroyed) this.requestRender(); });
+    this.requestRender();
+  }
+
+  protected override destroySelf(): void {
+    this.#subscription.dispose();
+    super.destroySelf();
+  }
+
+  protected override renderSelf(buffer: OptimizedBuffer): void {
+    const model = this.#draft.model;
+    const background = parseColor(this.#theme.background);
+    const surface = parseColor(this.#theme.surface);
+    const active = parseColor(this.#theme.surfaceActive);
+    const foreground = parseColor(this.#theme.foreground);
+    const muted = parseColor(this.#theme.muted);
+    const accent = parseColor(this.#theme.accent);
+    const error = parseColor(this.#theme.error);
+    buffer.fillRect(0, 0, this.width, this.height, background);
+    const lines = formatDirectoryReviewLines(model, this.width, Math.min(this.height, this.#maxRows));
+    for (let row = 0; row < lines.length && row < this.height; row += 1) {
+      const line = lines[row];
+      if (line === undefined) continue;
+      const isError = model.error !== undefined && (row === 1 || row === this.height - 1);
+      const isHeader = row === 0;
+      const rowBackground = row > 0 && row < lines.length - 1 ? surface : background;
+      buffer.fillRect(0, row, this.width, 1, rowBackground === undefined ? background : rowBackground);
+      drawDirectoryText(buffer, line, 0, row, isError ? error : isHeader ? accent : muted, rowBackground, this.width);
+    }
+    if (model.focus === 'review' && model.review !== undefined && this.height > 0) {
+      const footer = 'Enter apply  ·  Esc cancel';
+      drawDirectoryText(buffer, footer, 1, this.height - 1, foreground, surface, Math.max(0, this.width - 2));
+    }
+  }
+}
+
+export function formatDirectoryReviewLines(model: DirectoryDraftReadModel, width: number, maxRows: number): readonly string[] {
+  const safeWidth = Math.max(1, Math.trunc(width));
+  const safeRows = Math.max(1, Math.trunc(maxRows));
+  const lines: string[] = [];
+  const heading = model.focus === 'review' ? `Review  ${model.directoryPath}` : `Directory  ${model.directoryPath}`;
+  lines.push(clipDirectory(heading, safeWidth));
+  if (model.error !== undefined && lines.length < safeRows) {
+    const location = model.error.line === undefined ? '' : `line ${model.error.line + 1}${model.error.column === undefined ? '' : `:${model.error.column + 1}`}: `;
+    lines.push(clipDirectory(`${location}${model.error.message}`, safeWidth));
+  } else if (model.focus === 'review' && model.review !== undefined) {
+    for (const operation of model.review.operations) {
+      if (lines.length >= safeRows - 1) break;
+      lines.push(clipDirectory(formatOperation(operation), safeWidth));
+    }
+    if (lines.length === 1) lines.push(clipDirectory('No filesystem changes', safeWidth));
+  } else {
+    for (const row of model.rows) {
+      if (lines.length >= safeRows - 1) break;
+      const marker = row.origin === 'copy' ? '+ ' : row.origin === 'unbound' ? '? ' : '  ';
+      lines.push(clipDirectory(`${marker}${row.escapedName}`, safeWidth));
+    }
+  }
+  const footer = model.error === undefined ? (model.focus === 'review' ? 'Enter apply  ·  Esc cancel' : ':w review  ·  u undo') : 'Draft preserved  ·  fix row and retry';
+  if (safeRows > 1) lines.push(clipDirectory(footer, safeWidth));
+  return Object.freeze(lines.slice(0, safeRows));
+}
+
+export interface DirectoryReviewFocusLifecycleOptions {
+  readonly focus: FocusGraph;
+  readonly targetId?: string;
+  readonly onCancelReview?: () => void | Promise<void>;
+}
+
+export type DirectoryReviewFocusFailure =
+  | { readonly kind: 'already-open' }
+  | { readonly kind: 'not-open' }
+  | { readonly kind: 'focus'; readonly cause: FocusGraphFailure };
+
+/** Opens review as an overlay and lets FocusGraph restore the directory editor. */
+export class DirectoryReviewFocusLifecycle implements Disposable {
+  readonly #focus: FocusGraph;
+  readonly #targetId: string;
+  readonly #onCancelReview: (() => void | Promise<void>) | undefined;
+  #registration: Disposable | undefined;
+  #disposed = false;
+
+  constructor(options: DirectoryReviewFocusLifecycleOptions) {
+    this.#focus = options.focus;
+    this.#targetId = options.targetId ?? 'xi.directory-review';
+    this.#onCancelReview = options.onCancelReview;
+  }
+
+  get isOpen(): boolean { return this.#registration !== undefined; }
+  get targetId(): string { return this.#targetId; }
+
+  open(): Result<void, DirectoryReviewFocusFailure> {
+    if (this.#disposed) return { ok: false, error: { kind: 'focus', cause: { kind: 'graph-disposed' } } };
+    if (this.#registration !== undefined) return { ok: false, error: { kind: 'already-open' } };
+    const opened = this.#focus.openOverlay({ id: this.#targetId, kind: 'overlay', contexts: ['modal-review'] });
+    if (!opened.ok) return { ok: false, error: { kind: 'focus', cause: opened.error } };
+    this.#registration = opened.value;
+    return { ok: true, value: undefined };
+  }
+
+  async cancel(): Promise<Result<void, DirectoryReviewFocusFailure>> {
+    if (this.#registration === undefined) return { ok: false, error: { kind: 'not-open' } };
+    try {
+      await this.#onCancelReview?.();
+      this.#registration.dispose();
+      this.#registration = undefined;
+      return { ok: true, value: undefined };
+    } catch {
+      return { ok: false, error: { kind: 'focus', cause: { kind: 'invalid-target', message: 'review cancellation failed' } } };
+    }
+  }
+
+  close(): Result<void, DirectoryReviewFocusFailure> {
+    if (this.#registration === undefined) return { ok: false, error: { kind: 'not-open' } };
+    this.#registration.dispose();
+    this.#registration = undefined;
+    return { ok: true, value: undefined };
+  }
+
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#registration?.dispose();
+    this.#registration = undefined;
+  }
+}
+
+function formatOperation(operation: DirectoryOperation): string {
+  switch (operation.kind) {
+    case 'rename': return `↪ ${operation.from} → ${operation.to}`;
+    case 'copy': return `+ ${operation.sourcePath} → ${operation.destinationPath}`;
+    case 'trash': return `× ${operation.sourcePath}`;
+  }
+}
+
+function drawDirectoryText(buffer: OptimizedBuffer, value: string, x: number, y: number, foreground: ReturnType<typeof parseColor>, background: ReturnType<typeof parseColor>, width: number): void {
+  const clipped = clipDirectory(value, Math.max(0, width - x));
+  const characters = [...clipped];
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index];
+    if (character !== undefined) buffer.setCell(x + index, y, character, foreground, background);
+  }
+}
+
+function clipDirectory(value: string, width: number): string {
+  if (width <= 0) return '';
+  const points = [...value];
+  if (points.length <= width) return value;
+  if (width === 1) return '…';
+  return `${points.slice(0, width - 1).join('')}…`;
+}

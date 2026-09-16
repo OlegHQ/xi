@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "T030-ORACLE-JUMP-01",
+      "title": "Jump list back traversal",
+      "purpose": "Pin G, gg and Ctrl-O jump entries and resulting cursor state.",
+      "modes": ["normal"],
+      "lines": ["one", "two", "three"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "jump-to-end", "keys": "G" },
+        { "label": "jump-to-start", "keys": "gg" },
+        { "label": "jump-back", "keys": "<C-O>" }
+      ]
+    },
+    {
+      "id": "T030-ORACLE-CHANGE-01",
+      "title": "Change list after insert and undo",
+      "purpose": "Pin change-list state and undo restoration around a single insert.",
+      "modes": ["normal", "insert"],
+      "lines": ["one", "two"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "insert", "keys": "iX<Esc>" },
+        { "label": "undo", "keys": "u" }
+      ]
+    }
+  ]
+}

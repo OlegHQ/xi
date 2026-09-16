@@ -1,0 +1,6 @@
+677f6d5722c601621b61d80f179e780599830ff3da72c7477beca36986ad3bed  packages/layout/src/index.ts
+24d54d6989a9eab95ff60c0ce6041393a4f7b149eabb6d22e526079c368f5de4  packages/vim/motions/index.ts
+ef2b85b2aaca8605554de07f5a46da27b77d5ada6a40d1812f751641c6b8e2d1  packages/vim/motions/viewport.ts
+f664756f7d1869532096f18ed0742eac606bf2241063a40bc9e2f4ad6dc27933  tests/oracle/pty-ui.py
+c78331d6e49acf78cc91abad581d295378db719c707993437e112785c762df2b  tests/vim/motions/t031-oracle-probe.ts
+68ca9da008b2d0ad3cd4f6f676ae08a7a6f02bebfa0451b2eed68e7e69b18c20  tests/vim/motions/t031-viewport.test.ts

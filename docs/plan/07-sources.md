@@ -1,5 +1,7 @@
 # Sources and research record
 
+The [interaction research report](11-interaction-research.md) adds primary-source comparisons, exact inspected Helix/VS Code/OpenTUI revisions, architectural tradeoffs and the gap audit behind specs 08–10. Those are research pins, not chosen Xi runtime dependencies; moving help still requires the matching T003 oracle pin.
+
 Primary sources below were accessed on 2026-09-14. Unless stated otherwise, they are living documentation without a fixed publication date. They establish the cited upstream behavior or available interfaces, not Xi's implementation quality or benchmark results. T001/T003 must pin package releases, binary hashes and corresponding source/docs before relying on specific APIs or oracle semantics.
 
 ## Rendering, runtime and architecture
@@ -76,3 +78,7 @@ These observations informed the optional personal profile. The directory was not
 ## Research limitations
 
 No finished Xi prototype existed during planning, so all proposed latency/memory/UX targets remain unproven. Several moving upstream pages redirected; sources above use the resolved readable pages. A historical/raw Neovim UI path and some ancillary VS Code pages failed to load; they are not relied on for claims. This is a capability-family survey and an implementation design, not an exhaustive inventory of VS Code extensions or proof of complete Vim compatibility. The pinned-help inventory audit and production validation gates are required implementation work.
+
+## Performance refinement, 2026-09-15
+
+The current implementation audit and primary-source research are in [13-performance-research](13-performance-research.md), with pinned source/archive hashes in [performance-sources.json](performance-sources.json). Sources cover actual VS Code coalescing/index code, Vim packed blocks, JSC string representation and inclusive heap accounting, Bun profiling/workers, Tree-sitter incremental input, and SQLite allocation/index/journal behavior. The two supplied performance attachments informed questions; their runtime-specific/generalized claims are not accepted without verification. The user confirmed SQLite is a developer budgets/results ledger and engine design serves Xi's initial requirements.

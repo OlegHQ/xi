@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "T016-ORACLE-HORIZONTAL-BOUNDARIES-01",
+      "title": "Horizontal motion stops at file boundaries",
+      "purpose": "Capture h/l movement at BOF and EOF, repeated counts, and line-local failures.",
+      "modes": ["normal"],
+      "lines": ["abc", "def"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "start", "drain": true },
+        { "label": "h-at-bof", "keys": "h" },
+        { "label": "counted-h-at-bof", "keys": "4h" },
+        { "label": "move-to-eol", "keys": "2l" },
+        { "label": "counted-l-at-eol", "keys": "9l" },
+        { "label": "move-to-bof", "keys": "2h" },
+        { "label": "line-start", "keys": "0" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-EMPTY-BUFFER-01",
+      "title": "Horizontal, line, and file motions on empty text",
+      "purpose": "Capture safe no-op behavior on the one empty logical line.",
+      "modes": ["normal"],
+      "lines": [],
+      "steps": [
+        { "label": "start", "drain": true },
+        { "label": "h", "keys": "h" },
+        { "label": "l", "keys": "l" },
+        { "label": "line-start", "keys": "0" },
+        { "label": "first-nonblank", "keys": "^" },
+        { "label": "eol", "keys": "$" },
+        { "label": "last-nonblank", "keys": "g_" },
+        { "label": "gg", "keys": "gg" },
+        { "label": "G", "keys": "G" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-WHICHWRAP-HL-01",
+      "title": "whichwrap h and l cross logical lines",
+      "purpose": "Capture only the option-selected Normal h/l line transitions.",
+      "modes": ["normal"],
+      "lines": ["ab", "cd"],
+      "cursor": { "line": 2, "byteColumn0": 0 },
+      "options": { "whichwrap": "h,l" },
+      "steps": [
+        { "label": "h-to-previous-eol", "keys": "h" },
+        { "label": "l-to-next-bof", "keys": "l" },
+        { "label": "h-to-previous-eol-again", "keys": "h" },
+        { "label": "counted-l-to-next-bof", "keys": "8l" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-WHICHWRAP-ARROWS-01",
+      "title": "whichwrap left and right arrow crossings",
+      "purpose": "Capture arrow key wrapping separately from h/l option flags.",
+      "modes": ["normal"],
+      "lines": ["ab", "cd"],
+      "cursor": { "line": 2, "byteColumn0": 0 },
+      "options": { "whichwrap": "<,>" },
+      "steps": [
+        { "label": "left-to-previous-eol", "keys": "<Left>" },
+        { "label": "right-to-next-bof", "keys": "<Right>" },
+        { "label": "right-at-eof", "keys": "<Right>" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-VERTICAL-STICKY-COLUMN-01",
+      "title": "Vertical motion retains desired display column on ragged and tabbed lines",
+      "purpose": "Capture sticky desired column as motion visits short lines and a tab cell.",
+      "modes": ["normal"],
+      "lines": ["0123456789", "x", "a\tzzzz", "short", "0123456789"],
+      "cursor": { "line": 1, "byteColumn0": 6 },
+      "steps": [
+        { "label": "to-short-line", "keys": "j" },
+        { "label": "to-tab-line", "keys": "j" },
+        { "label": "to-short-word", "keys": "j" },
+        { "label": "back-to-tab-line", "keys": "k" },
+        { "label": "back-to-short-line", "keys": "k" },
+        { "label": "back-to-original-line", "keys": "k" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-VERTICAL-STICKY-EOL-01",
+      "title": "Vertical motion preserves the end-of-line desired column",
+      "purpose": "Capture sticky EOL cursor intent across short and empty target lines.",
+      "modes": ["normal"],
+      "lines": ["abcdef", "x", "", "12345"],
+      "cursor": { "line": 1, "byteColumn0": 5 },
+      "steps": [
+        { "label": "explicit-eol", "keys": "$" },
+        { "label": "short-line", "keys": "j" },
+        { "label": "empty-line", "keys": "j" },
+        { "label": "next-line", "keys": "j" },
+        { "label": "back-to-empty", "keys": "k" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-LINE-BOUNDARIES-01",
+      "title": "Line boundary motions distinguish indentation, EOL, and last nonblank",
+      "purpose": "Capture 0, ^, $, and g_ at whitespace-only, empty, and mixed lines.",
+      "modes": ["normal"],
+      "lines": ["  \t  word \t", "  ", "", "abc"],
+      "cursor": { "line": 1, "byteColumn0": 7 },
+      "steps": [
+        { "label": "line-start", "keys": "0" },
+        { "label": "first-nonblank", "keys": "^" },
+        { "label": "eol", "keys": "$" },
+        { "label": "last-nonblank", "keys": "g_" },
+        { "label": "home-alias", "keys": "<Home>" },
+        { "label": "end-alias", "keys": "<End>" },
+        { "label": "blank-line-first-nonblank", "keys": "j^" },
+        { "label": "blank-line-last-nonblank", "keys": "g_" },
+        { "label": "empty-line-first-nonblank", "keys": "j^" },
+        { "label": "empty-line-last-nonblank", "keys": "g_" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-FILE-LINE-COUNTS-01",
+      "title": "gg and G count lines and clamp outside the file",
+      "purpose": "Capture counted gg/G, defaults, and counts beyond both file boundaries.",
+      "modes": ["normal"],
+      "lines": ["  one", "two", "  three", "four"],
+      "cursor": { "line": 3, "byteColumn0": 4 },
+      "steps": [
+        { "label": "gg-default", "keys": "gg" },
+        { "label": "gg-count-two", "keys": "2gg" },
+        { "label": "gg-count-over-eof", "keys": "99gg" },
+        { "label": "G-count-two", "keys": "2G" },
+        { "label": "G-count-over-eof", "keys": "99G" },
+        { "label": "G-default", "keys": "G" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-STARTOFLINE-01",
+      "title": "startofline controls gg and G cursor columns",
+      "purpose": "Capture linewise file motions with startofline enabled and disabled.",
+      "modes": ["normal"],
+      "lines": ["  first", "  second", "third"],
+      "cursor": { "line": 2, "byteColumn0": 5 },
+      "options": { "startofline": false },
+      "steps": [
+        { "label": "gg-retain-column", "keys": "gg" },
+        { "label": "G-retain-column", "keys": "G" },
+        { "label": "gg-count-retain-column", "keys": "2gg" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-STARTOFLINE-02",
+      "title": "startofline selects first nonblank on gg and G",
+      "purpose": "Capture option-enabled column reset for first and last file motions.",
+      "modes": ["normal"],
+      "lines": ["  first", "  second", "third"],
+      "cursor": { "line": 2, "byteColumn0": 5 },
+      "options": { "startofline": true },
+      "steps": [
+        { "label": "gg-first-nonblank", "keys": "gg" },
+        { "label": "G-first-nonblank", "keys": "G" },
+        { "label": "G-count-first-nonblank", "keys": "2G" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-COUNTED-COLUMN-MOTIONS-01",
+      "title": "Counted $ and g_ move across the requested number of lines",
+      "purpose": "Capture the different Nth-next-line count rule for end and last-nonblank motions.",
+      "modes": ["normal"],
+      "lines": ["zero", "one  ", "two\t", "three", "four"],
+      "cursor": { "line": 2, "byteColumn0": 1 },
+      "steps": [
+        { "label": "counted-eol-two", "keys": "2$" },
+        { "label": "counted-last-nonblank-two", "keys": "2g_" },
+        { "label": "counted-eol-over-eof", "keys": "99$" },
+        { "label": "counted-last-nonblank-over-eof", "keys": "99g_" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-COLUMN-BAR-TAB-01",
+      "title": "Column motion counts terminal cells across a tab",
+      "purpose": "Capture one-based | counts, tab cell mapping, and clamping beyond EOL.",
+      "modes": ["normal"],
+      "lines": ["a\tbc", "123456789"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "bar-inside-tab", "keys": "5|" },
+        { "label": "bar-after-tab", "keys": "9|" },
+        { "label": "bar-past-eol", "keys": "99|" },
+        { "label": "vertical-retains-column", "keys": "j" },
+        { "label": "bar-first-column", "keys": "1|" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-LINEWISE-PLUS-UNDERSCORE-01",
+      "title": "+, -, and _ target first nonblank lines with their count rules",
+      "purpose": "Capture linewise line displacement and first-nonblank behavior at both file edges.",
+      "modes": ["normal"],
+      "lines": ["  top", "  one", "two", "  three", "four"],
+      "cursor": { "line": 3, "byteColumn0": 2 },
+      "steps": [
+        { "label": "plus-next-first-nonblank", "keys": "+" },
+        { "label": "minus-previous-first-nonblank", "keys": "-" },
+        { "label": "underscore-count-two", "keys": "2_" },
+        { "label": "plus-count-over-eof", "keys": "99+" },
+        { "label": "minus-count-over-bof", "keys": "99-" },
+        { "label": "carriage-return-alias", "keys": "<CR>" },
+        { "label": "ctrl-m-alias", "keys": "<C-M>" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-VERTICAL-ALIASES-01",
+      "title": "Vertical key aliases match j and k",
+      "purpose": "Capture arrow, Ctrl-P/N/J, and NL aliases on ordinary logical lines.",
+      "modes": ["normal"],
+      "lines": ["one", "two", "three", "four"],
+      "cursor": { "line": 2, "byteColumn0": 1 },
+      "steps": [
+        { "label": "down-arrow", "keys": "<Down>" },
+        { "label": "up-arrow", "keys": "<Up>" },
+        { "label": "ctrl-n", "keys": "<C-N>" },
+        { "label": "ctrl-p", "keys": "<C-P>" },
+        { "label": "ctrl-j", "keys": "<C-J>" },
+        { "label": "nl", "keys": "<NL>" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-HORIZONTAL-ALIASES-01",
+      "title": "Backspace, Ctrl-H, and Space aliases honor whichwrap",
+      "purpose": "Capture Normal aliases under the pinned default `whichwrap=b,s`.",
+      "modes": ["normal"],
+      "lines": ["ab", "cd"],
+      "cursor": { "line": 2, "byteColumn0": 0 },
+      "steps": [
+        { "label": "backspace-to-prev-eol", "keys": "<BS>" },
+        { "label": "space-to-next-bof", "keys": "<Space>" },
+        { "label": "ctrl-h-to-prev-eol", "keys": "<C-H>" },
+        { "label": "space-to-next-bof-again", "keys": "<Space>" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-UNICODE-CHAR-MOTION-01",
+      "title": "Horizontal motions advance Unicode Vim characters without splitting UTF-16 pairs",
+      "purpose": "Capture h/l byte columns across a supplementary scalar and lines containing combining and joined emoji characters.",
+      "modes": ["normal"],
+      "lines": ["a😀b", "áb", "x👩‍🚀y"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "l-to-supplementary-scalar", "keys": "l" },
+        { "label": "l-to-b-after-supplementary-scalar", "keys": "l" },
+        { "label": "h-to-supplementary-scalar", "keys": "h" },
+        { "label": "counted-l-stops-at-eol", "keys": "9l" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-GRAPHEME-MOTION-01",
+      "title": "Horizontal motions treat a combining sequence as one Vim character",
+      "purpose": "Capture forward, backward, and counted h/l positions around a combining grapheme.",
+      "modes": ["normal"],
+      "lines": ["éb"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "l-skips-combining-scalar", "keys": "l" },
+        { "label": "h-returns-to-base", "keys": "h" },
+        { "label": "counted-l-clamps-after-base-and-b", "keys": "9l" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-TAB-CHAR-MOTION-01",
+      "title": "Horizontal motions preserve display columns when crossing a tab",
+      "purpose": "Capture h/l cursor and desired columns on a tab and the character following its expansion.",
+      "modes": ["normal"],
+      "lines": ["a\tb"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "l-to-tab-start", "keys": "l" },
+        { "label": "l-to-after-tab", "keys": "l" },
+        { "label": "h-back-to-tab-start", "keys": "h" },
+        { "label": "h-back-to-a", "keys": "h" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-VERTICAL-WIDE-CELL-01",
+      "title": "Vertical motion maps a desired display cell into wide glyphs and tabs",
+      "purpose": "Capture cursor affinity to the glyph occupying a target cell across width-two glyphs and tabs.",
+      "modes": ["normal"],
+      "lines": ["abc", "a😀b", "a\tb"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "desired-cell-inside-wide-glyph", "keys": "j" },
+        { "label": "desired-cell-inside-tab", "keys": "j" },
+        { "label": "back-to-wide-glyph", "keys": "k" },
+        { "label": "back-to-ascii", "keys": "k" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-CTRL-HOME-END-01",
+      "title": "Ctrl-Home and Ctrl-End navigate to counted file lines",
+      "purpose": "Capture the pinned aliases for gg and G, including Ctrl-End's end-of-line target.",
+      "modes": ["normal"],
+      "lines": ["  one", "  two", "  three"],
+      "cursor": { "line": 2, "byteColumn0": 4 },
+      "steps": [
+        { "label": "ctrl-end-default", "keys": "<C-End>" },
+        { "label": "ctrl-home-default", "keys": "<C-Home>" },
+        { "label": "ctrl-end-count-two", "keys": "2<C-End>" },
+        { "label": "ctrl-home-count-over-bof", "keys": "99<C-Home>" }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-MOTION-STATE-INVARIANTS-01",
+      "title": "Motion-only input preserves text and registers",
+      "purpose": "Capture text and all observable registers around a seeded yank followed only by motions.",
+      "modes": ["normal"],
+      "lines": ["alpha beta", "short", "gamma delta"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "seed-register", "keys": "\"ayy" },
+        { "label": "motion-zero", "keys": "0" },
+        { "label": "motion-vertical", "keys": "j" },
+        { "label": "motion-end-of-line", "keys": "$" },
+        { "label": "motion-file-end", "keys": "G" },
+        { "label": "motion-file-start", "keys": "gg" }
+      ]
+    }
+  ]
+}

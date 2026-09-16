@@ -1,0 +1,259 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "T019-ORACLE-COUNT-PRODUCT-01",
+      "title": "Operator and motion counts multiply",
+      "purpose": "Pin 2d3w as six forward small-word motions, including register text and cursor placement.",
+      "modes": ["normal"],
+      "lines": ["a b c d e f g h i"],
+      "steps": [
+        { "label": "2d3w", "keys": "2d3w" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-DOUBLED-LINEWISE-01",
+      "title": "Doubled delete applies a counted linewise range",
+      "purpose": "Pin 2dd text, linewise register type, and the surviving cursor line.",
+      "modes": ["normal"],
+      "lines": ["aa", "bb", "cc", "dd"],
+      "cursor": { "line": 2, "byteColumn0": 1 },
+      "steps": [
+        { "label": "2dd", "keys": "2dd" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-D0-BACKWARD-EXCLUSIVE-01",
+      "title": "d0 excludes the endpoint and keeps the cursor character",
+      "purpose": "Pin a backward exclusive motion at column zero, including register and cursor boundaries.",
+      "modes": ["normal"],
+      "lines": ["one two", "next"],
+      "cursor": { "line": 1, "byteColumn0": 4 },
+      "steps": [
+        { "label": "d0", "keys": "d0" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-D-DOLLAR-INCLUSIVE-01",
+      "title": "d$ deletes through the inclusive line end",
+      "purpose": "Pin inclusive end-of-line deletion without consuming the line separator.",
+      "modes": ["normal"],
+      "lines": ["one two", "next"],
+      "cursor": { "line": 1, "byteColumn0": 4 },
+      "steps": [
+        { "label": "d-dollar", "keys": "d$" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-BACKWARD-WORD-01",
+      "title": "Backward word delete normalizes the exclusive endpoint",
+      "purpose": "Pin db from inside a word and its register/cursor boundary.",
+      "modes": ["normal"],
+      "lines": ["one two three"],
+      "cursor": { "line": 1, "byteColumn0": 10 },
+      "steps": [
+        { "label": "db-inside-word", "keys": "db" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-BACKWARD-END-01",
+      "title": "Backward inclusive word-end delete includes the endpoint",
+      "purpose": "Pin dge across a space and previous word end.",
+      "modes": ["normal"],
+      "lines": ["one two three"],
+      "cursor": { "line": 1, "byteColumn0": 8 },
+      "steps": [
+        { "label": "dge-from-word-start", "keys": "dge" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-EXCLUSIVE-NEXT-LINE-COLUMN-ZERO-01",
+      "title": "Exclusive end at next-line column zero is adjusted",
+      "purpose": "Pin dw ending at column zero of the next line while that line has remaining nonblank text.",
+      "modes": ["normal"],
+      "lines": ["first", "second tail"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "dw-next-line-column-zero", "keys": "dw" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-DW-INDENTED-EOF-01",
+      "title": "Indented dw at EOF preserves indentation",
+      "purpose": "Pin the captured characterwise delete of the final word while retaining leading spaces and the empty final line.",
+      "modes": ["normal"],
+      "lines": ["  first", ""],
+      "cursor": { "line": 1, "byteColumn0": 2 },
+      "steps": [
+        { "label": "dw-linewise-exception", "keys": "dw" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-EMPTY-LAST-LINE-DELETE-01",
+      "title": "Doubled delete removes an empty final line",
+      "purpose": "Pin dd from an empty last line, final-newline preservation, and the linewise register value.",
+      "modes": ["normal"],
+      "lines": ["first", ""],
+      "cursor": { "line": 2, "byteColumn0": 0 },
+      "steps": [
+        { "label": "dd-empty-last-line", "keys": "dd" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-CHARWISE-01",
+      "title": "v forces a linewise motion to characterwise",
+      "purpose": "Pin dvj as exclusive characterwise range over a linewise j motion.",
+      "modes": ["normal"],
+      "lines": ["abc", "def", "ghi"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "dvj", "keys": "dvj" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-LINEWISE-01",
+      "title": "V forces a characterwise motion to linewise",
+      "purpose": "Pin dVw as linewise range despite the exclusive characterwise w motion.",
+      "modes": ["normal"],
+      "lines": ["foo bar", "second"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "dVw", "keys": "dVw" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-BLOCKWISE-01",
+      "title": "Ctrl-V forces a rectangular block range",
+      "purpose": "Pin d<C-V>j block width, deleted text, and register type on single-cell ASCII columns.",
+      "modes": ["normal"],
+      "lines": ["abc", "def", "ghi"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "d-ctrl-v-j", "keys": "d<C-V>j" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-BLOCKWISE-TABS-01",
+      "title": "A block delete crossing tab cells retains a tab in the register",
+      "purpose": "Pin block width and register text when the selected rectangle covers full tabs and an adjacent character.",
+      "modes": ["normal"],
+      "lines": ["a\tb", "ab\tc"],
+      "cursor": { "line": 1, "byteColumn0": 1 },
+      "steps": [
+        { "label": "block-delete-final-tab-cells", "keys": "d<C-V>j" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-BLOCKWISE-TAB-EDGE-EXPANSION-01",
+      "title": "A block edge intersecting a tab expands to cover the tab",
+      "purpose": "Pin Neovim's tab-edge expansion, resulting eight-cell register width, and full tab deletion.",
+      "modes": ["normal"],
+      "lines": ["abcdX", "\tY"],
+      "cursor": { "line": 1, "byteColumn0": 4 },
+      "steps": [
+        { "label": "block-delete-one-tab-cell", "keys": "d<C-V>j" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FORCED-BLOCKWISE-WIDE-GRAPHEME-01",
+      "title": "A block range touching a wide grapheme deletes the whole grapheme",
+      "purpose": "Pin cell-to-UTF-16 conversion, block register contents, and resulting text for wide characters.",
+      "modes": ["normal"],
+      "lines": ["😀ab", "😀cd"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "block-delete-wide-graphemes", "keys": "d<C-V>j" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-CW-TRANSITION-01",
+      "title": "cw changes only through the current word and enters Insert mode",
+      "purpose": "Pin cw's contextual range, Insert transition, final edit, cursor, and register state.",
+      "modes": ["normal"],
+      "lines": ["alpha beta gamma"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "cw-insert-text-and-escape", "keys": "cwNEW<Esc>" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-CW-COUNT-01",
+      "title": "Counted cw uses word-end special behavior",
+      "purpose": "Observe whether counted cw retains the change-word special case and exact register contents.",
+      "modes": ["normal"],
+      "lines": ["one two three four"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "c2w", "keys": "c2w" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-CW-NEXT-LINE-COLUMN-ZERO-01",
+      "title": "cw ending at next-line column zero preserves the separator",
+      "purpose": "Pin cw's word-end special case when w would otherwise reach column zero on the next line.",
+      "modes": ["normal"],
+      "lines": ["alpha", "beta tail"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "cw-cross-line-and-insert", "keys": "cwX<Esc>" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-CC-LINEWISE-TRANSITION-01",
+      "title": "cc changes a line and enters Insert with its indentation boundary",
+      "purpose": "Pin linewise change text/register state, preserved indentation, and the insert-mode replacement boundary.",
+      "modes": ["normal"],
+      "lines": ["  alpha", "beta"],
+      "cursor": { "line": 1, "byteColumn0": 2 },
+      "steps": [
+        { "label": "cc-replace-and-escape", "keys": "ccNEW<Esc>" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-CC-COUNTED-TRANSITION-01",
+      "title": "Counted cc replaces multiple lines at the original indentation boundary",
+      "purpose": "Pin doubled-change line counting, linewise register content, and insert transition on a multi-line range.",
+      "modes": ["normal"],
+      "lines": ["  alpha", "  beta", "gamma"],
+      "cursor": { "line": 1, "byteColumn0": 2 },
+      "steps": [
+        { "label": "2cc-replace-and-escape", "keys": "2ccNEW<Esc>" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-YANK-LINEWISE-01",
+      "title": "yy yanks a linewise register without editing",
+      "purpose": "Pin doubled yank register type, cursor, and unchanged text/version behavior.",
+      "modes": ["normal"],
+      "lines": ["one", "two", "three"],
+      "cursor": { "line": 2, "byteColumn0": 1 },
+      "steps": [
+        { "label": "yy", "keys": "yy" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-YANK-DOUBLED-COUNT-01",
+      "title": "A counted doubled yank captures multiple lines without editing",
+      "purpose": "Pin 2yy linewise text/register state and unchanged cursor/document.",
+      "modes": ["normal"],
+      "lines": ["one", "two", "three", "four"],
+      "cursor": { "line": 2, "byteColumn0": 1 },
+      "steps": [
+        { "label": "2yy", "keys": "2yy" }
+      ]
+    },
+    {
+      "id": "T019-ORACLE-FAILED-MOTION-REPEAT-01",
+      "title": "A failed operator motion preserves the prior dot target",
+      "purpose": "Run dw, a failed dfZ, and dot; compare text, cursor, registers, and error after each command.",
+      "modes": ["normal"],
+      "lines": ["one two three"],
+      "cursor": { "line": 1, "byteColumn0": 0 },
+      "steps": [
+        { "label": "successful-dw-seeds-repeat", "keys": "dw" },
+        { "label": "failed-find-operator", "keys": "dfZ" },
+        { "label": "dot-repeats-prior-dw", "keys": "." }
+      ]
+    }
+  ]
+}

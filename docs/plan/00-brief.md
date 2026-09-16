@@ -4,23 +4,29 @@ Xi should make everyday code editing feel immediate: open a project, find a file
 
 The prescribed stack is Bun, strict TypeScript, and OpenTUI. **The editing engine is Xi's own implementation.** Neovim exists only in the development test harness. The default theme is an original light theme inspired by OpenCode's restraint; “light” is the interpretation of the requested “kight,” reinforced by the existing Latte configuration. These decisions supersede any earlier embedded-Neovim proposal.
 
+First-class multiple cursors, extensible internal architecture, contextual key/command suggestions with safe aliases, strong mouse support and an attractively painted optional motion trail are required for the initial release. Vim motions and editing remain authoritative. Read [selection composition](08-selections.md), [interaction](09-interaction.md), [extensibility](10-extensibility.md) and the [research and decision record](11-interaction-research.md). A motion trail never changes an edit target, and a multi-cursor extension is not described as native Neovim multi-cursor parity.
+
+## Initial engine and resource scope
+
+The goal is the right engine for Xi's initial requirements, not copying all of Vim. The declared motion/operator/edit contracts and Xi multi-selection behavior stay required; Vim's storage, swap pager, whole application, scripting and plugin compatibility do not become requirements merely because they exist upstream. [Performance engineering](12-performance.md) sets structural hot-path rules and all-owner CPU/memory budgets now; [research](13-performance-research.md) records the implementation audit and representation tradeoffs. SQLite serves only the developer budgets/results ledger. New resource gates are unproven and must complete before release claims.
+
 ## Evidence and decisions
 
 OpenTUI provides native rendering with TypeScript bindings and an imperative core surface; it also has renderer/input testing facilities. This makes it a plausible presentation layer, not evidence that a complete editor will be fast. Start with imperative core rendering, a custom virtualized document renderable, and measured dirty-region updates. Do not use its text input buffer as Xi's document model. Verify exported APIs against a pinned installed release before writing integration code. [OpenTUI core](https://github.com/anomalyco/opentui/blob/main/packages/core/README.md), [testing](https://opentui.com/docs/core-concepts/testing/).
 
-A piece tree is the initial document-structure candidate. Microsoft's text-buffer work is evidence that buffer design and workload measurements matter in JavaScript editors; it is not a benchmark of Xi or proof that moving everything into native code wins. Ticket T004 compares an augmented piece tree with a chunked rope under actual editor workloads before fixing the choice. [Text Buffer Reimplementation](https://code.visualstudio.com/blogs/2018/03/23/text-buffer-reimplementation).
+Microsoft's text-buffer work is evidence that buffer design and workload measurements matter in JavaScript editors; it is not a benchmark of Xi or proof that moving everything into native code wins. T004 compared an augmented piece tree with a chunked rope under seeded editing, batch, snapshot, anchor and undo workloads, and selected the chunked rope because the piece tree fragmented badly under repeated middle insertion. The evidence and trade-offs are recorded in the [T004 storage decision](../decisions/T004-storage.md). [Text Buffer Reimplementation](https://code.visualstudio.com/blogs/2018/03/23/text-buffer-reimplementation).
 
 Helix supplies a useful configuration shape: TOML editor settings, nested key tables, separate language/server definitions. Xi adopts that shape with its own validated schema and Vim modes; it does not promise drop-in Helix configuration semantics. [Helix configuration](https://docs.helix-editor.com/configuration.html), [key remapping](https://docs.helix-editor.com/remapping.html), [languages](https://docs.helix-editor.com/languages.html).
 
-Owning Vim semantics is the largest delivery risk. Keep all requested motion/edge-case parity in the release contract, but expose incremental compatibility levels honestly. A small corpus of successful `hjkl` and `dw` tests does not constitute parity. Read the complete pinned help inventory and register unimplemented behaviors as release blockers. The intended compatibility boundary and treatment of arbitrary scripting are in [the Vim contract](02-vim.md).
+Owning Vim semantics is the largest delivery risk. Keep all requested motion/edge-case parity in the release contract, but expose incremental compatibility levels honestly. A small corpus of successful `hjkl` and `dw` tests does not constitute parity. Audit the pinned help inventory against Xi’s declared requirements and register unimplemented in-scope behaviors as release blockers; classify unrelated upstream application commands without automatically expanding scope. The intended compatibility boundary and treatment of arbitrary scripting are in [the Vim contract](02-vim.md).
 
 ## Priorities and milestones
 
 | Milestone | Usable outcome | Required gates |
 |---|---|---|
 | M0: feasibility | Rendering, input, buffer, regex, and oracle prototypes with measured choices | G0 |
-| M1: foundation | Strict package graph, document transactions, coordinate conversions, repeatable harness | G1 |
-| M2: editing | Own engine, broad motion/operator/visual/insert/repeat coverage | G2 |
+| M1: foundation | Strict package graph, selection sets, command descriptors, transactions, coordinate conversions, repeatable harness | G1 |
+| M2: editing | Own engine, broad motion/operator/visual/insert/repeat coverage including multi-cursor composition | G2 |
 | M3: daily navigation | Polished workbench, file picker, Explorer/Outline shell, directory editing, search/replace | G3 |
 | M4: language intelligence | Real LSP lifecycle, diagnostics, completion, navigation and transactional edits | G4 |
 | M5: source control | Read/write Git workflows, hunk staging, conflict review, task output | G5 |
@@ -50,7 +56,10 @@ This is a broad capability-family survey, not a claim to enumerate every command
 | Format, format on save, indentation, EditorConfig | Ordered formatter policy, one logical undo group, overrides explained | Required / formatting + config |
 | Autosave, hot exit, reopen sessions | Explicit save default, opt-in autosave, durable recovery, separate session layout | Required / persistence |
 | Encoding, line endings, large files | UTF-8 fidelity first; explicit codec/BOM policy and large-file budgets | Required / document + platform |
-| Multi-cursor | Vim visual block and macros first; optional true multi-cursor later in a separate mode | Deferred; cannot alter strict Vim mode |
+| Multi-cursor | Shared Vim grammar over first-class selection sets; occurrence/line/regex creation, atomic edits, repeat/history and language integration | Required / selections + Vim + workbench |
+| Mouse | Editor selection, multiple carets, scroll, controls, split resizing, capture and terminal restoration | Required / input + layout + Vim + workbench |
+| Command discovery and aliases | Contextual prefix help and Ex completion from shared metadata; native Ex resolution retained | Required / Vim + workbench + UI |
+| Motion trail | Optional static motion-extent paint, distinct from actual Visual selections and edit ranges | Required configurable feature / Vim + UI |
 | Minimap and sticky-scroll | Breadcrumbs, outline and location indicator; optional sticky context after profiling | Minimap excluded; sticky context deferred |
 | Source control groups, diff, stage, commit | Worktree/index distinction; file/hunk actions; multiline Vim commit buffer | Required / Git |
 | Branches, worktrees, history, stash, blame | Picker and read-only history; guarded branch/stash commands | Required basic branch/history; advanced worktree management deferred |
@@ -63,7 +72,8 @@ This is a broad capability-family survey, not a claim to enumerate every command
 | Profiles, keybindings, settings, themes | TOML profiles, configuration diagnostics, theme picker and inspector | Required |
 | Accessibility | Keyboard-only paths, contrast, ASCII mode, no-color mode, quiet motion | Required; screen-reader support must be evaluated, not presumed |
 | Settings sync, accounts, telemetry | Local config files and exportable profiles | Sync/accounts excluded; local opt-in profiling only |
-| Extensions, webviews, notebooks, custom editors | Small typed internal ports; no arbitrary in-process extension API initially | Deferred; webview/notebook parity excluded |
+| Internal extensibility | Typed command/provider/view contributions, deterministic lifecycle, migrations and real consumer tests | Required / architecture + workbench |
+| External extensions, webviews, notebooks, custom editors | Future plugin host behind owned contracts; no arbitrary in-process extension API initially | External host deferred; webview/notebook parity excluded |
 | Remote SSH/containers/tunnels | Run Xi inside an existing SSH/tmux session | Required terminal compatibility; remote orchestration deferred |
 | AI chat/agents/inline generated code | No core dependency; ordinary edit transactions can support future integrations | Excluded from initial scope |
 
@@ -97,3 +107,5 @@ Observed planning environment: Linux aarch64, Bun 1.3.13, Neovim 0.12.4. These a
 | Compatibility inventory expands materially | Pinned help audit plus generated combinations | Add tickets; release stays blocked until coverage is resolved |
 
 All numeric budgets and architecture choices below are proposed requirements until their gates provide measured evidence. Research alone validates none of them.
+
+Additional risks: quadratic multi-cursor mapping, partial register/history commits, mouse hit tests against stale geometry, decorative paint changing Vim state, and contribution APIs bypassed by real features. T074–T095 add explicit experiments and contracts; none permits silent cursor truncation or reduced singleton parity.

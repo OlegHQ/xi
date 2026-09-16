@@ -1,0 +1,1759 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "version": "0.12.4",
+    "binarySha256": "d9635db0b272b7c81cd705ef0d8bbf16edfeb05b08b36b4228ab0d6a92ec384f",
+    "runtimeDocsSha256": "79b80909bf8f5fe1d89a0fb66200388e651c88d49d565fdc51780ef4b24d7b1e"
+  },
+  "fixtureIds": [
+    "T025-ORACLE-RECORD-PLAY-01",
+    "T025-ORACLE-NESTED-01",
+    "T025-ORACLE-MAPPING-01"
+  ],
+  "fixtures": [
+    {
+      "id": "T025-ORACLE-RECORD-PLAY-01",
+      "snapshots": [
+        {
+          "commandLine": "",
+          "error": "",
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
+            "\"": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            }
+          },
+          "options": {
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start"
+          },
+          "view": {
+            "skipcol": 0,
+            "curswant": 0,
+            "coladd": 0,
+            "topline": 1,
+            "col": 0,
+            "leftcol": 0,
+            "topfill": 0,
+            "lnum": 1
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "label": "record-insert",
+          "buffer": {
+            "modifiable": true,
+            "filetype": "",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "name": "",
+            "bomb": false,
+            "modified": true
+          },
+          "lines": [
+            "Xone two three"
+          ],
+          "marks": {
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "coladd": 0,
+                  "lnum": 1
+                }
+              ],
+              1
+            ]
+          },
+          "mode": "n",
+          "blocking": false,
+          "geometry": {
+            "windowWidth": 80,
+            "lines": 24,
+            "windowHeight": 23,
+            "columns": 80
+          },
+          "cursor": {
+            "screenRow": 1,
+            "screenColumn": 1,
+            "line": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "byteColumn": 1,
+            "desiredColumn": 0
+          }
+        },
+        {
+          "commandLine": "",
+          "error": "",
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
+            "\"": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            }
+          },
+          "options": {
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start"
+          },
+          "view": {
+            "skipcol": 0,
+            "curswant": 0,
+            "coladd": 0,
+            "topline": 1,
+            "col": 0,
+            "leftcol": 0,
+            "topfill": 0,
+            "lnum": 1
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "label": "play-a",
+          "buffer": {
+            "modifiable": true,
+            "filetype": "",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "name": "",
+            "bomb": false,
+            "modified": true
+          },
+          "lines": [
+            "XXone two three"
+          ],
+          "marks": {
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "coladd": 0,
+                  "lnum": 1
+                }
+              ],
+              1
+            ]
+          },
+          "mode": "n",
+          "blocking": false,
+          "geometry": {
+            "windowWidth": 80,
+            "lines": 24,
+            "windowHeight": 23,
+            "columns": 80
+          },
+          "cursor": {
+            "screenRow": 1,
+            "screenColumn": 1,
+            "line": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "byteColumn": 1,
+            "desiredColumn": 0
+          }
+        },
+        {
+          "commandLine": "",
+          "error": "",
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
+            "\"": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            }
+          },
+          "options": {
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start"
+          },
+          "view": {
+            "skipcol": 0,
+            "curswant": 1,
+            "coladd": 0,
+            "topline": 1,
+            "col": 1,
+            "leftcol": 0,
+            "topfill": 0,
+            "lnum": 1
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "label": "repeat-last",
+          "buffer": {
+            "modifiable": true,
+            "filetype": "",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "name": "",
+            "bomb": false,
+            "modified": true
+          },
+          "lines": [
+            "XXXone two three"
+          ],
+          "marks": {
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              2,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 1,
+                  "coladd": 0,
+                  "lnum": 1
+                }
+              ],
+              1
+            ]
+          },
+          "mode": "n",
+          "blocking": false,
+          "geometry": {
+            "windowWidth": 80,
+            "lines": 24,
+            "windowHeight": 23,
+            "columns": 80
+          },
+          "cursor": {
+            "screenRow": 1,
+            "screenColumn": 2,
+            "line": 1,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "byteColumn": 2,
+            "desiredColumn": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "T025-ORACLE-NESTED-01",
+      "snapshots": [
+        {
+          "options": {
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "timeout": true,
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "virtualedit": "",
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix"
+          },
+          "error": "",
+          "commandLine": "",
+          "label": "record-a",
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "screenColumn": 1,
+            "desiredColumn": 0,
+            "line": 1
+          },
+          "view": {
+            "curswant": 0,
+            "leftcol": 0,
+            "coladd": 0,
+            "col": 0,
+            "lnum": 1,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "lines": [
+            "Xone two"
+          ],
+          "mode": "n",
+          "marks": {
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "blocking": false,
+          "geometry": {
+            "windowHeight": 23,
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "buffer": {
+            "filetype": "",
+            "name": "",
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "modifiable": true,
+            "bomb": false,
+            "modified": true,
+            "endOfLine": true
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
+            "\"": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            },
+            "A": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            }
+          }
+        },
+        {
+          "options": {
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "timeout": true,
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "virtualedit": "",
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix"
+          },
+          "error": "",
+          "commandLine": "",
+          "label": "record-b-calling-a",
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "screenColumn": 1,
+            "desiredColumn": 0,
+            "line": 1
+          },
+          "view": {
+            "curswant": 0,
+            "leftcol": 0,
+            "coladd": 0,
+            "col": 0,
+            "lnum": 1,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "lines": [
+            "XXone two"
+          ],
+          "mode": "n",
+          "marks": {
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "blocking": false,
+          "geometry": {
+            "windowHeight": 23,
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "buffer": {
+            "filetype": "",
+            "name": "",
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "modifiable": true,
+            "bomb": false,
+            "modified": true,
+            "endOfLine": true
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
+            "\"": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            },
+            "A": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            }
+          }
+        },
+        {
+          "options": {
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "timeout": true,
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "virtualedit": "",
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix"
+          },
+          "error": "",
+          "commandLine": "",
+          "label": "play-b",
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "screenColumn": 1,
+            "desiredColumn": 0,
+            "line": 1
+          },
+          "view": {
+            "curswant": 0,
+            "leftcol": 0,
+            "coladd": 0,
+            "col": 0,
+            "lnum": 1,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "lines": [
+            "XXXone two"
+          ],
+          "mode": "n",
+          "marks": {
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "blocking": false,
+          "geometry": {
+            "windowHeight": 23,
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "buffer": {
+            "filetype": "",
+            "name": "",
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "modifiable": true,
+            "bomb": false,
+            "modified": true,
+            "endOfLine": true
+          },
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
+            "\"": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            },
+            "A": {
+              "type": "v",
+              "lines": [
+                "iX\u001b"
+              ]
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T025-ORACLE-MAPPING-01",
+      "snapshots": [
+        {
+          "options": {
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true
+          },
+          "error": "",
+          "commandLine": "",
+          "label": "record-mapped-key",
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "view": {
+            "curswant": 0,
+            "leftcol": 0,
+            "coladd": 0,
+            "col": 0,
+            "lnum": 1,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "mode": "n",
+          "buffer": {
+            "filetype": "",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "modifiable": true,
+            "bomb": false,
+            "name": "",
+            "modified": true
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "screenColumn": 1,
+            "desiredColumn": 0,
+            "line": 1
+          },
+          "marks": {
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "blocking": false,
+          "geometry": {
+            "windowHeight": 23,
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "lines": [
+            "Xone two"
+          ],
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "v",
+              "lines": [
+                "�k5"
+              ]
+            },
+            "A": {
+              "type": "v",
+              "lines": [
+                "�k5"
+              ]
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
+            "\"": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            }
+          }
+        },
+        {
+          "options": {
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true
+          },
+          "error": "",
+          "commandLine": "",
+          "label": "play-mapped-key",
+          "search": {
+            "pattern": "",
+            "forward": 1,
+            "highlighting": 1
+          },
+          "view": {
+            "curswant": 0,
+            "leftcol": 0,
+            "coladd": 0,
+            "col": 0,
+            "lnum": 1,
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "mode": "n",
+          "buffer": {
+            "filetype": "",
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "modifiable": true,
+            "bomb": false,
+            "name": "",
+            "modified": true
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "coladd": 0,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "screenColumn": 1,
+            "desiredColumn": 0,
+            "line": 1
+          },
+          "marks": {
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "blocking": false,
+          "geometry": {
+            "windowHeight": 23,
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "lines": [
+            "XXone two"
+          ],
+          "registers": {
+            "0": {
+              "type": "",
+              "lines": []
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "a": {
+              "type": "v",
+              "lines": [
+                "�k5"
+              ]
+            },
+            "A": {
+              "type": "v",
+              "lines": [
+                "�k5"
+              ]
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
+            "\"": {
+              "type": "",
+              "lines": []
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "note": "Pinned Neovim 0.12.4 macro recording/playback snapshots for T025 only; no compatibility inventory rows are marked verified by this file."
+}

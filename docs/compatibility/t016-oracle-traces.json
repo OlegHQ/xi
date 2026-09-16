@@ -1,0 +1,4679 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "version": "0.12.4",
+    "binarySha256": "d9635db0b272b7c81cd705ef0d8bbf16edfeb05b08b36b4228ab0d6a92ec384f",
+    "runtimeDocsSha256": "79b80909bf8f5fe1d89a0fb66200388e651c88d49d565fdc51780ef4b24d7b1e"
+  },
+  "fixtures": [
+    {
+      "id": "T016-ORACLE-HORIZONTAL-BOUNDARIES-01",
+      "title": "Horizontal motion stops at file boundaries",
+      "steps": [
+        {
+          "label": "start",
+          "keys": null,
+          "drain": true
+        },
+        {
+          "label": "h-at-bof",
+          "keys": "h",
+          "drain": false
+        },
+        {
+          "label": "counted-h-at-bof",
+          "keys": "4h",
+          "drain": false
+        },
+        {
+          "label": "move-to-eol",
+          "keys": "2l",
+          "drain": false
+        },
+        {
+          "label": "counted-l-at-eol",
+          "keys": "9l",
+          "drain": false
+        },
+        {
+          "label": "move-to-bof",
+          "keys": "2h",
+          "drain": false
+        },
+        {
+          "label": "line-start",
+          "keys": "0",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "start",
+          "lines": [
+            "abc",
+            "def"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "h-at-bof",
+          "lines": [
+            "abc",
+            "def"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "counted-h-at-bof",
+          "lines": [
+            "abc",
+            "def"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "move-to-eol",
+          "lines": [
+            "abc",
+            "def"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "counted-l-at-eol",
+          "lines": [
+            "abc",
+            "def"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "move-to-bof",
+          "lines": [
+            "abc",
+            "def"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "line-start",
+          "lines": [
+            "abc",
+            "def"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-EMPTY-BUFFER-01",
+      "title": "Horizontal, line, and file motions on empty text",
+      "steps": [
+        {
+          "label": "start",
+          "keys": null,
+          "drain": true
+        },
+        {
+          "label": "h",
+          "keys": "h",
+          "drain": false
+        },
+        {
+          "label": "l",
+          "keys": "l",
+          "drain": false
+        },
+        {
+          "label": "line-start",
+          "keys": "0",
+          "drain": false
+        },
+        {
+          "label": "first-nonblank",
+          "keys": "^",
+          "drain": false
+        },
+        {
+          "label": "eol",
+          "keys": "$",
+          "drain": false
+        },
+        {
+          "label": "last-nonblank",
+          "keys": "g_",
+          "drain": false
+        },
+        {
+          "label": "gg",
+          "keys": "gg",
+          "drain": false
+        },
+        {
+          "label": "G",
+          "keys": "G",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "start",
+          "lines": [
+            ""
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "h",
+          "lines": [
+            ""
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "l",
+          "lines": [
+            ""
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "line-start",
+          "lines": [
+            ""
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "first-nonblank",
+          "lines": [
+            ""
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "eol",
+          "lines": [
+            ""
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "last-nonblank",
+          "lines": [
+            ""
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "gg",
+          "lines": [
+            ""
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "G",
+          "lines": [
+            ""
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-WHICHWRAP-HL-01",
+      "title": "whichwrap h and l cross logical lines",
+      "steps": [
+        {
+          "label": "h-to-previous-eol",
+          "keys": "h",
+          "drain": false
+        },
+        {
+          "label": "l-to-next-bof",
+          "keys": "l",
+          "drain": false
+        },
+        {
+          "label": "h-to-previous-eol-again",
+          "keys": "h",
+          "drain": false
+        },
+        {
+          "label": "counted-l-to-next-bof",
+          "keys": "8l",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "h-to-previous-eol",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "whichwrap": "h,l",
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "l-to-next-bof",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "whichwrap": "h,l",
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "h-to-previous-eol-again",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "whichwrap": "h,l",
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "counted-l-to-next-bof",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "whichwrap": "h,l",
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-WHICHWRAP-ARROWS-01",
+      "title": "whichwrap left and right arrow crossings",
+      "steps": [
+        {
+          "label": "left-to-previous-eol",
+          "keys": "<Left>",
+          "drain": false
+        },
+        {
+          "label": "right-to-next-bof",
+          "keys": "<Right>",
+          "drain": false
+        },
+        {
+          "label": "right-at-eof",
+          "keys": "<Right>",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "left-to-previous-eol",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "<,>"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "right-to-next-bof",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "<,>"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "right-at-eof",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "<,>"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-VERTICAL-STICKY-COLUMN-01",
+      "title": "Vertical motion retains desired display column on ragged and tabbed lines",
+      "steps": [
+        {
+          "label": "to-short-line",
+          "keys": "j",
+          "drain": false
+        },
+        {
+          "label": "to-tab-line",
+          "keys": "j",
+          "drain": false
+        },
+        {
+          "label": "to-short-word",
+          "keys": "j",
+          "drain": false
+        },
+        {
+          "label": "back-to-tab-line",
+          "keys": "k",
+          "drain": false
+        },
+        {
+          "label": "back-to-short-line",
+          "keys": "k",
+          "drain": false
+        },
+        {
+          "label": "back-to-original-line",
+          "keys": "k",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "to-short-line",
+          "lines": [
+            "0123456789",
+            "x",
+            "a\tzzzz",
+            "short",
+            "0123456789"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 6
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "to-tab-line",
+          "lines": [
+            "0123456789",
+            "x",
+            "a\tzzzz",
+            "short",
+            "0123456789"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 8,
+            "desiredColumn": 6
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "to-short-word",
+          "lines": [
+            "0123456789",
+            "x",
+            "a\tzzzz",
+            "short",
+            "0123456789"
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 5,
+            "desiredColumn": 6
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "back-to-tab-line",
+          "lines": [
+            "0123456789",
+            "x",
+            "a\tzzzz",
+            "short",
+            "0123456789"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 8,
+            "desiredColumn": 6
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "back-to-short-line",
+          "lines": [
+            "0123456789",
+            "x",
+            "a\tzzzz",
+            "short",
+            "0123456789"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 6
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "back-to-original-line",
+          "lines": [
+            "0123456789",
+            "x",
+            "a\tzzzz",
+            "short",
+            "0123456789"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 7,
+            "coladd": 0,
+            "virtualColumn": 7,
+            "desiredColumn": 6
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-VERTICAL-STICKY-EOL-01",
+      "title": "Vertical motion preserves the end-of-line desired column",
+      "steps": [
+        {
+          "label": "explicit-eol",
+          "keys": "$",
+          "drain": false
+        },
+        {
+          "label": "short-line",
+          "keys": "j",
+          "drain": false
+        },
+        {
+          "label": "empty-line",
+          "keys": "j",
+          "drain": false
+        },
+        {
+          "label": "next-line",
+          "keys": "j",
+          "drain": false
+        },
+        {
+          "label": "back-to-empty",
+          "keys": "k",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "explicit-eol",
+          "lines": [
+            "abcdef",
+            "x",
+            "",
+            "12345"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 6,
+            "coladd": 0,
+            "virtualColumn": 6,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "short-line",
+          "lines": [
+            "abcdef",
+            "x",
+            "",
+            "12345"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "empty-line",
+          "lines": [
+            "abcdef",
+            "x",
+            "",
+            "12345"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "next-line",
+          "lines": [
+            "abcdef",
+            "x",
+            "",
+            "12345"
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 5,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "back-to-empty",
+          "lines": [
+            "abcdef",
+            "x",
+            "",
+            "12345"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-LINE-BOUNDARIES-01",
+      "title": "Line boundary motions distinguish indentation, EOL, and last nonblank",
+      "steps": [
+        {
+          "label": "line-start",
+          "keys": "0",
+          "drain": false
+        },
+        {
+          "label": "first-nonblank",
+          "keys": "^",
+          "drain": false
+        },
+        {
+          "label": "eol",
+          "keys": "$",
+          "drain": false
+        },
+        {
+          "label": "last-nonblank",
+          "keys": "g_",
+          "drain": false
+        },
+        {
+          "label": "home-alias",
+          "keys": "<Home>",
+          "drain": false
+        },
+        {
+          "label": "end-alias",
+          "keys": "<End>",
+          "drain": false
+        },
+        {
+          "label": "blank-line-first-nonblank",
+          "keys": "j^",
+          "drain": false
+        },
+        {
+          "label": "blank-line-last-nonblank",
+          "keys": "g_",
+          "drain": false
+        },
+        {
+          "label": "empty-line-first-nonblank",
+          "keys": "j^",
+          "drain": false
+        },
+        {
+          "label": "empty-line-last-nonblank",
+          "keys": "g_",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "line-start",
+          "lines": [
+            "  \t  word \t",
+            "  ",
+            "",
+            "abc"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "first-nonblank",
+          "lines": [
+            "  \t  word \t",
+            "  ",
+            "",
+            "abc"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 6,
+            "coladd": 0,
+            "virtualColumn": 11,
+            "desiredColumn": 10
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "eol",
+          "lines": [
+            "  \t  word \t",
+            "  ",
+            "",
+            "abc"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 11,
+            "coladd": 0,
+            "virtualColumn": 16,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "last-nonblank",
+          "lines": [
+            "  \t  word \t",
+            "  ",
+            "",
+            "abc"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 9,
+            "coladd": 0,
+            "virtualColumn": 14,
+            "desiredColumn": 13
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "home-alias",
+          "lines": [
+            "  \t  word \t",
+            "  ",
+            "",
+            "abc"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "end-alias",
+          "lines": [
+            "  \t  word \t",
+            "  ",
+            "",
+            "abc"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 11,
+            "coladd": 0,
+            "virtualColumn": 16,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "blank-line-first-nonblank",
+          "lines": [
+            "  \t  word \t",
+            "  ",
+            "",
+            "abc"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "blank-line-last-nonblank",
+          "lines": [
+            "  \t  word \t",
+            "  ",
+            "",
+            "abc"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "empty-line-first-nonblank",
+          "lines": [
+            "  \t  word \t",
+            "  ",
+            "",
+            "abc"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "empty-line-last-nonblank",
+          "lines": [
+            "  \t  word \t",
+            "  ",
+            "",
+            "abc"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-FILE-LINE-COUNTS-01",
+      "title": "gg and G count lines and clamp outside the file",
+      "steps": [
+        {
+          "label": "gg-default",
+          "keys": "gg",
+          "drain": false
+        },
+        {
+          "label": "gg-count-two",
+          "keys": "2gg",
+          "drain": false
+        },
+        {
+          "label": "gg-count-over-eof",
+          "keys": "99gg",
+          "drain": false
+        },
+        {
+          "label": "G-count-two",
+          "keys": "2G",
+          "drain": false
+        },
+        {
+          "label": "G-count-over-eof",
+          "keys": "99G",
+          "drain": false
+        },
+        {
+          "label": "G-default",
+          "keys": "G",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "gg-default",
+          "lines": [
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 5,
+            "desiredColumn": 4
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "gg-count-two",
+          "lines": [
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 4
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "gg-count-over-eof",
+          "lines": [
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 4,
+            "desiredColumn": 4
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "G-count-two",
+          "lines": [
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 4
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "G-count-over-eof",
+          "lines": [
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 4,
+            "desiredColumn": 4
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "G-default",
+          "lines": [
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 4,
+            "desiredColumn": 4
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-STARTOFLINE-01",
+      "title": "startofline controls gg and G cursor columns",
+      "steps": [
+        {
+          "label": "gg-retain-column",
+          "keys": "gg",
+          "drain": false
+        },
+        {
+          "label": "G-retain-column",
+          "keys": "G",
+          "drain": false
+        },
+        {
+          "label": "gg-count-retain-column",
+          "keys": "2gg",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "gg-retain-column",
+          "lines": [
+            "  first",
+            "  second",
+            "third"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 6,
+            "coladd": 0,
+            "virtualColumn": 6,
+            "desiredColumn": 5
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "G-retain-column",
+          "lines": [
+            "  first",
+            "  second",
+            "third"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 5,
+            "desiredColumn": 5
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "gg-count-retain-column",
+          "lines": [
+            "  first",
+            "  second",
+            "third"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 6,
+            "coladd": 0,
+            "virtualColumn": 6,
+            "desiredColumn": 5
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-STARTOFLINE-02",
+      "title": "startofline selects first nonblank on gg and G",
+      "steps": [
+        {
+          "label": "gg-first-nonblank",
+          "keys": "gg",
+          "drain": false
+        },
+        {
+          "label": "G-first-nonblank",
+          "keys": "G",
+          "drain": false
+        },
+        {
+          "label": "G-count-first-nonblank",
+          "keys": "2G",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "gg-first-nonblank",
+          "lines": [
+            "  first",
+            "  second",
+            "third"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "tabstop": 8,
+            "whichwrap": "b,s",
+            "startofline": true
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "G-first-nonblank",
+          "lines": [
+            "  first",
+            "  second",
+            "third"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "tabstop": 8,
+            "whichwrap": "b,s",
+            "startofline": true
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "G-count-first-nonblank",
+          "lines": [
+            "  first",
+            "  second",
+            "third"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "tabstop": 8,
+            "whichwrap": "b,s",
+            "startofline": true
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-COUNTED-COLUMN-MOTIONS-01",
+      "title": "Counted $ and g_ move across the requested number of lines",
+      "steps": [
+        {
+          "label": "counted-eol-two",
+          "keys": "2$",
+          "drain": false
+        },
+        {
+          "label": "counted-last-nonblank-two",
+          "keys": "2g_",
+          "drain": false
+        },
+        {
+          "label": "counted-eol-over-eof",
+          "keys": "99$",
+          "drain": false
+        },
+        {
+          "label": "counted-last-nonblank-over-eof",
+          "keys": "99g_",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "counted-eol-two",
+          "lines": [
+            "zero",
+            "one  ",
+            "two\t",
+            "three",
+            "four"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 8,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "tabstop": 8,
+            "whichwrap": "b,s",
+            "startofline": false
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "counted-last-nonblank-two",
+          "lines": [
+            "zero",
+            "one  ",
+            "two\t",
+            "three",
+            "four"
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 5,
+            "desiredColumn": 4
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "tabstop": 8,
+            "whichwrap": "b,s",
+            "startofline": false
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "counted-eol-over-eof",
+          "lines": [
+            "zero",
+            "one  ",
+            "two\t",
+            "three",
+            "four"
+          ],
+          "cursor": {
+            "line": 5,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 4,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "tabstop": 8,
+            "whichwrap": "b,s",
+            "startofline": false
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "counted-last-nonblank-over-eof",
+          "lines": [
+            "zero",
+            "one  ",
+            "two\t",
+            "three",
+            "four"
+          ],
+          "cursor": {
+            "line": 5,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 4,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "tabstop": 8,
+            "whichwrap": "b,s",
+            "startofline": false
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-COLUMN-BAR-TAB-01",
+      "title": "Column motion counts terminal cells across a tab",
+      "steps": [
+        {
+          "label": "bar-inside-tab",
+          "keys": "5|",
+          "drain": false
+        },
+        {
+          "label": "bar-after-tab",
+          "keys": "9|",
+          "drain": false
+        },
+        {
+          "label": "bar-past-eol",
+          "keys": "99|",
+          "drain": false
+        },
+        {
+          "label": "vertical-retains-column",
+          "keys": "j",
+          "drain": false
+        },
+        {
+          "label": "bar-first-column",
+          "keys": "1|",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "bar-inside-tab",
+          "lines": [
+            "a\tbc",
+            "123456789"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 8,
+            "desiredColumn": 4
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "bar-after-tab",
+          "lines": [
+            "a\tbc",
+            "123456789"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 9,
+            "desiredColumn": 8
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "bar-past-eol",
+          "lines": [
+            "a\tbc",
+            "123456789"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 10,
+            "desiredColumn": 98
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "vertical-retains-column",
+          "lines": [
+            "a\tbc",
+            "123456789"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 9,
+            "coladd": 0,
+            "virtualColumn": 9,
+            "desiredColumn": 98
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "bar-first-column",
+          "lines": [
+            "a\tbc",
+            "123456789"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-LINEWISE-PLUS-UNDERSCORE-01",
+      "title": "+, -, and _ target first nonblank lines with their count rules",
+      "steps": [
+        {
+          "label": "plus-next-first-nonblank",
+          "keys": "+",
+          "drain": false
+        },
+        {
+          "label": "minus-previous-first-nonblank",
+          "keys": "-",
+          "drain": false
+        },
+        {
+          "label": "underscore-count-two",
+          "keys": "2_",
+          "drain": false
+        },
+        {
+          "label": "plus-count-over-eof",
+          "keys": "99+",
+          "drain": false
+        },
+        {
+          "label": "minus-count-over-bof",
+          "keys": "99-",
+          "drain": false
+        },
+        {
+          "label": "carriage-return-alias",
+          "keys": "<CR>",
+          "drain": false
+        },
+        {
+          "label": "ctrl-m-alias",
+          "keys": "<C-M>",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "plus-next-first-nonblank",
+          "lines": [
+            "  top",
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "minus-previous-first-nonblank",
+          "lines": [
+            "  top",
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "underscore-count-two",
+          "lines": [
+            "  top",
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "plus-count-over-eof",
+          "lines": [
+            "  top",
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 5,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "minus-count-over-bof",
+          "lines": [
+            "  top",
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "carriage-return-alias",
+          "lines": [
+            "  top",
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 2
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "ctrl-m-alias",
+          "lines": [
+            "  top",
+            "  one",
+            "two",
+            "  three",
+            "four"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-VERTICAL-ALIASES-01",
+      "title": "Vertical key aliases match j and k",
+      "steps": [
+        {
+          "label": "down-arrow",
+          "keys": "<Down>",
+          "drain": false
+        },
+        {
+          "label": "up-arrow",
+          "keys": "<Up>",
+          "drain": false
+        },
+        {
+          "label": "ctrl-n",
+          "keys": "<C-N>",
+          "drain": false
+        },
+        {
+          "label": "ctrl-p",
+          "keys": "<C-P>",
+          "drain": false
+        },
+        {
+          "label": "ctrl-j",
+          "keys": "<C-J>",
+          "drain": false
+        },
+        {
+          "label": "nl",
+          "keys": "<NL>",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "down-arrow",
+          "lines": [
+            "one",
+            "two",
+            "three",
+            "four"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "up-arrow",
+          "lines": [
+            "one",
+            "two",
+            "three",
+            "four"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "ctrl-n",
+          "lines": [
+            "one",
+            "two",
+            "three",
+            "four"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "ctrl-p",
+          "lines": [
+            "one",
+            "two",
+            "three",
+            "four"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "ctrl-j",
+          "lines": [
+            "one",
+            "two",
+            "three",
+            "four"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "nl",
+          "lines": [
+            "one",
+            "two",
+            "three",
+            "four"
+          ],
+          "cursor": {
+            "line": 4,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "whichwrap": "b,s",
+            "startofline": false,
+            "tabstop": 8
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-HORIZONTAL-ALIASES-01",
+      "title": "Backspace, Ctrl-H, and Space aliases honor whichwrap",
+      "steps": [
+        {
+          "label": "backspace-to-prev-eol",
+          "keys": "<BS>",
+          "drain": false
+        },
+        {
+          "label": "space-to-next-bof",
+          "keys": "<Space>",
+          "drain": false
+        },
+        {
+          "label": "ctrl-h-to-prev-eol",
+          "keys": "<C-H>",
+          "drain": false
+        },
+        {
+          "label": "space-to-next-bof-again",
+          "keys": "<Space>",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "backspace-to-prev-eol",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "space-to-next-bof",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "ctrl-h-to-prev-eol",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "space-to-next-bof-again",
+          "lines": [
+            "ab",
+            "cd"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-UNICODE-CHAR-MOTION-01",
+      "title": "Horizontal motions advance Unicode Vim characters without splitting UTF-16 pairs",
+      "steps": [
+        {
+          "label": "l-to-supplementary-scalar",
+          "keys": "l",
+          "drain": false
+        },
+        {
+          "label": "l-to-b-after-supplementary-scalar",
+          "keys": "l",
+          "drain": false
+        },
+        {
+          "label": "h-to-supplementary-scalar",
+          "keys": "h",
+          "drain": false
+        },
+        {
+          "label": "counted-l-stops-at-eol",
+          "keys": "9l",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "l-to-supplementary-scalar",
+          "lines": [
+            "a😀b",
+            "áb",
+            "x👩‍🚀y"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "l-to-b-after-supplementary-scalar",
+          "lines": [
+            "a😀b",
+            "áb",
+            "x👩‍🚀y"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 6,
+            "coladd": 0,
+            "virtualColumn": 4,
+            "desiredColumn": 3
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "h-to-supplementary-scalar",
+          "lines": [
+            "a😀b",
+            "áb",
+            "x👩‍🚀y"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "counted-l-stops-at-eol",
+          "lines": [
+            "a😀b",
+            "áb",
+            "x👩‍🚀y"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 6,
+            "coladd": 0,
+            "virtualColumn": 4,
+            "desiredColumn": 3
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-VERTICAL-WIDE-CELL-01",
+      "title": "Vertical motion maps a desired display cell into wide glyphs and tabs",
+      "steps": [
+        {
+          "label": "desired-cell-inside-wide-glyph",
+          "keys": "j",
+          "drain": false
+        },
+        {
+          "label": "desired-cell-inside-tab",
+          "keys": "j",
+          "drain": false
+        },
+        {
+          "label": "back-to-wide-glyph",
+          "keys": "k",
+          "drain": false
+        },
+        {
+          "label": "back-to-ascii",
+          "keys": "k",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "desired-cell-inside-wide-glyph",
+          "lines": [
+            "abc",
+            "a😀b",
+            "a\tb"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "desired-cell-inside-tab",
+          "lines": [
+            "abc",
+            "a😀b",
+            "a\tb"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 8,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "back-to-wide-glyph",
+          "lines": [
+            "abc",
+            "a😀b",
+            "a\tb"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 3,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        },
+        {
+          "label": "back-to-ascii",
+          "lines": [
+            "abc",
+            "a😀b",
+            "a\tb"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            },
+            "+": {
+              "lines": [
+                "server"
+              ],
+              "type": "v"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-CTRL-HOME-END-01",
+      "title": "Ctrl-Home and Ctrl-End navigate to counted file lines",
+      "steps": [
+        {
+          "label": "ctrl-end-default",
+          "keys": "<C-End>",
+          "drain": false
+        },
+        {
+          "label": "ctrl-home-default",
+          "keys": "<C-Home>",
+          "drain": false
+        },
+        {
+          "label": "ctrl-end-count-two",
+          "keys": "2<C-End>",
+          "drain": false
+        },
+        {
+          "label": "ctrl-home-count-over-bof",
+          "keys": "99<C-Home>",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "ctrl-end-default",
+          "lines": [
+            "  one",
+            "  two",
+            "  three"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 7,
+            "coladd": 0,
+            "virtualColumn": 7,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "ctrl-home-default",
+          "lines": [
+            "  one",
+            "  two",
+            "  three"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 5,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "ctrl-end-count-two",
+          "lines": [
+            "  one",
+            "  two",
+            "  three"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 5,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "ctrl-home-count-over-bof",
+          "lines": [
+            "  one",
+            "  two",
+            "  three"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 7,
+            "coladd": 0,
+            "virtualColumn": 7,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-MOTION-STATE-INVARIANTS-01",
+      "title": "Motion-only input preserves text and registers",
+      "steps": [
+        {
+          "label": "seed-register",
+          "keys": "\"ayy",
+          "drain": false
+        },
+        {
+          "label": "motion-zero",
+          "keys": "0",
+          "drain": false
+        },
+        {
+          "label": "motion-vertical",
+          "keys": "j",
+          "drain": false
+        },
+        {
+          "label": "motion-end-of-line",
+          "keys": "$",
+          "drain": false
+        },
+        {
+          "label": "motion-file-end",
+          "keys": "G",
+          "drain": false
+        },
+        {
+          "label": "motion-file-start",
+          "keys": "gg",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "seed-register",
+          "lines": [
+            "alpha beta",
+            "short",
+            "gamma delta"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "a": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "A": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            }
+          }
+        },
+        {
+          "label": "motion-zero",
+          "lines": [
+            "alpha beta",
+            "short",
+            "gamma delta"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "a": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "A": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            }
+          }
+        },
+        {
+          "label": "motion-vertical",
+          "lines": [
+            "alpha beta",
+            "short",
+            "gamma delta"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "a": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "A": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            }
+          }
+        },
+        {
+          "label": "motion-end-of-line",
+          "lines": [
+            "alpha beta",
+            "short",
+            "gamma delta"
+          ],
+          "cursor": {
+            "line": 2,
+            "byteColumn": 5,
+            "coladd": 0,
+            "virtualColumn": 5,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "a": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "A": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            }
+          }
+        },
+        {
+          "label": "motion-file-end",
+          "lines": [
+            "alpha beta",
+            "short",
+            "gamma delta"
+          ],
+          "cursor": {
+            "line": 3,
+            "byteColumn": 11,
+            "coladd": 0,
+            "virtualColumn": 11,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "a": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "A": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            }
+          }
+        },
+        {
+          "label": "motion-file-start",
+          "lines": [
+            "alpha beta",
+            "short",
+            "gamma delta"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 10,
+            "coladd": 0,
+            "virtualColumn": 10,
+            "desiredColumn": 2147483647
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "a": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "A": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "alpha beta"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-GRAPHEME-MOTION-01",
+      "title": "Horizontal motions treat a combining sequence as one Vim character",
+      "steps": [
+        {
+          "label": "l-skips-combining-scalar",
+          "keys": "l",
+          "drain": false
+        },
+        {
+          "label": "h-returns-to-base",
+          "keys": "h",
+          "drain": false
+        },
+        {
+          "label": "counted-l-clamps-after-base-and-b",
+          "keys": "9l",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "l-skips-combining-scalar",
+          "lines": [
+            "éb"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "h-returns-to-base",
+          "lines": [
+            "éb"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "counted-l-clamps-after-base-and-b",
+          "lines": [
+            "éb"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 4,
+            "coladd": 0,
+            "virtualColumn": 2,
+            "desiredColumn": 1
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T016-ORACLE-TAB-CHAR-MOTION-01",
+      "title": "Horizontal motions preserve display columns when crossing a tab",
+      "steps": [
+        {
+          "label": "l-to-tab-start",
+          "keys": "l",
+          "drain": false
+        },
+        {
+          "label": "l-to-after-tab",
+          "keys": "l",
+          "drain": false
+        },
+        {
+          "label": "h-back-to-tab-start",
+          "keys": "h",
+          "drain": false
+        },
+        {
+          "label": "h-back-to-a",
+          "keys": "h",
+          "drain": false
+        }
+      ],
+      "snapshots": [
+        {
+          "label": "l-to-tab-start",
+          "lines": [
+            "a\tb"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 8,
+            "desiredColumn": 7
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "l-to-after-tab",
+          "lines": [
+            "a\tb"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 3,
+            "coladd": 0,
+            "virtualColumn": 9,
+            "desiredColumn": 8
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "h-back-to-tab-start",
+          "lines": [
+            "a\tb"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 2,
+            "coladd": 0,
+            "virtualColumn": 8,
+            "desiredColumn": 7
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "label": "h-back-to-a",
+          "lines": [
+            "a\tb"
+          ],
+          "cursor": {
+            "line": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "desiredColumn": 0
+          },
+          "mode": "n",
+          "error": "",
+          "options": {
+            "startofline": false,
+            "tabstop": 8,
+            "whichwrap": "b,s"
+          },
+          "nonemptyRegisters": {
+            "*": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            },
+            "+": {
+              "type": "v",
+              "lines": [
+                "server"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

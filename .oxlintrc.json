@@ -1,0 +1,58 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "off"
+  },
+  "jsPlugins": [
+    {
+      "name": "xi",
+      "specifier": "./tools/lint/xi-performance.mjs"
+    }
+  ],
+  "rules": {
+    "xi/performance": [
+      "error",
+      {
+        "class": "C"
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "packages/document/**/*.ts",
+        "packages/selections/**/*.ts",
+        "packages/vim/**/*.ts",
+        "packages/workbench/editing/**/*.ts",
+        "packages/workbench/input/**/*.ts",
+        "packages/workbench/dispatch/**/*.ts",
+        "packages/ui/editor/**/*.ts",
+        "packages/ui/input/**/*.ts",
+        "packages/layout/**/*.ts"
+      ],
+      "rules": {
+        "xi/performance": [
+          "error",
+          {
+            "class": "H1"
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/services/**/*.ts",
+        "packages/vim/pattern/**/*.ts",
+        "packages/vim/search/**/*.ts"
+      ],
+      "rules": {
+        "xi/performance": [
+          "error",
+          {
+            "class": "B"
+          }
+        ]
+      }
+    }
+  ]
+}
