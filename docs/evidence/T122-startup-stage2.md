@@ -1,6 +1,6 @@
 # T122 follow-on startup optimizations
 
-- Outcome: implementation and listed functional checks passed; performance release qualification **unproven**.
+- Outcome: T122 implementation and listed acceptance checks passed; performance release qualification **unproven** under T115.
 - Parent revision: `555ed0ce3c2475a10844824468e6fddbb6e49755` plus working tree recorded in `T122-stage2-manifest.sha256`.
 - OpenTUI fork: `f299f165950810ababb70b7cf664d7657985c86d` (`xi-lazy-ffi`), unchanged 0.5.11 native ABI.
 - Host: shared Linux arm64, 4 CPUs; Bun 1.3.13, TypeScript 7.0.2, Node 26.4.0 for upstream portable checks. Helix 24.7 (079f5442), pinned clean Neovim 0.12.4.
@@ -85,6 +85,6 @@ Current bytecode executable captured in xterm/Xvfb at 100×30: `normal.png` and 
 
 ## Remaining qualification
 
-T122 remains in progress. This shared-host diagnostic has no confidence interval/reference-host qualification, physical key-to-visible capture, 10,000-event idle/loaded correctness matrix, complete cold-feature/large-file matrix, or aggregate allocations. Helix remains materially faster. First-use work still needs full tail qualification; compiled bytecode adds memory/size and does not solve input latency.
+T122 acceptance is complete. This shared-host diagnostic has no confidence interval/reference-host qualification, physical key-to-visible capture, 10,000-event idle/loaded correctness matrix, complete cold-feature/large-file matrix, or aggregate allocations. Helix remains materially faster. First-use work still needs full tail qualification; compiled bytecode adds memory/size and does not solve input latency.
 
 Prior full upstream failures remain recorded in [T122](T122.md): 13 Bun / 12 Node Kitty/source-asset cases reproduced on unchanged upstream. This follow-on changed only exports/build/patch generation there; affected type/build/packed-runtime/focused tests were rerun, not the entire upstream suite. Native binaries were unchanged; Zig is unavailable. Windows/macOS and physical terminals remain unqualified. No gate or prerequisite was marked complete.

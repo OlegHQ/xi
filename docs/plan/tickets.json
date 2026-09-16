@@ -5543,7 +5543,7 @@
     {
       "id": "T122",
       "title": "Reduce OpenTUI startup binding cost through a pinned fork",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "T001",
         "T002",
