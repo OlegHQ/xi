@@ -75,6 +75,10 @@ async function testFailedFlushSchedulesAutomaticRetry(): Promise<void> {
 
   const accepted = sync.acceptChange(corrupted, 'file:///workspace/resilience.ts');
   assert(accepted.ok, 'malformed-edit change is admitted (validated only by version, not by coordinates)');
+  // The flush is deferred behind a macrotask (not a same-tick microtask) so a
+  // keystroke never pays for materializing/JSON-encoding the document; give
+  // that timer a turn before waiting on the sync queue to drain.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
   await sync.whenIdle();
 
   // Without any further edit, the failed incremental flush must have

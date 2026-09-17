@@ -185,7 +185,10 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
       if (generation !== this.#generation) return;
       this.#options.host.notifySurfaceChange();
       if (!result.ok) {
-        if (result.error.kind === 'not-ready' && this.#open) {
+        // 'stale' means the index generation moved while populating (e.g. addPaths
+        // bumps generation per batch); retry with the same bounded backoff as
+        // 'not-ready' instead of dropping the query on the floor.
+        if ((result.error.kind === 'not-ready' || result.error.kind === 'stale') && this.#open) {
           setTimeout(() => { if (generation === this.#generation && this.#open) this.#runQuery(); }, 50);
         }
         return;

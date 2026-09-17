@@ -79,7 +79,14 @@ export function prepareVimDirectChange(input: VimDirectChangeInput): VimDirectCh
   if (input.key === '~') return prepareToggle(input, count, cursor);
   if (input.key === 'gr') return prepareVirtualReplace(input, count, cursor);
 
-  const boundaries = graphemeBoundariesOnLine(input.snapshot, cursor);
+  // `C`/`D` change/delete to end of line and genuinely need every boundary up
+  // to it; `X` only looks backward; everything else only needs `count`
+  // boundaries forward of the cursor.
+  const forwardNeed = input.key === 'C' || input.key === 'D' ? Number.POSITIVE_INFINITY
+    : input.key === 'X' || input.key === 'S' ? 0
+      : count;
+  const backwardNeed = input.key === 'X' ? count : 0;
+  const boundaries = graphemeBoundariesOnLine(input.snapshot, cursor, forwardNeed, backwardNeed);
   if (!boundaries.ok) return failure(boundaries.error);
   const forward = boundaries.value.filter((boundary) => boundary.start >= cursor);
   if (input.key !== 'S' && input.key !== 'x' && input.key !== 'X' && input.key !== 'D' && forward.length === 0) {
@@ -114,7 +121,9 @@ function prepareVirtualReplace(input: VimDirectChangeInput, count: number, curso
   if (!line.ok) return failure(line.error);
   const text = input.snapshot.slice(line.value.start as Utf16Offset, line.value.end as Utf16Offset);
   if (!text.ok) return failure({ kind: 'document-read-failed' });
-  const lastBoundary = text.value.length === 0 ? undefined : graphemeBoundariesOnLine(input.snapshot, cursor);
+  const lastBoundary = text.value.length === 0
+    ? undefined
+    : graphemeBoundariesOnLine(input.snapshot, cursor, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
   if (lastBoundary !== undefined && !lastBoundary.ok) return failure(lastBoundary.error);
   // Normal mode represents the end-of-line cursor on the final grapheme. An
   // empty line is the sole case where `gr` appends at the physical end.
@@ -151,7 +160,7 @@ function prepareReplace(input: VimDirectChangeInput, count: number, cursor: numb
   if (replacement === undefined || !isOneGrapheme(replacement) || replacement.includes('\n')) {
     return failure({ kind: 'invalid-replacement' });
   }
-  const boundaries = graphemeBoundariesOnLine(input.snapshot, cursor);
+  const boundaries = graphemeBoundariesOnLine(input.snapshot, cursor, count, 0);
   if (!boundaries.ok) return failure(boundaries.error);
   const available = boundaries.value.filter((boundary) => boundary.start >= cursor);
   const first = available[0];
@@ -184,7 +193,7 @@ function prepareReplace(input: VimDirectChangeInput, count: number, cursor: numb
 }
 
 function prepareToggle(input: VimDirectChangeInput, count: number, cursor: number): VimDirectChangeResult {
-  const boundaries = graphemeBoundariesOnLine(input.snapshot, cursor);
+  const boundaries = graphemeBoundariesOnLine(input.snapshot, cursor, count, 0);
   if (!boundaries.ok) return failure(boundaries.error);
   const selected = boundaries.value.filter((boundary) => boundary.start >= cursor).slice(0, count);
   const first = selected[0];
@@ -338,20 +347,72 @@ function noOpPlan(input: VimDirectChangeInput, count: number, cursor: number): V
 
 interface GraphemeBoundary { readonly start: number; readonly end: number }
 
-function graphemeBoundariesOnLine(snapshot: DocumentSnapshot, cursor: number): Result<readonly GraphemeBoundary[], VimDirectChangeFailure> {
-  const line = lineWindow(snapshot, cursor);
+const GRAPHEME_BOUNDARY_SEGMENTER = (Intl as typeof Intl & {
+  readonly Segmenter?: new (
+    _locales?: string | readonly string[],
+    _options?: { readonly granularity: 'grapheme' },
+  ) => { segment(value: string): Iterable<{ readonly index: number; readonly segment: string }> };
+}).Segmenter;
+
+const GRAPHEME_WINDOW_BASE = 64;
+
+/**
+ * Grapheme boundaries near `position`, bounded to at most `forwardNeed`
+ * boundaries at or after it and `backwardNeed` before it (either may be
+ * `Number.POSITIVE_INFINITY` for "up to the line boundary", or `0` to skip
+ * that side). Segmenting the whole line for every direct-change keystroke
+ * made e.g. a single `x` cost O(line length); most keys only need a handful
+ * of boundaries around the cursor, so this reads a small window and doubles
+ * it (capped at the line bounds) only while it is short of what was asked.
+ */
+function graphemeBoundariesOnLine(
+  snapshot: DocumentSnapshot,
+  position: number,
+  forwardNeed: number,
+  backwardNeed: number,
+): Result<readonly GraphemeBoundary[], VimDirectChangeFailure> {
+  const line = lineWindow(snapshot, position);
   if (!line.ok) return line;
-  const text = snapshot.slice(line.value.start as Utf16Offset, line.value.end as Utf16Offset);
-  if (!text.ok) return failure({ kind: 'document-read-failed' });
-  const result: GraphemeBoundary[] = [];
-  const segmenter = (Intl as typeof Intl & { readonly Segmenter?: new (_locales?: string | readonly string[], _options?: { readonly granularity: 'grapheme' }) => { segment(value: string): Iterable<{ readonly index: number; readonly segment: string }> } }).Segmenter;
-  if (typeof segmenter !== 'function') return failure({ kind: 'document-read-failed' });
-  for (const part of new segmenter(undefined, { granularity: 'grapheme' }).segment(text.value)) {
-    const start = line.value.start + part.index;
-    const end = start + part.segment.length;
-    result.push({ start, end });
+  const lineStart = line.value.start;
+  const lineEnd = line.value.end;
+  if (lineEnd === lineStart || (forwardNeed === 0 && backwardNeed === 0)) return success(Object.freeze([]));
+  let isAsciiLine = false;
+  if (typeof snapshot.isPrintableAsciiRange === 'function') {
+    const asciiRange = snapshot.isPrintableAsciiRange(lineStart as Utf16Offset, lineEnd as Utf16Offset);
+    if (!asciiRange.ok) return failure({ kind: 'document-read-failed' });
+    isAsciiLine = asciiRange.value;
   }
-  return success(Object.freeze(result));
+  if (isAsciiLine) {
+    // ASCII fast path: each code unit is its own single-width grapheme, so
+    // boundaries are consecutive offsets and no text needs to be read.
+    const from = backwardNeed === Number.POSITIVE_INFINITY ? lineStart : Math.max(lineStart, position - backwardNeed);
+    const to = forwardNeed === Number.POSITIVE_INFINITY ? lineEnd : Math.min(lineEnd, position + forwardNeed);
+    const result: GraphemeBoundary[] = [];
+    for (let index = from; index < to; index += 1) result.push({ start: index, end: index + 1 });
+    return success(Object.freeze(result));
+  }
+  const segmenter = GRAPHEME_BOUNDARY_SEGMENTER;
+  if (typeof segmenter !== 'function') return failure({ kind: 'document-read-failed' });
+  let backwardWindow = backwardNeed === 0 ? 0 : GRAPHEME_WINDOW_BASE;
+  let forwardWindow = forwardNeed === 0 ? 0 : GRAPHEME_WINDOW_BASE;
+  for (;;) {
+    const windowStart = backwardNeed === Number.POSITIVE_INFINITY ? lineStart : Math.max(lineStart, position - backwardWindow);
+    const windowEnd = forwardNeed === Number.POSITIVE_INFINITY ? lineEnd : Math.min(lineEnd, position + forwardWindow);
+    const text = snapshot.slice(windowStart as Utf16Offset, windowEnd as Utf16Offset);
+    if (!text.ok) return failure({ kind: 'document-read-failed' });
+    const result: GraphemeBoundary[] = [];
+    for (const part of new segmenter(undefined, { granularity: 'grapheme' }).segment(text.value)) {
+      const start = windowStart + part.index;
+      result.push({ start, end: start + part.segment.length });
+    }
+    const forwardCount = forwardNeed === 0 ? 0 : result.filter((boundary) => boundary.start >= position).length;
+    const backwardCount = backwardNeed === 0 ? 0 : result.filter((boundary) => boundary.end <= position).length;
+    const forwardSatisfied = forwardNeed === 0 || forwardCount >= forwardNeed || windowEnd >= lineEnd;
+    const backwardSatisfied = backwardNeed === 0 || backwardCount >= backwardNeed || windowStart <= lineStart;
+    if (forwardSatisfied && backwardSatisfied) return success(Object.freeze(result));
+    if (!forwardSatisfied) forwardWindow *= 2;
+    if (!backwardSatisfied) backwardWindow *= 2;
+  }
 }
 
 function swapCase(value: string): string {

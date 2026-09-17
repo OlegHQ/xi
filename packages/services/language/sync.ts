@@ -66,6 +66,9 @@ interface SyncState {
   openSent: boolean;
   closeRequested: boolean;
   flushQueued: boolean;
+  /** Pending macrotask that defers the flush enqueue off the synchronous commit path;
+   * cleared on close/dispose so no stale timer fires against a removed document. */
+  flushTimer: ReturnType<typeof setTimeout> | undefined;
   /** Guards a single automatic resync retry per failure episode; reset when new input arrives. */
   retryScheduled: boolean;
 }
@@ -177,6 +180,7 @@ export class LanguageDocumentSync {
       openSent: false,
       closeRequested: false,
       flushQueued: false,
+      flushTimer: undefined,
       retryScheduled: false,
     };
     this.#documents.set(document.uri, state);
@@ -227,7 +231,14 @@ export class LanguageDocumentSync {
     }
     if (!state.flushQueued) {
       state.flushQueued = true;
-      this.enqueue(async () => this.flushState(state));
+      // Deferred to a macrotask: the caller's synchronous commit path (and the
+      // frame it paints) must not pay for materializing/JSON-encoding the
+      // document on backpressure or full-sync. `flushTimer` is cleared on
+      // close/dispose so a stale timer never fires against a removed document.
+      state.flushTimer = setTimeout(() => {
+        state.flushTimer = undefined;
+        this.enqueue(async () => this.flushState(state));
+      }, 0);
     }
     return ok();
   }
@@ -264,6 +275,10 @@ export class LanguageDocumentSync {
     if (state === undefined) return Promise.resolve(ok());
     if (state.closeRequested) return this.whenIdle().then(() => ok());
     state.closeRequested = true;
+    if (state.flushTimer !== undefined) {
+      clearTimeout(state.flushTimer);
+      state.flushTimer = undefined;
+    }
     return this.enqueue(async () => {
       const flushed = await this.flushState(state);
       if (!flushed.ok) {

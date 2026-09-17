@@ -8,13 +8,14 @@ import {
   resolveExExecution,
   validateNativeSafeAliases,
 } from '../../packages/workbench/src/index';
+import { ExCommandLineSession } from '../../packages/workbench/commands/ex-command-line';
 import {
   defineCommandRegistration,
   type CommandDescriptorCandidate,
   type CommandSchema,
 } from '../../packages/contracts/src/index';
 import { asIdentifier, type CommandId, type Result, type ValidationIssue } from '../../packages/primitives/src/index';
-import { ExCommandLineSession, formatExCommandLineLines } from '../../packages/ui/commandline/index';
+import { formatExCommandLineLines } from '../../packages/ui/commandline/index';
 
 const emptySchema: CommandSchema<null> = {
   decode(input: unknown): Result<null, readonly ValidationIssue[]> {

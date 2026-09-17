@@ -89,11 +89,19 @@ interface ResolvedWordOptions {
   readonly keywords: KeywordClasses;
 }
 
+interface GraphemeWindowCacheEntry {
+  readonly windowStart: number;
+  readonly windowEnd: number;
+  readonly clusters: readonly { readonly start: number; readonly end: number; readonly text: string }[];
+}
+
 interface WordContext {
   readonly snapshot: DocumentSnapshot;
   readonly options: ResolvedWordOptions;
   readonly lineCache: Map<number, LineBounds>;
   readonly unitCache: Map<string, WordUnit>;
+  /** Cache for `readGraphemeBefore`'s bounded backward scan, keyed by line index. */
+  readonly graphemeWindowCache: Map<number, GraphemeWindowCacheEntry>;
 }
 
 interface GraphemeAt {
@@ -109,6 +117,8 @@ const GRAPHEME_SEGMENTER = (Intl as typeof Intl & {
     segment(input: string): Iterable<{ readonly segment: string; readonly index: number }>;
   };
 }).Segmenter;
+/** One reusable instance instead of constructing a new `Intl.Segmenter` on every call. */
+const GRAPHEME_SEGMENTER_INSTANCE = GRAPHEME_SEGMENTER === undefined ? undefined : new GRAPHEME_SEGMENTER('und', { granularity: 'grapheme' });
 const UNICODE_LETTER = /^\p{L}$/u;
 const UNICODE_NUMBER = /^\p{N}$/u;
 const UNICODE_EMOJI = /\p{Extended_Pictographic}/u;
@@ -154,6 +164,7 @@ export function resolveVimWordMotion(
   const context: WordContext = {
     snapshot,
     options: resolvedOptions.value,
+    graphemeWindowCache: new Map(),
     lineCache: new Map([[line.index, line]]),
     unitCache: new Map(),
   };
@@ -432,7 +443,7 @@ function previousTextUnit(
   end: number,
 ): Result<WordUnit | null, VimWordMotionFailure> {
   if (end <= line.start) return { ok: true, value: null };
-  const grapheme = readGraphemeBefore(context.snapshot, line, end);
+  const grapheme = readGraphemeBefore(context, line, end);
   if (!grapheme.ok) return grapheme;
   return unitAt(context, line, grapheme.value.start);
 }
@@ -442,14 +453,13 @@ function readGraphemeAt(
   line: LineBounds,
   offset: number,
 ): Result<GraphemeAt, VimWordMotionFailure> {
-  const segmenter = GRAPHEME_SEGMENTER;
-  if (segmenter === undefined) return wordFailure('invalid-width-policy');
+  const graphemes = GRAPHEME_SEGMENTER_INSTANCE;
+  if (graphemes === undefined) return wordFailure('invalid-width-policy');
   if (offset >= line.end) return wordFailure('document-read-failed');
   const start = asUtf16Offset(offset);
   if (start === null) return wordFailure('document-read-failed');
   let windowSize = 8;
   try {
-    const graphemes = new segmenter('und', { granularity: 'grapheme' });
     // Geometric windows preserve arbitrarily long clusters with linear total
     // read work, instead of rebuilding and segmenting every scalar prefix.
     while (true) {
@@ -475,13 +485,31 @@ function readGraphemeAt(
   }
 }
 
+/**
+ * Grapheme immediately before `end` on `line`. A `b`/`B`/`ge`/`gE` motion
+ * calls this once per grapheme walked backward; re-reading and re-segmenting
+ * a fresh (mostly overlapping) 64-unit window from the snapshot on every one
+ * of those steps redid up to ~64x the real work. The window's full cluster
+ * list is cached on `context` so consecutive backward steps are served from
+ * memory until the cached window is exhausted.
+ */
 function readGraphemeBefore(
-  snapshot: DocumentSnapshot,
+  context: WordContext,
   line: LineBounds,
   end: number,
 ): Result<GraphemeAt, VimWordMotionFailure> {
-  const segmenter = GRAPHEME_SEGMENTER;
+  const cached = context.graphemeWindowCache.get(line.index);
+  if (cached !== undefined && end > cached.windowStart && end <= cached.windowEnd) {
+    for (let index = cached.clusters.length - 1; index >= 0; index -= 1) {
+      const cluster = cached.clusters[index];
+      if (cluster === undefined) break;
+      if (cluster.end === end) return { ok: true, value: { start: cluster.start, end: cluster.end, text: cluster.text } };
+      if (cluster.end < end) break;
+    }
+  }
+  const segmenter = GRAPHEME_SEGMENTER_INSTANCE;
   if (segmenter === undefined) return wordFailure('invalid-width-policy');
+  const snapshot = context.snapshot;
   let windowSize = 64;
   try {
     while (true) {
@@ -496,10 +524,16 @@ function readGraphemeBefore(
       if (safeStart === null || safeEnd === null) return wordFailure('document-read-failed');
       const textResult = snapshot.slice(safeStart, safeEnd);
       if (!textResult.ok) return wordFailure('document-read-failed');
-      const segments = [...new segmenter('und', { granularity: 'grapheme' }).segment(textResult.value)];
+      const segments = [...segmenter.segment(textResult.value)];
       const last = segments.at(-1);
       if (last === undefined) return wordFailure('document-read-failed');
       if (segments.length > 1 || start === line.start) {
+        const clusters = segments.map((part) => ({
+          start: start + part.index,
+          end: start + part.index + part.segment.length,
+          text: part.segment,
+        }));
+        context.graphemeWindowCache.set(line.index, { windowStart: start, windowEnd: end, clusters });
         return { ok: true, value: { start: start + last.index, end, text: last.segment } };
       }
       windowSize *= 2;
@@ -515,7 +549,7 @@ function isGraphemeStart(
   offset: number,
 ): Result<boolean, VimWordMotionFailure> {
   if (offset === line.start) return { ok: true, value: true };
-  const segmenter = GRAPHEME_SEGMENTER;
+  const segmenter = GRAPHEME_SEGMENTER_INSTANCE;
   if (segmenter === undefined) return wordFailure('invalid-width-policy');
   const start = Math.max(line.start, offset - 64);
   const end = Math.min(line.end, offset + 64);
@@ -526,7 +560,7 @@ function isGraphemeStart(
   if (!text.ok) return wordFailure('document-read-failed');
   try {
     const localOffset = offset - start;
-    for (const part of new segmenter('und', { granularity: 'grapheme' }).segment(text.value)) {
+    for (const part of segmenter.segment(text.value)) {
       if (part.index === localOffset) return { ok: true, value: true };
     }
     return { ok: true, value: false };
@@ -675,6 +709,13 @@ function displayColumnForTarget(
   const prefixEnd = asUtf16Offset(target.start);
   const prefixStart = asUtf16Offset(target.line.start);
   if (prefixEnd === null || prefixStart === null) return wordFailure('document-read-failed');
+  // ASCII fast path: single-width, no tabs, so the column is just the length
+  // -- avoids segmenting (and reading) a potentially huge line prefix.
+  if (typeof context.snapshot.isPrintableAsciiRange === 'function') {
+    const asciiRange = context.snapshot.isPrintableAsciiRange(prefixStart, prefixEnd);
+    if (!asciiRange.ok) return wordFailure('document-read-failed');
+    if (asciiRange.value) return { ok: true, value: (prefixEnd as number) - (prefixStart as number) };
+  }
   const prefix = context.snapshot.slice(prefixStart, prefixEnd);
   if (!prefix.ok) return wordFailure('document-read-failed');
   return measureCellAdvance(prefix.value, 0, context.options);
@@ -685,11 +726,11 @@ function measureCellAdvance(
   initialCell: number,
   options: ResolvedWordOptions,
 ): Result<number, VimWordMotionFailure> {
-  const segmenter = GRAPHEME_SEGMENTER;
+  const segmenter = GRAPHEME_SEGMENTER_INSTANCE;
   if (segmenter === undefined) return wordFailure('invalid-width-policy');
   let cell = initialCell;
   try {
-    for (const grapheme of new segmenter('und', { granularity: 'grapheme' }).segment(text)) {
+    for (const grapheme of segmenter.segment(text)) {
       const width = grapheme.segment === '\t'
         ? options.tabSize - (cell % options.tabSize)
         : options.widthPolicy.widthOfCluster(grapheme.segment);

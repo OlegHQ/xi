@@ -318,11 +318,11 @@ function resolveScroll(
       : key === '<C-B>'
         ? clamp(targetTop + frame.heightCells - 1, 0, snapshot.lineCount - 1)
         : clamp((line.value as number) + direction * lineAmount, 0, snapshot.lineCount - 1);
-    const metrics = readLineMetrics(snapshot, targetLine, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy());
+    // `displayColumnForOffset(metrics, 0)` is always 0 (offset 0 is always in
+    // the first, leftmost cell), so the null case needs no metrics lookup.
+    const desiredCell = cursor.desiredDisplayCellColumn === null ? 0 : cursor.desiredDisplayCellColumn as number;
+    const metrics = readLineMetrics(snapshot, targetLine, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy(), desiredCell);
     if (metrics === null) return viewportFailure('document-read-failed');
-    const desiredCell = cursor.desiredDisplayCellColumn === null
-      ? displayColumnForOffset(metrics, 0)
-      : cursor.desiredDisplayCellColumn as number;
     const nextOffset = offsetAtCell(metrics, desiredCell);
     const start = snapshot.lineStartOffset(targetLine as LineIndex);
     if (!start.ok) return viewportFailure('document-read-failed');
@@ -584,7 +584,7 @@ function previousAnchor(
   for (let index = 0; index < rows; index += 1) {
     if (column > 0 && (currentRow?.wrapIndex ?? 0) > 0) {
       column = Math.max(0, column - contentWidth);
-      const metrics = readLineMetrics(snapshot, line, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy());
+      const metrics = readLineMetrics(snapshot, line, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy(), column);
       if (metrics === null) return null;
       offset = offsetAtCell(metrics, column);
       continue;
@@ -609,7 +609,7 @@ function nextAnchor(snapshot: DocumentSnapshot, frame: VisibleFrame, rows: numbe
   let offset = current.endOffset as number | null;
   for (let index = 0; index < rows; index += 1) {
     if (current?.kind === 'text' && line !== null && offset !== null) {
-      const metrics = readLineMetrics(snapshot, line, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy());
+      const metrics = readLineMetrics(snapshot, line, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy(), column);
       if (metrics === null) return null;
       if (column < metrics.cellToOffset.length) {
         const lineStart = snapshot.lineStartOffset(line as LineIndex);
@@ -646,7 +646,7 @@ function anchorForLine(snapshot: DocumentSnapshot, line: number, column: number,
   const start = snapshot.lineStartOffset(anchorLine as LineIndex);
   if (!start.ok) return null;
   const offset = fold === undefined
-    ? offsetAtCell(readLineMetrics(snapshot, anchorLine, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy()) ?? { text: '', starts: [], cellToOffset: [] }, column)
+    ? offsetAtCell(readLineMetrics(snapshot, anchorLine, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy(), column) ?? { text: '', starts: [], cellToOffset: [] }, column)
     : 0;
   return Object.freeze({
     documentVersion: snapshot.version,
@@ -672,11 +672,12 @@ function cursorAtScreenRow(
     cursor: Object.freeze({ documentVersion: snapshot.version, offset: candidate.offset, desiredDisplayCellColumn: candidate.displayCellColumn }),
     desiredScreenCellColumn: state.desiredScreenCellColumn,
   };
-  const metrics = readLineMetrics(snapshot, line, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy());
+  const screenRowDesired = state.cursor.desiredDisplayCellColumn as number ?? 0;
+  const metrics = readLineMetrics(snapshot, line, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy(), screenRowDesired);
   if (metrics === null) return null;
   const start = snapshot.lineStartOffset(line as LineIndex);
   if (!start.ok) return null;
-  const offset = offsetAtCell(metrics, state.cursor.desiredDisplayCellColumn as number ?? 0);
+  const offset = offsetAtCell(metrics, screenRowDesired);
   return { cursor: Object.freeze({ documentVersion: snapshot.version, offset: ((start.value as number) + offset) as Utf16Offset, desiredDisplayCellColumn: state.cursor.desiredDisplayCellColumn }), desiredScreenCellColumn: state.desiredScreenCellColumn };
 }
 
@@ -686,11 +687,11 @@ function cursorAtLine(
   state: VimViewportCursor,
   options: VimViewportOptions,
 ): { readonly cursor: VimViewportMotionCursor; readonly desiredScreenCellColumn: CellColumn | null } | null {
-  const metrics = readLineMetrics(snapshot, line, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy());
+  const desired = state.cursor.desiredDisplayCellColumn as number | null;
+  const metrics = readLineMetrics(snapshot, line, options.tabSize ?? 8, options.widthPolicy ?? defaultCellWidthPolicy(), desired ?? 0);
   if (metrics === null) return null;
   const start = snapshot.lineStartOffset(line as LineIndex);
   if (!start.ok) return null;
-  const desired = state.cursor.desiredDisplayCellColumn as number | null;
   const offset = offsetAtCell(metrics, desired ?? 0);
   return {
     cursor: Object.freeze({
@@ -702,36 +703,85 @@ function cursorAtLine(
   };
 }
 
-function readLineMetrics(snapshot: DocumentSnapshot, line: number, tabSize: number, widthPolicy: CellWidthPolicy): LineMetrics | null {
+/** Base window size (UTF-16 units) for the bounded metrics scan below; doubles toward the line end. */
+const LINE_METRICS_WINDOW_BASE = 64;
+
+/**
+ * Display-cell metrics for one line, measured only up to `neededCell` (plus
+ * one confirming cluster) rather than the whole line. Scroll/viewport keys
+ * only ever need a single target cell on a single line; measuring the full
+ * line (and allocating one array entry per display cell of it) made those
+ * keys cost O(line length) on a huge line for no reason.
+ */
+function readLineMetrics(snapshot: DocumentSnapshot, line: number, tabSize: number, widthPolicy: CellWidthPolicy, neededCell: number): LineMetrics | null {
   const start = snapshot.lineStartOffset(line as LineIndex);
   if (!start.ok) return null;
-  let end = snapshot.lengthUtf16;
+  const lineStart = start.value as number;
+  let lineEnd = snapshot.lengthUtf16;
   if (line + 1 < snapshot.lineCount) {
     const next = snapshot.lineStartOffset((line + 1) as LineIndex);
     if (!next.ok) return null;
-    end = (next.value as number) - 1;
+    lineEnd = (next.value as number) - 1;
   }
-  const content = snapshot.slice(start.value, end as Utf16Offset);
-  if (!content.ok) return null;
-  const starts: number[] = [];
-  const cellToOffset: number[] = [];
-  if (Segmenter === undefined) return null;
-  let displayCell = 0;
-  try {
-    for (const segment of new Segmenter('und', { granularity: 'grapheme' }).segment(content.value)) {
-      starts.push(segment.index);
-      const width = segment.segment === '\t'
-        ? tabSize - (displayCell % tabSize)
-        : widthPolicy.widthOfCluster(segment.segment);
-      if (!Number.isSafeInteger(width) || width < 0 || width > 2) return null;
-      const occupied = Math.max(1, width);
-      for (let cell = 0; cell < occupied; cell += 1) cellToOffset.push(segment.index);
-      displayCell += occupied;
+  if (lineEnd > lineStart && typeof snapshot.isPrintableAsciiRange === 'function') {
+    const asciiRange = snapshot.isPrintableAsciiRange(lineStart as Utf16Offset, lineEnd as Utf16Offset);
+    if (!asciiRange.ok) return null;
+    if (asciiRange.value) {
+      // ASCII fast path: no tabs (excluded from "printable ASCII"), so every
+      // unit is exactly one single-width cell; no text needs to be read.
+      const windowEnd = Math.min(lineEnd, lineStart + Math.max(0, neededCell) + 1);
+      const length = windowEnd - lineStart;
+      const cells: number[] = new Array(length);
+      for (let index = 0; index < length; index += 1) cells[index] = index;
+      return { text: '', starts: cells, cellToOffset: cells };
     }
-  } catch {
-    return null;
   }
-  return { text: content.value, starts, cellToOffset };
+  if (Segmenter === undefined) return null;
+  let windowUnits = LINE_METRICS_WINDOW_BASE;
+  for (;;) {
+    const windowEnd = Math.min(lineEnd, lineStart + windowUnits);
+    const content = snapshot.slice(lineStart as Utf16Offset, windowEnd as Utf16Offset);
+    if (!content.ok) return null;
+    const starts: number[] = [];
+    const cellToOffset: number[] = [];
+    let displayCell = 0;
+    let lastEnd = 0;
+    // Boundary before the final segment, kept in case that segment's cluster
+    // was truncated by the window and cannot yet be trusted.
+    let priorDisplayCell = 0;
+    let priorStartsLength = 0;
+    let priorCellLength = 0;
+    let sawAny = false;
+    try {
+      for (const segment of new Segmenter('und', { granularity: 'grapheme' }).segment(content.value)) {
+        priorDisplayCell = displayCell;
+        priorStartsLength = starts.length;
+        priorCellLength = cellToOffset.length;
+        sawAny = true;
+        starts.push(segment.index);
+        const width = segment.segment === '\t'
+          ? tabSize - (displayCell % tabSize)
+          : widthPolicy.widthOfCluster(segment.segment);
+        if (!Number.isSafeInteger(width) || width < 0 || width > 2) return null;
+        const occupied = Math.max(1, width);
+        for (let cell = 0; cell < occupied; cell += 1) cellToOffset.push(segment.index);
+        displayCell += occupied;
+        lastEnd = segment.index + segment.segment.length;
+      }
+    } catch {
+      return null;
+    }
+    const reachedLineEnd = windowEnd >= lineEnd;
+    const lastTouchesEdge = sawAny && !reachedLineEnd && lastEnd === content.value.length;
+    if (lastTouchesEdge) {
+      if (priorDisplayCell > neededCell) {
+        return { text: content.value, starts: starts.slice(0, priorStartsLength), cellToOffset: cellToOffset.slice(0, priorCellLength) };
+      }
+    } else if (displayCell > neededCell || reachedLineEnd) {
+      return { text: content.value, starts, cellToOffset };
+    }
+    windowUnits *= 2;
+  }
 }
 
 function offsetAtCell(metrics: LineMetrics, cell: number): number {
@@ -739,11 +789,6 @@ function offsetAtCell(metrics: LineMetrics, cell: number): number {
   if (cell >= metrics.cellToOffset.length) return metrics.starts.at(-1) ?? 0;
   if (cell <= 0) return metrics.cellToOffset[0] ?? metrics.starts[0] ?? 0;
   return metrics.cellToOffset[cell] ?? metrics.starts.at(-1) ?? 0;
-}
-
-function displayColumnForOffset(metrics: LineMetrics, offset: number): number {
-  const index = metrics.cellToOffset.findIndex((value) => value === offset);
-  return index < 0 ? Math.max(0, metrics.cellToOffset.length - 1) : index;
 }
 
 function scalarAt(snapshot: DocumentSnapshot, offset: number): string | null {

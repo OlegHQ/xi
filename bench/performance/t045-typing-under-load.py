@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import termios
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,11 +71,38 @@ def run_trial(workspace: Path, home: Path) -> list[float]:
         env=environment,
         stdin=slave,
         stdout=slave,
-        stderr=slave,
+        # stderr is NOT the PTY slave: XI_UI_TEST_MARKERS writes markers (readiness, search-open,
+        # search-state, ex-commandline-state, ...) synchronously to stderr, ahead of the actual
+        # rendered frame. Sharing the slave would let a marker satisfy a read before the real
+        # terminal output arrives, measuring key->marker instead of key->terminal output. Route
+        # stderr to its own pipe, drained on a background thread; time only stdout PTY bytes.
+        stderr=subprocess.PIPE,
         close_fds=True,
     )
     os.close(slave)
-    captured = bytearray()
+    captured = bytearray()  # stdout only, via the PTY master.
+    stderr_captured = bytearray()
+    stderr_lock = threading.Lock()
+
+    def drain_stderr() -> None:
+        assert child.stderr is not None
+        fd = child.stderr.fileno()
+        while True:
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            with stderr_lock:
+                stderr_captured.extend(chunk)
+
+    stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    def stderr_contains(needle: bytes) -> bool:
+        with stderr_lock:
+            return needle in stderr_captured
 
     def read_once(timeout: float) -> int:
         readable, _, _ = select.select([master], [], [], timeout)
@@ -89,9 +117,9 @@ def run_trial(workspace: Path, home: Path) -> list[float]:
 
     try:
         deadline = time.monotonic() + 10
-        while MARKER not in captured and time.monotonic() < deadline:
+        while not stderr_contains(MARKER) and time.monotonic() < deadline:
             read_once(0.05)
-        if MARKER not in captured:
+        if not stderr_contains(MARKER):
             raise RuntimeError("Xi did not reach XI_WORKBENCH_READY")
         time.sleep(0.25)
         while read_once(0):
@@ -101,11 +129,11 @@ def run_trial(workspace: Path, home: Path) -> list[float]:
         # RealtimeSearchService instance actively scanning the fixture files, not a mock.
         os.write(master, b" /")
         deadline = time.monotonic() + 5
-        while b"XI_SEARCH_OPEN" not in captured and time.monotonic() < deadline:
+        while not stderr_contains(b"XI_SEARCH_OPEN") and time.monotonic() < deadline:
             read_once(0.05)
         os.write(master, b"line")
         deadline = time.monotonic() + 5
-        while b'"state":"ready"' not in captured and time.monotonic() < deadline:
+        while not stderr_contains(b'"state":"ready"') and time.monotonic() < deadline:
             read_once(0.05)
         while read_once(0):
             pass
@@ -134,8 +162,18 @@ def run_trial(workspace: Path, home: Path) -> list[float]:
                     pass
             started = time.perf_counter_ns()
             os.write(master, b"j")
-            if read_once(2) == 0:
-                raise RuntimeError("Xi produced no terminal output for ordinary j under search load")
+            # An empty ack cannot count: require the timed stdout bytes to contain a cursor
+            # escape sequence (or any other CSI-introduced update), not just any byte.
+            saw_escape = False
+            chunk_deadline = time.monotonic() + 2
+            while time.monotonic() < chunk_deadline:
+                if read_once(max(0.0, chunk_deadline - time.monotonic())) == 0:
+                    break
+                if b"\x1b[" in captured:
+                    saw_escape = True
+                    break
+            if not saw_escape:
+                raise RuntimeError("Xi produced no terminal escape output for ordinary j under search load")
             samples.append((time.perf_counter_ns() - started) / 1_000_000)
             time.sleep(0.005)
             while read_once(0):
@@ -150,6 +188,9 @@ def run_trial(workspace: Path, home: Path) -> list[float]:
             child.kill()
             child.wait()
         os.close(master)
+        if child.stderr is not None:
+            child.stderr.close()
+        stderr_thread.join(timeout=1)
 
 
 def main() -> int:

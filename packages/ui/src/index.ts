@@ -61,14 +61,10 @@ export type {
 export {
   DEFAULT_EX_COMMAND_LINE_THEME,
   ExCommandLineRenderable,
-  ExCommandLineSession,
   formatExCommandLineLines,
 } from '../commandline/index';
 export type {
-  ExCommandLineInput,
-  ExCommandLineOptions,
   ExCommandLineReadPort,
-  ExCommandLineResult,
   ExCommandLineRenderableOptions,
   ExCommandLineTheme,
 } from '../commandline/index';

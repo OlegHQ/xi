@@ -151,17 +151,11 @@ export function resolveVimFind(
     lineEnd = (nextLine.value as number) - 1;
   }
   const localCursor = (cursor.offset as number) - lineStart;
-  if (localCursor < 0 || localCursor > lineEnd - lineStart) return failure('invalid-cursor');
-  const lineStartOffset = safeOffset(lineStart);
-  const lineEndOffset = safeOffset(lineEnd);
-  if (lineStartOffset === null || lineEndOffset === null) return failure('document-read-failed');
-  const lineTextResult = snapshot.slice(lineStartOffset, lineEndOffset);
-  if (!lineTextResult.ok || lineTextResult.value.includes('\n')) return failure('document-read-failed');
-  const graphemes = segment(lineTextResult.value);
-  if (graphemes === null) return failure('invalid-width-policy');
-  const cursorIndex = graphemes.findIndex((part) => part.offset === localCursor);
-  const isEmptyEnd = graphemes.length === 0 && localCursor === 0;
-  if (cursorIndex < 0 && !isEmptyEnd) return failure('invalid-cursor');
+  const lineLength = lineEnd - lineStart;
+  if (localCursor < 0 || localCursor > lineLength) return failure('invalid-cursor');
+  const cursorValid = validateGraphemeBoundary(snapshot, lineStart, lineLength, localCursor);
+  if (!cursorValid.ok) return cursorValid;
+  if (!cursorValid.value) return failure('invalid-cursor');
 
   const direction: 1 | -1 = directKey === 'f' || directKey === 't' ? 1 : -1;
   const previousMatchOffset = nextLastFind.lastMatch?.documentId === snapshot.id
@@ -172,12 +166,12 @@ export function resolveVimFind(
     && previousMatchOffset !== null && previousMatchOffset >= lineStart && previousMatchOffset < lineEnd
     ? previousMatchOffset - lineStart
     : null;
-  const matches = (direction === 1
-    ? graphemes.filter((part) => part.offset > localCursor && targetMatches(part.text, target))
-    : graphemes.filter((part) => part.offset < localCursor && targetMatches(part.text, target)).reverse())
-    .filter((part) => part.offset !== skipLastTillTarget);
-  const match = matches[count - 1];
-  if (match === undefined) {
+  const matchResult = direction === 1
+    ? findNthMatchForward(snapshot, lineStart, lineLength, localCursor, target, skipLastTillTarget, count)
+    : findNthMatchBackward(snapshot, lineStart, localCursor, target, skipLastTillTarget, count);
+  if (!matchResult.ok) return matchResult;
+  const match = matchResult.value;
+  if (match === null) {
     return {
       ok: true,
       value: Object.freeze({
@@ -190,14 +184,16 @@ export function resolveVimFind(
     };
   }
 
-  let targetIndex = graphemes.findIndex((part) => part.offset === match.offset);
-  if (directKey === 't') targetIndex -= 1;
-  if (directKey === 'T') targetIndex += 1;
   // Till motions stop immediately beside the found character. At a line boundary
   // Neovim's cursor remains on the closest valid grapheme.
-  targetIndex = Math.max(0, Math.min(graphemes.length - 1, targetIndex));
-  const localTarget = graphemes.length === 0 ? 0 : graphemes[targetIndex]?.offset;
-  if (localTarget === undefined) return failure('invalid-cursor');
+  let localTargetResult: Result<number, VimFindFailure> = { ok: true, value: match.offset };
+  if (directKey === 't') localTargetResult = previousGraphemeOffset(snapshot, lineStart, match.offset);
+  else if (directKey === 'T') {
+    const nextOffset = match.offset + match.text.length;
+    localTargetResult = { ok: true, value: nextOffset < lineLength ? nextOffset : match.offset };
+  }
+  if (!localTargetResult.ok) return localTargetResult;
+  const localTarget = localTargetResult.value;
   const absoluteTarget = safeOffset(lineStart + localTarget);
   if (absoluteTarget === null) return failure('invalid-cursor');
   const initialized = createVimMotionCursor(snapshot, absoluteTarget, options);
@@ -270,6 +266,133 @@ function segment(value: string): readonly Grapheme[] | null {
       .map((entry) => ({ text: entry.segment, offset: entry.index }));
   } catch {
     return null;
+  }
+}
+
+const INITIAL_FIND_WINDOW = 256;
+
+/** Segments only `[absStart, absEnd)`, offsets relative to `absStart`. Uses a plain per-code-unit split for a printable-ASCII window. */
+function segmentWindow(snapshot: DocumentSnapshot, absStart: number, absEnd: number): readonly Grapheme[] | null {
+  if (absEnd <= absStart) return [];
+  const asciiCheck = snapshot.isPrintableAsciiRange?.(absStart as Utf16Offset, absEnd as Utf16Offset);
+  const sliceResult = snapshot.slice(absStart as Utf16Offset, absEnd as Utf16Offset);
+  if (!sliceResult.ok) return null;
+  if (asciiCheck !== undefined && asciiCheck.ok && asciiCheck.value) {
+    const text = sliceResult.value;
+    const graphemes: Grapheme[] = [];
+    for (let index = 0; index < text.length; index += 1) graphemes.push({ text: text[index] as string, offset: index });
+    return graphemes;
+  }
+  return segment(sliceResult.value);
+}
+
+/**
+ * Nudges an absolute window boundary so it never splits a surrogate pair.
+ * `min`/`max` are boundaries already known safe (line starts and line/document
+ * ends never split a pair). When `candidate` would split one, this rounds down
+ * by one unit: a shrinking upper bound loses only the trailing low surrogate
+ * (picked up on the next, larger window), and a growing lower bound gains the
+ * leading high surrogate, so the pair stays intact either way.
+ */
+function safeBoundary(snapshot: DocumentSnapshot, candidate: number, min: number, max: number): number {
+  const clamped = Math.max(min, Math.min(max, candidate));
+  if (clamped <= min || clamped >= max) return clamped;
+  const check = snapshot.slice((clamped - 1) as Utf16Offset, (clamped + 1) as Utf16Offset);
+  if (check.ok && check.value.length === 2) {
+    const high = check.value.charCodeAt(0);
+    const low = check.value.charCodeAt(1);
+    if (high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff) return clamped - 1;
+  }
+  return clamped;
+}
+
+/** Confirms `localOffset` sits on a grapheme boundary within the line, growing the checked window outward as needed. */
+function validateGraphemeBoundary(
+  snapshot: DocumentSnapshot,
+  lineStart: number,
+  lineLength: number,
+  localOffset: number,
+): Result<boolean, VimFindFailure> {
+  if (localOffset === 0 && lineLength === 0) return { ok: true, value: true };
+  const lineEndAbs = lineStart + lineLength;
+  let windowSize = 64;
+  for (;;) {
+    const start = safeBoundary(snapshot, lineStart + Math.max(0, localOffset - windowSize), lineStart, lineEndAbs) - lineStart;
+    const end = safeBoundary(snapshot, lineStart + Math.min(lineLength, localOffset + windowSize), lineStart, lineEndAbs) - lineStart;
+    const graphemes = segmentWindow(snapshot, lineStart + start, lineStart + end);
+    if (graphemes === null) return failure('invalid-width-policy');
+    if (graphemes.some((part) => start + part.offset === localOffset)) return { ok: true, value: true };
+    if (start === 0 && end === lineLength) return { ok: true, value: false };
+    windowSize *= 2;
+  }
+}
+
+/** Finds the count-th matching grapheme after `localCursor`, growing the scan window outward until found or the line ends. */
+function findNthMatchForward(
+  snapshot: DocumentSnapshot,
+  lineStart: number,
+  lineLength: number,
+  localCursor: number,
+  target: string,
+  skipLastTillTarget: number | null,
+  count: number,
+): Result<Grapheme | null, VimFindFailure> {
+  const absCursor = lineStart + localCursor;
+  const lineEndAbs = lineStart + lineLength;
+  let windowSize = INITIAL_FIND_WINDOW;
+  for (;;) {
+    const end = safeBoundary(snapshot, Math.min(lineEndAbs, absCursor + windowSize), absCursor, lineEndAbs);
+    const graphemes = segmentWindow(snapshot, absCursor, end);
+    if (graphemes === null) return failure('invalid-width-policy');
+    const matches = graphemes
+      .map((part) => ({ text: part.text, offset: localCursor + part.offset }))
+      .filter((part) => part.offset > localCursor && targetMatches(part.text, target) && part.offset !== skipLastTillTarget);
+    if (matches.length >= count) return { ok: true, value: matches[count - 1] ?? null };
+    if (end >= lineEndAbs) return { ok: true, value: null };
+    windowSize *= 2;
+  }
+}
+
+/** Finds the count-th matching grapheme before `localCursor`, growing the scan window outward until found or the line starts. */
+function findNthMatchBackward(
+  snapshot: DocumentSnapshot,
+  lineStart: number,
+  localCursor: number,
+  target: string,
+  skipLastTillTarget: number | null,
+  count: number,
+): Result<Grapheme | null, VimFindFailure> {
+  const absCursor = lineStart + localCursor;
+  let windowSize = INITIAL_FIND_WINDOW;
+  for (;;) {
+    const start = safeBoundary(snapshot, Math.max(lineStart, absCursor - windowSize), lineStart, absCursor);
+    const graphemes = segmentWindow(snapshot, start, absCursor);
+    if (graphemes === null) return failure('invalid-width-policy');
+    const startLocal = start - lineStart;
+    const matches = graphemes
+      .map((part) => ({ text: part.text, offset: startLocal + part.offset }))
+      .filter((part) => part.offset < localCursor && targetMatches(part.text, target) && part.offset !== skipLastTillTarget)
+      .reverse();
+    if (matches.length >= count) return { ok: true, value: matches[count - 1] ?? null };
+    if (start <= lineStart) return { ok: true, value: null };
+    windowSize *= 2;
+  }
+}
+
+/** Local offset of the grapheme immediately before `matchLocalOffset`, growing the lookback window as needed. Falls back to the match itself if none exists. */
+function previousGraphemeOffset(snapshot: DocumentSnapshot, lineStart: number, matchLocalOffset: number): Result<number, VimFindFailure> {
+  const absMatch = lineStart + matchLocalOffset;
+  let windowSize = 8;
+  for (;;) {
+    const start = safeBoundary(snapshot, Math.max(lineStart, absMatch - windowSize), lineStart, absMatch);
+    const graphemes = segmentWindow(snapshot, start, absMatch);
+    if (graphemes === null) return failure('invalid-width-policy');
+    if (graphemes.length > 0) {
+      const last = graphemes[graphemes.length - 1];
+      return { ok: true, value: (start - lineStart) + (last?.offset ?? 0) };
+    }
+    if (start <= lineStart) return { ok: true, value: matchLocalOffset };
+    windowSize *= 2;
   }
 }
 

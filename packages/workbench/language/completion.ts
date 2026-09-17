@@ -1,4 +1,4 @@
-import { asIdentifier, type Disposable, type DocumentId, type Result, type UndoGroupId, type ViewId } from '../../contracts/src/index';
+import { asIdentifier, CancellationSource, type CancellationToken, type Disposable, type DocumentId, type Result, type UndoGroupId, type ViewId } from '../../contracts/src/index';
 import type { DocumentEdit, DocumentSnapshot } from '../../document/src/index';
 import type { SelectionSetSnapshot } from '../../selections/src/index';
 import type { OwnedVimKeyEvent, OwnedVimSession } from '../vim-session';
@@ -54,7 +54,7 @@ export interface CompletionControllerPort {
 }
 /** Mirrors `packages/services/language`'s `LanguageServerCompletionProvider`. */
 export interface CompletionProviderPort {
-  complete(request: WorkbenchCompletionRequest): Promise<Result<WorkbenchCompletionList, WorkbenchCompletionFailure>>;
+  complete(request: WorkbenchCompletionRequest, cancellation?: CancellationToken): Promise<Result<WorkbenchCompletionList, WorkbenchCompletionFailure>>;
   resolve?(item: WorkbenchCompletionItem): Promise<Result<WorkbenchCompletionItem, WorkbenchCompletionFailure>>;
 }
 
@@ -75,7 +75,7 @@ export interface WorkbenchSignatureModel {
 export interface SignatureControllerPort {
   readonly model: WorkbenchSignatureModel;
   subscribe(listener: (model: WorkbenchSignatureModel) => void): Disposable;
-  request(request: WorkbenchNavigationRequest): Promise<Result<WorkbenchSignatureList, WorkbenchSignatureFailure>>;
+  request(request: WorkbenchNavigationRequest, cancellation?: CancellationToken): Promise<Result<WorkbenchSignatureList, WorkbenchSignatureFailure>>;
   cancel(): void;
 }
 
@@ -144,6 +144,8 @@ const NOOP_DISPOSABLE: Disposable = Object.freeze({ dispose: () => {} });
 export class CompletionSnippetController {
   #completionOpen = false;
   #signatureOpen = false;
+  #completionCancellation: CancellationSource | undefined;
+  #signatureCancellation: CancellationSource | undefined;
   #completionSerial = 0;
   #operationNumber = 0;
   #completion: CompletionControllerPort | undefined;
@@ -244,6 +246,9 @@ export class CompletionSnippetController {
     }
     this.#signatureOpen = false;
     this.#completionOpen = true;
+    this.#completionCancellation?.cancel();
+    const cancellation = new CancellationSource();
+    this.#completionCancellation = cancellation;
     this.#completionSerial = controller.begin(request);
     this.#options.marker('XI_COMPLETION_OPEN', { version: request.documentVersion, selectionGeneration: request.selectionGeneration });
     void (async () => {
@@ -252,8 +257,8 @@ export class CompletionSnippetController {
         if (this.#completionOpen && ready.ok === false) controller.fail(this.#completionSerial, request, { kind: 'unavailable', message: ready.error.message });
         return;
       }
-      const result = await provider.complete(request);
-      if (!this.#completionOpen) return;
+      const result = await provider.complete(request, cancellation.token);
+      if (!this.#completionOpen || cancellation.token.isCancelled) return;
       if (result.ok) controller.publish(this.#completionSerial, request, result.value);
       else controller.fail(this.#completionSerial, request, result.error);
     })();
@@ -272,17 +277,22 @@ export class CompletionSnippetController {
     }
     this.#completionOpen = false;
     this.#signatureOpen = true;
+    this.#signatureCancellation?.cancel();
+    const cancellation = new CancellationSource();
+    this.#signatureCancellation = cancellation;
     this.#options.marker('XI_SIGNATURE_OPEN');
     void (async () => {
       const ready = await session.waitForReady();
-      if (!this.#signatureOpen || ready.ok === false) return;
-      await controller.request(request);
+      if (!this.#signatureOpen || ready.ok === false || cancellation.token.isCancelled) return;
+      await controller.request(request, cancellation.token);
     })();
     return true;
   }
 
   closeCompletion(cancel = true): void {
     this.#completionOpen = false;
+    this.#completionCancellation?.cancel();
+    this.#completionCancellation = undefined;
     if (cancel) this.#completion?.cancel();
     this.#options.marker('XI_COMPLETION_CLOSED');
   }
@@ -291,6 +301,8 @@ export class CompletionSnippetController {
    * `host.registerPanel('signature', { close: () => { signatureOpen = false; signatureController?.cancel(); } })`. */
   closeSignature(): void {
     this.#signatureOpen = false;
+    this.#signatureCancellation?.cancel();
+    this.#signatureCancellation = undefined;
     this.#signature?.cancel();
   }
 
@@ -347,8 +359,10 @@ export class CompletionSnippetController {
   handleSignatureKeypress(event: OwnedVimKeyEvent): Promise<boolean> {
     return (async () => {
       const key = event.name.toLowerCase();
-      if (key === 'escape' || event.raw === '') { this.#signatureOpen = false; this.#signature?.cancel(); this.#options.marker('XI_SIGNATURE_CLOSED'); return true; }
+      if (key === 'escape' || event.raw === '') { this.#signatureOpen = false; this.#signatureCancellation?.cancel(); this.#signatureCancellation = undefined; this.#signature?.cancel(); this.#options.marker('XI_SIGNATURE_CLOSED'); return true; }
       this.#signatureOpen = false;
+      this.#signatureCancellation?.cancel();
+      this.#signatureCancellation = undefined;
       this.#signature?.cancel();
       const active = this.#options.host.activeSession();
       if (active !== undefined) await active.handleKey(event);

@@ -58,6 +58,15 @@ interface PatternTextAccess {
   slice(start: number, end: number): string;
   charCodeAt(position: number): number;
   codePointAt(position: number): number | undefined;
+  /**
+   * Find the next UTF-16 code unit equal to `codeUnit` in `[fromIndex, toIndex)`,
+   * or -1. Implemented with native `String.prototype.indexOf` over the
+   * underlying window(s) so a bounded probe costs one native scan rather than
+   * one step per skipped code unit; callers bound `toIndex` themselves to
+   * keep each probe (and therefore each accounted step) cheap and to
+   * preserve cooperative yield points between probes.
+   */
+  indexOfUnit(codeUnit: number, fromIndex: number, toIndex: number): number;
 }
 
 interface PositionCoordinates {
@@ -263,7 +272,22 @@ function asciiLiteralFor(
   return result.ok && result.value ? node : undefined;
 }
 
-/** Counted, cooperative scan for the common one-byte literal search. */
+/**
+ * Counted, cooperative scan for the common one-byte literal search.
+ *
+ * The budget charges one step per bounded `indexOf` probe of at most
+ * `FAST_SCAN_BATCH` UTF-16 units (i.e. per candidate window examined or per
+ * match found, whichever advances first), not per UTF-16 unit skipped
+ * between candidates: `String.prototype.indexOf` scans the skipped units
+ * natively in one call, so counting them one-by-one against the step budget
+ * would fail long, sparse searches (e.g. a single match at the end of a
+ * multi-MiB document) long before any real per-step work happened. Bounding
+ * each probe to `FAST_SCAN_BATCH` units keeps the same cooperative
+ * yield/cancellation cadence as before while making the accounted step cost
+ * for a no-match/sparse scan proportional to the number of windows examined
+ * instead of the number of units skipped; a dense run of matches still costs
+ * about one step per match, same as before.
+ */
 function* evaluateFastAsciiLiteral(
   context: EvaluationContext,
   node: Extract<PatternNode, { readonly kind: 'literal' }>,
@@ -271,27 +295,26 @@ function* evaluateFastAsciiLiteral(
   const expected = node.value.charCodeAt(0);
   const matches: InternalMatch[] = [];
   let offset = 0;
-  let batch = 0;
   while (offset < context.text.length) {
+    const probeEnd = Math.min(context.text.length, offset + FAST_SCAN_BATCH);
+    const index = context.text.indexOfUnit(expected, offset, probeEnd);
     context.budget.tick(node.source);
-    if (context.text.charCodeAt(offset) === expected) {
+    if (index === -1) {
+      offset = probeEnd;
+    } else {
       if (matches.length >= context.program.outputLimit) {
         throw new PatternEvaluationError('output-limit-exceeded', `pattern-output-limit-exceeded: ${context.program.outputLimit}`, context.budget.steps, node.source);
       }
       matches.push({
-        start: offset,
-        end: offset + 1,
-        consumedStart: offset,
-        consumedEnd: offset + 1,
+        start: index,
+        end: index + 1,
+        consumedStart: index,
+        consumedEnd: index + 1,
         captures: new Map(),
       });
+      offset = index + 1;
     }
-    offset += 1;
-    batch += 1;
-    if (batch >= FAST_SCAN_BATCH) {
-      batch = 0;
-      yield;
-    }
+    yield;
   }
   return { matches, steps: context.budget.steps, engine: 'nfa' };
 }
@@ -1656,9 +1679,6 @@ function isCombiningCodePointScalar(value: string): boolean {
   return /^\p{M}$/u.test(value);
 }
 
-function advanceCodePoint(text: string, position: number): number {
-  return position >= text.length ? text.length + 1 : position + codePointWidthAt(text, position);
-}
 
 function isEndOfLine(text: PatternTextAccess, position: number): boolean {
   return position === text.length || text.charCodeAt(position) === 10;
@@ -1740,6 +1760,24 @@ function createTextAccess(snapshot: PatternTextSnapshot): PatternTextAccess {
     }
     return Number.NaN;
   };
+  const indexOfUnit = (codeUnit: number, fromIndex: number, toIndex: number): number => {
+    const needle = String.fromCharCode(codeUnit);
+    const end = Math.min(toIndex, length);
+    if (materialized !== undefined) {
+      const found = materialized.indexOf(needle, fromIndex);
+      return found !== -1 && found < end ? found : -1;
+    }
+    let position = Math.max(0, fromIndex);
+    while (position < end) {
+      loadWindow(position);
+      const local = position - windowStart;
+      const localEnd = Math.min(windowText.length, end - windowStart);
+      const found = windowText.indexOf(needle, local);
+      if (found !== -1 && found < localEnd) return windowStart + found;
+      position = windowStart + windowText.length;
+    }
+    return -1;
+  };
   return {
     length,
     slice: read,
@@ -1753,6 +1791,7 @@ function createTextAccess(snapshot: PatternTextSnapshot): PatternTextAccess {
       }
       return first;
     },
+    indexOfUnit,
   };
 }
 

@@ -175,6 +175,7 @@ async function main(): Promise<void> {
   let workspaceEditCoordinator: import('../../../packages/services/src/entrypoints/language').WorkspaceEditCoordinator | undefined;
   let workspaceEditExecutor: WorkspaceEditResourceExecutor | undefined;
   let languageInitialization: Promise<void> | undefined;
+  const languageSyncWarnedDocumentIds = new Set<DocumentId>();
   const workbench = new WorkbenchSession({
     saveBuffer: async (buffer) => {
       if (buffer.path === undefined) return { ok: false, error: 'no file name' };
@@ -185,7 +186,10 @@ async function main(): Promise<void> {
     },
     onDocumentChange: (change) => {
       const admitted = languageSession?.changeDocument(change);
-      if (admitted !== undefined && !admitted.ok) process.stderr.write(`xi: language sync unavailable: ${admitted.error.message}\n`);
+      if (admitted !== undefined && !admitted.ok && !languageSyncWarnedDocumentIds.has(change.documentId)) {
+        languageSyncWarnedDocumentIds.add(change.documentId);
+        process.stderr.write(`xi: language sync unavailable: ${admitted.error.message}\n`);
+      }
       // Vim-originated commits already advanced their owning session during
       // command execution. Remapping those sessions would add avoidable work
       // to every typed character; external LSP/workspace commits still map
@@ -436,6 +440,20 @@ async function main(): Promise<void> {
     onPrefixStateChange: (viewId, state) => inputRouter.schedulePrefixHelp(viewId, state.pendingKeys, state.parserContinuations),
     onCommandLineChange: (state) => inputRouter.handleCommandLineChange(state),
     onHostCommand: (command, viewId) => hostCommands.handleVimHostCommand(command, viewId),
+    onBufferOpened: (buffer) => {
+      if (languageSession === undefined) return;
+      const bufferLanguageId = languageIdForPath(buffer.path);
+      if (bufferLanguageId === undefined) return;
+      const text = readDocumentText(buffer.document);
+      if (text === undefined) return;
+      const admitted = languageSession.openDocument({ uri: fileUri(buffer.path), documentId: String(buffer.documentId), languageId: bufferLanguageId, version: buffer.document.version, text });
+      if (!admitted.ok) process.stderr.write(`xi: language document unavailable: ${admitted.error.message}\n`);
+    },
+    onBufferClosed: (buffer) => {
+      if (languageSession === undefined || buffer.path === undefined) return;
+      if (languageIdForPath(buffer.path) === undefined) return;
+      languageSession.closeDocument(fileUri(buffer.path));
+    },
   });
   const picker = new PickerController<PickerEntry, WorkbenchTheme>({
     host,
@@ -643,6 +661,19 @@ async function main(): Promise<void> {
     { id: 'status', kind: 'button', enabled: true, activate: () => {} },
     { id: 'tab.active', kind: 'tab', enabled: true, activate: () => { const active = workbench.activeViewId; if (active !== undefined) void workbench.focus(active); } },
   ]);
+  /** Every overlay panel is mutually exclusive with every other; opening one must always
+   * close the rest, not just the ones a given call site happened to remember. Registered on
+   * `host` (not yet extracted into per-feature controllers -- S5-S8) so it, not `main()`,
+   * owns exclusivity ordering. */
+  host.registerPanel('search', { isOpen: () => searchFeature.isOpen, close: () => searchFeature.close() });
+  host.registerPanel('explorer', { isOpen: () => explorerFeature.isOpen, close: () => explorerFeature.close() });
+  host.registerPanel('problems', { isOpen: () => problemsFeature.isProblemsOpen, close: () => problemsFeature.closeProblems() });
+  host.registerPanel('outline', { isOpen: () => overlayFeature.isOutlineOpen, close: () => overlayFeature.closeOutline() });
+  host.registerPanel('hover', { isOpen: () => overlayFeature.isHoverOpen, close: () => overlayFeature.closeHover() });
+  host.registerPanel('completion', { isOpen: () => completionFeature.isCompletionOpen, close: () => completionFeature.closeCompletion(), alwaysClose: true });
+  host.registerPanel('signature', { isOpen: () => completionFeature.isSignatureOpen, close: () => completionFeature.closeSignature(), alwaysClose: true });
+  host.registerPanel('output', { isOpen: () => problemsFeature.isOutputOpen, close: () => problemsFeature.closeOutput() });
+
   // Deferred until every controller `onPrefixStateChange`/`onCommandLineChange` delegates to
   // (`inputRouter`, constructed above) exists: `createSession`'s initial state publish can
   // invoke those callbacks synchronously.
@@ -784,19 +815,6 @@ async function main(): Promise<void> {
   host.dispose();
   marker('XI_TEARDOWN', { step: 'done' });
 
-  /** Every overlay panel is mutually exclusive with every other; opening one must always
-   * close the rest, not just the ones a given call site happened to remember. Registered on
-   * `host` (not yet extracted into per-feature controllers -- S5-S8) so it, not `main()`,
-   * owns exclusivity ordering. */
-  host.registerPanel('search', { isOpen: () => searchFeature.isOpen, close: () => searchFeature.close() });
-  host.registerPanel('explorer', { isOpen: () => explorerFeature.isOpen, close: () => explorerFeature.close() });
-  host.registerPanel('problems', { isOpen: () => problemsFeature.isProblemsOpen, close: () => problemsFeature.closeProblems() });
-  host.registerPanel('outline', { isOpen: () => overlayFeature.isOutlineOpen, close: () => overlayFeature.closeOutline() });
-  host.registerPanel('hover', { isOpen: () => overlayFeature.isHoverOpen, close: () => overlayFeature.closeHover() });
-  host.registerPanel('completion', { isOpen: () => completionFeature.isCompletionOpen, close: () => completionFeature.closeCompletion(), alwaysClose: true });
-  host.registerPanel('signature', { isOpen: () => completionFeature.isSignatureOpen, close: () => completionFeature.closeSignature(), alwaysClose: true });
-  host.registerPanel('output', { isOpen: () => problemsFeature.isOutputOpen, close: () => problemsFeature.closeOutput() });
-
   function startFileIndexPopulation(): Promise<void> {
     fileIndexPopulation ??= populateFileIndex(fileIndex, filesystem, workspaceRoot).then(() => { host.notifySurfaceChange(); });
     return fileIndexPopulation;
@@ -897,6 +915,7 @@ function toExplorerEntry(entry: WorkspaceDirectoryEntry): ExplorerDirectoryEntry
 
 function toExplorerWatchEvent(event: WorkspaceDirectoryWatchEvent, root: string): import('../../../packages/services/src/entrypoints/launch').ExplorerWatchEvent {
   const relativePath = relativeWorkspacePath(root, event.path);
+  if (event.kind === 'overflow') return { kind: 'overflow', rootId: 'workspace', relativePath };
   return { kind: 'changed', rootId: 'workspace', relativePath };
 }
 
@@ -1096,17 +1115,6 @@ function processEnvironment(): Readonly<Record<string, string>> {
   return Object.freeze(environment);
 }
 
-function textHash(bytes: Uint8Array): string {
-  let first = 0xcbf29ce484222325n;
-  let second = 0x9e3779b185ebca87n;
-  for (const byte of bytes) {
-    first ^= BigInt(byte);
-    first = BigInt.asUintN(64, first * 0x100000001b3n);
-    second ^= first >> 29n;
-    second = BigInt.asUintN(64, second * 0x9e3779b185ebca87n);
-  }
-  return `${first.toString(16).padStart(16, '0')}${second.toString(16).padStart(16, '0')}`;
-}
 
 main().catch((error: unknown) => {
   process.stderr.write(`xi: fatal: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);

@@ -215,11 +215,17 @@ export function updateSelectionSet(
   const nextGeneration = (current.selectionGeneration as number) + 1;
   if (!Number.isSafeInteger(nextGeneration)) return failure('invalid-selection-generation');
   const members: SelectionMember[] = [];
-  let nextOrdinal = Math.max(...current.members.map((member) => member.creationOrdinal as number)) + 1;
+  let maxOrdinal = -1;
+  const currentById = new Map<SelectionId, SelectionMember>();
+  for (const member of current.members) {
+    currentById.set(member.id, member);
+    if ((member.creationOrdinal as number) > maxOrdinal) maxOrdinal = member.creationOrdinal as number;
+  }
+  let nextOrdinal = maxOrdinal + 1;
   for (let index = 0; index < input.members.length; index += 1) {
     const item = input.members[index];
     if (item === undefined) return failure('empty-selection-set');
-    const old = current.members.find((candidate) => candidate.id === item.id);
+    const old = currentById.get(item.id);
     const ordinal = item.creationOrdinal ?? old?.creationOrdinal ?? nextOrdinal++;
     const member = createMember(snapshot, item, ordinal);
     if (!member.ok) return member;

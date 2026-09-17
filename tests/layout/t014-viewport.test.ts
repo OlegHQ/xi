@@ -10,7 +10,7 @@ import {
 } from '../../packages/primitives/src/index';
 import { TextFileDocument, type EditProposal } from '../../packages/document/src/index';
 import { createSelectionSet, type SelectionSetSnapshot } from '../../packages/selections/src/index';
-import { defaultCellWidthPolicy, ViewportLayout, type CellHitTarget, type ViewportProjectionInput } from '../../packages/layout/src/index';
+import { defaultCellWidthPolicy, resolveScrollAnchor, ViewportLayout, type CellHitTarget, type ViewportProjectionInput } from '../../packages/layout/src/index';
 
 const documentId = identifier<DocumentId>('T014-layout-fixtures');
 const viewId = identifier<ViewId>('T014-main-view');
@@ -412,6 +412,30 @@ function checkTypingOnFirstLineKeepsLowerRowContentIdentityAndShiftsOffsetsCorre
   console.log('T014-STABLE-CONTENT-01 and T014-SHIFTED-OFFSET-01 passed: typing on the first visible line keeps unaffected rows\' content identity stable and shifts their absolute offsets and hit-testing correctly.');
 }
 
+function checkHorizontalScrollFollowsCursorOffScreen(): void {
+  const document = editable(`${'x'.repeat(600)}`);
+  const selection = selectionAt(document, 500);
+  const widthCells = 80;
+  const resolved = resolveScrollAnchor(document.snapshot(), selection, 0, 20, widthCells, 0);
+  assert.equal(resolved.ok, true, 'T014-HSCROLL-01 resolveScrollAnchor succeeds for a long unwrapped line');
+  if (!resolved.ok) return;
+  assert.ok(resolved.value.scrollLeft > 0, 'T014-HSCROLL-01 a cursor past the viewport width scrolls right');
+  const layout = new ViewportLayout();
+  const frame = project(
+    layout, document, widthCells, 20, selection,
+    { wrap: false, horizontalScrollCells: resolved.value.scrollLeft }, resolved.value.anchor,
+  );
+  const primary = frame.selections.find((member) => member.primary);
+  assert.ok(primary !== undefined, 'T014-HSCROLL-01 primary selection projects');
+  assert.equal(primary?.head.clipped, false, 'T014-HSCROLL-01 the caret cell is not clipped once scrolled into view');
+  const position = primary?.head.position;
+  assert.ok(position !== null && position !== undefined, 'T014-HSCROLL-01 the caret has a visible screen position');
+  if (position !== null && position !== undefined) {
+    assert.ok(position.column >= 0 && position.column < widthCells, 'T014-HSCROLL-01 the caret column stays inside the viewport width');
+  }
+  console.log('T014-HSCROLL-01 passed: resolveScrollAnchor scrolls horizontally to keep an off-screen cursor column visible and unclipped.');
+}
+
 function identifier<T extends string>(value: string): T {
   const result = asIdentifier<T>(value, 'fixture-id');
   if (!result.ok) throw new Error(result.error.message);
@@ -429,3 +453,4 @@ checkSelectionIdentityAndClippingProjection();
 checkCustomWidthAndEmptyLinePolicies();
 checkRaggedRowsAndWideGlyphClippedAtViewportEdge();
 checkTypingOnFirstLineKeepsLowerRowContentIdentityAndShiftsOffsetsCorrectly();
+checkHorizontalScrollFollowsCursorOffScreen();

@@ -156,6 +156,8 @@ export interface UndoTreeEntry {
   retainedUtf16: number;
   retainedRootUtf16: number;
   retainedMetadataBytes: number;
+  /** Running sum of `steps[*].retainedMetadataBytes`, maintained incrementally so `record()` stays O(1) per commit. */
+  stepsMetadataBytes: number;
 }
 
 interface ActiveUndoGroup {
@@ -346,11 +348,15 @@ export class UndoTree {
       const rootDelta = coalesced === undefined
         ? step.retainedRootUtf16
         : coalesced.retainedRootUtf16 - (previousStep?.retainedRootUtf16 ?? 0);
+      const stepMetadataDelta = coalesced === undefined
+        ? step.retainedMetadataBytes
+        : coalesced.retainedMetadataBytes - (previousStep?.retainedMetadataBytes ?? 0);
       if (coalesced === undefined) {
         node.steps.push(step);
       } else {
         node.steps[node.steps.length - 1] = coalesced;
       }
+      node.stepsMetadataBytes += stepMetadataDelta;
       node.afterRevisionId = change.afterRevisionId;
       node.retainedUtf16 += textDelta;
       node.retainedRootUtf16 += rootDelta;
@@ -385,6 +391,7 @@ export class UndoTree {
       retainedUtf16: step.retainedUtf16,
       retainedRootUtf16: step.retainedRootUtf16,
       retainedMetadataBytes: 0,
+      stepsMetadataBytes: step.retainedMetadataBytes,
     };
     node.retainedMetadataBytes = entryMetadataBytes(node, change.selectionHistory);
     this.#nextOrder += 1;
@@ -512,7 +519,9 @@ export class UndoTree {
         retainedUtf16: saved.retainedUtf16,
         retainedRootUtf16: 0,
         retainedMetadataBytes: 0,
+        stepsMetadataBytes: 0,
       };
+      node.stepsMetadataBytes = node.steps.reduce((total, entryStep) => total + entryStep.retainedMetadataBytes, 0);
       node.retainedMetadataBytes = entryMetadataBytes(node);
       if (parent === null) root.children.push(node);
       else parent.children.push(node);
@@ -579,6 +588,7 @@ export class UndoTree {
       first.retainedUtf16 = 0;
       first.retainedRootUtf16 = 0;
       first.retainedMetadataBytes = 0;
+      first.stepsMetadataBytes = 0;
       this.#entryCount -= 1;
       this.#retainedUtf16 -= discardedUtf16;
       this.#retainedMetadataBytes -= discardedMetadataBytes;
@@ -1075,12 +1085,12 @@ function validRetention(retention: UndoRetention): boolean {
 }
 
 function entryMetadataBytes(
-  node: Pick<UndoTreeEntry, 'steps' | 'beforeSelection' | 'afterSelection'>,
+  node: Pick<UndoTreeEntry, 'stepsMetadataBytes' | 'beforeSelection' | 'afterSelection'>,
   selectionHistory?: { readonly before: SerializedSelectionValue; readonly after: SerializedSelectionValue },
 ): number {
   const before = node.beforeSelection ?? selectionHistory?.before;
   const after = node.afterSelection ?? selectionHistory?.after;
-  return 128 + node.steps.reduce((total, step) => total + step.retainedMetadataBytes, 0)
+  return 128 + node.stepsMetadataBytes
     + (before === undefined ? 0 : estimateSerializedValueBytes(before))
     + (after === undefined ? 0 : estimateSerializedValueBytes(after));
 }
@@ -1094,8 +1104,22 @@ export function estimateUndoStepMetadata(
     + inverseLineEndings.reduce((total, patch) => total + 32 + patch.insert.length * 2, 0);
 }
 
+/** Fixed overhead charged per retained selection snapshot for its envelope fields (viewId, mode, primaryId, etc). */
+const SELECTION_ENVELOPE_BYTES = 64;
+/**
+ * Estimated UTF-16 bytes per serialized selection member (endpoints, affinities, desired column).
+ * Chosen as a conservative round number covering the observed member shape in
+ * `packages/workbench/editing/history-coordinator.ts` (`serializeView`/`serializeMappedView`)
+ * without paying to serialize it.
+ */
+const SELECTION_MEMBER_BYTES = 96;
+
 function estimateSerializedValueBytes(value: SerializedSelectionValue): number {
-  return canonicalJson(value).length * 2;
+  const members = value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as { readonly members?: unknown }).members
+    : undefined;
+  const memberCount = Array.isArray(members) ? members.length : 1;
+  return SELECTION_ENVELOPE_BYTES + memberCount * SELECTION_MEMBER_BYTES;
 }
 
 function checksumOf(value: unknown): string {

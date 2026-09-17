@@ -373,29 +373,61 @@ function readText(snapshot: DocumentSnapshot, start: number, end: number): Resul
   return text.ok ? { ok: true, value: text.value } : rangeFailure('document-read-failed');
 }
 
+/** Base window size (UTF-16 units) for the bounded grapheme scans below; doubles toward the line bounds. */
+const GRAPHEME_WINDOW_BASE = 64;
+
+/**
+ * Boundary one grapheme after `offset`. Reads only a small window instead of
+ * the rest of the (possibly huge) line: a single grapheme is confirmed once a
+ * second one is visible after it in the window, or the window reaches the
+ * true line end, matching the doubling pattern in motions/index.ts.
+ */
 function nextGraphemeBoundary(snapshot: DocumentSnapshot, offset: number): Result<number, VimOperatorRangeFailure> {
   const bounds = lineBoundsAt(snapshot, asOffset(offset));
   if (!bounds.ok) return bounds;
   if (offset >= bounds.value.end) return { ok: true, value: offset };
-  const text = readText(snapshot, offset, bounds.value.end);
-  if (!text.ok) return text;
-  const first = firstGrapheme(text.value);
-  return first === null ? { ok: true, value: offset } : { ok: true, value: offset + first.length };
+  let window = GRAPHEME_WINDOW_BASE;
+  for (;;) {
+    const windowEnd = Math.min(bounds.value.end, offset + window);
+    const text = readText(snapshot, offset, windowEnd);
+    if (!text.ok) return text;
+    let first: { readonly segment: string; readonly index: number } | undefined;
+    let second: { readonly segment: string; readonly index: number } | undefined;
+    for (const part of graphemes(text.value)) {
+      if (first === undefined) { first = part; continue; }
+      second = part;
+      break;
+    }
+    if (first === undefined) return { ok: true, value: offset };
+    if (second !== undefined || windowEnd >= bounds.value.end) return { ok: true, value: offset + first.segment.length };
+    window *= 2;
+  }
 }
 
+/**
+ * The grapheme immediately before `offset`. Mirrors `nextGraphemeBoundary`:
+ * the last cluster found is trusted once there is another one before it
+ * within the window, or the window reaches the true line start.
+ */
 function previousGrapheme(snapshot: DocumentSnapshot, offset: number): Result<{ readonly start: number; readonly text: string } | null, VimOperatorRangeFailure> {
   if (offset <= 0) return { ok: true, value: null };
   const bounds = lineBoundsAt(snapshot, asOffset(offset));
   if (!bounds.ok) return bounds;
   if (offset > bounds.value.end) return rangeFailure('invalid-endpoint');
-  const text = readText(snapshot, bounds.value.start, offset);
-  if (!text.ok) return text;
-  let last: { readonly segment: string; readonly index: number } | null = null;
-  for (const part of graphemes(text.value)) last = part;
-  return last === null ? { ok: true, value: null } : {
-    ok: true,
-    value: { start: bounds.value.start + last.index, text: last.segment },
-  };
+  let window = GRAPHEME_WINDOW_BASE;
+  for (;;) {
+    const windowStart = Math.max(bounds.value.start, offset - window);
+    const text = readText(snapshot, windowStart, offset);
+    if (!text.ok) return text;
+    let previous: { readonly segment: string; readonly index: number } | undefined;
+    let last: { readonly segment: string; readonly index: number } | undefined;
+    for (const part of graphemes(text.value)) { previous = last; last = part; }
+    if (last === undefined) return { ok: true, value: null };
+    if (previous !== undefined || windowStart <= bounds.value.start) {
+      return { ok: true, value: { start: windowStart + last.index, text: last.segment } };
+    }
+    window *= 2;
+  }
 }
 
 function isNonblankAt(snapshot: DocumentSnapshot, offset: number): boolean {
@@ -437,11 +469,6 @@ function graphemeParts(
     cell += width;
   }
   return { ok: true, value: Object.freeze(result) };
-}
-
-function firstGrapheme(text: string): string | null {
-  for (const part of graphemes(text)) return part.segment;
-  return null;
 }
 
 function* graphemes(text: string): Iterable<{ readonly segment: string; readonly index: number }> {

@@ -49,7 +49,18 @@ assert.equal(result.result.matches.length, 0, 'T118-SEARCH-STREAM-02 no-match re
 assert.ok(observed.reads.length > 1, 'T118-SEARCH-STREAM-03 document was read in multiple chunks');
 assert.ok(Math.max(...observed.reads) <= 64 * 1024,
   `T118-SEARCH-STREAM-04 largest document read was ${Math.max(...observed.reads)} UTF-16 units`);
-assert.ok(evaluation.steps >= source.length, 'T118-SEARCH-STREAM-05 failed candidate work is counted');
+// The fast ASCII literal path charges one step per bounded native `indexOf`
+// probe (at most FAST_SCAN_BATCH=4096 UTF-16 units per probe), not one step
+// per unit skipped, so a fully sparse/no-match scan is charged roughly
+// `source.length / 4096` steps instead of `source.length` steps. This keeps
+// long, mostly-empty searches (e.g. a single match at the end of a
+// multi-MiB document) well inside the default step budget while still
+// counting real, bounded work and yielding at the same cadence as before.
+assert.ok(evaluation.steps > 0, 'T118-SEARCH-STREAM-05 failed candidate work is still counted');
+assert.ok(
+  evaluation.steps <= Math.ceil(source.length / 1024),
+  `T118-SEARCH-STREAM-05 bounded indexOf probes should cost far fewer steps than UTF-16 units scanned, got ${evaluation.steps} steps for ${source.length} units`,
+);
 
 let cancelled = false;
 const cancellable = createPatternEvaluation(

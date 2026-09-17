@@ -15,6 +15,7 @@ import struct
 import subprocess
 import tempfile
 import termios
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,11 +63,39 @@ def run_trial(path: Path, home: Path) -> list[float]:
         env=environment,
         stdin=slave,
         stdout=slave,
-        stderr=slave,
+        # stderr is NOT the PTY slave: XI_UI_TEST_MARKERS writes markers (e.g.
+        # XI_WORKBENCH_READY, XI_EX_COMMANDLINE_STATE) synchronously to stderr, ahead of the
+        # actual rendered frame. Sharing the slave would let a marker satisfy a read before the
+        # real terminal output arrives, measuring key->marker instead of key->terminal output.
+        # Route stderr to its own pipe, drained on a background thread, and time only stdout
+        # bytes read from the PTY master.
+        stderr=subprocess.PIPE,
         close_fds=True,
     )
     os.close(slave)
-    captured = bytearray()
+    captured = bytearray()  # stdout only, via the PTY master.
+    stderr_captured = bytearray()
+    stderr_lock = threading.Lock()
+
+    def drain_stderr() -> None:
+        assert child.stderr is not None
+        fd = child.stderr.fileno()
+        while True:
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            with stderr_lock:
+                stderr_captured.extend(chunk)
+
+    stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    def stderr_has_marker() -> bool:
+        with stderr_lock:
+            return MARKER in stderr_captured
 
     def read_once(timeout: float) -> int:
         readable, _, _ = select.select([master], [], [], timeout)
@@ -81,9 +110,9 @@ def run_trial(path: Path, home: Path) -> list[float]:
 
     try:
         deadline = time.monotonic() + 10
-        while MARKER not in captured and time.monotonic() < deadline:
+        while not stderr_has_marker() and time.monotonic() < deadline:
             read_once(0.05)
-        if MARKER not in captured:
+        if not stderr_has_marker():
             raise RuntimeError("Xi did not reach XI_WORKBENCH_READY")
         time.sleep(0.25)
         while read_once(0):
@@ -92,8 +121,18 @@ def run_trial(path: Path, home: Path) -> list[float]:
         for _ in range(30):
             started = time.perf_counter_ns()
             os.write(master, b"j")
-            if read_once(2) == 0:
-                raise RuntimeError("Xi produced no terminal output for ordinary j")
+            # An empty ack cannot count: require the timed stdout bytes to contain a cursor
+            # escape sequence (or any other CSI-introduced update), not just any byte.
+            saw_escape = False
+            chunk_deadline = time.monotonic() + 2
+            while time.monotonic() < chunk_deadline:
+                if read_once(max(0.0, chunk_deadline - time.monotonic())) == 0:
+                    break
+                if b"\x1b[" in captured:
+                    saw_escape = True
+                    break
+            if not saw_escape:
+                raise RuntimeError("Xi produced no terminal escape output for ordinary j")
             samples.append((time.perf_counter_ns() - started) / 1_000_000)
             time.sleep(0.005)
             while read_once(0):
@@ -108,6 +147,9 @@ def run_trial(path: Path, home: Path) -> list[float]:
             child.kill()
             child.wait()
         os.close(master)
+        if child.stderr is not None:
+            child.stderr.close()
+        stderr_thread.join(timeout=1)
 
 
 def main() -> int:

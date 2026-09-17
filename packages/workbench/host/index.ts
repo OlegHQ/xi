@@ -27,6 +27,11 @@ export interface BufferHostOptions {
   readonly onHostCommand?: HostCommandPort;
   readonly onPrefixStateChange?: (viewId: ViewId, state: VimPrefixHelpState) => void;
   readonly onCommandLineChange?: (state: VimCommandLineState | undefined) => void;
+  /** Invoked whenever a buffer beyond the launch document is opened/closed, so the
+   * composition root can register/unregister it with the language server -- the launch
+   * document is registered separately by the composition root itself. */
+  readonly onBufferOpened?: (buffer: { readonly documentId: DocumentId; readonly path: string; readonly document: TextFileDocument }) => void;
+  readonly onBufferClosed?: (buffer: { readonly documentId: DocumentId; readonly path: string | undefined }) => void;
 }
 
 export interface OpenBufferAtPathOptions {
@@ -160,6 +165,7 @@ export class BufferHost {
     if (viewId === undefined) return undefined;
     this.createSession(openedFile, viewId, undefined, options.line === undefined ? undefined : options.line + 1);
     this.#session.focus(viewId);
+    this.#options.onBufferOpened?.({ documentId: openedFile.id, path, document: openedFile });
     return { viewId, bufferId: openedFile.id, created: true };
   }
 
@@ -170,10 +176,14 @@ export class BufferHost {
     const view = this.#session.views().find((candidate) => candidate.viewId === viewId);
     const bufferId = view?.bufferId;
     if (bufferId === undefined || this.#session.buffer(bufferId)?.preview !== true) return { ok: false, activeViewId: undefined };
+    const path = this.#session.buffer(bufferId)?.path;
     const closed = this.#session.closeView(viewId, 'discard');
     this.sessions.get(viewId)?.dispose();
     this.sessions.delete(viewId);
-    if (closed.ok) this.documents.delete(bufferId);
+    if (closed.ok) {
+      this.documents.delete(bufferId);
+      this.#options.onBufferClosed?.({ documentId: bufferId, path });
+    }
     return { ok: closed.ok, activeViewId: closed.ok ? closed.value.activeViewId : undefined };
   }
 

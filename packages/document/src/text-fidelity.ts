@@ -123,27 +123,26 @@ export function openTextDocument(
   seed = 41027,
   options: OpenTextDocumentOptions = {},
 ): OpenTextDocument {
-  const original = bytes.slice();
   const fileFormat = resolveFileFormat(options);
   if (fileFormat === undefined) {
-    return { kind: 'read-only', document: new ReadOnlyByteDocument(id, original, 'invalid-file-format') };
+    return { kind: 'read-only', document: new ReadOnlyByteDocument(id, bytes, 'invalid-file-format') };
   }
-  const hasUtf8Bom = startsWithUtf8Bom(original);
-  const payload = original.subarray(hasUtf8Bom ? 3 : 0);
+  const hasUtf8Bom = startsWithUtf8Bom(bytes);
+  const payload = bytes.subarray(hasUtf8Bom ? 3 : 0);
   let decoded: string;
   try {
     // The file BOM has already been removed into metadata; preserve any further U+FEFF as content.
     decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(payload);
   } catch {
-    return { kind: 'read-only', document: new ReadOnlyByteDocument(id, original, 'invalid-utf8') };
+    return { kind: 'read-only', document: new ReadOnlyByteDocument(id, bytes, 'invalid-utf8') };
   }
   if (decoded.includes('\0')) {
-    return { kind: 'read-only', document: new ReadOnlyByteDocument(id, original, 'binary-content') };
+    return { kind: 'read-only', document: new ReadOnlyByteDocument(id, bytes, 'binary-content') };
   }
 
   const normalized = normalizeLineEndings(decoded, fileFormat);
   if (normalized === undefined) {
-    return { kind: 'read-only', document: new ReadOnlyByteDocument(id, original, 'ambiguous-line-endings') };
+    return { kind: 'read-only', document: new ReadOnlyByteDocument(id, bytes, 'ambiguous-line-endings') };
   }
   const opened = TextFileDocument.create(
     id,
@@ -195,42 +194,54 @@ export async function openTextDocumentChunks(
   const appendDecoded = (decoded: string): void => {
     if (decoded.length === 0) return;
     if (decoded.includes('\0')) sawNul = true;
-    const parts: string[] = [];
-    let start = 0;
-    let index = 0;
+    let text = decoded;
     if (pendingCR) {
-      if (decoded.charCodeAt(0) === 10) {
+      if (text.charCodeAt(0) === 10) {
         endings.push('crlf');
-        parts.push('\n');
-        start = 1;
-        index = 1;
+        appendNormalized('\n');
+        text = text.slice(1);
       } else {
         sawLoneCR = true;
         if (fileFormat === 'legacy' || fileFormat === 'mac') {
           endings.push('cr');
-          parts.push('\n');
+          appendNormalized('\n');
         } else {
-          parts.push('\r');
+          appendNormalized('\r');
         }
       }
       pendingCR = false;
+      if (text.length === 0) return;
     }
-    for (; index < decoded.length; index += 1) {
-      if (decoded.charCodeAt(index) === 10) {
-        if (index > start) parts.push(decoded.slice(start, index));
+    // Fast path: chunks without a bare/leading CR need no per-line splitting;
+    // append the decoded text whole and only tally its LF count.
+    if (text.indexOf('\r') === -1) {
+      let lfCount = 0;
+      for (let index = 0; index < text.length; index += 1) {
+        if (text.charCodeAt(index) === 10) lfCount += 1;
+      }
+      for (let index = 0; index < lfCount; index += 1) endings.push('lf');
+      appendNormalized(text);
+      return;
+    }
+    const parts: string[] = [];
+    let start = 0;
+    let index = 0;
+    for (; index < text.length; index += 1) {
+      if (text.charCodeAt(index) === 10) {
+        if (index > start) parts.push(text.slice(start, index));
         endings.push('lf');
         parts.push('\n');
         start = index + 1;
         continue;
       }
-      if (decoded.charCodeAt(index) !== 13) continue;
-      if (index > start) parts.push(decoded.slice(start, index));
-      if (index + 1 === decoded.length) {
+      if (text.charCodeAt(index) !== 13) continue;
+      if (index > start) parts.push(text.slice(start, index));
+      if (index + 1 === text.length) {
         pendingCR = true;
-        start = decoded.length;
+        start = text.length;
         continue;
       }
-      if (decoded.charCodeAt(index + 1) === 10) {
+      if (text.charCodeAt(index + 1) === 10) {
         endings.push('crlf');
         parts.push('\n');
         index += 1;
@@ -246,7 +257,7 @@ export async function openTextDocumentChunks(
       }
       start = index + 1;
     }
-    if (start < decoded.length) parts.push(decoded.slice(start));
+    if (start < text.length) parts.push(text.slice(start));
     const normalized = parts.join('');
     appendNormalized(normalized);
   };
@@ -258,7 +269,9 @@ export async function openTextDocumentChunks(
   try {
     for await (const chunk of chunks) {
       if (!(chunk instanceof Uint8Array)) throw new TypeError('file chunk is not Uint8Array');
-      original.push(chunk.slice());
+      // Retained only for the rare invalid-input fallback; producers hand each
+      // chunk over once and do not mutate it after yielding, so no copy is needed here.
+      original.push(chunk);
       let offset = 0;
       if (!payloadStarted) {
         while (prefix.length < 3 && offset < chunk.length) {

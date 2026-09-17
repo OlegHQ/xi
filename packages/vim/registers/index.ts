@@ -1,5 +1,5 @@
 import type { CancellationToken, ClipboardPort, PlatformFailure } from '../../contracts/src/index';
-import type { DocumentEdit, DocumentSnapshot, LineIndex, Result, Utf16Offset } from '../../document/src/index';
+import type { DocumentEdit, DocumentReadFailure, DocumentSnapshot, LineIndex, Result, Utf16Offset } from '../../document/src/index';
 import { normalizeAtomicEdits } from '../transactions/multi-command';
 
 /** Vim's register name vocabulary, including the unnamed and black-hole names. */
@@ -586,10 +586,9 @@ function prepareLinePut(context: VimPutContext, value: VimRegisterValue): Result
   const start = context.snapshot.lineStartOffset(line.value);
   if (!start.ok) return { ok: false, error: { kind: 'line-out-of-range' } };
   const text = value.lines.join('\n');
-  const lineText = context.snapshot.slice(start.value, context.snapshot.lengthUtf16 as Utf16Offset);
-  if (!lineText.ok) return { ok: false, error: { kind: 'line-out-of-range' } };
-  const lineEndRelative = lineText.value.indexOf('\n');
-  const lineEnd = (start.value as number) + (lineEndRelative < 0 ? lineText.value.length : lineEndRelative);
+  const lineEndResult = lineEndOffset(context.snapshot, line.value as number);
+  if (!lineEndResult.ok) return { ok: false, error: { kind: 'line-out-of-range' } };
+  const lineEnd = lineEndResult.value;
   const beforeLine = context.command === 'P' || context.command === 'gP';
   const after = beforeLine ? start.value as number : (lineEnd < context.snapshot.lengthUtf16 ? lineEnd + 1 : context.snapshot.lengthUtf16);
   const payload = beforeLine
@@ -614,10 +613,9 @@ function prepareBlockPut(context: VimPutContext, value: VimRegisterValue): Resul
     const targetLine = (line.value as number) + index;
     const targetStart = context.snapshot.lineStartOffset(targetLine as LineIndex);
     if (!targetStart.ok) return { ok: false, error: { kind: 'line-out-of-range' } };
-    const lineSlice = context.snapshot.slice(targetStart.value, context.snapshot.lengthUtf16 as Utf16Offset);
-    if (!lineSlice.ok) return { ok: false, error: { kind: 'line-out-of-range' } };
-    const newline = lineSlice.value.indexOf('\n');
-    const lineEnd = (targetStart.value as number) + (newline < 0 ? lineSlice.value.length : newline);
+    const lineEndResult = lineEndOffset(context.snapshot, targetLine);
+    if (!lineEndResult.ok) return { ok: false, error: { kind: 'line-out-of-range' } };
+    const lineEnd = lineEndResult.value;
     const at = Math.min(lineEnd, (targetStart.value as number) + logicalColumn);
     const text = lines[index] ?? '';
     const lineLength = lineEnd - (targetStart.value as number);
@@ -649,10 +647,9 @@ function prepareVisualPut(context: VimPutContext, value: VimRegisterValue): Resu
       for (let lineIndex = selection.firstLine; lineIndex <= selection.lastLine; lineIndex += 1) {
         const start = context.snapshot.lineStartOffset(lineIndex as LineIndex);
         if (!start.ok) return { ok: false, error: { kind: 'line-out-of-range' } };
-        const suffix = context.snapshot.slice(start.value, context.snapshot.lengthUtf16 as Utf16Offset);
-        if (!suffix.ok) return { ok: false, error: { kind: 'line-out-of-range' } };
-        const newline = suffix.value.indexOf('\n');
-        const lineEnd = (start.value as number) + (newline < 0 ? suffix.value.length : newline);
+        const lineEndResult = lineEndOffset(context.snapshot, lineIndex);
+        if (!lineEndResult.ok) return { ok: false, error: { kind: 'line-out-of-range' } };
+        const lineEnd = lineEndResult.value;
         const at = Math.min(lineEnd, (start.value as number) + selection.firstColumn);
         const fragment = value.lines[lineIndex - selection.firstLine] ?? '';
         const replacement = fragment.padEnd(width, ' ');
@@ -675,10 +672,20 @@ function prepareVisualPut(context: VimPutContext, value: VimRegisterValue): Resu
 }
 
 function nextCharacterBoundary(snapshot: DocumentSnapshot, offset: number): number {
-  const tail = snapshot.slice(offset as Utf16Offset, snapshot.lengthUtf16 as Utf16Offset);
+  const end = Math.min(offset + 2, snapshot.lengthUtf16);
+  const tail = snapshot.slice(offset as Utf16Offset, end as Utf16Offset);
   if (!tail.ok || tail.value.length === 0) return snapshot.lengthUtf16;
   const scalar = tail.value.codePointAt(0);
   return offset + (scalar !== undefined && scalar > 0xffff ? 2 : 1);
+}
+
+function lineEndOffset(snapshot: DocumentSnapshot, line: number): Result<number, DocumentReadFailure> {
+  if (line + 1 < snapshot.lineCount) {
+    const nextStart = snapshot.lineStartOffset((line + 1) as LineIndex);
+    if (!nextStart.ok) return nextStart;
+    return { ok: true, value: (nextStart.value as number) - 1 };
+  }
+  return { ok: true, value: snapshot.lengthUtf16 };
 }
 
 function validRange(start: number, end: number, length: number): boolean {

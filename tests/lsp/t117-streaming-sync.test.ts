@@ -87,7 +87,10 @@ assert.equal(acceptance, true, 'T117-STREAM-04 change admission does not read th
 assert.equal(reads.full, 0, 'T117-STREAM-05 blocked change admission performs no full snapshot read');
 assert.ok(sync.queuedBytes > 0 && sync.queuedBytes <= 1_024, 'T117-STREAM-06 queued replacement bytes stay bounded');
 
-await Promise.resolve();
+// The flush enqueue is deferred behind a macrotask (not a same-tick
+// microtask) so a keystroke never pays for materializing/encoding the
+// document; give that timer a turn before unblocking the transport.
+await new Promise<void>((resolve) => setTimeout(resolve, 0));
 transport.release();
 await sync.whenIdle();
 const incremental = transport.messages.find((message) => message.method === 'textDocument/didChange');
@@ -132,6 +135,8 @@ for (let index = 0; index < 20; index += 1) {
 }
 assert.ok(overflowSync.queuedBytes <= 8, 'T117-STREAM-15 overflow keeps only bounded pending payload bytes');
 assert.equal(overflowReads.full, 0, 'T117-STREAM-16 queue overflow still avoids flattening on the input path');
+// See the T117-STREAM-07 comment above: give the deferred flush's macrotask a turn.
+await new Promise<void>((resolve) => setTimeout(resolve, 0));
 overflowTransport.release();
 await overflowSync.whenIdle();
 assert.ok(overflowReads.full > 0, 'T117-STREAM-17 explicit resync materializes only in the queued operation');

@@ -571,14 +571,9 @@ function fullDocumentText(snapshot: DocumentSnapshot): Result<string, { readonly
   return content.ok ? content : { ok: false, error: { kind: content.error.kind } };
 }
 
+// Content identity only needs a stable, collision-resistant digest for
+// equality checks. Bun's native CryptoHasher is hardware-accelerated, unlike
+// the previous per-byte BigInt FNV loop.
 function textHash(bytes: Uint8Array): string {
-  let first = 0xcbf29ce484222325n;
-  let second = 0x9e3779b185ebca87n;
-  for (const byte of bytes) {
-    first ^= BigInt(byte);
-    first = BigInt.asUintN(64, first * 0x100000001b3n);
-    second ^= first >> 29n;
-    second = BigInt.asUintN(64, second * 0x9e3779b185ebca87n);
-  }
-  return `${first.toString(16).padStart(16, '0')}${second.toString(16).padStart(16, '0')}`;
+  return Bun.CryptoHasher.hash('sha256', bytes, 'hex');
 }

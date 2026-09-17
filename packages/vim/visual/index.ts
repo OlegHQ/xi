@@ -382,14 +382,96 @@ function endpointFor(
       },
     };
   }
-  const bounds = lineBounds(snapshot, line.value);
-  if (bounds === null) return visualFailure('invalid-cursor');
-  const relative = (cursor.offset as number) - bounds.start;
-  if (bounds.text.length === 0) return { ok: true, value: { kind: 'empty-line', lineIndex: line.value } };
-  if (relative < 0 || relative >= bounds.text.length) return visualFailure('invalid-cursor');
-  const segment = firstGraphemeAt(bounds.text, relative);
-  if (segment === null || segment.start !== relative) return visualFailure('invalid-cursor');
-  return { ok: true, value: { kind: 'character', offset: cursor.offset, after: ((cursor.offset as number) + segment.text.length) as Utf16Offset } };
+  const metrics = lineMetrics(snapshot, line.value);
+  if (metrics === null) return visualFailure('invalid-cursor');
+  if (metrics.start === metrics.end) return { ok: true, value: { kind: 'empty-line', lineIndex: line.value } };
+  const cursorAbs = cursor.offset as number;
+  if (cursorAbs < metrics.start || cursorAbs >= metrics.end) return visualFailure('invalid-cursor');
+  // Bounded: confirming the boundary and measuring the cluster only ever
+  // reads a small window around the cursor, never the whole (possibly huge) line.
+  if (!graphemeBoundaryConfirmed(snapshot, cursorAbs, metrics.start)) return visualFailure('invalid-cursor');
+  const length = graphemeLengthAt(snapshot, cursorAbs, metrics.end);
+  if (length === null) return visualFailure('invalid-cursor');
+  return { ok: true, value: { kind: 'character', offset: cursor.offset, after: (cursorAbs + length) as Utf16Offset } };
+}
+
+/** Base window size (UTF-16 units) for the bounded grapheme scans below; doubles toward the line bounds. */
+const GRAPHEME_WINDOW_BASE = 64;
+
+const VISUAL_GRAPHEME_SEGMENTER = ((): { segment(input: string): Iterable<{ readonly segment: string; readonly index: number }> } | undefined => {
+  const ctor = (Intl as typeof Intl & {
+    readonly Segmenter?: new (locales?: string | readonly string[], options?: { readonly granularity: 'grapheme' }) => {
+      segment(input: string): Iterable<{ readonly segment: string; readonly index: number }>;
+    };
+  }).Segmenter;
+  return typeof ctor === 'function' ? new ctor(undefined, { granularity: 'grapheme' }) : undefined;
+})();
+
+/** True when `offset` is where a grapheme cluster starts (or the line start itself). */
+function graphemeBoundaryConfirmed(snapshot: DocumentSnapshot, offset: number, lineStart: number): boolean {
+  if (offset <= lineStart) return true;
+  const segmenter = VISUAL_GRAPHEME_SEGMENTER;
+  if (segmenter === undefined) return true;
+  let window = GRAPHEME_WINDOW_BASE;
+  for (;;) {
+    const windowStart = Math.max(lineStart, offset - window);
+    const text = snapshot.slice(windowStart as Utf16Offset, offset as Utf16Offset);
+    if (!text.ok) return false;
+    let previous: { readonly segment: string; readonly index: number } | undefined;
+    let last: { readonly segment: string; readonly index: number } | undefined;
+    for (const part of segmenter.segment(text.value)) { previous = last; last = part; }
+    if (last === undefined) return windowStart <= lineStart;
+    if (previous !== undefined || windowStart <= lineStart) {
+      return windowStart + last.index + last.segment.length === offset;
+    }
+    window *= 2;
+  }
+}
+
+/** Length in UTF-16 units of the grapheme cluster starting at `offset`, or null if none. */
+function graphemeLengthAt(snapshot: DocumentSnapshot, offset: number, lineEnd: number): number | null {
+  if (offset >= lineEnd) return null;
+  const segmenter = VISUAL_GRAPHEME_SEGMENTER;
+  if (segmenter === undefined) {
+    const text = snapshot.slice(offset as Utf16Offset, Math.min(lineEnd, offset + 2) as Utf16Offset);
+    if (!text.ok) return null;
+    const scalar = Array.from(text.value)[0];
+    return scalar === undefined ? null : scalar.length;
+  }
+  let window = GRAPHEME_WINDOW_BASE;
+  for (;;) {
+    const windowEnd = Math.min(lineEnd, offset + window);
+    const text = snapshot.slice(offset as Utf16Offset, windowEnd as Utf16Offset);
+    if (!text.ok) return null;
+    let first: { readonly segment: string; readonly index: number } | undefined;
+    let second: { readonly segment: string; readonly index: number } | undefined;
+    for (const part of segmenter.segment(text.value)) {
+      if (first === undefined) { first = part; continue; }
+      second = part;
+      break;
+    }
+    if (first === undefined || first.index !== 0) return null;
+    if (second !== undefined || windowEnd >= lineEnd) return first.segment.length;
+    window *= 2;
+  }
+}
+
+/** Cheap line start/end (no text read); mirrors `lineBounds` without materializing the line's text. */
+function lineMetrics(snapshot: DocumentSnapshot, line: LineIndex): { readonly start: number; readonly end: number } | null {
+  const start = snapshot.lineStartOffset(line);
+  if (!start.ok) return null;
+  const next = (line as number) + 1 < snapshot.lineCount
+    ? snapshot.lineStartOffset(((line as number) + 1) as LineIndex)
+    : null;
+  if (next !== null && !next.ok) return null;
+  let end = next?.ok === true ? (next.value as number) - 1 : snapshot.lengthUtf16;
+  if (next === null && end > (start.value as number)) {
+    const final = snapshot.slice((end - 1) as Utf16Offset, end as Utf16Offset);
+    if (!final.ok) return null;
+    if (final.value === '\n') end -= 1;
+  }
+  if (end < (start.value as number)) return null;
+  return { start: start.value as number, end };
 }
 
 function lineBounds(snapshot: DocumentSnapshot, line: LineIndex): { readonly start: number; readonly end: number; readonly text: string } | null {
@@ -410,23 +492,6 @@ function lineBounds(snapshot: DocumentSnapshot, line: LineIndex): { readonly sta
   const text = snapshot.slice(start.value, endOffset);
   if (!text.ok) return null;
   return { start: start.value as number, end, text: text.value };
-}
-
-function firstGraphemeAt(text: string, offset: number): { readonly start: number; readonly text: string } | null {
-  const segmenter = (Intl as typeof Intl & {
-    readonly Segmenter?: new (locales?: string | readonly string[], options?: { readonly granularity: 'grapheme' }) => {
-      segment(input: string): Iterable<{ readonly segment: string; readonly index: number }>;
-    };
-  }).Segmenter;
-  if (segmenter !== undefined) {
-    for (const part of new segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
-      if (part.index === offset) return { start: part.index, text: part.segment };
-      if (part.index > offset) return null;
-    }
-    return null;
-  }
-  const scalar = Array.from(text.slice(offset))[0];
-  return scalar === undefined ? null : { start: offset, text: scalar };
 }
 
 function isWellFormedUtf16(text: string): boolean {

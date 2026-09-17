@@ -206,11 +206,21 @@ export class NodeFilesystemPort implements FilesystemPort {
     if (cancellation.isCancelled) return cancelled();
     try {
       let disposed = false;
-      const watcher = watchFile(path, { persistent: false }, (_eventType, filename) => {
+      const onWatchEvent = (_eventType: string, filename: string | Buffer | null): void => {
         if (cancellation.isCancelled) return;
         const child = filename === undefined || filename === null ? path : join(path, filename.toString());
         listener({ kind: 'changed', path: child });
-      });
+      };
+      // Recursive watching keeps expanded subdirectories live without a watcher per
+      // directory; not every platform/Node build supports it (Linux support is recent),
+      // so an unsupported recursive option falls back to non-recursive watching of `path`
+      // itself rather than failing the whole watch.
+      let watcher;
+      try {
+        watcher = watchFile(path, { persistent: false, recursive: true }, onWatchEvent);
+      } catch {
+        watcher = watchFile(path, { persistent: false }, onWatchEvent);
+      }
       // A removed watched directory, EMFILE or an inotify overflow surfaces as an
       // 'error' event; left unhandled it is an uncaught exception that crashes the
       // process. Report it through the existing overflow event instead of the

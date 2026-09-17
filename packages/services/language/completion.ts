@@ -1,4 +1,4 @@
-import type { Disposable, Result } from '../../contracts/src/index';
+import type { CancellationToken, Disposable, Result } from '../../contracts/src/index';
 import { requestIsSupported, type LanguageProviderSession } from './provider-session';
 
 export interface CompletionPosition { readonly line: number; readonly utf16: number; }
@@ -16,7 +16,7 @@ export type CompletionAction =
 export interface CompletionReadModel { readonly state: 'idle' | 'loading' | 'ready' | 'error'; readonly request: CompletionRequest | undefined; readonly items: readonly CompletionItem[]; readonly isIncomplete: boolean; readonly selectedId: string | undefined; readonly documentation: string | undefined; readonly documentationOffset: number; readonly message: string | undefined; }
 
 export interface CompletionProvider {
-  complete(request: CompletionRequest): Promise<Result<CompletionList, CompletionFailure>>;
+  complete(request: CompletionRequest, cancellation?: CancellationToken): Promise<Result<CompletionList, CompletionFailure>>;
   resolve?(item: CompletionItem): Promise<Result<CompletionItem, CompletionFailure>>;
 }
 
@@ -25,7 +25,7 @@ export class LanguageServerCompletionProvider implements CompletionProvider {
   readonly #session: LanguageProviderSession;
   constructor(session: LanguageProviderSession) { this.#session = session; }
 
-  async complete(request: CompletionRequest): Promise<Result<CompletionList, CompletionFailure>> {
+  async complete(request: CompletionRequest, cancellation?: CancellationToken): Promise<Result<CompletionList, CompletionFailure>> {
     if (request.uri === undefined) return { ok: false, error: { kind: 'unavailable', message: 'completion request has no document URI' } };
     if (!requestIsSupported(this.#session, 'textDocument/completion', request.uri)) return { ok: false, error: { kind: 'unavailable', message: 'language server does not provide completion' } };
     try {
@@ -33,7 +33,7 @@ export class LanguageServerCompletionProvider implements CompletionProvider {
         textDocument: { uri: request.uri },
         position: { line: request.position.line, character: request.position.utf16 },
         context: { triggerKind: request.trigger === 'character' ? 2 : request.trigger === 'retrigger' ? 3 : 1 },
-      });
+      }, cancellation);
       const record = asRecord(response);
       const values = Array.isArray(response) ? response : Array.isArray(record?.items) ? record.items : response === null ? [] : undefined;
       if (values === undefined) return { ok: false, error: { kind: 'unavailable', message: 'language server returned invalid completions' } };

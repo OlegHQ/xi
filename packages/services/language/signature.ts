@@ -1,4 +1,4 @@
-import type { Disposable, Result } from '../../contracts/src/index';
+import type { CancellationToken, Disposable, Result } from '../../contracts/src/index';
 import { requestIsSupported, type LanguageProviderSession } from './provider-session';
 
 export interface SignaturePosition { readonly line: number; readonly utf16: number; }
@@ -9,19 +9,19 @@ export type SignatureFailure = { readonly kind: 'stale' | 'unavailable' | 'dispo
 export interface SignatureList { readonly signatures: readonly SignatureInformation[]; readonly activeSignature: number; readonly activeParameter: number | undefined; }
 export interface SignatureReadModel { readonly state: 'idle' | 'loading' | 'ready' | 'error'; readonly request: SignatureRequest | undefined; readonly signatures: readonly SignatureInformation[]; readonly activeSignature: number; readonly activeParameter: number | undefined; readonly message: string | undefined; }
 
-export interface SignatureProvider { request(request: SignatureRequest): Promise<Result<SignatureList, SignatureFailure>>; }
+export interface SignatureProvider { request(request: SignatureRequest, cancellation?: CancellationToken): Promise<Result<SignatureList, SignatureFailure>>; }
 
 export class LanguageServerSignatureProvider implements SignatureProvider {
   readonly #session: LanguageProviderSession;
   constructor(session: LanguageProviderSession) { this.#session = session; }
-  async request(request: SignatureRequest): Promise<Result<SignatureList, SignatureFailure>> {
+  async request(request: SignatureRequest, cancellation?: CancellationToken): Promise<Result<SignatureList, SignatureFailure>> {
     if (request.uri === undefined) return unavailable('signature request has no document URI');
     if (!requestIsSupported(this.#session, 'textDocument/signatureHelp', request.uri)) return unavailable('language server does not provide signature help');
     try {
       const response = await this.#session.request<unknown>('textDocument/signatureHelp', {
         textDocument: { uri: request.uri },
         position: { line: request.position.line, character: request.position.utf16 },
-      });
+      }, cancellation);
       if (response === null) return { ok: true, value: Object.freeze({ signatures: Object.freeze([]), activeSignature: 0, activeParameter: undefined }) };
       const record = asRecord(response);
       if (record === undefined || !Array.isArray(record.signatures)) return unavailable('language server returned invalid signature help');
@@ -48,11 +48,11 @@ export class SignatureController implements Disposable {
   constructor(provider: SignatureProvider) { this.#provider = provider; }
   get model(): SignatureReadModel { return this.#model; }
   subscribe(listener: (model: SignatureReadModel) => void): Disposable { if (this.#disposed) throw new Error('signature-controller-disposed'); this.#listeners.add(listener); return Object.freeze({ dispose: () => { this.#listeners.delete(listener); } }); }
-  async request(request: SignatureRequest): Promise<Result<SignatureList, SignatureFailure>> {
+  async request(request: SignatureRequest, cancellation?: CancellationToken): Promise<Result<SignatureList, SignatureFailure>> {
     if (this.#disposed) return { ok: false, error: { kind: 'disposed', message: 'signature controller is disposed' } };
     const generation = ++this.#generation;
     this.setModel({ state: 'loading', request, signatures: Object.freeze([]), activeSignature: 0, activeParameter: undefined, message: undefined });
-    const result = await this.#provider.request(request);
+    const result = await this.#provider.request(request, cancellation);
     if (this.#disposed || generation !== this.#generation) return { ok: false, error: { kind: 'stale', message: 'signature response is stale' } };
     if (!result.ok) { this.setModel({ ...this.#model, state: 'error', message: result.error.message }); return result; }
     this.setModel({ state: result.value.signatures.length === 0 ? 'idle' : 'ready', request, signatures: result.value.signatures, activeSignature: result.value.activeSignature, activeParameter: result.value.activeParameter, message: result.value.signatures.length === 0 ? 'No signature help' : undefined });

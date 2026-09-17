@@ -330,7 +330,13 @@ export function planVimInsertInput(
     }
   }
 
-  const line = readLineWindow(snapshot, session.cursorOffset as number);
+  // Bounded forward: ordinary keys touch at most a handful of units past the
+  // cursor. A paste/register payload can be large, so widen the margin to its
+  // known length rather than re-reading the whole (possibly huge) line.
+  const forwardMargin = input.kind === 'paste' && pasted !== undefined
+    ? pasted.length + INSERT_KEY_FORWARD_MARGIN
+    : INSERT_KEY_FORWARD_MARGIN;
+  const line = readLineWindow(snapshot, session.cursorOffset as number, forwardMargin);
   if (line === undefined) return failure('snapshot-read-failed');
   const source = line.text;
   const cursor = (session.cursorOffset as number) - line.start;
@@ -357,7 +363,7 @@ export function planVimInsertRegisterPayload(
     return failure('stale-register-request');
   }
   if (typeof payload.text !== 'string' || !isUnicodeScalarText(payload.text)) return failure('invalid-input');
-  const line = readLineWindow(snapshot, session.cursorOffset as number);
+  const line = readLineWindow(snapshot, session.cursorOffset as number, payload.text.length + INSERT_KEY_FORWARD_MARGIN);
   if (line === undefined) return failure('snapshot-read-failed');
   const cursor = (session.cursorOffset as number) - line.start;
   if (!isSafeBoundary(line.text, cursor)) return failure('invalid-cursor');
@@ -559,13 +565,14 @@ function insertionEdit(cursor: number, value: string): { readonly edit: VimInser
 }
 
 function replacePayload(source: string, cursor: number, value: string): { readonly edit: VimInsertEdit; readonly cursorAfter: number; readonly frame: ReplaceFrame } {
-  const line = lineRanges(source).find((range) => range.start <= cursor && cursor <= range.end);
+  // `source` is always a single physical line (readLineWindow never crosses a
+  // line boundary), so the line range is trivially the whole string; scanning
+  // it with `lineRanges` on every keystroke cost O(line length) for nothing.
+  const line = { start: 0, end: source.length };
   let end = cursor;
-  if (line !== undefined) {
-    for (const _grapheme of graphemes(value)) {
-      if (end >= line.end) break;
-      end = nextGrapheme(source, end, line.end);
-    }
+  for (const _grapheme of graphemes(value)) {
+    if (end >= line.end) break;
+    end = nextGrapheme(source, end, line.end);
   }
   const replaced = source.slice(cursor, end);
   const edit = makeEdit(cursor, end, value);
@@ -574,8 +581,9 @@ function replacePayload(source: string, cursor: number, value: string): { readon
 }
 
 function virtualReplace(source: string, cursor: number, value: string, tabstop: number): { readonly edit: VimInsertEdit; readonly cursorAfter: number; readonly frame: ReplaceFrame } {
-  const line = lineRanges(source).find((range) => range.start <= cursor && cursor <= range.end);
-  if (line === undefined || cursor >= line.end) {
+  // See replacePayload: `source` is always a single line, so the range is trivial.
+  const line = { start: 0, end: source.length };
+  if (cursor >= line.end) {
     const inserted = insertionEdit(cursor, value);
     return { ...inserted, frame: Object.freeze({ start: offset(cursor), insertedText: value, replacedText: '', cursorBefore: offset(cursor) }) };
   }
@@ -934,7 +942,18 @@ function isPendingValid(pending: VimInsertPendingInput): boolean {
   }
 }
 
-function readLineWindow(snapshot: DocumentSnapshot, absoluteOffset: number): LineWindow | undefined {
+/** Single-key insert payloads never exceed a few units; this covers digraphs, tabs and control keys generously. */
+const INSERT_KEY_FORWARD_MARGIN = 256;
+
+/**
+ * Read the current line, bounded forward of `absoluteOffset` by `forwardMargin`
+ * units when given. Backward reach always extends to the true line start,
+ * since Tab/`<C-t>`/`<C-d>`/`<C-u>`/autoindent semantics need the exact
+ * column-from-line-start context; only the trailing portion past the cursor,
+ * which ordinary keys never touch beyond a small bounded amount, is capped so
+ * a single keystroke on a huge line does not re-materialize the whole line.
+ */
+function readLineWindow(snapshot: DocumentSnapshot, absoluteOffset: number, forwardMargin?: number): LineWindow | undefined {
   if (!Number.isSafeInteger(absoluteOffset) || absoluteOffset < 0 || absoluteOffset > snapshot.lengthUtf16) return undefined;
   const lineResult = snapshot.lineIndexAt(offset(absoluteOffset));
   if (!lineResult.ok) return undefined;
@@ -942,12 +961,13 @@ function readLineWindow(snapshot: DocumentSnapshot, absoluteOffset: number): Lin
   const startResult = snapshot.lineStartOffset(lineIndex);
   if (!startResult.ok) return undefined;
   const start = startResult.value as number;
-  let end = snapshot.lengthUtf16;
+  let lineEnd = snapshot.lengthUtf16;
   if ((lineIndex as number) + 1 < snapshot.lineCount) {
     const nextStartResult = snapshot.lineStartOffset((lineIndex as number + 1) as LineIndex);
     if (!nextStartResult.ok) return undefined;
-    end = (nextStartResult.value as number) - 1;
+    lineEnd = (nextStartResult.value as number) - 1;
   }
+  const end = forwardMargin === undefined ? lineEnd : Math.min(lineEnd, absoluteOffset + forwardMargin);
   const textResult = snapshot.slice(offset(start), offset(end));
   if (!textResult.ok) return undefined;
   return Object.freeze({ text: textResult.value, start, end, lineIndex });
@@ -1097,7 +1117,7 @@ function previousGrapheme(source: string, cursor: number, lowerBound: number): n
   let start = previousScalar(source, cursor, lowerBound);
   while (start > lowerBound) {
     const scalar = scalarAt(source, start);
-    if (!/\p{M}|\p{Emoji_Modifier}/u.test(scalar) && scalar !== '\u200d' && !source.slice(lowerBound, start).endsWith('\u200d')) break;
+    if (!/\p{M}|\p{Emoji_Modifier}/u.test(scalar) && scalar !== '\u200d' && source.charCodeAt(start - 1) !== 0x200d) break;
     start = previousScalar(source, start, lowerBound);
   }
   return start;

@@ -199,20 +199,28 @@ export class RealtimeSearchService implements Disposable {
     const bufferMatches = computeBufferMatches(query, bufferSources, generation);
     const ownedPaths = bufferOwnedPaths(bufferSources);
     const streamed: SearchMatch[] = [];
+    // Accumulate disk + buffer matches into one array by appending in place
+    // instead of re-spreading `[...streamed, ...bufferMatches]` on every
+    // batch, which was an O(n^2 / batchSize) copy over a long search.
+    // `bufferMatches` is copied into it once, up front.
+    const combined: SearchMatch[] = [...bufferMatches];
     const onBatch = (batch: readonly SearchMatch[]): void => {
       if (batch.length === 0 || this.#disposed || generation !== this.#generation || cancellation.token.isCancelled) return;
-      for (const match of batch) if (!ownedPaths.has(bufferPathKey(match.rootId, match.path))) streamed.push(match);
+      for (const match of batch) {
+        if (ownedPaths.has(bufferPathKey(match.rootId, match.path))) continue;
+        streamed.push(match);
+        combined.push(match);
+      }
       // Cheap, unsorted intermediate publish; the final publish below sorts once.
-      const merged = [...streamed, ...bufferMatches];
       const limit = query.maxResults ?? this.#defaultLimit;
       this.#publish(Object.freeze({
         contractVersion: 1,
         query,
         generation,
         state: 'loading',
-        matches: Object.freeze(merged.slice(0, limit)),
-        totalMatches: merged.length,
-        truncated: merged.length > limit,
+        matches: Object.freeze(combined.slice(0, limit)),
+        totalMatches: combined.length,
+        truncated: combined.length > limit,
         message: undefined,
       }));
     };

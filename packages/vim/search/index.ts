@@ -536,31 +536,50 @@ function advanceAfterMatch(snapshot: DocumentSnapshot, match: PatternMatch, dire
 
 function nextBoundary(snapshot: DocumentSnapshot, offset: number): number {
   if (offset >= snapshot.lengthUtf16) return offset + 1;
-  const textResult = snapshot.slice(offset as Utf16Offset, snapshot.lengthUtf16 as Utf16Offset);
+  const end = Math.min(offset + 2, snapshot.lengthUtf16);
+  const textResult = snapshot.slice(offset as Utf16Offset, end as Utf16Offset);
   if (!textResult.ok || textResult.value.length === 0) return offset + 1;
   const codePoint = textResult.value.codePointAt(0);
   return offset + (codePoint !== undefined && codePoint > 0xffff ? 2 : 1);
 }
 
+/** Zero-based UTF-16 offset just past the line's content, excluding its terminating newline. */
+function lineEndOffset(snapshot: DocumentSnapshot, line: number): number {
+  if (line + 1 < snapshot.lineCount) {
+    const next = snapshot.lineStartOffset((line + 1) as LineIndex);
+    if (next.ok) return (next.value as number) - 1;
+  }
+  return snapshot.lengthUtf16;
+}
+
 function wordAtCursor(snapshot: DocumentSnapshot, cursor: Utf16Offset): { readonly value: string; readonly start: number; readonly end: number } | undefined {
-  const text = snapshotText(snapshot);
   const at = cursor as number;
-  if (at >= text.length) return undefined;
-  const codePoint = text.codePointAt(at);
+  const lineResult = snapshot.lineIndexAt(cursor);
+  if (!lineResult.ok) return undefined;
+  const lineStartResult = snapshot.lineStartOffset(lineResult.value);
+  if (!lineStartResult.ok) return undefined;
+  const lineStart = lineStartResult.value as number;
+  const lineEnd = lineEndOffset(snapshot, lineResult.value as number);
+  if (at >= lineEnd) return undefined;
+  const lineSlice = snapshot.slice(lineStart as Utf16Offset, lineEnd as Utf16Offset);
+  if (!lineSlice.ok) return undefined;
+  const text = lineSlice.value;
+  const localAt = at - lineStart;
+  const codePoint = text.codePointAt(localAt);
   if (codePoint === undefined || !isWordCodePoint(codePoint)) return undefined;
-  let start = at;
+  let start = localAt;
   while (start > 0) {
     const previous = previousCodePoint(text, start);
     if (previous === undefined || !isWordCodePoint(previous.codePoint)) break;
     start = previous.start;
   }
-  let end = at + (codePoint > 0xffff ? 2 : 1);
+  let end = localAt + (codePoint > 0xffff ? 2 : 1);
   while (end < text.length) {
     const next = text.codePointAt(end);
     if (next === undefined || !isWordCodePoint(next)) break;
     end += next > 0xffff ? 2 : 1;
   }
-  return { value: text.slice(start, end), start, end };
+  return { value: text.slice(start, end), start: start + lineStart, end: end + lineStart };
 }
 
 const unicodeLetter = /^\p{L}$/u;
@@ -572,11 +591,16 @@ function isWordCodePoint(codePoint: number): boolean {
 }
 
 function isWholeWordMatch(snapshot: DocumentSnapshot, match: PatternMatch): boolean {
-  const text = snapshotText(snapshot);
   const start = match.start as number;
   const end = match.end as number;
-  const before = start > 0 ? previousCodePoint(text, start)?.codePoint : undefined;
-  const after = end < text.length ? text.codePointAt(end) : undefined;
+  const beforeStart = Math.max(0, start - 2);
+  const afterEnd = Math.min(snapshot.lengthUtf16, end + 2);
+  const beforeSlice = start > beforeStart ? snapshot.slice(beforeStart as Utf16Offset, start as Utf16Offset) : undefined;
+  const afterSlice = end < afterEnd ? snapshot.slice(end as Utf16Offset, afterEnd as Utf16Offset) : undefined;
+  const beforeText = beforeSlice?.ok ? beforeSlice.value : '';
+  const afterText = afterSlice?.ok ? afterSlice.value : '';
+  const before = beforeText.length > 0 ? previousCodePoint(beforeText, beforeText.length)?.codePoint : undefined;
+  const after = afterText.length > 0 ? afterText.codePointAt(0) : undefined;
   return (before === undefined || !isWordCodePoint(before)) && (after === undefined || !isWordCodePoint(after));
 }
 
@@ -642,8 +666,8 @@ function expandVimReplacement(
     if (lowerNext) { converted = converted.slice(0, 1).toLowerCase() + converted.slice(1); lowerNext = false; }
     output.push(converted);
   };
-  const text = snapshotText(snapshot);
-  const fullMatch = text.slice(match.start as number, match.end as number);
+  const fullMatchResult = snapshot.slice(match.start, match.end);
+  const fullMatch = fullMatchResult.ok ? fullMatchResult.value : '';
   for (let index = 0; index < replacement.length; index += 1) {
     const character = replacement[index];
     if (character === '&' || character === '~') { push(character === '&' ? fullMatch : previousReplacement ?? ''); continue; }
@@ -660,7 +684,10 @@ function expandVimReplacement(
     else if (escaped === '0') push(fullMatch);
     else if (escaped >= '1' && escaped <= '9') {
       const capture = match.captures.get(Number(escaped));
-      if (capture !== undefined) push(text.slice(capture.start as number, capture.end as number));
+      if (capture !== undefined) {
+        const captureResult = snapshot.slice(capture.start, capture.end);
+        if (captureResult.ok) push(captureResult.value);
+      }
     } else if (escaped === 'u') upperNext = true;
     else if (escaped === 'l') lowerNext = true;
     else if (escaped === 'U') { upperMode = true; lowerMode = false; }

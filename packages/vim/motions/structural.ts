@@ -74,46 +74,79 @@ export function resolveVimStructuralMotion(
       value: Object.freeze({ cursor: nextCursor, kind: 'characterwise', moved: target.value !== cursor.offset }),
     };
   }
-  const source = readSource(snapshot, offset, maxScan);
-  if (!source.ok) return source;
-  const current = scalarIndexAt(source.value.scalars, offset);
-  const currentLine = lineAt(source.value.lines, offset);
-  if (current === null || currentLine === null) return failure('invalid-cursor');
-
+  // Bracket-depth (`%`, `[(`, `[{`, `])`, `]}`) and paragraph (`{`, `}`) targets are
+  // exact as soon as found, regardless of window size, so they can grow the scan
+  // window outward from a small budget and stop at the first match. Sentence and
+  // section motions assume the window edge may itself be a boundary, so growing
+  // their window could change the answer; they keep the single fixed-budget read.
   let targetOffset: number | null;
   let kind: VimStructuralMotionOutcome['kind'] = 'characterwise';
   switch (invocation.key) {
-    case '%':
-      targetOffset = matchingPair(source.value.scalars, current, parsePairs(options.matchPairs ?? DEFAULT_MATCH_PAIRS));
+    case '%': {
+      const result = resolveWithGrowingWindow(snapshot, offset, maxScan, (source, current) =>
+        matchingPair(source.scalars, current, parsePairs(options.matchPairs ?? DEFAULT_MATCH_PAIRS)));
+      if (!result.ok) return result;
+      targetOffset = result.value;
       break;
+    }
     case '(':
-    case ')':
+    case ')': {
+      const source = readSource(snapshot, offset, maxScan);
+      if (!source.ok) return source;
+      const current = scalarIndexAt(source.value.scalars, offset);
+      if (current === null) return failure('invalid-cursor');
       targetOffset = sentenceTarget(source.value.scalars, current, invocation.key === ')', count);
       break;
+    }
     case '{':
-    case '}':
+    case '}': {
       kind = 'linewise';
-      targetOffset = paragraphTarget(source.value.lines, currentLine, invocation.key === '}', count, options.paragraphs ?? '');
+      const result = resolveWithGrowingWindow(snapshot, offset, maxScan, (source, _current, currentLine) =>
+        paragraphTarget(source.lines, currentLine, invocation.key === '}', count, options.paragraphs ?? ''));
+      if (!result.ok) return result;
+      targetOffset = result.value;
       break;
+    }
     case '[[':
     case ']]':
     case '[]':
-    case '][':
+    case '][': {
       kind = 'linewise';
+      const source = readSource(snapshot, offset, maxScan);
+      if (!source.ok) return source;
+      const currentLine = lineAt(source.value.lines, offset);
+      if (currentLine === null) return failure('invalid-cursor');
       targetOffset = sectionTarget(source.value.lines, currentLine, invocation.key, count, options.sections ?? 'SHN');
       break;
-    case '[(':
-      targetOffset = unmatchedPairTarget(source.value.scalars, current, '(', ')', -1, count);
+    }
+    case '[(': {
+      const result = resolveWithGrowingWindow(snapshot, offset, maxScan, (source, current) =>
+        unmatchedPairTarget(source.scalars, current, '(', ')', -1, count));
+      if (!result.ok) return result;
+      targetOffset = result.value;
       break;
-    case '[{':
-      targetOffset = unmatchedPairTarget(source.value.scalars, current, '{', '}', -1, count);
+    }
+    case '[{': {
+      const result = resolveWithGrowingWindow(snapshot, offset, maxScan, (source, current) =>
+        unmatchedPairTarget(source.scalars, current, '{', '}', -1, count));
+      if (!result.ok) return result;
+      targetOffset = result.value;
       break;
-    case '])':
-      targetOffset = unmatchedPairTarget(source.value.scalars, current, '(', ')', 1, count);
+    }
+    case '])': {
+      const result = resolveWithGrowingWindow(snapshot, offset, maxScan, (source, current) =>
+        unmatchedPairTarget(source.scalars, current, '(', ')', 1, count));
+      if (!result.ok) return result;
+      targetOffset = result.value;
       break;
-    case ']}':
-      targetOffset = unmatchedPairTarget(source.value.scalars, current, '{', '}', 1, count);
+    }
+    case ']}': {
+      const result = resolveWithGrowingWindow(snapshot, offset, maxScan, (source, current) =>
+        unmatchedPairTarget(source.scalars, current, '{', '}', 1, count));
+      if (!result.ok) return result;
+      targetOffset = result.value;
       break;
+    }
   }
   if (targetOffset === null) return failure('unmatched-structure');
   const nextCursor: VimStructuralMotionCursor = Object.freeze({
@@ -139,6 +172,38 @@ interface SourceLine {
 interface Source {
   readonly lines: readonly SourceLine[];
   readonly scalars: readonly { readonly value: string; readonly offset: number }[];
+  readonly firstLine: number;
+  readonly lastLine: number;
+}
+
+const INITIAL_SCAN_WINDOW = 256;
+
+/**
+ * Runs `compute` against a window that starts small and doubles outward (capped
+ * at `maxScan`) until it produces a match or the window already spans the whole
+ * document. Safe only for computations whose non-null result cannot depend on
+ * context outside the window (bracket depth matches, blank-line paragraph
+ * boundaries) — never for ones that treat the window edge as an assumed boundary.
+ */
+function resolveWithGrowingWindow(
+  snapshot: DocumentSnapshot,
+  offset: number,
+  maxScan: number,
+  compute: (source: Source, current: number, currentLine: number) => number | null,
+): Result<number | null, VimStructuralMotionFailure> {
+  let window = Math.min(INITIAL_SCAN_WINDOW, maxScan);
+  for (;;) {
+    const source = readSource(snapshot, offset, window);
+    if (!source.ok) return source;
+    const current = scalarIndexAt(source.value.scalars, offset);
+    const currentLine = lineAt(source.value.lines, offset);
+    if (current === null || currentLine === null) return failure('invalid-cursor');
+    const target = compute(source.value, current, currentLine);
+    if (target !== null) return { ok: true, value: target };
+    const coversWholeDocument = source.value.firstLine === 0 && source.value.lastLine === snapshot.lineCount - 1;
+    if (window >= maxScan || coversWholeDocument) return { ok: true, value: null };
+    window = Math.min(maxScan, window * 2);
+  }
 }
 
 function readSource(snapshot: DocumentSnapshot, offset: number, maxScan: number): Result<Source, VimStructuralMotionFailure> {
@@ -212,7 +277,7 @@ function readSource(snapshot: DocumentSnapshot, offset: number, maxScan: number)
     }
     if (lineIndex + 1 < lines.length) scalars.push({ value: '\n', offset: scalarOffset });
   }
-  return { ok: true, value: Object.freeze({ lines: Object.freeze(lines), scalars: Object.freeze(scalars) }) };
+  return { ok: true, value: Object.freeze({ lines: Object.freeze(lines), scalars: Object.freeze(scalars), firstLine, lastLine }) };
 }
 
 function lineStart(snapshot: DocumentSnapshot, line: number): Result<number, VimStructuralMotionFailure> {

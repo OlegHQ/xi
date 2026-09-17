@@ -352,14 +352,17 @@ export class WorkbenchRenderable extends Renderable {
    * falling back to line 0. Only reports back when the resolved anchor differs
    * from the read model's value, to avoid a report/read feedback loop.
    */
-  private resolveAnchor(viewId: string, view: WorkbenchViewSnapshot, heightCells: number): ViewportAnchor | undefined {
-    const previous = view.scrollTop;
-    const resolved = resolveScrollAnchor(view.document, view.selections, previous, heightCells);
+  private resolveAnchor(
+    viewId: string, view: WorkbenchViewSnapshot, widthCells: number, heightCells: number,
+  ): { readonly anchor: ViewportAnchor; readonly scrollLeft: number } | undefined {
+    const previousTop = view.scrollTop;
+    const previousLeft = view.scrollLeft;
+    const resolved = resolveScrollAnchor(view.document, view.selections, previousTop, heightCells, widthCells, previousLeft);
     if (!resolved.ok) return undefined;
-    if (resolved.value.scrollTop !== previous) {
-      this.#onViewportAnchorChange?.(viewId, resolved.value.scrollTop, view.scrollLeft);
+    if (resolved.value.scrollTop !== previousTop || resolved.value.scrollLeft !== previousLeft) {
+      this.#onViewportAnchorChange?.(viewId, resolved.value.scrollTop, resolved.value.scrollLeft);
     }
-    return resolved.value.anchor;
+    return { anchor: resolved.value.anchor, scrollLeft: resolved.value.scrollLeft };
   }
 
   protected override renderSelf(buffer: OptimizedBuffer): void {
@@ -374,7 +377,7 @@ export class WorkbenchRenderable extends Renderable {
     const view = activeViewId === undefined ? undefined : this.#workbench.readView(activeViewId);
     const anchor = activeViewId === undefined || view === undefined
       ? undefined
-      : this.resolveAnchor(String(activeViewId), view, geometry.editorHeight);
+      : this.resolveAnchor(String(activeViewId), view, geometry.editorWidth - 6, geometry.editorHeight);
     const projected = activeViewId === undefined || view === undefined || geometry.compact
       ? undefined
       : this.#layout.project({
@@ -383,8 +386,8 @@ export class WorkbenchRenderable extends Renderable {
         selection: view.selections,
         widthCells: geometry.editorWidth,
         heightCells: geometry.editorHeight,
-        options: { wrap: false, gutterWidthCells: 6 },
-        ...(anchor === undefined ? {} : { anchor }),
+        options: { wrap: false, gutterWidthCells: 6, horizontalScrollCells: anchor?.scrollLeft ?? 0 },
+        ...(anchor === undefined ? {} : { anchor: anchor.anchor }),
       });
     const frame = projected?.ok === true ? projected.value : undefined;
     const presentation = this.#presentation === undefined || activeViewId === undefined
@@ -515,15 +518,15 @@ export class WorkbenchRenderable extends Renderable {
         paneLayout = new ViewportLayout();
         this.#paneLayouts.set(pane.viewId, paneLayout);
       }
-      const paneAnchor = this.resolveAnchor(pane.viewId, view, pane.height);
+      const paneAnchor = this.resolveAnchor(pane.viewId, view, pane.width - 6, pane.height);
       const projected = paneLayout.project({
         viewId: pane.viewId as import('../../contracts/src/index').ViewId,
         snapshot: view.document,
         selection: view.selections,
         widthCells: pane.width,
         heightCells: pane.height,
-        options: { wrap: false, gutterWidthCells: 6 },
-        ...(paneAnchor === undefined ? {} : { anchor: paneAnchor }),
+        options: { wrap: false, gutterWidthCells: 6, horizontalScrollCells: paneAnchor?.scrollLeft ?? 0 },
+        ...(paneAnchor === undefined ? {} : { anchor: paneAnchor.anchor }),
       });
       if (!projected.ok) {
         drawText(buffer, 'No editable buffer', pane.x + 1, pane.y, this.#muted, this.#background, pane.width - 2);

@@ -195,7 +195,7 @@ export class RopeDocument {
     this.#currentRevisionId = revisionId(1);
     this.#nextRevisionId = 2;
     this.#priorityState = (seed >>> 0) || 0x9e3779b9;
-    for (const chunk of chunkText(initialText)) this.#root = this.merge(this.#root, this.createNode(chunk));
+    this.#root = buildBalancedRoot(chunkText(initialText));
   }
 
   static create(id: DocumentSnapshot['id'], initialText: string, seed = 41027): Result<RopeDocument, { readonly kind: 'invalid-text' | 'invalid-seed' }> {
@@ -240,7 +240,10 @@ export class RopeDocument {
     if (typeof chunk !== 'string' || !(allowLiteralCR ? isWellFormedUtf16(chunk) : isNormalizedText(chunk))) {
       return { ok: false, error: { kind: 'invalid-text' } };
     }
-    for (const piece of chunkText(chunk)) this.#root = this.merge(this.#root, this.createNode(piece));
+    // Bulk-build the pieces of this one call into a balanced subtree, then fold
+    // it into the accumulated root with a single merge instead of one per piece.
+    const subtree = buildBalancedRoot(chunkText(chunk));
+    if (subtree !== null) this.#root = this.merge(this.#root, subtree);
     this.#snapshotCache = undefined;
     return { ok: true, value: undefined };
   }
@@ -393,9 +396,7 @@ export class RopeDocument {
   /** Repack current text into full leaves; older captured snapshots keep their roots. */
   compact(): void {
     const text = renderRoot(this.#root);
-    let rebuilt: RopeRoot = null;
-    for (const chunk of chunkText(text)) rebuilt = this.merge(rebuilt, this.createNode(chunk));
-    this.#root = rebuilt;
+    this.#root = buildBalancedRoot(chunkText(text));
     this.#snapshotCache = undefined;
   }
 
@@ -587,7 +588,30 @@ function makeNode(chunk: RopeChunk, priority: number, left: RopeRoot, right: Rop
 function makeChunk(text: string): RopeChunk {
   // Typed-array elements cannot be frozen on the pinned JSC runtime. The index
   // remains private to immutable rope nodes; only the containing chunk is frozen.
-  return Object.freeze({ text, ...encodedMetrics(text), lineBreakOffsets: lineBreakOffsets(text) });
+  return Object.freeze({ text, ...chunkMetrics(text) });
+}
+
+/**
+ * Build a balanced treap from chunks already in document order, in O(n)
+ * instead of merging one chunk at a time (O(chunks · log chunks)). Priorities
+ * are assigned in preorder so every node's priority is strictly less than any
+ * priority used within its own subtree, satisfying the treap's min-heap
+ * invariant while keeping the tree height ~log2(n) regardless of randomness.
+ */
+function buildBalancedRoot(chunks: readonly RopeChunk[]): RopeRoot {
+  if (chunks.length === 0) return null;
+  let nextPriority = 0;
+  const build = (lo: number, hi: number): RopeNode => {
+    const mid = (lo + hi) >>> 1;
+    const chunk = chunks[mid];
+    if (chunk === undefined) throw new Error('rope-bulk-build-index');
+    const priority = nextPriority;
+    nextPriority += 1;
+    const left = lo <= mid - 1 ? build(lo, mid - 1) : null;
+    const right = mid + 1 <= hi ? build(mid + 1, hi) : null;
+    return makeNode(chunk, priority, left, right);
+  };
+  return build(0, chunks.length - 1);
 }
 
 function compareEdits(left: DocumentEdit, right: DocumentEdit): number {
@@ -825,6 +849,39 @@ function encodedMetrics(text: string): {
     offset += scalarUtf16WidthAt(text, offset);
   }
   return { utf8ByteLength, utf32ScalarLength, printableAscii };
+}
+
+/**
+ * Chunk construction on the open path (`makeChunk`) needs encodedMetrics and
+ * lineBreakOffsets together; folding them into one forward walk avoids three
+ * passes (encodedMetrics, then lineBreakOffsets' count pass and fill pass)
+ * per bounded chunk. `encodedMetrics`/`lineBreakOffsets` stay separate for
+ * invariant-checking call sites that only need one of the two.
+ */
+function chunkMetrics(text: string): {
+  readonly utf8ByteLength: number;
+  readonly utf32ScalarLength: number;
+  readonly printableAscii: boolean;
+  readonly lineBreakOffsets: PackedLineBreakOffsets;
+} {
+  let utf8ByteLength = 0;
+  let utf32ScalarLength = 0;
+  let printableAscii = true;
+  const breaks: number[] = [];
+  for (let offset = 0; offset < text.length; utf32ScalarLength += 1) {
+    const first = text.charCodeAt(offset);
+    if (first < 0x20 || first > 0x7e) printableAscii = false;
+    if (first === 10) breaks.push(offset);
+    utf8ByteLength += scalarUtf8WidthAt(text, offset);
+    offset += scalarUtf16WidthAt(text, offset);
+  }
+  const offsets = new Uint16Array(breaks.length);
+  for (let index = 0; index < breaks.length; index += 1) {
+    const value = breaks[index];
+    if (value === undefined || value > 0xffff) throw new Error('linebreak-index-overflow');
+    offsets[index] = value;
+  }
+  return { utf8ByteLength, utf32ScalarLength, printableAscii, lineBreakOffsets: offsets };
 }
 
 function scalarUtf16WidthAt(text: string, offset: number): 1 | 2 {

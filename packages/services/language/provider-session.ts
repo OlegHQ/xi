@@ -1,6 +1,8 @@
+import type { CancellationToken } from '../../contracts/src/index';
+
 /** Minimal session contract shared by the production LSP feature adapters. */
 export interface LanguageProviderSession {
-  request<Response>(method: string, params?: unknown): Promise<Response>;
+  request<Response>(method: string, params?: unknown, cancellation?: CancellationToken): Promise<Response>;
   notify?(method: string, params?: unknown): Promise<void>;
   /** Returns false when the current server has not negotiated this feature. */
   supportsRequest?(method: string, uri?: string): boolean;

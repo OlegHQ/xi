@@ -161,3 +161,53 @@ The pinned SQLite amalgamation was downloaded as public research data. Version 3
 Pinned downloaded source hashes are retained in [performance-sources.json](performance-sources.json). Large originals and profile traces live under `.artifacts/performance-planning/`; URLs/revisions/hashes make the source audit reproducible. One optional WebKit `WTFString.h` fetch returned HTTP 429; conclusions above use the successfully retrieved `StringImpl.h`, not the unavailable file. Current Bun/SQLite/Tree-sitter web documentation was read on the review date; version-specific APIs still require pinned local probes. No unverified worker speedup, hard string limit, native allocation counter, or zero-copy guarantee is promoted to a requirement.
 
 This refinement chooses constraints and experiment criteria now. It does not claim to have performed T107–T118 refactors, certified a dedicated runner, met all resource budgets, or completed all Xi command families. Their explicit tickets and release dependencies are the deliverable for the requested plan refinement; measurable production completion remains gated separately.
+
+## Second-pass audit and remediation plan, 2026-09-17
+
+Fresh read of the worktree at `b6b5692` (after T116). `bun run check` passes; the
+import graph, perf lint and type check are green. Every row below was confirmed by
+reading the code. Work is split into groups with disjoint file sets so they can be
+fixed in parallel; each group leaves one small test behind and runs the listed gates.
+
+| # | Group / files | Defect | Fix |
+|---|---|---|---|
+| A1 | `apps/xi/src/main.ts:791` | `host.registerPanel(...)` runs after `await runWorkbench` and `host.dispose()`; panel exclusivity is inert in production | register before `host.createSession`, or each controller registers itself |
+| A2 | `main.ts:187`, `workbench/host/index.ts:133` | only the launch document is registered with the LSP session; other buffers get no diagnostics/completion and a sync stderr write per keystroke | `openBufferAtPath`/close call `languageSession.openDocument`/`closeDocument`; never write to stderr on the key path |
+| A3 | `main.ts:898`, `platform/src/filesystem.ts:209` | explorer watch events all mapped to `changed`; overflow recovery never runs, watcher never re-armed; watch is non-recursive | forward `event.kind`; re-arm on overflow; recursive or per-expanded-directory watch |
+| A4 | `main.ts:1099` | dead per-byte BigInt `textHash` | delete |
+| B1 | `services/language/lifecycle.ts:436` | `restart()` never resolves: run loop treats the wake as a crash, burns a retry, respawns | explicit restart flag; cycle returns instead of retrying |
+| B2 | `workbench/language/completion.ts:255`, `services/language/completion.ts` | completion/signature requests never cancelled; one in-flight request per typed char | per-open cancellation source cancelled on close/retrigger |
+| B3 | `services/language/sync.ts:229` | flush microtask runs before paint; on backpressure or full-sync it materializes and stringifies the whole document on the key path | defer flush behind a macrotask; bound work per slice |
+| C1 | `layout/src/viewport.ts:264` | projection cache keyed on `selectionGeneration`; every cursor key re-materializes all visible rows | key rows on geometry only; recompute selections separately |
+| C2 | `ui/src/workbench.ts`, `layout/src/viewport.ts:597` | `horizontalScrollCells` never passed; anchor always column 0; caret clipped past ~4×width | derive horizontal cell offset from the primary head; feed through `scrollLeft` |
+| C3 | `ui/commandline/index.ts:56` | duplicate writable `ExCommandLineSession` in UI, unused | delete class and export |
+| D1 | `vim/registers/index.ts:677`, `vim/search/index.ts:539,694`, `vim/motions/structural.ts:139`, `vim/motions/find.ts:158` | slice to end of document to read one code point; 1 MiB eager scan for `%`; whole-line segmentation for `f/t` | bounded windows, `slice(offset, offset+2)`, directional scans with early exit |
+| D2 | `vim/insert/index.ts:318,1096`, `vim/operators/direct-changes.ts:341`, `vim/ranges/normalize.ts:376`, `vim/visual/index.ts:395`, `vim/motions/viewport.ts:705`, `vim/motions/word.ts:566` | whole-line materialization and per-grapheme objects for `<BS>`, Replace, `x/s/r/~`, `cw`, `v`, scroll keys; 64× window amplification for `b` | bounded windows (64–256 units, extended on demand); one module-level segmenter; ASCII fast paths |
+| E1 | `document/src/undo.ts:361`, `selections/src/index.ts:200`, `vim/pattern/parser.ts:39` | per-commit reduce over all steps + canonical JSON of selections; O(n²) member lookup and spread-max; step budget counted per code unit | running metadata sum; id map + loop max; budget by characters advanced, outputs by matches needed |
+| E2 | `document/src/text-fidelity.ts:126,198`, `document/src/rope.ts:198` | two strings pushed per line on chunked open even for pure LF; unconditional full byte copy; per-chunk merge build | `indexOf('\r')` per chunk, append whole chunks; copy only on read-only fallback; O(n) bulk build |
+| F1 | `services/persistence/index.ts:296` | checkpoint materializes + stringifies whole document before the size check | bail on `lengthUtf16 > maxBytes` first; stream via `encodeTextFileChunks` |
+| F2 | `workbench/search/index.ts:574`, `workbench/language/workspace-edits.ts:314` | per-byte BigInt FNV hashing on replace/rename | `Bun.hash` / `Bun.CryptoHasher` |
+| F3 | `workbench/picker/index.ts:188`, `services/navigation/index.ts:189` | picker query returns `stale` during index population and is not retried | retry `stale` like `not-ready`, or do not bump generation on additions |
+| F4 | `services/search/index.ts:206` | accumulated match list copied per 32-match batch | append in place, publish frozen view |
+| G1 | `bench/performance/t116-key-output.py`, `t045-typing-under-load.py` | stderr shares the PTY and the sync `XI_EX_COMMANDLINE_STATE` marker lands before the frame; numbers are key→marker | separate stderr fd; time stdout only; require the moved cursor in the parsed frame |
+
+Deferred to a second phase (ownership drift, no user-visible defect): UI deciding
+quit on `q`/Ctrl-C and owning SIGTSTP (`ui/src/terminal.ts:494,290`); `renderSelf`
+mutating scroll state through a callback; scroll-wheel cursor semantics, ctags
+provider, theme mapping, recovery policy and the only `ClockPort` implementation
+still in `main.ts`; missing `dispose()` on `PersistenceService`, `ConfigStore`,
+`JournaledFilesystemOperations`, `AtomicCommandCoordinator`; unused
+`ui/input/adapter.ts`, `workbench/dispatch`, `WorkbenchHistoryCoordinator`; syntax
+highlighter not wired and O(document) per request; grapheme segmentation gaps
+(Hangul jamo, Indic conjuncts). No release gate is certified by this pass.
+
+Outcome, same day: groups A–G were applied in the worktree with one new test per
+group (`tests/workbench/t-panel-registration`, `tests/lsp/t-restart-resolves`,
+`tests/layout` T014-HSCROLL-01, `tests/vim/bounded-reads`, `tests/vim/bounded-line-reads`,
+`tests/document/undo-metadata-linear`, `tests/selections/update-large-set`,
+`tests/vim/pattern/literal-fast-path-budget`, extended `checkpoint-caching`).
+`bun run check` and `test:startup` pass. Single-run diagnostics on this host, not gates:
+10 MiB public open 206 → ≈90 ms (normal) and 225 → ≈110 ms (dense); motion-only
+`project()` p95 5.05 → 0.05 ms; typing-under-load key→stdout p95 8.6 → 2.8 ms with the
+corrected probe boundary. The remaining `t019`/`t024` oracle failures are the T121
+host-clipboard class and are independent of these changes.

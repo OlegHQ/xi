@@ -11,6 +11,7 @@ import type {
 } from '../../selections/src/index';
 import type {
   CellPoint,
+  CellWidthPolicy,
   FoldRegion,
   FrameIdentity,
   GutterCells,
@@ -31,7 +32,7 @@ import type {
   VisibleFrame,
 } from './types';
 import { PackedPositionIndex } from './packed-index';
-import { DEFAULT_WIDTH_POLICY } from './graphemes';
+import { DEFAULT_WIDTH_POLICY, splitGraphemes } from './graphemes';
 import {
   MAX_LAYOUT_ID_UTF16,
   buildDiffFillerRow,
@@ -81,6 +82,20 @@ interface CachedViewportProjection {
   readonly truncatedLongLine: boolean;
 }
 
+/**
+ * Rows/positions cached by `geometryKey` alone (text, dimensions, scroll, folds,
+ * style generation, etc. -- everything except `selectionGeneration`). A cursor
+ * motion that changes only the selection reuses this instead of re-materializing
+ * every visible row; only `projectSelections` reruns against the cached rows.
+ */
+interface CachedRowsProjection {
+  readonly key: string;
+  readonly anchor: ViewportAnchor;
+  readonly rows: readonly ScreenRow[];
+  readonly positions: PackedPositionIndex;
+  readonly truncatedLongLine: boolean;
+}
+
 const MAX_FRAME_HISTORY = 8;
 const MAX_LINE_CACHE_ENTRIES = 512;
 const MAX_MATERIALIZED_LINE_ENTRIES = 512;
@@ -126,14 +141,17 @@ export class ViewportLayout {
   #lineCacheEvictions = 0;
   #rowsBuilt = 0;
   #frameCacheHits = 0;
+  #rowsCacheHits = 0;
   #materializedLineHits = 0;
   #materializedLineMisses = 0;
   #materializedLineEvictions = 0;
   #lastProjection: CachedViewportProjection | undefined;
+  #lastRows: CachedRowsProjection | undefined;
 
   get cacheStats(): LayoutCacheStats {
     return Object.freeze({
       frameCacheHits: this.#frameCacheHits,
+      rowsCacheHits: this.#rowsCacheHits,
       lineCacheHits: this.#lineCacheHits,
       lineCacheMisses: this.#lineCacheMisses,
       lineCacheEvictions: this.#lineCacheEvictions,
@@ -261,7 +279,10 @@ export class ViewportLayout {
       layoutGeneration: this.#layoutGeneration as LayoutGeneration,
     });
 
-    const projectionKey = JSON.stringify([geometryKey, selection.selectionGeneration]);
+    // Plain string concatenation, not JSON.stringify: geometryKey is already a
+    // string and selectionGeneration a number, so a delimited template is a cheap
+    // equivalent key without allocating through the JSON machinery on every call.
+    const projectionKey = `${geometryKey} ${selection.selectionGeneration}`;
     if (this.#lastProjection?.key === projectionKey) {
       this.#frameCacheHits += 1;
       const cached = this.#lastProjection;
@@ -281,6 +302,40 @@ export class ViewportLayout {
         frame,
         positions: cached.positions,
       });
+      this.#trimFrames();
+      return { ok: true, value: frame };
+    }
+
+    // Same geometry (text, dimensions, scroll, folds, style generation, ...) but a
+    // different selection -- e.g. plain cursor motion. Reuse the already-built rows
+    // and position index instead of re-materializing every visible row; only the
+    // selection projection below needs to rerun.
+    if (this.#lastRows?.key === geometryKey) {
+      this.#rowsCacheHits += 1;
+      const cachedRows = this.#lastRows;
+      const projectedSelections = projectSelections(snapshot, selection, cachedRows.rows, cachedRows.positions, folds);
+      if (!projectedSelections.ok) return projectedSelections;
+      const frame: VisibleFrame = Object.freeze({
+        identity,
+        widthCells: input.widthCells,
+        heightCells: input.heightCells,
+        anchor: cachedRows.anchor,
+        rows: cachedRows.rows,
+        selections: projectedSelections.value,
+        truncatedLongLine: cachedRows.truncatedLongLine,
+      });
+      this.#lastProjection = Object.freeze({
+        key: projectionKey,
+        anchor: cachedRows.anchor,
+        rows: cachedRows.rows,
+        selections: projectedSelections.value,
+        positions: cachedRows.positions,
+        truncatedLongLine: cachedRows.truncatedLongLine,
+      });
+      this.#currentFrameId = frameId;
+      this.#currentDocumentKey = documentKey;
+      this.#documentVersions.set(documentKey, snapshot.version);
+      this.#frames.set(frameId as number, { frame, positions: cachedRows.positions });
       this.#trimFrames();
       return { ok: true, value: frame };
     }
@@ -329,7 +384,12 @@ export class ViewportLayout {
       if ((baseOffset as number) < (line.value.start as number) || (baseOffset as number) > (line.value.end as number)) {
         return layoutFailure('invalid-anchor');
       }
-      const read = readVisibleLineText(snapshot, baseOffset, line.value.end, contentWidth, input.heightCells - rows.length, wrap);
+      // Include `horizontalScrollCells` in the requested width: with wrap off, the
+      // visible slice starts `horizontalScrollCells` display cells into the line
+      // (see `shapeLine`'s `screen = logicalCell - horizontalScroll`), so reading
+      // only `contentWidth` worth of source text would truncate before ever
+      // reaching the scrolled-to columns, leaving the caret's cell unplaced.
+      const read = readVisibleLineText(snapshot, baseOffset, line.value.end, contentWidth + horizontalScrollCells, input.heightCells - rows.length, wrap);
       if (!read.ok) return read;
       const prefix = read.value.text;
       const lineAnnotations = (annotationsByLine.get(logicalLine) ?? []).flatMap((annotation) => {
@@ -433,6 +493,13 @@ export class ViewportLayout {
       positions,
       truncatedLongLine,
     });
+    this.#lastRows = Object.freeze({
+      key: geometryKey,
+      anchor: effectiveAnchor,
+      rows: frame.rows,
+      positions,
+      truncatedLongLine,
+    });
     this.#currentFrameId = frameId;
     this.#currentDocumentKey = documentKey;
     this.#documentVersions.set(documentKey, snapshot.version);
@@ -533,6 +600,7 @@ export class ViewportLayout {
     this.#currentFrameId = null;
     this.#lastGeometryKey = '';
     this.#lastProjection = undefined;
+    this.#lastRows = undefined;
   }
 
   #trimFrames(): void {
@@ -602,15 +670,26 @@ function defaultAnchor(snapshot: DocumentSnapshot): { readonly ok: true; readonl
  * `cursor - heightCells + 1` when it is below. No scrolloff margin exists in this
  * codebase yet, so none is applied. Callers must report the returned `scrollTop`
  * back to the read model so scroll position and the rendered anchor never drift.
+ *
+ * `scrollLeft` follows the same rule horizontally over the primary head's display
+ * column, since production always projects with `wrap: false`: no wrapped row ever
+ * exists to fall back on, so an off-screen column would otherwise render clipped.
+ * Callers must feed the returned `scrollLeft` back as `options.horizontalScrollCells`
+ * on the following `project()` call and report it back to the read model exactly
+ * like `scrollTop`.
  */
 export function resolveScrollAnchor(
   snapshot: DocumentSnapshot,
   selection: SelectionSetSnapshot,
   scrollTop: number,
   heightCells: number,
-): { readonly ok: true; readonly value: { readonly anchor: ViewportAnchor; readonly scrollTop: number } } | { readonly ok: false; readonly error: LayoutFailure } {
+  widthCells: number,
+  scrollLeft: number,
+  options?: { readonly tabSize?: number; readonly widthPolicy?: CellWidthPolicy },
+): { readonly ok: true; readonly value: { readonly anchor: ViewportAnchor; readonly scrollTop: number; readonly scrollLeft: number } } | { readonly ok: false; readonly error: LayoutFailure } {
   const lastLine = Math.max(0, snapshot.lineCount - 1);
   let top = Math.min(Math.max(0, Math.trunc(scrollTop)), lastLine);
+  let left = Math.max(0, Math.trunc(scrollLeft));
   const primary = selection.members.find((member) => member.id === selection.primaryId);
   if (primary !== undefined) {
     const cursorLineResult = snapshot.lineIndexAt(primary.head.at.offset);
@@ -619,6 +698,19 @@ export function resolveScrollAnchor(
       const visibleRows = Math.max(1, heightCells);
       if (cursorLine < top) top = cursorLine;
       else if (cursorLine > top + visibleRows - 1) top = Math.max(0, cursorLine - visibleRows + 1);
+
+      const lineStart = snapshot.lineStartOffset(lineIndex(cursorLine));
+      if (lineStart.ok) {
+        const headColumn = measureDisplayColumn(
+          snapshot, lineStart.value, primary.head.at.offset,
+          options?.tabSize ?? 8, options?.widthPolicy ?? DEFAULT_WIDTH_POLICY,
+        );
+        if (headColumn !== undefined) {
+          const visibleCells = Math.max(1, widthCells);
+          if (headColumn < left) left = headColumn;
+          else if (headColumn > left + visibleCells - 1) left = Math.max(0, headColumn - visibleCells + 1);
+        }
+      }
     }
   }
   const offset = snapshot.lineStartOffset(lineIndex(top));
@@ -628,8 +720,50 @@ export function resolveScrollAnchor(
     value: {
       anchor: Object.freeze({ documentVersion: snapshot.version, lineIndex: lineIndex(top), offset: offset.value, displayCellColumn: cellColumn(0) }),
       scrollTop: top,
+      scrollLeft: left,
     },
   };
+}
+
+/**
+ * Display-cell column of `targetOffset` within the line starting at `lineStart`,
+ * mirroring `shapeLine`'s unwrapped column advance (tab stops plus per-cluster
+ * width) without materializing any cells -- only used to keep the horizontal
+ * scroll anchor over the cursor. `undefined` on an unreadable slice or invalid
+ * cluster width; callers then leave `scrollLeft` unchanged.
+ */
+function measureDisplayColumn(
+  snapshot: DocumentSnapshot,
+  lineStart: Utf16Offset,
+  targetOffset: Utf16Offset,
+  tabSize: number,
+  widthPolicy: CellWidthPolicy,
+): number | undefined {
+  if ((targetOffset as number) <= (lineStart as number)) return 0;
+  const prefix = snapshot.slice(lineStart, targetOffset);
+  if (!prefix.ok) return undefined;
+  let column = 0;
+  let clusters: readonly { readonly text: string }[];
+  try {
+    clusters = splitGraphemes(prefix.value);
+  } catch {
+    return undefined;
+  }
+  for (const cluster of clusters) {
+    if (cluster.text === '\t') {
+      column += tabSize - (column % tabSize);
+      continue;
+    }
+    let measured: number;
+    try {
+      measured = widthPolicy.widthOfCluster(cluster.text);
+    } catch {
+      return undefined;
+    }
+    if (!Number.isSafeInteger(measured) || measured < 0 || measured > 2) return undefined;
+    column += measured === 0 ? 0 : measured;
+  }
+  return column;
 }
 
 function projectSelections(

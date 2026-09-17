@@ -107,8 +107,12 @@ async function testRandomizedStream(encoding: PositionEncoding): Promise<void> {
     });
     assert(committed.ok && committed.value.kind === 'committed', `${encoding} randomized edit ${index} committed: ${committed.ok ? committed.value.kind : committed.error.kind}`);
     // Every fourth batch is deliberately left pending so coalescing is exercised.
-    if (index % 4 === 3) await sync.whenIdle();
+    if (index % 4 === 3) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await sync.whenIdle();
+    }
   }
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
   await sync.whenIdle();
   assert(committedFailures.length === 0, `${encoding} committed stream contains no stale admissions`);
   equal(peer.text, text, `${encoding} fake peer converges to Xi after randomized edits`);
@@ -130,6 +134,9 @@ async function testFullSyncAndQueueBound(): Promise<void> {
     const accepted = sync.acceptSnapshot(document(version, `${version}-base😀`));
     assert(accepted.ok, `full-sync edit ${version} admitted`);
   }
+  // See the randomized-stream comment above: the flush enqueue is deferred
+  // behind a macrotask; give that timer a turn before draining the queue.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
   await sync.whenIdle();
   equal(peer.text, '30-base😀', 'full-sync peer receives newest bounded target');
   equal(peer.version, 30, 'full-sync version skips only coalesced intermediate notifications');

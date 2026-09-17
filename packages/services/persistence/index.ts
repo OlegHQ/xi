@@ -294,6 +294,15 @@ export class PersistenceService {
     options: RecoveryOptions = {},
   ): Promise<Result<RecoveryCheckpoint, PersistenceFailure>> {
     const snapshot = document.snapshot();
+    const journalPath = options.journalPath ?? recoveryJournalPath(path);
+    const maxBytes = boundedPositive(options.maxBytes, DEFAULT_MAX_RECOVERY_BYTES);
+    // Cheap pre-check: the document's UTF-16 length is a lower bound on the
+    // JSON-encoded UTF-8 byte size of the new entry alone. If that already
+    // exceeds the journal's byte budget, the checkpoint is definitely too
+    // large; bail before slicing, JSON-encoding or writing anything.
+    if (snapshot.lengthUtf16 > maxBytes) {
+      return { ok: false, error: { kind: 'journal-too-large', path: journalPath, bytes: snapshot.lengthUtf16 } };
+    }
     const text = snapshot.slice(asOffset(0), asOffset(snapshot.lengthUtf16));
     if (!text.ok) return { ok: false, error: { kind: 'serialize', message: text.error.kind } };
     const base = this.#opened.get(document.id);
@@ -309,7 +318,6 @@ export class PersistenceService {
       defaultLineEnding: snapshot.defaultLineEnding,
       hasUtf8Bom: snapshot.hasUtf8Bom,
     });
-    const journalPath = options.journalPath ?? recoveryJournalPath(path);
     // Reuse the decoded journal kept from the previous checkpoint/recover on
     // this path when the file's stat has not changed since, instead of
     // re-reading and JSON.parsing up to DEFAULT_MAX_RECOVERY_BYTES on every
@@ -320,7 +328,6 @@ export class PersistenceService {
     const encodedEntries = [...existing.value.encoded, journalEntryEncoding(checkpoint)];
     const maxEntries = Math.min(DEFAULT_MAX_RECOVERY_ENTRIES, boundedPositive(options.maxEntries, DEFAULT_MAX_RECOVERY_ENTRIES));
     while (entries.length > maxEntries) { entries.shift(); encodedEntries.shift(); }
-    const maxBytes = boundedPositive(options.maxBytes, DEFAULT_MAX_RECOVERY_BYTES);
     // Only the new entry is ever JSON.stringify'd here; older, unchanged
     // entries reuse their cached encoding instead of being re-serialized.
     let totalBytes = journalTotalBytes(encodedEntries);

@@ -317,6 +317,7 @@ export class LanguageServerSession implements Disposable {
   #disposePromise: Promise<void> | undefined;
   #attempts = 0;
   #retries = 0;
+  #restartRequested = false;
   #replayCount = 0;
   #lastFailure: string | null = null;
   #disabledReason: string | null = null;
@@ -447,6 +448,7 @@ export class LanguageServerSession implements Disposable {
     this.#pullDiagnostics.restart();
     this.clearCapabilities();
     this.#options.diagnostics?.clearServer(this.identity.key);
+    this.#restartRequested = true;
     this.wakeFailureWaiters({ previous: 'running', current: 'stopping', failure: 'explicit restart' });
     if (transport !== undefined) await transport.dispose();
     if (this.#runPromise !== undefined) await this.#runPromise.catch(() => {});
@@ -643,6 +645,11 @@ export class LanguageServerSession implements Disposable {
         void this.scheduleHealthyReset(this.#readyAt);
         const failure = await this.waitForTransportFailure();
         if (this.#lifecycleCancellation.token.isCancelled) return;
+        if (this.#restartRequested) {
+          this.#restartRequested = false;
+          await this.finishTransport(transport);
+          return;
+        }
         await this.finishTransport(transport);
         this.recordFailure(failure.failure ?? 'language server stopped unexpectedly');
       } catch (error: unknown) {

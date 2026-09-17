@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { WorkbenchPointerCapture, WorkbenchSession, ContributionRegistry } from '../../packages/workbench/src/index';
-import { ExCommandLineSession, PrefixHelpController } from '../../packages/ui/src/index';
+import { ExCommandLineSession } from '../../packages/workbench/src/entrypoints/launch';
+import { PrefixHelpController } from '../../packages/ui/src/index';
 import { PointerGestureController } from '../../packages/vim/src/index';
 import { ProblemsRenderable, SearchRenderable, paintEditorFrame } from '../../packages/ui/src/index';
 

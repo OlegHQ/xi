@@ -264,6 +264,7 @@ export type LayoutFailure =
 
 export interface LayoutCacheStats {
   readonly frameCacheHits: number;
+  readonly rowsCacheHits: number;
   readonly lineCacheHits: number;
   readonly lineCacheMisses: number;
   readonly lineCacheEvictions: number;

@@ -99,6 +99,30 @@ async function saveDoesNotRereadUnchangedFile(): Promise<void> {
   assert.equal(fs.readFileCalls, readsBeforeSave, 'save does not re-read the unchanged on-disk file to recompute its identity');
 }
 
+async function checkpointOfOversizedDocumentBailsQuickly(): Promise<void> {
+  const fs = new CountingFilesystem();
+  fs.seed('/tmp/cache-oversized.txt', new TextEncoder().encode('x'));
+  const service = new PersistenceService(fs);
+  const opened = await service.openFile('/tmp/cache-oversized.txt', id('cache-oversized'), cancellation);
+  assert.equal(opened.ok, true);
+  if (!opened.ok || opened.value.kind !== 'editable') return;
+  const document = opened.value.document;
+  const maxBytes = 1024;
+  const oversizedText = 'y'.repeat(maxBytes * 2);
+  assert.equal(document.apply({ start: offset(1), end: offset(1), text: oversizedText }, document.version).ok, true);
+
+  const readsBeforeCheckpoint = fs.readFileCalls;
+  const started = performance.now();
+  const result = await service.checkpoint(document, '/tmp/cache-oversized.txt', cancellation, { maxBytes });
+  const elapsedMilliseconds = performance.now() - started;
+
+  assert.equal(result.ok, false, 'checkpoint of an oversized document reports too-large instead of writing a truncated journal');
+  if (!result.ok) assert.equal(result.error.kind, 'journal-too-large', 'failure reason is journal-too-large');
+  assert.equal(fs.readFileCalls, readsBeforeCheckpoint, 'the oversized-document check bails before reading/parsing the journal');
+  assert.equal(elapsedMilliseconds < 50, true, `oversized checkpoint must bail in under 50ms, took ${elapsedMilliseconds}ms`);
+}
+
 await secondCheckpointDoesNotReparseJournal();
 await saveDoesNotRereadUnchangedFile();
-console.log('checkpoint-caching passed journal reuse and save identity-hint fixtures');
+await checkpointOfOversizedDocumentBailsQuickly();
+console.log('checkpoint-caching passed journal reuse, save identity-hint, and oversized-document fixtures');
