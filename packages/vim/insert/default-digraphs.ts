@@ -1383,12 +1383,17 @@ const rawEntries: VimDigraphEntry[] = [
   ["st", "\ufb06"],
 ];
 
-export const DEFAULT_VIM_DIGRAPH_ENTRIES: readonly VimDigraphEntry[] = Object.freeze(
-  rawEntries.map(([sequence, value]) => Object.freeze([sequence, value] as const)),
-);
+// Built on first use: freezing 1,366 tuples and filling the map at import time cost ~5 ms of
+// every startup for a table only Ctrl-K ever reads. The lookup stays synchronous.
+let entries: readonly VimDigraphEntry[] | undefined;
+let map: ReadonlyMap<string, string> | undefined;
 
-const DEFAULT_VIM_DIGRAPH_MAP: ReadonlyMap<string, string> = new Map(DEFAULT_VIM_DIGRAPH_ENTRIES);
+export function defaultVimDigraphEntries(): readonly VimDigraphEntry[] {
+  entries ??= Object.freeze(rawEntries.map(([sequence, value]) => Object.freeze([sequence, value] as const)));
+  return entries;
+}
 
 export function lookupDefaultVimDigraph(sequence: string): string | undefined {
-  return DEFAULT_VIM_DIGRAPH_MAP.get(sequence);
+  map ??= new Map(rawEntries);
+  return map.get(sequence);
 }

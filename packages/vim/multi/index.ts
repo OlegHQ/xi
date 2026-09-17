@@ -1,4 +1,4 @@
-import type { CancellationToken, Result } from '../contracts/src/index';
+import type { CancellationToken, Result } from '../../contracts/src/index';
 import {
   createDocumentAnchor,
   DocumentChangeMap,
@@ -6,7 +6,7 @@ import {
   type DocumentSnapshot,
   type LineIndex,
   type Utf16Offset,
-} from '../document/src/index';
+} from '../../document/src/index';
 import type {
   DesiredColumn,
   EndpointInput,
@@ -14,10 +14,10 @@ import type {
   SelectionMember,
   SelectionMemberInput,
   SelectionSetSnapshot,
-} from '../selections/src/index';
-import { createSelectionSet, updateSelectionSet } from '../selections/src/index';
-import type { CellColumn } from '../document/src/index';
-import type { SelectionId } from '../selections/src/index';
+} from '../../selections/src/index';
+import { createSelectionSet, updateSelectionSet } from '../../selections/src/index';
+import type { CellColumn } from '../../document/src/index';
+import type { SelectionId } from '../../selections/src/index';
 import {
   createVimMotionCursor,
   resolveVimMotion,
@@ -26,38 +26,38 @@ import {
   type VimMotionInvocation,
   type VimMotionOptions,
   type VimMotionOutcome,
-} from './motions/index';
+} from '../motions/index';
 import {
   resolveVimWordMotion,
   type VimWordMotionInvocation,
   type VimWordMotionKey,
-} from './motions/word';
+} from '../motions/word';
 import {
   resolveVimTextObject,
   vimTextObjectMotion,
   type VimTextObjectInvocation,
   type VimTextObjectKey,
   type VimTextObjectOptions,
-} from './text-objects/index';
+} from '../text-objects/index';
 import type {
   VimCoreOperator,
   VimOperatorMotionFailure,
   VimOperatorPlan,
   VimOperatorPreparationInput,
   VimOperatorSessionState,
-} from './operators/core';
-import { multiplyVimOperatorCounts, prepareVimOperator } from './operators/core';
-import { normalizeAtomicEdits, type AtomicEditConflict } from './transactions/multi-command';
+} from '../operators/core';
+import { multiplyVimOperatorCounts, prepareVimOperator } from '../operators/core';
+import { normalizeAtomicEdits, type AtomicEditConflict } from '../transactions/multi-command';
 import {
   type VimVisualCursor,
   type VimVisualFailure,
   type VimVisualOptions,
   extendVimVisualSelection,
-} from './visual/index';
-import { resolveVimFind, type VimFindFailure, type VimFindInvocation, type VimFindOptions, type VimFindOutcome, type VimLastFind } from './motions/find';
-import type { VimJumpHistory, VimJumpReason, VimNavigationTarget, VimMarkStore } from './navigation/index';
-import { recordVimJump, setVimMark } from './navigation/index';
-import { searchVimBuffer, type VimSearchFailure, type VimSearchOutcome, type VimSearchRequest, type VimSearchState, type VimSearchView } from './search/index';
+} from '../visual/index';
+import { resolveVimFind, type VimFindFailure, type VimFindInvocation, type VimFindOptions, type VimFindOutcome, type VimLastFind } from '../motions/find';
+import type { VimJumpHistory, VimJumpReason, VimNavigationTarget, VimMarkStore } from '../navigation/index';
+import { recordVimJump, setVimMark } from '../navigation/index';
+import { searchVimBuffer, type VimSearchFailure, type VimSearchOutcome, type VimSearchRequest, type VimSearchState, type VimSearchView } from '../search/index';
 
 export type VimMultiFailurePolicy = 'retain-failed' | 'reject-command';
 export type VimMultiMotionInvocation = VimMotionInvocation | VimWordMotionInvocation | VimTextObjectInvocation;
@@ -548,7 +548,7 @@ export function setVimMultiPrimaryMark(
   name: string,
   snapshot: DocumentSnapshot,
   selections: SelectionSetSnapshot,
-): Result<VimMarkStore, import('./navigation/index').VimMarkFailure> {
+): Result<VimMarkStore, import('../navigation/index').VimMarkFailure> {
   if (!sameSelectionDocument(snapshot, selections)) return { ok: false, error: { kind: 'wrong-document' } };
   const primary = selections.members.find((member) => member.id === selections.primaryId);
   if (primary === undefined) return { ok: false, error: { kind: 'invalid-cursor' } };
@@ -669,7 +669,7 @@ function normalMemberMotion(
   member: SelectionMember,
   invocation: VimMultiMotionInvocation,
   options?: VimMultiMotionOptions,
-): Result<Omit<import('./ranges/normalize').VimOperatorRangeInput, 'operator'>, VimOperatorMotionFailure> {
+): Result<Omit<import('../ranges/normalize').VimOperatorRangeInput, 'operator'>, VimOperatorMotionFailure> {
   const cursor = motionCursorForMember(snapshot, member);
   if (!cursor.ok) return { ok: false, error: { kind: 'motion-failed', reason: cursor.error.kind } };
   const outcome = resolveMultiMotion(snapshot, cursor.value, invocation, options);
@@ -695,7 +695,7 @@ function normalMemberMotion(
 function visualMemberMotion(
   snapshot: DocumentSnapshot,
   member: SelectionMember,
-): Result<Omit<import('./ranges/normalize').VimOperatorRangeInput, 'operator'>, VimOperatorMotionFailure> {
+): Result<Omit<import('../ranges/normalize').VimOperatorRangeInput, 'operator'>, VimOperatorMotionFailure> {
   if (!isVisualMember(member)) return { ok: false, error: { kind: 'invalid-endpoint' } };
   const origin = member.anchor;
   const target = member.head;

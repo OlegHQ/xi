@@ -6,6 +6,7 @@ import {
   parseColor,
 } from '@opentui/core/renderer';
 import type { Disposable } from '../../contracts/src/index.ts';
+import { PanelHitMap, PanelScroll, installPanelPointerHandler, type WorkbenchPanelPointerEvent } from '../src/panel-pointer';
 
 export type ExplorerNodeKind = 'root' | 'directory' | 'file' | 'symlink' | 'other' | 'state';
 export type ExplorerLoadState = 'unloaded' | 'loading' | 'ready' | 'empty' | 'permission-denied' | 'symlink-cycle' | 'overflow' | 'error';
@@ -101,18 +102,23 @@ export interface ExplorerRenderableOptions extends RenderableOptions<ExplorerRen
   readonly theme?: ExplorerTheme;
   readonly maxRows?: number;
   readonly showHeader?: boolean;
+  readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
 }
 
 /** Bounded panel renderer. All tree state comes from an immutable read model. */
 export class ExplorerRenderable extends Renderable {
   readonly #explorer: ExplorerReadPort;
-  readonly #theme: ExplorerTheme;
+  #theme: ExplorerTheme;
   readonly #maxRows: number;
   readonly #showHeader: boolean;
+  readonly #hitMap = new PanelHitMap();
+  readonly #onPointer: ((event: WorkbenchPanelPointerEvent) => boolean) | undefined;
   readonly #subscription: Disposable;
+  readonly #scroll = new PanelScroll();
+  #lastSelectedId: string | undefined;
 
   constructor(ctx: RenderContext, options: ExplorerRenderableOptions) {
-    const { explorer: _explorer, theme: _theme, maxRows: _maxRows, showHeader: _showHeader, ...renderOptions } = options;
+    const { explorer: _explorer, theme: _theme, maxRows: _maxRows, showHeader: _showHeader, onPointer: _onPointer, ...renderOptions } = options;
     super(ctx, {
       ...renderOptions,
       width: options.width ?? '100%',
@@ -123,16 +129,53 @@ export class ExplorerRenderable extends Renderable {
     this.#theme = options.theme ?? DEFAULT_EXPLORER_THEME;
     this.#maxRows = options.maxRows ?? 10_000;
     this.#showHeader = options.showHeader ?? true;
+    this.#onPointer = options.onPointer;
     if (!Number.isSafeInteger(this.#maxRows) || this.#maxRows < 1) throw new TypeError('explorer-max-rows-must-be-positive');
+    installPanelPointerHandler(this, 'explorer', this.#hitMap, () => this.#explorer.model.generation, this.#onPointer, {
+      scrollbarColumn: () => (this.#scroll.thumb(this.#explorer.model.visibleRows.length, this.#dataViewport()) === undefined ? undefined : this.width - 1),
+      isDragging: () => this.#scroll.dragging,
+      scrollBy: (delta) => {
+        if (this.#scroll.scrollBy(delta, this.#explorer.model.visibleRows.length, this.#dataViewport())) this.requestRender();
+      },
+      beginDrag: (row) => this.#scroll.beginDrag(row),
+      dragTo: (row) => {
+        if (this.#scroll.dragTo(row, this.#explorer.model.visibleRows.length, this.#dataViewport())) this.requestRender();
+      },
+      endDrag: () => this.#scroll.endDrag(),
+    });
     this.#subscription = this.#explorer.subscribe(() => {
       if (!this.isDestroyed) this.requestRender();
     });
     this.requestRender();
   }
 
+  #dataViewport(heightOverride?: number): number {
+    return Math.max(0, (heightOverride ?? this.height) - (this.#showHeader ? 1 : 0) - 1);
+  }
+
   protected override destroySelf(): void {
+    this.#scroll.reset();
     this.#subscription.dispose();
     super.destroySelf();
+  }
+
+  protected override onResize(width: number, height: number): void {
+    this.#scroll.endDrag();
+    this.#scroll.clamp(this.#explorer.model.visibleRows.length, this.#dataViewport(height));
+    super.onResize(width, height);
+  }
+
+  override get visible(): boolean { return super.visible; }
+  override set visible(value: boolean) {
+    if (!value) this.#scroll.endDrag();
+    super.visible = value;
+  }
+
+  /** Apply a new theme immediately, live. Colors are recomputed from `#theme` on every
+   * `renderSelf` call (never cached), so reassigning it and requesting one frame is enough. */
+  setTheme(theme: ExplorerTheme): void {
+    this.#theme = theme;
+    this.requestRender();
   }
 
   protected override renderSelf(buffer: OptimizedBuffer): void {
@@ -146,17 +189,39 @@ export class ExplorerRenderable extends Renderable {
     const error = parseColor(this.#theme.error);
     const model = this.#explorer.model;
     buffer.fillRect(0, 0, this.width, this.height, background);
-    const lines = formatExplorerLines(model, this.width, Math.min(this.height, this.#maxRows), this.#showHeader);
+    const viewport = this.#dataViewport();
+    if (model.selectedId !== this.#lastSelectedId) {
+      this.#lastSelectedId = model.selectedId;
+      const selectedIndex = model.selectedId === undefined ? -1 : model.visibleRows.findIndex((row) => row.nodeId === model.selectedId);
+      if (selectedIndex >= 0) {
+        if (selectedIndex < this.#scroll.offset) this.#scroll.scrollBy(selectedIndex - this.#scroll.offset, model.visibleRows.length, viewport);
+        else if (selectedIndex >= this.#scroll.offset + viewport) this.#scroll.scrollBy(selectedIndex - viewport + 1 - this.#scroll.offset, model.visibleRows.length, viewport);
+      }
+    }
+    this.#scroll.clamp(model.visibleRows.length, viewport);
+    const thumb = this.#scroll.thumb(model.visibleRows.length, viewport);
+    const textWidth = thumb === undefined ? this.width : Math.max(1, this.width - 1);
+    const lines = formatExplorerLines(model, textWidth, Math.min(this.height, this.#maxRows), this.#showHeader, this.#scroll.offset);
+    const hitRows: (string | undefined)[] = Array.from({ length: this.height });
     for (let row = 0; row < lines.length && row < this.height; row += 1) {
       const line = lines[row];
       if (line === undefined) continue;
       const dataRow = this.#showHeader ? row - 1 : row;
-      const visible = dataRow >= 0 ? model.visibleRows[dataRow] : undefined;
+      const visible = dataRow >= 0 ? model.visibleRows[dataRow + this.#scroll.offset] : undefined;
+      if (row > 0 && row < this.height - 1 && visible?.kind !== 'state') hitRows[row] = visible?.nodeId;
       const selected = visible?.selected === true;
       const rowBackground = selected ? active : surface;
       buffer.fillRect(0, row, this.width, 1, rowBackground);
       const lineColor = model.state === 'error' || visible?.kind === 'state' ? error : row === 0 && this.#showHeader ? accent : selected ? foreground : muted;
-      drawExplorerText(buffer, line, 0, row, lineColor, rowBackground, this.width);
+      drawExplorerText(buffer, line, 0, row, lineColor, rowBackground, textWidth);
+    }
+    this.#hitMap.publish(model.generation, hitRows);
+    if (thumb !== undefined) {
+      const trackTop = this.#showHeader ? 1 : 0;
+      for (let row = 0; row < viewport; row += 1) {
+        const onThumb = row >= thumb.start && row < thumb.start + thumb.size;
+        buffer.fillRect(this.width - 1, trackTop + row, 1, 1, onThumb ? accent : border);
+      }
     }
     if (this.height > 0) {
       buffer.fillRect(0, this.height - 1, this.width, 1, surface);
@@ -168,7 +233,7 @@ export class ExplorerRenderable extends Renderable {
 }
 
 /** Format rows with stable identity markers and explicit empty/error states. */
-export function formatExplorerLines(model: ExplorerReadModel, width: number, maxRows: number, showHeader = true): readonly string[] {
+export function formatExplorerLines(model: ExplorerReadModel, width: number, maxRows: number, showHeader = true, scrollOffset = 0): readonly string[] {
   const safeWidth = Math.max(1, Math.trunc(width));
   const safeRows = Math.max(1, Math.trunc(maxRows));
   const lines: string[] = [];
@@ -176,7 +241,7 @@ export function formatExplorerLines(model: ExplorerReadModel, width: number, max
   if (model.visibleRows.length === 0 && lines.length < safeRows) {
     lines.push(clipExplorer(model.state === 'error' ? (model.message ?? 'Unable to read workspace') : model.state === 'loading' ? 'Loading…' : 'No files', safeWidth));
   }
-  for (const row of model.visibleRows) {
+  for (const row of model.visibleRows.slice(Math.max(0, Math.trunc(scrollOffset)))) {
     if (lines.length >= safeRows) break;
     const node = model.nodes.find((candidate) => candidate.id === row.nodeId);
     if (node === undefined) continue;

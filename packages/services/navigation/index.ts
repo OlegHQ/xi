@@ -249,14 +249,59 @@ export class FilePathIndex implements Disposable {
     return Object.freeze({ entries, generation: this.#generation, totalMatches, truncated: totalMatches > entries.length });
   }
 
+  /**
+   * Time-sliced counterpart to `query()`: scores entries in bounded chunks and
+   * yields to the event loop between them so a query over a large index (up to
+   * 250k entries) never holds the thread for one long synchronous pass. Honors
+   * cancellation and the index's own generation (bumped by any mutation) between
+   * slices so a query never scores against a store that changed underneath it.
+   */
   async queryAsync(query: string, options: FilePickerQueryOptions = {}): Promise<Result<FilePickerQueryResult, PickerFailure>> {
     const cancellation = options.cancellation;
     if (cancellation?.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
-    // Yield once so a worker-side caller can cancel between dispatch and scoring.
-    await Promise.resolve();
+    if (this.#disposed) return { ok: false, error: { kind: 'provider', message: 'filename index is disposed' } };
+    if (!this.#ready) return { ok: false, error: { kind: 'not-ready', mode: 'file', message: 'filename index is still warming' } };
+    const generation = this.#generation;
+    const limit = boundedLimit(options.limit);
+    const includeHidden = options.includeHidden ?? true;
+    const includeIgnored = options.includeIgnored ?? this.#includeIgnored;
+    const normalizedQuery = normalizeForSearch(query);
+    const anchor = normalizedQuery.length >= 3 && !normalizedQuery.includes(' ')
+      ? normalizedQuery
+      : longestLiteralAnchor(normalizedQuery);
+    const matches: PickerEntry[] = [];
+    // A fixed-size chunk (tuned to land near a 4ms slice for typical fuzzy-score
+    // costs) yields unconditionally rather than gating on elapsed time, so the
+    // pause cadence -- and therefore cancellation/generation responsiveness --
+    // stays deterministic across hardware instead of degrading to zero yields
+    // on a fast machine.
+    const CHUNK_SIZE = 2_000;
+    let scanned = 0;
+    for (const [identity, path] of this.#entries) {
+      // Count and yield on every visited entry, not only matches that pass every
+      // filter -- otherwise a query with a selective anchor (mostly `continue`s)
+      // could scan the whole index in one synchronous pass without ever yielding.
+      scanned += 1;
+      if (scanned % CHUNK_SIZE === 0) {
+        await yieldToEventLoop();
+        if (cancellation?.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
+        if (this.#generation !== generation) return { ok: false, error: { kind: 'stale', generation } };
+      }
+      if (!includeHidden && path.hidden === true) continue;
+      if (!includeIgnored && path.ignored === true) continue;
+      const root = this.#roots.get(path.rootId);
+      if (root === undefined) continue;
+      const normalizedPath = this.#normalizedEntries.get(identity) ?? '';
+      if (anchor.length >= 3 && !normalizedPath.includes(anchor)) continue;
+      const score = scoreFuzzyNormalized(normalizedQuery, normalizedPath);
+      if (score !== undefined) matches.push(makeFileEntry(root, path, score));
+    }
     if (cancellation?.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
-    const result = this.query(query, options);
-    return isQueryFailure(result) ? { ok: false, error: result } : { ok: true, value: result };
+    if (this.#generation !== generation) return { ok: false, error: { kind: 'stale', generation } };
+    matches.sort(compareEntries);
+    const totalMatches = matches.length;
+    const entries = Object.freeze(matches.slice(0, limit));
+    return { ok: true, value: Object.freeze({ entries, generation: this.#generation, totalMatches, truncated: totalMatches > entries.length }) };
   }
 
   dispose(): void {
@@ -338,6 +383,45 @@ export class StaticPickerProvider implements PickerProvider {
     }
     found.sort(compareEntries);
     return { ok: true, value: Object.freeze(found.slice(0, boundedLimit(request.limit))) };
+  }
+}
+
+export interface BufferPickerEntry {
+  readonly id: string;
+  readonly label: string;
+  readonly detail: string;
+  readonly value: string;
+}
+
+/** Picker provider over an in-memory buffer list supplied by `source()` on every query (open
+ * buffers change independently of the picker). Uses plain NFKC-normalized, locale-lowercased
+ * substring matching rather than `StaticPickerProvider`'s fuzzy score, matching how buffer
+ * switching is expected to behave: a literal substring of the path, not a fuzzy path match. */
+export class BufferPickerProvider implements PickerProvider {
+  readonly id: string;
+  readonly mode: Exclude<PickerMode, 'file'>;
+  readonly #source: () => readonly BufferPickerEntry[];
+
+  /** `mode` defaults to buffers; any other non-file mode (e.g. themes discovered after startup) reuses the same live-source matching. */
+  constructor(id: string, source: () => readonly BufferPickerEntry[], mode: Exclude<PickerMode, 'file'> = 'buffer') {
+    if (!validIdentifier(id)) throw new TypeError('picker-provider-id-must-be-nonempty');
+    this.id = id;
+    this.#source = source;
+    this.mode = mode;
+  }
+
+  async query(request: PickerQueryRequest, cancellation: CancellationToken): Promise<Result<readonly PickerEntry[], PickerFailure>> {
+    const query = normalizeForSearch(request.query);
+    const entries: PickerEntry[] = [];
+    for (const entry of this.#source()) {
+      if (cancellation.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
+      if (query.length > 0 && !normalizeForSearch(entry.label).includes(query)) continue;
+      entries.push(Object.freeze({
+        id: entry.id, mode: this.mode, kind: this.mode, label: entry.label, detail: entry.detail, value: entry.value,
+        rootId: undefined, relativePath: undefined, hidden: false, score: query.length === 0 ? 0 : 1,
+      }));
+    }
+    return { ok: true, value: Object.freeze(entries.slice(0, request.limit ?? 100)) };
   }
 }
 
@@ -584,6 +668,9 @@ function boundedLimit(value: number | undefined): number {
   return Math.min(value, 10_000);
 }
 function normalizeForSearch(value: string): string { return value.normalize('NFKC').toLocaleLowerCase('en-US'); }
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 function scoreFuzzy(query: string, candidate: string): number | undefined {
   return scoreFuzzyNormalized(normalizeForSearch(query), normalizeForSearch(candidate));
 }
@@ -642,7 +729,6 @@ function longestLiteralAnchor(query: string): string {
 function compareEntries(left: PickerEntry, right: PickerEntry): number {
   return right.score - left.score || left.label.localeCompare(right.label, 'en-US') || left.id.localeCompare(right.id, 'en-US');
 }
-function isQueryFailure(value: FilePickerQueryResult | PickerFailure): value is PickerFailure { return 'kind' in value; }
 function failureMessage(failure: PickerFailure): string {
   switch (failure.kind) {
     case 'cancelled': return 'Cancelled';

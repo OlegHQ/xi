@@ -68,7 +68,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t088-primary-only-") as temporary:
             raise SystemExit(f"primary-only completion did not preserve secondary cursor: {applied!r}")
         os.write(master, b"\x1b")
         time.sleep(0.2)
-        os.write(master, b"q")
+        # The applied completion left the buffer dirty; bare 'q' now correctly refuses a
+        # dirty buffer like ':q' does, so discard the scratch edit explicitly.
+        os.write(master, b":q!\r")
         child.wait(timeout=5)
     finally:
         if child.poll() is None:

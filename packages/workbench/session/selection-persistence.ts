@@ -1,4 +1,4 @@
-import type { Result } from '../contracts/src/index';
+import type { Result } from '../../contracts/src/index';
 
 export interface PersistedSelectionMember { readonly id: string; readonly anchor: number; readonly head: number; readonly kind: string; }
 export interface PersistedViewSelection { readonly viewId: string; readonly documentId: string; readonly contentHash: string; readonly documentVersion: number; readonly scrollTop: number; readonly scrollLeft: number; readonly primaryId: string; readonly members: readonly PersistedSelectionMember[]; }

@@ -4,4 +4,5 @@ name = "xi"
 version = "0.0.1"
 
 [dependencies]
+"github.com/dietrichgebert/ponytail" = {}
 # "github.com/owner/repo/path" = {}

@@ -10,7 +10,7 @@ import {
 } from '../../packages/primitives/src/index';
 import { TextFileDocument, type EditProposal } from '../../packages/document/src/index';
 import { createSelectionSet, type SelectionSetSnapshot } from '../../packages/selections/src/index';
-import { defaultCellWidthPolicy, ViewportLayout, type ViewportProjectionInput } from '../../packages/layout/src/index';
+import { defaultCellWidthPolicy, ViewportLayout, type CellHitTarget, type ViewportProjectionInput } from '../../packages/layout/src/index';
 
 const documentId = identifier<DocumentId>('T014-layout-fixtures');
 const viewId = identifier<ViewId>('T014-main-view');
@@ -327,6 +327,91 @@ function checkRaggedRowsAndWideGlyphClippedAtViewportEdge(): void {
   console.log('T014-RAGGED-ROW-01 and T014-WIDE-EDGE-01 passed: ragged lines receive explicit padding and a wide glyph at the no-wrap edge is not split.');
 }
 
+function checkTypingOnFirstLineKeepsLowerRowContentIdentityAndShiftsOffsetsCorrectly(): void {
+  // Matches the production non-wrapping viewport shape (packages/ui/src/workbench.ts
+  // uses `{ wrap: false, gutterWidthCells: 6 }`): a document with several lines below
+  // the edit, wrap off, gutter on.
+  const document = editable('first\nsecond\nthird\nfourth\nfifth');
+  const layout = new ViewportLayout();
+  const options: ViewportProjectionInput['options'] = { wrap: false, gutterWidthCells: 6 };
+  const before = project(layout, document, 20, 5, selectionAt(document), options);
+  assert.equal(before.rows.length, 5);
+
+  const proposal: EditProposal = {
+    documentId,
+    expectedVersion: document.snapshot().version,
+    edits: [{ start: offset(0), end: offset(0), text: 'X' }],
+    origin: 'vim',
+    undoGroup,
+  };
+  const committed = document.commit(proposal);
+  assert.equal(committed.ok, true);
+  if (!committed.ok || committed.value.kind !== 'committed') throw new Error('fixture-edit-failed');
+  layout.observeDocumentChange(committed.value.change);
+  const after = project(layout, document, 20, 5, selectionAt(document), options);
+  assert.equal(after.rows.length, 5);
+
+  // The edited line's own row legitimately changes.
+  assert.notEqual(after.rows[0]?.text, before.rows[0]?.text, 'the edited line\'s rendered text changes');
+
+  for (let rowIndex = 1; rowIndex < 5; rowIndex += 1) {
+    const beforeRow = before.rows[rowIndex];
+    const afterRow = after.rows[rowIndex];
+    assert.ok(beforeRow !== undefined && afterRow !== undefined);
+    if (beforeRow === undefined || afterRow === undefined) continue;
+    assert.equal(afterRow.text, beforeRow.text,
+      `T014-STABLE-CONTENT-01 row ${rowIndex} keeps identical rendered glyphs when only an earlier line changed`);
+    assert.equal(afterRow.contentKey, beforeRow.contentKey,
+      `T014-STABLE-CONTENT-01 row ${rowIndex} content identity is stable across the absolute-offset shift`);
+    assert.ok(beforeRow.contentKey !== null, 'a text row always carries a non-null content key');
+    assert.equal(afterRow.lineIndex, beforeRow.lineIndex);
+    assert.equal((afterRow.startOffset as number), (beforeRow.startOffset as number) + 1,
+      `T014-SHIFTED-OFFSET-01 row ${rowIndex} start offset absorbs the one inserted character`);
+    assert.equal((afterRow.endOffset as number), (beforeRow.endOffset as number) + 1,
+      `T014-SHIFTED-OFFSET-01 row ${rowIndex} end offset absorbs the one inserted character`);
+    for (let column = 0; column < afterRow.cells.length; column += 1) {
+      const beforeTarget: CellHitTarget | null | undefined = beforeRow.cells[column]?.target;
+      const afterTarget: CellHitTarget | null | undefined = afterRow.cells[column]?.target;
+      if (beforeTarget?.kind === 'text' && afterTarget?.kind === 'text') {
+        assert.equal(afterTarget.offset as number, (beforeTarget.offset as number) + 1,
+          `T014-SHIFTED-OFFSET-01 row ${rowIndex} column ${column} cell offset absorbs the one inserted character`);
+      }
+      if (beforeTarget?.kind === 'gutter' && afterTarget?.kind === 'gutter') {
+        assert.deepEqual(afterTarget, beforeTarget, `T014-STABLE-CONTENT-01 row ${rowIndex} column ${column} gutter label is unchanged`);
+      }
+    }
+  }
+
+  // Hit-testing and offset lookups on the shifted rows must still be correct, not
+  // merely reused: probe the second visible line's first text cell (after the
+  // 6-column gutter) by its NEW absolute offset.
+  const secondLineFirstCellBefore = before.rows[1]?.cells[6]?.target;
+  assert.equal(secondLineFirstCellBefore?.kind, 'text');
+  const expectedOffset = secondLineFirstCellBefore?.kind === 'text' ? (secondLineFirstCellBefore.offset as number) + 1 : -1;
+  const position = layout.positionForOffset(after.identity.frameId, offset(expectedOffset));
+  assert.equal(position.ok, true, 'T014-SHIFTED-OFFSET-01 the shifted offset resolves to a screen position');
+  if (position.ok) {
+    assert.deepEqual(position.value, { row: 1, column: 6 }, 'T014-SHIFTED-OFFSET-01 offset maps to the same visible cell as before the edit');
+    const hit = layout.hitTest(after.identity.frameId, position.value);
+    assert.equal(hit.ok, true);
+    if (hit.ok) {
+      assert.equal(hit.value.target.offset, expectedOffset, 'T014-SHIFTED-OFFSET-01 hit-testing returns the correct shifted offset');
+      assert.equal(Object.isFrozen(hit.value.target), true,
+        'T014-LAZY-TARGET-FREEZE-01 a target actually returned by hitTest is frozen');
+    }
+  }
+  // Performance fix (see rebaseMaterializedRows in packages/layout/src/index.ts):
+  // per-frame cells are deliberately left unfrozen until `hitTest` actually returns
+  // one, so an un-hit-tested cell's target on the published frame stays unfrozen.
+  const untouchedTarget = after.rows[2]?.cells[7]?.target;
+  assert.ok(untouchedTarget !== null && untouchedTarget !== undefined);
+  if (untouchedTarget !== null && untouchedTarget !== undefined) {
+    assert.equal(Object.isFrozen(untouchedTarget), false,
+      'T014-LAZY-TARGET-FREEZE-01 a cell target nobody hit-tested is not eagerly frozen');
+  }
+  console.log('T014-STABLE-CONTENT-01 and T014-SHIFTED-OFFSET-01 passed: typing on the first visible line keeps unaffected rows\' content identity stable and shifts their absolute offsets and hit-testing correctly.');
+}
+
 function identifier<T extends string>(value: string): T {
   const result = asIdentifier<T>(value, 'fixture-id');
   if (!result.ok) throw new Error(result.error.message);
@@ -343,3 +428,4 @@ checkBlockSelectionKeepsTabCellGeometry();
 checkSelectionIdentityAndClippingProjection();
 checkCustomWidthAndEmptyLinePolicies();
 checkRaggedRowsAndWideGlyphClippedAtViewportEdge();
+checkTypingOnFirstLineKeepsLowerRowContentIdentityAndShiftsOffsetsCorrectly();

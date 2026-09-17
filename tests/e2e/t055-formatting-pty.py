@@ -125,7 +125,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t055-format-") as temporary:
         read_until(master, captured, b"XI_FORMAT_ERROR", 5)
         if failure_path.read_text(encoding="utf-8") != original:
             raise SystemExit("T055 formatter failure overwrote the disk file")
-        os.write(master, b"q")
+        # The buffer is intentionally left dirty (the failed format-on-save never wrote it);
+        # bare 'q' now correctly refuses a dirty buffer like ':q' does, so discard explicitly.
+        os.write(master, b":q!\r")
         read_for(master, captured, 2)
     finally:
         if child.poll() is None:

@@ -8,9 +8,15 @@
  */
 export {
   BoundedPickerModel,
+  BufferPickerProvider,
   FilePathIndex,
   FilePickerProvider,
   StaticPickerProvider,
   createNavigationContributionModule,
 } from '../../navigation';
+export type { BufferPickerEntry } from '../../navigation';
 export { DiagnosticStore } from '../../language/diagnostics';
+// Pure `file://` URI <-> path helpers with no LSP/session dependencies (see
+// ../../language/workspace-edit-resources.ts) -- safe for the launch critical path since callers
+// need them before a language server has ever been started.
+export { fileUri, workspacePathFromUri, workspaceRelativePathFromUri } from '../../language/workspace-edit-resources';

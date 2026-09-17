@@ -194,11 +194,16 @@ export class RealtimeSearchService implements Disposable {
   async #run(query: SearchQuery, generation: number, cancellation: CancellationSource, resolve: (result: Result<SearchReadModel, SearchFailure>) => void): Promise<void> {
     this.#timer = undefined;
     const bufferSources = this.#bufferSourceProvider?.() ?? this.#bufferSources;
+    // Dirty-buffer text does not change while a single search run is in
+    // flight, so scan it once instead of on every ripgrep batch.
+    const bufferMatches = computeBufferMatches(query, bufferSources, generation);
+    const ownedPaths = bufferOwnedPaths(bufferSources);
     const streamed: SearchMatch[] = [];
     const onBatch = (batch: readonly SearchMatch[]): void => {
       if (batch.length === 0 || this.#disposed || generation !== this.#generation || cancellation.token.isCancelled) return;
-      streamed.push(...batch);
-      const merged = mergeBufferMatches(query, bufferSources, streamed, generation);
+      for (const match of batch) if (!ownedPaths.has(bufferPathKey(match.rootId, match.path))) streamed.push(match);
+      // Cheap, unsorted intermediate publish; the final publish below sorts once.
+      const merged = [...streamed, ...bufferMatches];
       const limit = query.maxResults ?? this.#defaultLimit;
       this.#publish(Object.freeze({
         contractVersion: 1,
@@ -224,7 +229,8 @@ export class RealtimeSearchService implements Disposable {
       resolve({ ok: false, error: disk.error });
       return;
     }
-    const merged = mergeBufferMatches(query, bufferSources, disk.value, generation);
+    const filteredDisk = disk.value.filter((match) => !ownedPaths.has(bufferPathKey(match.rootId, match.path)));
+    const merged = [...filteredDisk, ...bufferMatches].sort(compareSearchMatches);
     const limit = query.maxResults ?? this.#defaultLimit;
     const matches = merged.slice(0, limit);
     const model: SearchReadModel = Object.freeze({
@@ -514,11 +520,20 @@ function compileExpression(query: SearchQuery): Result<RegExp, SearchFailure> {
   catch (error: unknown) { return { ok: false, error: { kind: 'invalid-regex', message: error instanceof Error ? error.message : 'invalid regular expression' } }; }
 }
 
-function mergeBufferMatches(query: SearchQuery, buffers: readonly SearchBufferSource[], disk: readonly SearchMatch[], generation: number): SearchMatch[] {
-  const filtered = disk.filter((match) => !buffers.some((buffer) => buffer.rootId === match.rootId && buffer.path === match.path));
-  const source: SearchMatch[] = [];
+/** Key used to identify a dirty buffer's disk-owned path, avoiding an O(matches * buffers) scan. */
+function bufferPathKey(rootId: string, path: string): string { return `${rootId} ${path}`; }
+
+function bufferOwnedPaths(buffers: readonly SearchBufferSource[]): Set<string> {
+  const owned = new Set<string>();
+  for (const buffer of buffers) owned.add(bufferPathKey(buffer.rootId, buffer.path));
+  return owned;
+}
+
+/** Scans dirty-buffer text for matches. Call once per query run, not per batch: buffer text is fixed for the run's duration. */
+function computeBufferMatches(query: SearchQuery, buffers: readonly SearchBufferSource[], generation: number): SearchMatch[] {
   const expression = compileExpression(query);
-  if (!expression.ok) return filtered.slice();
+  if (!expression.ok) return [];
+  const source: SearchMatch[] = [];
   for (const buffer of buffers) {
     if (buffer.rootId !== query.rootId) continue;
     const lines = buffer.text.split('\n');
@@ -545,7 +560,11 @@ function mergeBufferMatches(query: SearchQuery, buffers: readonly SearchBufferSo
       }
     }
   }
-  return [...filtered, ...source].sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line || a.range.startUtf16 - b.range.startUtf16);
+  return source;
+}
+
+function compareSearchMatches(a: SearchMatch, b: SearchMatch): number {
+  return a.path.localeCompare(b.path) || a.line - b.line || a.range.startUtf16 - b.range.startUtf16;
 }
 
 function escapeRegExp(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'); }

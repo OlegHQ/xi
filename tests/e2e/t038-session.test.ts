@@ -154,7 +154,27 @@ async function e11ResizeAndLayoutPersistence(): Promise<void> {
   console.log('XI_T038_E11_PASS');
 }
 
+async function unnamedBufferHasNoPath(): Promise<void> {
+  const scratch = document('T038-unnamed-source', 'hello\n');
+  const session = new WorkbenchSession({ workspaceId: 'T038-unnamed-workspace' });
+  const opened = session.openBuffer(scratch, { viewId: identifier<ViewId>('T038-unnamed-view') });
+  assert.equal(opened.ok, true, 'unnamed buffer still opens');
+  if (!opened.ok) return;
+  assert.equal(opened.value.path, undefined, 'a buffer opened without a path has no path, not a "[No Name]" display string standing in for one');
+  assert.equal(session.buffer(scratch.id)?.path, undefined, 'buffer() lookup agrees the path is unset');
+  // Serializing the layout (used for recovery/session persistence) must not throw on an
+  // unnamed buffer, even though the wire format still requires a string field.
+  const snapshot = session.layoutSnapshot();
+  assert.equal(snapshot.buffers[0]?.path, '', 'layout snapshot never leaks a UI display label into a persisted path');
+  const renamed = session.renameBufferPath(scratch.id, '/workspace/hello.txt');
+  assert.equal(renamed.ok, true, 'a later save can still assign a real path');
+  assert.equal(session.buffer(scratch.id)?.path, '/workspace/hello.txt', 'renameBufferPath sets the now-real path');
+  session.dispose();
+  console.log('XI_T038_UNNAMED_PASS');
+}
+
 await e02PreviewSplitClose();
 await dirtyPreviewAndStaleRestore();
 await e11ResizeAndLayoutPersistence();
-console.log('T038 session fixtures passed E02 preview/split/close, shared history, stale restore and E11 resize/layout persistence');
+await unnamedBufferHasNoPath();
+console.log('T038 session fixtures passed E02 preview/split/close, shared history, stale restore, E11 resize/layout persistence and the unnamed-buffer path contract');

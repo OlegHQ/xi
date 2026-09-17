@@ -1,3 +1,6 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { parseSync } from 'oxc-parser';
 import { createApplication, TerminalStartupError } from '../../apps/xi/src/composition';
 import { decodeJsonAtBoundary, type Decoder, type PlatformPorts, type RequestId } from '../../packages/contracts/src/index';
 import { asIdentifier, DisposableScope, ScopedSignal, type Disposable } from '../../packages/primitives/src/index';
@@ -16,6 +19,7 @@ export async function verifyArchitectureContracts(): Promise<readonly string[]> 
   verifyUiDocumentOwnershipBoundary(failures);
   verifyScopedLanguageProtocolDependencies(failures);
   verifyUnknownDataValidation(failures);
+  verifyCompositionRootOwnership(failures);
   return failures;
 }
 
@@ -213,6 +217,160 @@ function asciiBytes(value: string): Uint8Array {
   return Uint8Array.from([...value].map((character) => character.charCodeAt(0)));
 }
 
+/**
+ * `apps/xi` (the composition root) may only construct, wire, start, stop and parse CLI
+ * arguments (01-architecture's ownership table); it must never re-grow feature state or
+ * per-key/per-pointer/per-command handlers that belong to a workbench feature controller
+ * (T116 S4-S9). Checked structurally over the real AST (via `oxc-parser`, already a
+ * devDependency used by `tools/lint/check.ts`) rather than by regex over source text, per
+ * the ticket's own requirement.
+ */
+const FORBIDDEN_HANDLER_NAME = /^handle\w*(Keypress|Pointer|Command)$/u;
+const FORBIDDEN_OPEN_CLOSE_NAME = /^(open|close)\w+$/u;
+const FORBIDDEN_LET_SUFFIXES = ['Open', 'Pending', 'Query', 'SelectedIndex', 'Draft', 'Generation', 'Serial'];
+const MAIN_FUNCTION_LINE_BUDGET = 120;
+
+interface OxcNode { readonly type?: string; readonly [key: string]: unknown }
+
+function walkAst(node: unknown, visit: (node: OxcNode) => void): void {
+  if (node === null || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const item of node) walkAst(item, visit);
+    return;
+  }
+  const record = node as OxcNode;
+  if (typeof record.type === 'string') visit(record);
+  for (const key of Object.keys(record)) {
+    if (key === 'type') continue;
+    const value = record[key];
+    if (value !== null && typeof value === 'object') walkAst(value, visit);
+  }
+}
+
+function functionLikeName(node: OxcNode): string | undefined {
+  if (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression') {
+    const id = node.id as OxcNode | null | undefined;
+    return id?.type === 'Identifier' ? (id as { readonly name: string }).name : undefined;
+  }
+  return undefined;
+}
+
+function namedFunctionLikeDeclarations(program: OxcNode): readonly { readonly name: string; readonly node: OxcNode }[] {
+  const results: { readonly name: string; readonly node: OxcNode }[] = [];
+  walkAst(program, (node) => {
+    const declaredName = functionLikeName(node);
+    if (declaredName !== undefined) { results.push({ name: declaredName, node }); return; }
+    if (node.type === 'VariableDeclarator') {
+      const id = node.id as OxcNode;
+      const init = node.init as OxcNode | null | undefined;
+      if (id.type === 'Identifier' && (init?.type === 'ArrowFunctionExpression' || init?.type === 'FunctionExpression')) {
+        results.push({ name: (id as { readonly name: string }).name, node: init });
+      }
+      return;
+    }
+    if (node.type === 'MethodDefinition' || node.type === 'PropertyDefinition') {
+      // Class members only -- deliberately excludes plain `ObjectExpression` `Property`
+      // wiring fields (e.g. `openFile: (path) => host.openBufferAtPath(path)` passed into a
+      // controller's options), which are pass-through callbacks the ownership table
+      // explicitly wants (constructing/wiring), not a declared handler owned by `main()`.
+      const key = node.key as OxcNode | undefined;
+      if (key?.type === 'Identifier') results.push({ name: (key as { readonly name: string }).name, node });
+    }
+  });
+  return results;
+}
+
+function letDeclaredNames(program: OxcNode): readonly string[] {
+  const names: string[] = [];
+  walkAst(program, (node) => {
+    if (node.type !== 'VariableDeclaration' || node.kind !== 'let') return;
+    for (const declarator of node.declarations as readonly OxcNode[]) {
+      const id = declarator.id as OxcNode;
+      if (id.type === 'Identifier') names.push((id as { readonly name: string }).name);
+    }
+  });
+  return names;
+}
+
+function nodeLineSpan(sourceText: string, node: OxcNode): number {
+  const start = node.start as number;
+  const end = node.end as number;
+  const startLine = countNewlines(sourceText, 0, start);
+  const endLine = countNewlines(sourceText, 0, end);
+  return endLine - startLine + 1;
+}
+
+function countNewlines(text: string, from: number, to: number): number {
+  let count = 0;
+  for (let index = from; index < to; index += 1) if (text.charCodeAt(index) === 10) count += 1;
+  return count;
+}
+
+function collectSourceFiles(root: string): readonly string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === '.git') continue;
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) files.push(...collectSourceFiles(path));
+    else if (/\.[cm]?tsx?$/u.test(entry.name)) files.push(path);
+  }
+  return files;
+}
+
+/** Finds a top-level (module-scope) `function main(...)` declaration, if this file has one. */
+function findTopLevelMainFunction(program: OxcNode): OxcNode | undefined {
+  const body = program.body as readonly OxcNode[] | undefined;
+  for (const statement of body ?? []) {
+    if (statement.type !== 'FunctionDeclaration') continue;
+    const id = statement.id as OxcNode | null | undefined;
+    if (id?.type === 'Identifier' && (id as { readonly name: string }).name === 'main') return statement;
+  }
+  return undefined;
+}
+
+function verifyCompositionRootOwnership(failures: string[]): void {
+  const root = 'apps/xi';
+  let mainFileChecked = false;
+  for (const file of collectSourceFiles(root)) {
+    const sourceText = readFileSync(file, 'utf8');
+    const parsed = parseSync(file, sourceText);
+    const program = parsed.program as unknown as OxcNode;
+    // Module-scope composition helpers (e.g. `openDocument`, `resolveFileArgument`) are
+    // stateless utility functions the ownership table explicitly allows; (a)/(b) instead
+    // target closure state hidden *inside* the composition root's own `main()`, matching
+    // what T116 S4-S9 actually moved out. A file with no top-level `main` has nothing to
+    // scope to, so nothing here is exempt for it.
+    const scope = findTopLevelMainFunction(program) ?? program;
+
+    for (const { name } of namedFunctionLikeDeclarations(scope)) {
+      if (FORBIDDEN_HANDLER_NAME.test(name) || FORBIDDEN_OPEN_CLOSE_NAME.test(name)) {
+        failures.push(`ARCH-COMPOSITION-ROOT-01: ${file} declares forbidden handler-shaped name '${name}' inside main() (feature state belongs in a workbench controller)`);
+      }
+    }
+
+    for (const name of letDeclaredNames(scope)) {
+      if (FORBIDDEN_LET_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
+        failures.push(`ARCH-COMPOSITION-ROOT-01: ${file} declares forbidden feature-state 'let ${name}' inside main() (belongs in a workbench controller)`);
+      }
+    }
+
+    if (file.endsWith('/main.ts')) {
+      mainFileChecked = true;
+      walkAst(program, (node) => {
+        if (node.type !== 'FunctionDeclaration') return;
+        const id = node.id as OxcNode | null | undefined;
+        const name = id?.type === 'Identifier' ? (id as { readonly name: string }).name : undefined;
+        if (name === 'main') return;
+        const lines = nodeLineSpan(sourceText, node);
+        if (lines > MAIN_FUNCTION_LINE_BUDGET) {
+          failures.push(`ARCH-COMPOSITION-ROOT-01: ${file} declares function '${name ?? '<anonymous>'}' spanning ${lines} lines (budget ${MAIN_FUNCTION_LINE_BUDGET}; only 'main' is exempt)`);
+        }
+      });
+    }
+  }
+  if (!mainFileChecked) failures.push(`ARCH-COMPOSITION-ROOT-01: ${root}/src/main.ts was not found to check`);
+}
+
 function fakeWorkbench(): WorkbenchReadPort {
   return {
     activeViewId: undefined,
@@ -277,7 +435,7 @@ function id(value: string): RequestId {
 export async function runArchitectureContractCheck(): Promise<void> {
   const failures = await verifyArchitectureContracts();
   if (failures.length > 0) throw new Error(failures.join('\n'));
-  console.log('Architecture contracts passed: ARCH-FAKE-COMPOSE-01, ARCH-PARTIAL-START-01, ARCH-TERMINAL-RESTORE-01, ARCH-UI-DOCUMENT-01, ARCH-LSP-OWNER-01, ARCH-UNKNOWN-DISCRIMINANT-01, ARCH-BOUNDARY-JSON-01, ARCH-BOUNDARY-UTF8-01.');
+  console.log('Architecture contracts passed: ARCH-FAKE-COMPOSE-01, ARCH-PARTIAL-START-01, ARCH-TERMINAL-RESTORE-01, ARCH-UI-DOCUMENT-01, ARCH-LSP-OWNER-01, ARCH-UNKNOWN-DISCRIMINANT-01, ARCH-BOUNDARY-JSON-01, ARCH-BOUNDARY-UTF8-01, ARCH-COMPOSITION-ROOT-01.');
 }
 
 if (import.meta.main) await runArchitectureContractCheck();

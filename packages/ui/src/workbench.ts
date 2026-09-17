@@ -13,7 +13,7 @@ import type {
   WorkbenchSplitSnapshot,
   WorkbenchViewSnapshot,
 } from '../../workbench/src/index.ts';
-import { ViewportLayout, type CellHitTarget, type ProjectedSelection, type VisibleFrame } from '../../layout/src/index';
+import { resolveScrollAnchor, ViewportLayout, type CellHitTarget, type ProjectedSelection, type ViewportAnchor, type VisibleFrame } from '../../layout/src/index';
 import {
   paintEditorFrame,
   type EditorPresentationRead,
@@ -26,45 +26,8 @@ import {
   type MotionTrailMode,
 } from '../theme/motion-tokens';
 
-export interface WorkbenchTheme {
-  readonly background: string;
-  readonly surface: string;
-  readonly surfaceActive: string;
-  readonly foreground: string;
-  readonly muted: string;
-  readonly border: string;
-  readonly accent: string;
-  readonly error: string;
-  /** Optional editor layer tokens. Existing themes receive stable defaults. */
-  readonly selectionPrimary?: string;
-  readonly selectionSecondary?: string;
-  readonly cursorPrimary?: string;
-  readonly cursorSecondary?: string;
-  readonly motionTrail?: string;
-  readonly operatorPreview?: string;
-}
-
-export const LIGHT_WORKBENCH_THEME: WorkbenchTheme = Object.freeze({
-  background: '#FAF9F6',
-  surface: '#F1F0EC',
-  surfaceActive: '#E7EDF4',
-  foreground: '#24292E',
-  muted: '#60666D',
-  border: '#D5D4CF',
-  accent: '#245A88',
-  error: '#A52A36',
-  selectionPrimary: '#D6E5F2',
-  selectionSecondary: '#E4ECF3',
-  cursorPrimary: '#1A2835',
-  cursorSecondary: '#405B72',
-  motionTrail: '#EEF2F4',
-  operatorPreview: '#C4D8E8',
-});
-
-export const ASCII_WORKBENCH_THEME: WorkbenchTheme = Object.freeze({
-  ...LIGHT_WORKBENCH_THEME,
-  border: '#60666D',
-});
+export { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, BUILTIN_WORKBENCH_THEMES, type WorkbenchTheme } from '../theme/workbench-themes';
+import { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, type WorkbenchTheme } from '../theme/workbench-themes';
 
 export interface WorkbenchLayout {
   readonly compact: boolean;
@@ -122,6 +85,14 @@ export interface WorkbenchRenderableOptions extends RenderableOptions<WorkbenchR
   readonly colorMode?: EditorColorMode;
   readonly onPointer?: (event: WorkbenchPointerEvent) => boolean;
   readonly onPointerCancel?: (reason: 'resize' | 'dispose' | 'escape' | 'suspend') => void;
+  /**
+   * Called after a render moves a view's cursor-follow scroll anchor, so the
+   * composition root can persist it back through `WorkbenchSession.setViewScroll`
+   * (the UI layer has no write access to session state). Not calling this back
+   * only loses persistence across resize/reopen; on-screen scrolling still works
+   * because the renderable keeps its own last-anchor cache.
+   */
+  readonly onViewportAnchorChange?: (viewId: string, scrollTop: number, scrollLeft: number) => void;
 }
 
 export interface WorkbenchFrameRead {
@@ -175,7 +146,7 @@ export function calculateWorkbenchLayout(width: number, height: number, showBott
 /** A document-backed OpenTUI shell for the first Xi workbench surface. */
 export class WorkbenchRenderable extends Renderable {
   readonly #workbench: WorkbenchReadPort;
-  readonly #theme: WorkbenchTheme;
+  #theme: WorkbenchTheme;
   readonly #ascii: boolean;
   readonly #fileLabel: string;
   readonly #showBottomPanel: boolean;
@@ -185,25 +156,38 @@ export class WorkbenchRenderable extends Renderable {
   readonly #colorMode: EditorColorMode;
   readonly #onPointer: ((event: WorkbenchPointerEvent) => boolean) | undefined;
   readonly #onPointerCancel: ((reason: 'resize' | 'dispose' | 'escape' | 'suspend') => void) | undefined;
+  readonly #onViewportAnchorChange: ((viewId: string, scrollTop: number, scrollLeft: number) => void) | undefined;
   readonly #layout = new ViewportLayout();
   readonly #paneLayouts = new Map<string, ViewportLayout>();
   readonly #paneRects = new Map<string, PaneRect>();
   readonly #paneFrames = new Map<string, VisibleFrame>();
   readonly #splitters = new Map<string, SplitterRect>();
+  /** Per-pane previous frame/presentation, so split panes can paint only their
+   * damaged rows instead of a full repaint every frame (mirrors the single-view
+   * `#lastFrame`/`#lastPresentation`). */
+  readonly #paneLastFrames = new Map<string, WorkbenchFrameRead>();
+  readonly #paneLastPresentations = new Map<string, EditorPresentationRead | undefined>();
+  /** `resolveMotionPaintTokens` only depends on the theme; recomputed in `setTheme`
+   * instead of once per paint range per frame. */
+  #motionPaintTokens: ReturnType<typeof resolveMotionPaintTokens>;
+  /** `layout` only depends on size and `#showBottomPanel` (constant); avoid recomputing it
+   * from every `renderSelf`/pointer-hit-test access at up to 30x/s while idle. */
+  #cachedLayout: { readonly width: number; readonly height: number; readonly value: WorkbenchLayout } | undefined;
   #splitterCapture: string | undefined;
-  readonly #background: RGBA;
-  readonly #surface: RGBA;
-  readonly #active: RGBA;
-  readonly #foreground: RGBA;
-  readonly #muted: RGBA;
-  readonly #border: RGBA;
-  readonly #accent: RGBA;
+  #background: RGBA;
+  #surface: RGBA;
+  #active: RGBA;
+  #foreground: RGBA;
+  #muted: RGBA;
+  #border: RGBA;
+  #accent: RGBA;
   #lastShellSize: { readonly width: number; readonly height: number } | undefined;
   #lastFrame: WorkbenchFrameRead | undefined;
   #lastPresentation: EditorPresentationRead | undefined;
   #lastPaintStats: MotionPaintStats | undefined;
   #lastHeaderText: string | undefined;
   #lastStatusText: string | undefined;
+  #lastBottomPanelKey: string | undefined;
   #pointerFrameId: number | undefined;
 
   constructor(ctx: RenderContext, options: WorkbenchRenderableOptions) {
@@ -225,6 +209,7 @@ export class WorkbenchRenderable extends Renderable {
     this.#colorMode = options.colorMode ?? 'truecolor';
     this.#onPointer = options.onPointer;
     this.#onPointerCancel = options.onPointerCancel;
+    this.#onViewportAnchorChange = options.onViewportAnchorChange;
     this.#background = parseColor(this.#theme.background);
     this.#surface = parseColor(this.#theme.surface);
     this.#active = parseColor(this.#theme.surfaceActive);
@@ -232,6 +217,7 @@ export class WorkbenchRenderable extends Renderable {
     this.#muted = parseColor(this.#theme.muted);
     this.#border = parseColor(this.#theme.border);
     this.#accent = parseColor(this.#theme.accent);
+    this.#motionPaintTokens = resolveMotionPaintTokens(this.#theme);
     this.onMouse = (event: MouseEvent): void => {
       if (this.#onPointer === undefined || event.target !== this) return;
       const phase = pointerPhase(event.type);
@@ -280,10 +266,39 @@ export class WorkbenchRenderable extends Renderable {
     this.requestRender();
   }
 
-  get layout(): WorkbenchLayout { return calculateWorkbenchLayout(this.width, this.height, this.#showBottomPanel); }
+  get layout(): WorkbenchLayout {
+    const cached = this.#cachedLayout;
+    if (cached !== undefined && cached.width === this.width && cached.height === this.height) return cached.value;
+    const value = calculateWorkbenchLayout(this.width, this.height, this.#showBottomPanel);
+    this.#cachedLayout = { width: this.width, height: this.height, value };
+    return value;
+  }
   get lastFrame(): WorkbenchFrameRead | undefined { return this.#lastFrame; }
   get lastPaintStats(): MotionPaintStats | undefined { return this.#lastPaintStats; }
   refresh(): void { this.requestRender(); }
+  get theme(): WorkbenchTheme { return this.#theme; }
+  /** Apply a new theme immediately, live -- used for the theme picker's preview/cancel/commit
+   * flow. Every color the renderer paints with is cached from `#theme` at construction time
+   * only; this reassigns those same cached fields and requests one fresh frame. */
+  setTheme(theme: WorkbenchTheme): void {
+    this.#theme = theme;
+    this.#background = parseColor(theme.background);
+    this.#surface = parseColor(theme.surface);
+    this.#active = parseColor(theme.surfaceActive);
+    this.#foreground = parseColor(theme.foreground);
+    this.#muted = parseColor(theme.muted);
+    this.#border = parseColor(theme.border);
+    this.#accent = parseColor(theme.accent);
+    this.#motionPaintTokens = resolveMotionPaintTokens(theme);
+    // renderSelf only repaints the full background/sidebar/header on a genuine size change
+    // (`fullRepaint`, compared against #lastShellSize) -- clearing it here is what forces
+    // that same full-repaint path for a theme change too, not just a resize.
+    this.#lastShellSize = undefined;
+    this.#lastHeaderText = undefined;
+    this.#lastStatusText = undefined;
+    this.#lastBottomPanelKey = undefined;
+    this.requestRender();
+  }
   cancelPointerCapture(): void {
     this.#pointerFrameId = undefined;
     this.#splitterCapture = undefined;
@@ -296,6 +311,8 @@ export class WorkbenchRenderable extends Renderable {
     this.#layout.dispose();
     for (const layout of this.#paneLayouts.values()) layout.dispose();
     this.#paneLayouts.clear();
+    this.#paneLastFrames.clear();
+    this.#paneLastPresentations.clear();
     this.#paneRects.clear();
     this.#paneFrames.clear();
     this.#splitters.clear();
@@ -309,6 +326,8 @@ export class WorkbenchRenderable extends Renderable {
     this.#layout.dispose();
     for (const layout of this.#paneLayouts.values()) layout.dispose();
     this.#paneLayouts.clear();
+    this.#paneLastFrames.clear();
+    this.#paneLastPresentations.clear();
     this.#paneRects.clear();
     this.#paneFrames.clear();
     this.#splitters.clear();
@@ -319,7 +338,28 @@ export class WorkbenchRenderable extends Renderable {
     this.#lastPaintStats = undefined;
     this.#lastHeaderText = undefined;
     this.#lastStatusText = undefined;
+    this.#lastBottomPanelKey = undefined;
     super.destroySelf();
+  }
+
+  /**
+   * Cursor-follow scroll anchor for one view (docs/plan/01-architecture.md "Input,
+   * effects and rendering"; fixes the viewport never scrolling past the first
+   * screen). Seeds from the read model's `scrollTop` (authoritative, written by
+   * wheel scroll and restored layouts through `WorkbenchSession.setViewScroll`) so
+   * a scroll written through the session is rendered, then adjusts it so a cursor
+   * below the fold still pulls the viewport down instead of `project()` silently
+   * falling back to line 0. Only reports back when the resolved anchor differs
+   * from the read model's value, to avoid a report/read feedback loop.
+   */
+  private resolveAnchor(viewId: string, view: WorkbenchViewSnapshot, heightCells: number): ViewportAnchor | undefined {
+    const previous = view.scrollTop;
+    const resolved = resolveScrollAnchor(view.document, view.selections, previous, heightCells);
+    if (!resolved.ok) return undefined;
+    if (resolved.value.scrollTop !== previous) {
+      this.#onViewportAnchorChange?.(viewId, resolved.value.scrollTop, view.scrollLeft);
+    }
+    return resolved.value.anchor;
   }
 
   protected override renderSelf(buffer: OptimizedBuffer): void {
@@ -332,6 +372,9 @@ export class WorkbenchRenderable extends Renderable {
 
     const activeViewId = this.#workbench.activeViewId;
     const view = activeViewId === undefined ? undefined : this.#workbench.readView(activeViewId);
+    const anchor = activeViewId === undefined || view === undefined
+      ? undefined
+      : this.resolveAnchor(String(activeViewId), view, geometry.editorHeight);
     const projected = activeViewId === undefined || view === undefined || geometry.compact
       ? undefined
       : this.#layout.project({
@@ -341,6 +384,7 @@ export class WorkbenchRenderable extends Renderable {
         widthCells: geometry.editorWidth,
         heightCells: geometry.editorHeight,
         options: { wrap: false, gutterWidthCells: 6 },
+        ...(anchor === undefined ? {} : { anchor }),
       });
     const frame = projected?.ok === true ? projected.value : undefined;
     const presentation = this.#presentation === undefined || activeViewId === undefined
@@ -390,7 +434,7 @@ export class WorkbenchRenderable extends Renderable {
           reducedMotion: this.#reducedMotion,
           colorMode: this.#colorMode,
           mode: view.session.mode,
-          theme: resolveMotionPaintTokens(this.#theme),
+          theme: this.#motionPaintTokens,
           rows,
         });
       }
@@ -410,9 +454,15 @@ export class WorkbenchRenderable extends Renderable {
     this.#lastPresentation = presentation;
 
     if (geometry.bottomHeight > 0) {
-      buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, geometry.bottomHeight, this.#surface);
-      buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, 1, this.#border);
-      drawText(buffer, 'Problems 0   Output   Tasks', geometry.editorX + 1, geometry.bottomTop + 1, this.#foreground, this.#surface, geometry.editorWidth - 2);
+      const bottomPanelKey = `${geometry.editorX},${geometry.bottomTop},${geometry.editorWidth},${geometry.bottomHeight}`;
+      if (this.#lastBottomPanelKey !== bottomPanelKey) {
+        buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, geometry.bottomHeight, this.#surface);
+        buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, 1, this.#border);
+        drawText(buffer, 'Problems 0   Output   Tasks', geometry.editorX + 1, geometry.bottomTop + 1, this.#foreground, this.#surface, geometry.editorWidth - 2);
+        this.#lastBottomPanelKey = bottomPanelKey;
+      }
+    } else {
+      this.#lastBottomPanelKey = undefined;
     }
     const count = view?.selections.members.length ?? 0;
     const mode = view?.session.mode.toUpperCase() ?? 'NORMAL';
@@ -465,6 +515,7 @@ export class WorkbenchRenderable extends Renderable {
         paneLayout = new ViewportLayout();
         this.#paneLayouts.set(pane.viewId, paneLayout);
       }
+      const paneAnchor = this.resolveAnchor(pane.viewId, view, pane.height);
       const projected = paneLayout.project({
         viewId: pane.viewId as import('../../contracts/src/index').ViewId,
         snapshot: view.document,
@@ -472,22 +523,34 @@ export class WorkbenchRenderable extends Renderable {
         widthCells: pane.width,
         heightCells: pane.height,
         options: { wrap: false, gutterWidthCells: 6 },
+        ...(paneAnchor === undefined ? {} : { anchor: paneAnchor }),
       });
       if (!projected.ok) {
         drawText(buffer, 'No editable buffer', pane.x + 1, pane.y, this.#muted, this.#background, pane.width - 2);
+        this.#paneLastFrames.delete(pane.viewId);
+        this.#paneLastPresentations.delete(pane.viewId);
         continue;
       }
       const frame = projected.value;
       this.#paneFrames.set(pane.viewId, frame);
       const presentation = this.#presentation?.readPresentation(pane.viewId as import('../../contracts/src/index').ViewId);
-      const paint = drawFrame(buffer, frame, pane.x, pane.y, this.#foreground, this.#muted, this.#background, this.#accent, this.#ascii, {
-        presentation,
-        motionTrail: this.#motionTrail,
-        reducedMotion: this.#reducedMotion,
-        colorMode: this.#colorMode,
-        mode: view.session.mode,
-        theme: resolveMotionPaintTokens(this.#theme),
-      });
+      const previousPaneFrame = this.#paneLastFrames.get(pane.viewId);
+      const previousPanePresentation = this.#paneLastPresentations.get(pane.viewId);
+      const paneRanges = calculatePaintRanges(previousPaneFrame, frame, view, presentation, previousPanePresentation, fullRepaint);
+      let paint: MotionPaintStats | undefined;
+      for (const rows of paneRanges) {
+        paint = drawFrame(buffer, frame, pane.x, pane.y, this.#foreground, this.#muted, this.#background, this.#accent, this.#ascii, {
+          presentation,
+          motionTrail: this.#motionTrail,
+          reducedMotion: this.#reducedMotion,
+          colorMode: this.#colorMode,
+          mode: view.session.mode,
+          theme: this.#motionPaintTokens,
+          rows,
+        });
+      }
+      this.#paneLastFrames.set(pane.viewId, Object.freeze({ layout: geometry, frame, view }));
+      this.#paneLastPresentations.set(pane.viewId, presentation);
       if (String(this.#workbench.activeViewId) === pane.viewId) {
         activeFrame = frame;
         activeView = view;
@@ -502,9 +565,15 @@ export class WorkbenchRenderable extends Renderable {
       buffer.fillRect(splitter.x, splitter.y, splitter.width, splitter.height, this.#border);
     }
     if (geometry.bottomHeight > 0) {
-      buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, geometry.bottomHeight, this.#surface);
-      buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, 1, this.#border);
-      drawText(buffer, 'Problems 0   Output   Tasks', geometry.editorX + 1, geometry.bottomTop + 1, this.#foreground, this.#surface, geometry.editorWidth - 2);
+      const bottomPanelKey = `${geometry.editorX},${geometry.bottomTop},${geometry.editorWidth},${geometry.bottomHeight}`;
+      if (this.#lastBottomPanelKey !== bottomPanelKey) {
+        buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, geometry.bottomHeight, this.#surface);
+        buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, 1, this.#border);
+        drawText(buffer, 'Problems 0   Output   Tasks', geometry.editorX + 1, geometry.bottomTop + 1, this.#foreground, this.#surface, geometry.editorWidth - 2);
+        this.#lastBottomPanelKey = bottomPanelKey;
+      }
+    } else {
+      this.#lastBottomPanelKey = undefined;
     }
     const count = activeView?.selections.members.length ?? 0;
     const mode = activeView?.session.mode.toUpperCase() ?? 'NORMAL';
@@ -681,7 +750,8 @@ function drawFrame(buffer: OptimizedBuffer, frame: VisibleFrame, x: number, y: n
   });
 }
 
-function calculatePaintRanges(
+/** Exported for direct unit testing of the row-level paint diff (see tests/ui). */
+export function calculatePaintRanges(
   previous: WorkbenchFrameRead | undefined,
   current: VisibleFrame,
   view: WorkbenchViewSnapshot,
@@ -696,7 +766,18 @@ function calculatePaintRanges(
 
   const dirty = new Set<number>();
   for (let row = 0; row < current.rows.length; row += 1) {
-    if (previous.frame.rows[row] !== current.rows[row]) dirty.add(row);
+    const previousRow = previous.frame.rows[row];
+    const currentRow = current.rows[row];
+    // `contentKey` is stable across a base-offset shift for an otherwise-identical row (see its
+    // doc comment in packages/layout/src/index.ts), so comparing it instead of row-object
+    // identity keeps an edit on one line from marking every later row dirty just because the
+    // edit shifted their absolute offsets. Fall back to identity when either side has no
+    // reusable content identity (`null`).
+    const same = previousRow?.contentKey !== null && previousRow?.contentKey !== undefined
+      && currentRow?.contentKey !== null && currentRow?.contentKey !== undefined
+      ? previousRow.contentKey === currentRow.contentKey
+      : previousRow === currentRow;
+    if (!same) dirty.add(row);
   }
 
   const previousSelections = previous.view.selections;

@@ -2,11 +2,15 @@
 export { PersistenceService } from '../../persistence';
 export {
   BoundedPickerModel,
+  BufferPickerProvider,
   FilePathIndex,
   FilePickerProvider,
   StaticPickerProvider,
   createNavigationContributionModule,
 } from '../../navigation';
+export type { BufferPickerEntry } from '../../navigation';
+export { lookupCtags, parseCtags } from '../../navigation/ctags';
+export type { CtagsRecord } from '../../navigation/ctags';
 export { InMemorySearchBackend, RealtimeSearchService, RipgrepSearchBackend } from '../../search';
 export type {
   RipgrepSearchBackendOptions,
@@ -77,6 +81,30 @@ export { HostNavigationController } from '../../navigation/host';
 export type { HostLocation, HostNavigationFailure, HostNavigationProvider, HostNavigationResult } from '../../navigation/host';
 export { DiagnosticStore } from '../../language/diagnostics';
 export { executeLanguageCodeAction } from '../../language/workspace-edits';
+export {
+  WorkspaceEditResourceExecutor,
+  applyWorkspaceEditProposal,
+  applyWorkspaceResources,
+  fileUri,
+  planWorkspaceResources,
+  renameWithBoundedRetry,
+  serverSupportsFileOperation,
+  validateWorkspaceTextEditRanges,
+  workspacePathFromUri,
+  workspaceRelativePathFromUri,
+} from '../../language/workspace-edit-resources';
+export type {
+  ApplyWorkspaceEditProposalOptions,
+  RenameRetryOptions,
+  WorkspaceEditableDocument,
+  WorkspaceEditProposalProvider,
+  WorkspaceEditResourceExecutorOptions,
+  WorkspaceResourceApplyOptions,
+  WorkspaceResourceFilesystemPort,
+  WorkspaceResourcePlanItem,
+  WorkspaceResourcePlanOptions,
+  WorkspacePathState,
+} from '../../language/workspace-edit-resources';
 export { HierarchyController, LanguageServerHierarchyProvider } from '../../language/hierarchy';
 export type { HierarchyKind, HierarchyRelation, HierarchyItem, DocumentLink, HierarchyProvider, HierarchyFailure, HierarchyReadState, HierarchyReadModel } from '../../language/hierarchy';
 export { expandSnippet, SnippetSession } from '../../language/snippets';

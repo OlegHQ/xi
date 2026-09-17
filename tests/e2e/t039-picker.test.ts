@@ -58,6 +58,26 @@ const hiddenShown = index.query('settings', { includeHidden: true });
 assert.equal('kind' in hiddenShown, false, 'T039-HIDDEN-03 hidden paths can be selected');
 if (!('kind' in hiddenShown)) assert.equal(hiddenShown.totalMatches, 1, 'T039-HIDDEN-04 hidden result is retained when enabled');
 
+// T039-ASYNC-INDEX: queryAsync must time-slice a large index -- yielding to the
+// event loop between chunks -- and honor cancellation/generation between those
+// yields instead of scoring 50k+ entries in one uninterruptible synchronous pass.
+const asyncWarm = await index.queryAsync('generated/file-004', { limit: 40, includeHidden: false });
+assert.equal(asyncWarm.ok, true, 'T039-ASYNC-INDEX-01 time-sliced query succeeds on a large index');
+if (asyncWarm.ok) assert.ok(asyncWarm.value.entries.length > 0, 'T039-ASYNC-INDEX-02 time-sliced query still finds matches');
+
+const asyncCancelSource = new CancellationSource();
+const asyncCancelPending = index.queryAsync('generated', { cancellation: asyncCancelSource.token });
+asyncCancelSource.cancel();
+const asyncCancelled = await asyncCancelPending;
+assert.equal(asyncCancelled.ok, false, 'T039-ASYNC-INDEX-03 a query over 50k+ entries yields at least once, so a cancel requested right after dispatch still lands before completion');
+if (!asyncCancelled.ok) assert.equal(asyncCancelled.error.kind, 'cancelled', 'T039-ASYNC-INDEX-04 cancellation between slices is typed');
+
+const asyncStalePending = index.queryAsync('generated');
+assert.equal(index.addPaths('root-a', [{ rootId: 'root-a', relativePath: 'src/late-added-during-scan.ts' }]).ok, true, 'T039-ASYNC-INDEX-05 index mutates mid-scan');
+const asyncStaleResult = await asyncStalePending;
+assert.equal(asyncStaleResult.ok, false, 'T039-ASYNC-INDEX-06 a generation change mid-scan is observed between slices, not scored against a moving store');
+if (!asyncStaleResult.ok) assert.equal(asyncStaleResult.error.kind, 'stale', 'T039-ASYNC-INDEX-07 generation mismatch is reported as stale');
+
 const notReady = new FilePathIndex();
 assert.equal(notReady.addRoot({ id: 'cold', label: 'cold', path: '/cold' }).ok, true);
 const coldResult = notReady.query('x');

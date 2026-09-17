@@ -109,6 +109,8 @@ function makeView(nextSnapshot: DocumentSnapshot, nextSelections: ReturnType<typ
     session: { viewId, documentId, documentVersion: nextSnapshot.version, selections: nextSelections, mode: 'normal' },
     document: nextSnapshot,
     selections: nextSelections,
+    scrollTop: 0,
+    scrollLeft: 0,
   };
 }
 

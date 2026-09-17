@@ -106,6 +106,42 @@ explained golden repair. T108/T109/T111/T112/T116 retain production work and
 T106/T115 retain measurement and qualification. No reference budget is certified
 by this follow-up.
 
+## Follow-up audit and remediation, 2026-09-17
+
+A fresh ownership and hot-path audit of the worktree (not a release qualification)
+found defects the 2026-09-15 table did not list. They were fixed in the shared
+worktree the same day; each fix carries a unit or PTY test named below. Two rows
+of the original table are now stale: `TextFileDocument.snapshot()` is cached until
+the next commit, and the rope's line-break index is already packed.
+
+| Finding | Owner / path | Fix and evidence |
+|---|---|---|
+| Language server killed 5 s after spawn: the platform process port armed an unconditional SIGTERM timer and the session used a 5 000 ms default; this was the unexplained `ready → failed` loop in T127 | `platform/src/process.ts`, `services/language/lifecycle.ts` | `timeoutMilliseconds` is optional and long-lived servers pass none; timeout/dispose escalate to SIGKILL. `tests/platform/t-process-lifetime.test.ts`, `tests/services/t-lifecycle-process-spec.test.ts` |
+| Unnamed buffer's display label `[No Name]` used as a filesystem path by checkpoint and save, writing `[No Name]` and `[No Name].xi-recovery.json` into the cwd | `workbench/session`, `apps/xi` | `path` is `undefined` for unnamed buffers; save reports E32; label derived at the UI edge. `tests/e2e/t038-session.test.ts` |
+| Production render never passed a viewport anchor, so the editor pinned line 0 and never scrolled; wheel wrote `scrollTop` that nothing read | `ui/src/workbench.ts`, `layout`, `workbench/src/read-model.ts` | `resolveScrollAnchor` follows the primary cursor from the read model's `scrollTop`/`scrollLeft`; anchor changes flow back through `setViewScroll`. `tests/ui/t111-render-scheduling.test.ts`, `tests/workbench/t123-scroll-read-model.test.ts` |
+| Permanent 30 fps render loop while idle (`renderer.start()`), every tick re-reading the view and re-projecting | `ui/src/terminal.ts`, `apps/xi` | On-demand frames only; every service/model subscription in the composition root requests a coalesced frame. Idle renders zero frames over 200 ms in `t111-render-scheduling` |
+| Materialized-row cache keyed by absolute offsets: one typed character re-materialized and repainted every row below it; per-frame `project()` p50 ≈ 7 ms at 200×50 | `layout/src/index.ts`, `ui/src/workbench.ts` | Content-relative row templates rebased per frame, no per-frame deep freeze, single position-index build, display index only for visual-block. `T014-LAYOUT-PRODUCTION-SHAPE-TYPING-01`: p50 7.2 → ≈0.9 ms, p95 14.0 → 2.4–3.4 ms; paint ranges compare `ScreenRow.contentKey`, ≤2 rows repaint per keystroke (`tests/ui/t123-paint-contentkey.test.ts`). Published rows/cells are no longer deep-frozen; hit-test targets are frozen on return. Remaining p95 is the O(visible cells) rebase allocation; a typed-array cell representation is the next step |
+| Vim-origin commit mapped selections and replaced coordinator state twice per key; `views()` rebuilt every snapshot | `workbench/session`, `workbench/editing/atomic-command.ts` | Single-view Vim commits skip external mapping; identical state short-circuits. `tests/workbench/keystroke-fanout.test.ts` |
+| Replace-mode session was quadratic (`replaceStack` spread and full re-validation per key) | `vim/insert` | In-place append/pop, per-increment validation. `tests/vim/replace-session-scaling.test.ts` (20 000 keys ≈ linear) |
+| Watchers had no `'error'` listener (process crash on inotify limits); `overflow` never emitted; tasks ran with a scrubbed environment; task output split UTF-8 across chunks | `platform/src/filesystem.ts`, `services/tasks`, `services/config` | Error → close + `overflow`; tasks inherit the process environment with explicit keys overriding; streaming decoder. `tests/files/filesystem-watch-and-enumerate.test.ts`, `tests/tasks/t060-tasks.test.ts` |
+| Cancelled LSP requests counted against the pending limit forever and the limit failed the whole transport; protocol oddities consumed restart retries; `$/progress` tokens never freed; push diagnostics uncapped; error messages erased | `services/language/transport.ts`, `lifecycle.ts`, `diagnostics.ts` | Bounded cancelled history, per-request rejection, `recordProtocolIssue` separate from crashes, healthy-window reset, 10 000-item cap, incremental diagnostic store |
+| Search re-scanned dirty buffers and re-sorted all matches per ripgrep batch; explorer re-enumerated and republished per raw watch event; picker query scanned 250k entries synchronously | `services/search`, `services/files`, `services/navigation` | Buffers scanned once per query, sort once at completion; watch events coalesced per parent with one publish; `queryAsync` time-sliced with cancellation. `tests/search/t043-search.test.ts`, `tests/e2e/t040-explorer.test.ts`, `tests/e2e/t039-picker.test.ts` |
+| Recovery checkpoint re-parsed and re-encoded the whole journal (≤16 MiB) per checkpoint; per-byte BigInt/FNV hashing on open, save and every file operation; language sync allocated a per-scalar array of the document on open and stalled after a flush failure | `services/persistence`, `services/files/journaled-operations.ts`, `services/language/sync.ts` | In-memory journal cache with per-entry encodings, identity reuse when stat matches, `Bun.CryptoHasher`/`Bun.hash`, `isWellFormed`, single snapshot per open, one automatic resync retry. `tests/persistence/checkpoint-caching.test.ts`, `tests/lsp/sync-resilience.test.ts` |
+| Composition root owned workspace-edit resource semantics, a ctags parser, the buffer picker provider, five divergent open-file flows, and 75 inline test-marker branches | `apps/xi/src/main.ts` | Extracted to `services/language/workspace-edit-resources.ts` and `services/navigation/ctags.ts`, `BufferPickerProvider`; one `openBufferAtPath`; one `marker()` helper parsed at the process boundary; `main()` wrapped so the renderer is destroyed on any startup failure; `workbench.dispose()` and `OwnedVimSession.dispose()` run at teardown. `main.ts` 3 835 → ≈3 540 lines |
+
+Two regressions introduced during this remediation were caught by PTY tests and fixed
+the same day: the CLI clock's `sleep` ignored cancellation, so the new healthy-window
+reset kept the process alive 30 s after quit (`t051-completion-pty`); and the new
+`closeAllPanels()` closed a panel's own deferred re-open, emitting a spurious
+`XI_SEARCH_CANCELLED` (`t045-e05-search-rapid-typing-pty`). `closeAllPanels(keep)`
+now skips the panel being opened.
+
+Still open after this pass, for T116/T111/T112: Ex dispatch through `CommandRegistry`
+(discovery and dispatch remain two tables), panel keymaps and the leader state machine
+still in `main.ts`, the explorer `publish()` node-list rebuild, the layout rebase
+allocation noted above, and full production-path latency qualification (T115). No
+release gate is certified by this follow-up.
+
 ## Diagnostic reproduction
 
 Executed `bun run bench/performance/planning-probe.ts <public|rope> <normal|dense|long> 1048576` in six fresh children. Normal uses 79 `x` plus LF; dense uses `x` plus LF; long is all `x`. The public path calls `openTextDocument`; the private comparator calls `RopeDocument.create`. Both verify successful length; source SHA-256, line count, memory snapshots, CPU and max RSS are retained in `.artifacts/performance-planning/open-probe.json`. Source generation is outside open wall time but inside the recorded CPU interval. Imported modules are present in the pre-open baseline. Full fidelity correctness still requires owner tests.

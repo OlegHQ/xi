@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { ViewSelectionPersistence, type PersistedViewSelection } from '../../packages/workbench/selection-persistence';
+import { ViewSelectionPersistence, type PersistedViewSelection } from '../../packages/workbench/session/selection-persistence';
 import { TextFileDocument } from '../../packages/document/src/index';
 import { createSelectionSet, type EndpointInput } from '../../packages/selections/src/index';
 import { WorkbenchSession } from '../../packages/workbench/src/index';

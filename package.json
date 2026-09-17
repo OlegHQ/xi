@@ -3,9 +3,6 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
   "engines": {
     "bun": ">=1.3.13 <2"
   },
@@ -23,8 +20,12 @@
     "test:e2e": "bun run ./tools/verify-suite.ts e2e \"$@\"",
     "bench": "bun run ./tools/verify-suite.ts bench \"$@\"",
     "xi": "bun run apps/xi/src/main.ts",
+    "xi:dev:build": "bun build apps/xi/src/main.ts --target=bun --splitting --outdir dist/dev --external '@opentui/core-*' --external web-tree-sitter",
+    "xi:dev": "bun run dist/dev/main.js",
+    "skills:sync": "bun run ./tools/skills-sync.ts",
     "package:audit": "bun run ./tools/package-audit.ts --check",
     "package:build": "bun build --compile --bytecode --format=esm apps/xi/src/main.ts --outfile dist/xi",
+    "xi:install": "bun run package:build && mkdir -p ~/.local/bin && cp dist/xi ~/.local/bin/xi && chmod 755 ~/.local/bin/xi && ~/.local/bin/xi --version",
     "package:release": "bun run ./tools/package-release.ts",
     "package:smoke": "bun run package:audit && python3 tests/distribution/t064-compiled-pty.py && python3 tests/distribution/t064-ex-pty.py",
     "spikes:render": "bun run ./spikes/render/probe.ts",

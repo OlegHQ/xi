@@ -172,6 +172,7 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
   readonly #loadGenerations = new Map<string, number>();
   readonly #watchers = new Map<string, Disposable>();
   readonly #listeners = new Set<(model: ExplorerReadModel) => void>();
+  #decorationPublishTimer: ReturnType<typeof setTimeout> | undefined;
   #model: ExplorerReadModel;
   #generation = 0;
   #selectedId: string | undefined;
@@ -251,11 +252,38 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     const root = this.#rootPaths.get(rootId);
     if (root === undefined) return failure('root-not-found', rootId, 'explorer root does not exist');
     this.#watchers.get(rootId)?.dispose();
+    // A raw filesystem watcher can fire a burst of 'changed' notifications for
+    // the same directory (e.g. a multi-file save or `git checkout`); each one
+    // without an attached entry re-runs a full enumerateDirectory of the
+    // parent. Coalesce those bursts per parent path into one re-enumeration
+    // (and therefore one reconcile/publish) instead of one per raw event.
+    const pendingRefresh = new Map<string, ExplorerWatchEvent>();
+    let flushTimer: ReturnType<typeof setTimeout> | undefined;
+    const flush = (): void => {
+      flushTimer = undefined;
+      const events = [...pendingRefresh.values()];
+      pendingRefresh.clear();
+      if (this.#disposed) return;
+      for (const event of events) void this.applyWatchEvent(event);
+    };
     const watched = await this.#filesystem.watchDirectory(root.path, (event) => {
-      if (!this.#disposed) void this.applyWatchEvent(event);
+      if (this.#disposed) return;
+      if (event.kind === 'changed' && event.entry === undefined) {
+        pendingRefresh.set(`${event.rootId} ${event.relativePath}`, event);
+        flushTimer ??= setTimeout(flush, 50);
+        return;
+      }
+      void this.applyWatchEvent(event);
     }, cancellation ?? neverCancelledToken);
     if (!watched.ok) return watched;
-    this.#watchers.set(rootId, watched.value);
+    this.#watchers.set(rootId, Object.freeze({
+      dispose() {
+        if (flushTimer !== undefined) clearTimeout(flushTimer);
+        flushTimer = undefined;
+        pendingRefresh.clear();
+        watched.value.dispose();
+      },
+    }));
     return { ok: true, value: undefined };
   }
 
@@ -441,6 +469,8 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    if (this.#decorationPublishTimer !== undefined) clearTimeout(this.#decorationPublishTimer);
+    this.#decorationPublishTimer = undefined;
     for (const watcher of this.#watchers.values()) watcher.dispose();
     this.#watchers.clear();
     this.#listeners.clear();
@@ -526,7 +556,18 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
       const result = await this.#git.read(node.path, token);
       if (result.ok && this.#nodes.has(node.id)) node.git = result.value;
     }
-    if (!this.#disposed) this.publish('ready');
+    // A directory reconcile can kick off decoration reads for many children at
+    // once; publishing per completion rebuilds (and copies) the whole frozen
+    // node list once per child. Coalesce same-tick completions into one publish.
+    this.scheduleDecorationPublish();
+  }
+
+  private scheduleDecorationPublish(): void {
+    if (this.#disposed || this.#decorationPublishTimer !== undefined) return;
+    this.#decorationPublishTimer = setTimeout(() => {
+      this.#decorationPublishTimer = undefined;
+      if (!this.#disposed) this.publish('ready');
+    }, 0);
   }
 
   private findParentForPath(rootId: string, relativePath: string): MutableNode | undefined {

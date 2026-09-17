@@ -14,7 +14,9 @@ import type {
 export class NodeProcessPort implements ProcessPort {
   spawn(spec: ProcessSpec): Promise<Result<ProcessHandle, PlatformFailure>> {
     if (spec.argv.length === 0 || spec.argv[0].length === 0) return Promise.resolve(failure('invalid-argv', 'process argv must not be empty', false));
-    if (!Number.isSafeInteger(spec.timeoutMilliseconds) || spec.timeoutMilliseconds < 1) return Promise.resolve(failure('invalid-timeout', 'process timeout must be positive', false));
+    if (spec.timeoutMilliseconds !== undefined && (!Number.isSafeInteger(spec.timeoutMilliseconds) || spec.timeoutMilliseconds < 1)) {
+      return Promise.resolve(failure('invalid-timeout', 'process timeout must be positive', false));
+    }
     if (spec.cancellation.isCancelled) return Promise.resolve(failure('cancelled', 'process launch was cancelled', false));
     try {
       const child = Bun.spawn({
@@ -37,14 +39,12 @@ export class NodeProcessPort implements ProcessPort {
           stderr: streamChunks(child.stderr),
           exit,
           terminate: async (forceAfterMilliseconds: number) => {
-            child.kill('SIGTERM');
-            const boundedForceAfter = Number.isSafeInteger(forceAfterMilliseconds) && forceAfterMilliseconds >= 0 ? forceAfterMilliseconds : 250;
-            await Promise.race([exit, delay(boundedForceAfter)]);
-            if (child.exitCode === null) child.kill('SIGKILL');
+            const boundedForceAfter = Number.isSafeInteger(forceAfterMilliseconds) && forceAfterMilliseconds >= 0 ? forceAfterMilliseconds : DEFAULT_GRACE_MILLISECONDS;
+            await killEscalating(child, boundedForceAfter);
             await exit;
           },
           dispose: () => {
-            if (child.exitCode === null) child.kill('SIGTERM');
+            if (child.exitCode === null) void killEscalating(child, DEFAULT_GRACE_MILLISECONDS).catch(() => {});
           },
         }),
       });
@@ -53,12 +53,13 @@ export class NodeProcessPort implements ProcessPort {
     }
   }
 
-  private track(child: Bun.Subprocess<'pipe' | 'ignore', 'pipe', 'pipe'>, cancellation: CancellationToken, timeoutMilliseconds: number): Promise<Result<ProcessExit, PlatformFailure>> {
-    let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
-      if (child.exitCode === null) child.kill('SIGTERM');
+  private track(child: Bun.Subprocess<'pipe' | 'ignore', 'pipe', 'pipe'>, cancellation: CancellationToken, timeoutMilliseconds: number | undefined): Promise<Result<ProcessExit, PlatformFailure>> {
+    // A long-lived process (e.g. a language server) has no forced lifetime unless the caller sets one.
+    let timeout: ReturnType<typeof setTimeout> | undefined = timeoutMilliseconds === undefined ? undefined : setTimeout(() => {
+      if (child.exitCode === null) void killEscalating(child, DEFAULT_GRACE_MILLISECONDS).catch(() => {});
     }, timeoutMilliseconds);
     const cancellationSubscription = cancellation.onCancel(() => {
-      if (child.exitCode === null) child.kill('SIGTERM');
+      if (child.exitCode === null) void killEscalating(child, DEFAULT_GRACE_MILLISECONDS).catch(() => {});
     });
     return child.exited.then((code) => {
       if (timeout !== undefined) clearTimeout(timeout);
@@ -81,6 +82,9 @@ function createInput(sink: Bun.FileSink): ProcessInput {
       if (closed) return failure('stdin-closed', 'process stdin is closed', false);
       try {
         sink.write(bytes);
+        // Await the underlying flush so a stalled reader applies real backpressure to
+        // the write queue instead of letting output buffer without bound.
+        await sink.flush();
         return { ok: true, value: undefined };
       } catch (error: unknown) {
         return failure('stdin-write-failed', error instanceof Error ? error.message : String(error), true);
@@ -112,6 +116,16 @@ async function* streamChunks(stream: ReadableStream<Uint8Array<ArrayBuffer>> | n
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
+const DEFAULT_GRACE_MILLISECONDS = 250;
+
+/** SIGTERM, then SIGKILL if the child has not exited after a short grace period. */
+async function killEscalating(child: Bun.Subprocess<'pipe' | 'ignore', 'pipe', 'pipe'>, graceMilliseconds: number): Promise<void> {
+  if (child.exitCode !== null) return;
+  child.kill('SIGTERM');
+  await Promise.race([child.exited, delay(graceMilliseconds)]);
+  if (child.exitCode === null) child.kill('SIGKILL');
 }
 
 function failure(code: string, message: string, retryable: boolean): Result<never, PlatformFailure> {

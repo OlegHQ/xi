@@ -56,9 +56,22 @@ with tempfile.TemporaryDirectory(prefix="xi-t071-native-navigation-") as tempora
         os.write(master, b"\x17w")
         os.write(master, b"j\x1d")
         read_until(master, captured, b"XI_NATIVE_TAG", 5)
-        os.write(master, b"q!")
-        time.sleep(0.2)
-        os.write(master, b"q!")
+        # gf/Ctrl-W gf/tag-jump can leave more than one view open; bare 'q' now correctly
+        # closes one view per press (matching ':q' semantics) instead of quitting the whole
+        # app immediately, so close views explicitly via Ex until the process actually exits
+        # rather than assuming or relying on stray Normal-mode keystrokes.
+        for _ in range(5):
+            if child.poll() is not None:
+                break
+            os.write(master, b":q!\r")
+            deadline = time.monotonic() + 1
+            while child.poll() is None and time.monotonic() < deadline:
+                readable, _, _ = select.select([master], [], [], 0.05)
+                if readable:
+                    try:
+                        captured.extend(os.read(master, 65536))
+                    except OSError:
+                        break
         child.wait(timeout=5)
     finally:
         if child.poll() is None:

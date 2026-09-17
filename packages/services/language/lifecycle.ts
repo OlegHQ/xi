@@ -467,7 +467,7 @@ export class LanguageServerSession implements Disposable {
       const sync = this.#sync;
       if (sync !== undefined) {
         void sync.openDocument(document).then((result) => {
-          if (!result.ok) this.recordFailure(result.error.message);
+          if (!result.ok) this.recordProtocolIssue(result.error.message);
         });
       }
     } else {
@@ -518,7 +518,7 @@ export class LanguageServerSession implements Disposable {
     if (known && this.#state === 'ready' && this.#transport !== undefined) {
       const sync = this.#sync;
       if (sync !== undefined) void sync.closeDocument(uri).then((result) => {
-        if (!result.ok) this.recordFailure(result.error.message);
+        if (!result.ok) this.recordProtocolIssue(result.error.message);
       });
     }
     return { ok: true, value: undefined };
@@ -528,7 +528,7 @@ export class LanguageServerSession implements Disposable {
     this.#configurationSet = true;
     this.#configuration = configuration;
     if (this.#state === 'ready' && this.#transport !== undefined) {
-      void this.#transport.notify('workspace/didChangeConfiguration', { settings: configuration }).catch((error: unknown) => this.recordFailure(safeErrorMessage(error)));
+      void this.#transport.notify('workspace/didChangeConfiguration', { settings: configuration }).catch((error: unknown) => this.recordProtocolIssue(safeErrorMessage(error)));
     }
   }
 
@@ -596,7 +596,10 @@ export class LanguageServerSession implements Disposable {
         argv: [this.#options.config.command, ...this.#options.config.args],
         cwd: this.identity.root,
         env: this.identity.environment,
-        timeoutMilliseconds: this.#options.processTimeoutMilliseconds ?? 5_000,
+        // A language server is long-lived: it has no wall-clock lifetime unless the
+        // caller explicitly opts into one. Omitting this leaves the process port
+        // free of a forced-kill timer instead of SIGTERMing a healthy server.
+        ...(this.#options.processTimeoutMilliseconds === undefined ? {} : { timeoutMilliseconds: this.#options.processTimeoutMilliseconds }),
         cancellation: attempt.token,
       };
       const transportOptions = {
@@ -637,6 +640,7 @@ export class LanguageServerSession implements Disposable {
         this.#readyAt = this.#options.clock.monotonicMilliseconds();
         await this.replayState(transport);
         this.transition('ready');
+        void this.scheduleHealthyReset(this.#readyAt);
         const failure = await this.waitForTransportFailure();
         if (this.#lifecycleCancellation.token.isCancelled) return;
         await this.finishTransport(transport);
@@ -672,6 +676,13 @@ export class LanguageServerSession implements Disposable {
         general: { positionEncodings: ['utf-16'] },
         textDocument: {
           completion: { dynamicRegistration: true, completionItem: { snippetSupport: true } },
+          // Without declaring this, a spec-compliant server (confirmed: typescript-language-server)
+          // reads the absence of `textDocument.publishDiagnostics` as "this client does not want
+          // diagnostics pushed" and never sends any `textDocument/publishDiagnostics` notification.
+          // Only the minimal, honestly-supported shape is declared: DiagnosticPublish/LanguageDiagnostic
+          // do not model relatedInformation, tagSupport or versionSupport, so none of those optional
+          // sub-capabilities are claimed here.
+          publishDiagnostics: {},
           diagnostic: { dynamicRegistration: true },
           callHierarchy: { dynamicRegistration: true },
           typeHierarchy: { dynamicRegistration: true },
@@ -697,7 +708,10 @@ export class LanguageServerSession implements Disposable {
       const token = tokenFromUnknown(record?.token);
       if (token === undefined || !Object.hasOwn(record ?? {}, 'value')) return;
       const event = Object.freeze({ token, value: record?.value });
-      this.#progress.set(tokenKey(token), event);
+      // An 'end' event closes that progress token; without deleting it here the
+      // map (and every future health snapshot copying it) grows without bound.
+      if (asRecord(record?.value)?.kind === 'end') this.#progress.delete(tokenKey(token));
+      else this.#progress.set(tokenKey(token), event);
       for (const listener of [...this.#progressListeners]) {
         try { listener(event); } catch { /* observers cannot break protocol dispatch */ }
       }
@@ -705,7 +719,7 @@ export class LanguageServerSession implements Disposable {
     transport.onNotification('textDocument/publishDiagnostics', (params: unknown) => {
       const publish = decodeDiagnostics(params, this.#documents);
       if (publish === undefined) {
-        this.recordFailure('language server sent invalid textDocument/publishDiagnostics parameters');
+        this.recordProtocolIssue('language server sent invalid textDocument/publishDiagnostics parameters');
         return;
       }
       this.#options.diagnostics?.publish({ ...publish, serverId: this.identity.key });
@@ -713,7 +727,7 @@ export class LanguageServerSession implements Disposable {
     transport.onRequest('workspace/diagnostic/refresh', async () => {
       if (this.supportsRequest('textDocument/diagnostic')) {
         try { await this.refreshAllPullDiagnostics(); }
-        catch (error: unknown) { this.recordFailure(safeErrorMessage(error)); }
+        catch (error: unknown) { this.recordProtocolIssue(safeErrorMessage(error)); }
       }
       return null;
     });
@@ -809,17 +823,17 @@ export class LanguageServerSession implements Disposable {
   private registerCapabilities(params: unknown): void {
     const parsed = asRegistrationParams(params);
     if (parsed === undefined) {
-      this.recordFailure('language server sent invalid client/registerCapability parameters');
+      this.recordProtocolIssue('language server sent invalid client/registerCapability parameters');
       return;
     }
     if (this.#dynamicCapabilities.size + parsed.registrations.length > MAX_DYNAMIC_CAPABILITIES) {
-      this.recordFailure('language server exceeded the dynamic capability limit');
+      this.recordProtocolIssue('language server exceeded the dynamic capability limit');
       return;
     }
     const ids = new Set<string>();
     for (const registration of parsed.registrations) {
       if (!isSupportedDynamicMethod(registration.method) || ids.has(registration.id) || this.#dynamicCapabilities.has(registration.id)) {
-        this.recordFailure('language server registered an unsupported or duplicate capability');
+        this.recordProtocolIssue('language server registered an unsupported or duplicate capability');
         return;
       }
       ids.add(registration.id);
@@ -836,14 +850,14 @@ export class LanguageServerSession implements Disposable {
   private unregisterCapabilities(params: unknown): void {
     const parsed = asUnregistrationParams(params);
     if (parsed === undefined) {
-      this.recordFailure('language server sent invalid client/unregisterCapability parameters');
+      this.recordProtocolIssue('language server sent invalid client/unregisterCapability parameters');
       return;
     }
     if (parsed.unregisterations.some((registration) => {
       const current = this.#dynamicCapabilities.get(registration.id);
       return current === undefined || current.method !== registration.method;
     })) {
-      this.recordFailure('language server tried to unregister an unknown capability');
+      this.recordProtocolIssue('language server tried to unregister an unknown capability');
       return;
     }
     for (const registration of parsed.unregisterations) {
@@ -921,11 +935,27 @@ export class LanguageServerSession implements Disposable {
     return slept.ok && !this.#lifecycleCancellation.token.isCancelled;
   }
 
+  /** A genuine transport/process failure; consumes the bounded restart budget. */
   private recordFailure(message: string): void {
     this.#lastFailure = message;
     const readyAt = this.#readyAt;
     if (readyAt !== undefined && this.#options.clock.monotonicMilliseconds() - readyAt >= this.#retry.healthyWindowMilliseconds) this.#retries = 0;
     this.#retries += 1;
+  }
+
+  /** A protocol oddity (bad payload, unsupported/duplicate capability, a best-effort notify failing): recorded for health/diagnosis, but it never consumes the restart budget. */
+  private recordProtocolIssue(message: string): void {
+    this.#lastFailure = message;
+  }
+
+  /**
+   * Clears the restart-storm counter once a session has stayed ready for the full
+   * healthy window, instead of waiting for the next failure to notice retroactively.
+   */
+  private async scheduleHealthyReset(readyAt: number): Promise<void> {
+    const slept = await this.#options.clock.sleep(this.#retry.healthyWindowMilliseconds, this.#lifecycleCancellation.token);
+    if (!slept.ok || this.#lifecycleCancellation.token.isCancelled) return;
+    if (this.#readyAt === readyAt && this.#state === 'ready') this.#retries = 0;
   }
 
   private shouldRetry(): boolean {
@@ -1097,7 +1127,7 @@ function decodeDiagnostics(
   documents: ReadonlyMap<string, StoredLanguageDocument>,
 ): { readonly uri: string; readonly generation: number; readonly documentVersion?: number; readonly diagnostics: readonly Omit<import('./diagnostics').LanguageDiagnostic, 'id' | 'uri' | 'serverId' | 'documentVersion' | 'generation'>[] } | undefined {
   const record = asRecord(value);
-  if (typeof record?.uri !== 'string' || !Array.isArray(record.diagnostics)) return undefined;
+  if (typeof record?.uri !== 'string' || !Array.isArray(record.diagnostics) || record.diagnostics.length > 10_000) return undefined;
   const document = documents.get(record.uri);
   if (document === undefined) return undefined;
   const publishedVersion = record.version === undefined ? undefined : integer(record.version);

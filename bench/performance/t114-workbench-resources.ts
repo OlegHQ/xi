@@ -28,6 +28,11 @@ for (let cycle = 0; cycle < 1_000; cycle += 1) {
 }
 const lifecycleMilliseconds = performance.now() - lifecycleStarted;
 
+const afterLifecycle = coordinator.stats();
+if (afterLifecycle.leases !== 0 || afterLifecycle.accountedBytes !== 0) {
+  throw new Error(`retained-root-and-listener-counts correctness failed: ${afterLifecycle.leases} leftover leases, ${afterLifecycle.accountedBytes} leftover bytes after 1,000 disposed cycles`);
+}
+
 const evicted: string[] = [];
 const live = coordinator.admit({ owner: 'document', kind: 'retained', bytes: 12 * 1024 * 1024, priority: 'live' });
 if (!live.ok) throw new Error(`live admission failed: ${live.error.kind}`);
@@ -46,7 +51,7 @@ const result = {
   diagnosticOnly: true,
   fixture: 'PF10-workbench-resource-coordinator',
   host: { platform: process.platform, architecture: process.arch, bun: Bun.version },
-  lifecycle: { cycles: 1_000, milliseconds: lifecycleMilliseconds },
+  lifecycle: { cycles: 1_000, milliseconds: lifecycleMilliseconds, leftoverLeases: afterLifecycle.leases, leftoverBytes: afterLifecycle.accountedBytes },
   pressure: { evicted, stats: serialiseStats(afterPressure) },
   external: { stats: serialiseStats(afterExternal) },
   profile,

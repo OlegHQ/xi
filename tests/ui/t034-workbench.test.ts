@@ -36,6 +36,8 @@ function makeWorkbench(text = 'alpha 😀 beta\nsecond line\nthird line'): { rea
     session: { viewId: VIEW_ID, documentId: DOCUMENT_ID, documentVersion: snapshot.version, selections: selections.value.selectionSet, mode: 'normal' },
     document: snapshot,
     selections: selections.value.selectionSet,
+    scrollTop: 0,
+    scrollLeft: 0,
   };
   const document: DocumentReadPort = {
     snapshot: () => snapshot,
@@ -91,6 +93,8 @@ function makeCursorView(snapshot: DocumentSnapshot, primary: SelectionId, offset
     session: { viewId: VIEW_ID, documentId: DOCUMENT_ID, documentVersion: snapshot.version, selections: selections.value.selectionSet, mode: 'normal' },
     document: snapshot,
     selections: selections.value.selectionSet,
+    scrollTop: 0,
+    scrollLeft: 0,
   };
 }
 

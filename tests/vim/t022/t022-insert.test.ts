@@ -16,7 +16,7 @@ import {
 import { planVimInsertRegisterPayload } from '../../../packages/vim/insert/index';
 import type { VimInsertEntryContext, VimInsertLastContext } from '../../../packages/vim/insert/index';
 import {
-  DEFAULT_VIM_DIGRAPH_ENTRIES,
+  defaultVimDigraphEntries,
   DEFAULT_VIM_DIGRAPH_SOURCE,
   lookupDefaultVimDigraph,
 } from '../../../packages/vim/insert/default-digraphs';
@@ -480,7 +480,7 @@ function checkDefaultDigraphTable(binaryPath: string): void {
     rows.push([row[0], row[1]]);
   }
   assert.equal(rows.length, DEFAULT_VIM_DIGRAPH_SOURCE.entryCount, 'T022-DIGRAPH-TABLE-06 table has the pinned entry count');
-  assert.deepEqual(DEFAULT_VIM_DIGRAPH_ENTRIES, rows, 'T022-DIGRAPH-TABLE-07 checked-in default table is byte-for-byte equivalent in order and values');
+  assert.deepEqual(defaultVimDigraphEntries(), rows, 'T022-DIGRAPH-TABLE-07 checked-in default table is byte-for-byte equivalent in order and values');
   assert.equal(new Set(rows.map(([sequence]) => sequence)).size, rows.length, 'T022-DIGRAPH-TABLE-08 table keys are unique');
   for (const [sequence, value] of rows) {
     assert.equal(lookupDefaultVimDigraph(sequence), value, `T022-DIGRAPH-TABLE-09 lookup preserves ${sequence}`);

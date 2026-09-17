@@ -117,7 +117,8 @@ export interface ProcessSpec {
   readonly env: Readonly<Record<string, string>>;
   /** Search and other one-way commands can avoid allocating a writable stdin pipe. */
   readonly stdin?: 'pipe' | 'ignore';
-  readonly timeoutMilliseconds: number;
+  /** Wall-clock lifetime bound; omit for a long-lived process (e.g. a language server) with no forced lifetime. */
+  readonly timeoutMilliseconds?: number;
   readonly cancellation: CancellationToken;
 }
 

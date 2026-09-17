@@ -61,6 +61,30 @@ export { LanguagePresentationFeatures } from './folding';
 export type { FoldRange, SelectionRange, InlayHint, CodeLens, FoldingResult, SelectionRangeResult, HintResult, FoldingFailure, PresentationResolve, PresentationExecute } from './folding';
 export { WorkspaceEditCoordinator, LanguageServerWorkspaceEditProvider, executeLanguageCodeAction } from './workspace-edits';
 export type { WorkspaceTextEdit, WorkspaceResourceOperation, WorkspaceEditProposal, WorkspaceEditTarget, WorkspaceEditPort, WorkspaceEditFailure, WorkspaceEditPosition, WorkspaceEditDocument, WorkspaceEditRequest, CodeActionRequest, LanguageCodeAction, WorkspaceEditProviderFailure, WorkspaceFileOperationKind, LanguageCodeActionExecutionFailure, LanguageCodeActionExecutor } from './workspace-edits';
+export {
+  WorkspaceEditResourceExecutor,
+  applyWorkspaceEditProposal,
+  applyWorkspaceResources,
+  fileUri,
+  planWorkspaceResources,
+  renameWithBoundedRetry,
+  serverSupportsFileOperation,
+  validateWorkspaceTextEditRanges,
+  workspacePathFromUri,
+  workspaceRelativePathFromUri,
+} from './workspace-edit-resources';
+export type {
+  ApplyWorkspaceEditProposalOptions,
+  RenameRetryOptions,
+  WorkspaceEditableDocument,
+  WorkspaceEditProposalProvider,
+  WorkspaceEditResourceExecutorOptions,
+  WorkspaceResourceApplyOptions,
+  WorkspaceResourceFilesystemPort,
+  WorkspaceResourcePlanItem,
+  WorkspaceResourcePlanOptions,
+  WorkspacePathState,
+} from './workspace-edit-resources';
 export { expandSnippet, SnippetSession } from './snippets';
 export type { SnippetEdit, SnippetTabstop, SnippetTransform, SnippetExpansion, SnippetFailure } from './snippets';
 export type {

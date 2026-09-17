@@ -10,11 +10,12 @@ import type {
 import { createSelectionSet, mapSelectionSet, type EndpointInput, type SelectionMember, type SelectionMemberInput, type SelectionSet } from '../../selections/src/index';
 import { asIdentifier, asLineIndex, asUtf16Offset, type DocumentId, type DocumentVersion, type Result, type SelectionId, type UndoGroupId, type ViewId } from '../../contracts/src/index';
 import type { VimMode, VimSessionReader, VimSessionSnapshot } from '../../vim/src/index.ts';
-import { ViewSelectionPersistence, type PersistedViewSelection, type SelectionPersistenceFailure, type SelectionPersistenceSnapshot } from '../selection-persistence';
+import { ViewSelectionPersistence, type PersistedViewSelection, type SelectionPersistenceFailure, type SelectionPersistenceSnapshot } from './selection-persistence';
 import {
   AtomicCommandCoordinator,
   createAtomicWorkbenchState,
   type AtomicViewState,
+  type AtomicWorkbenchState,
 } from '../editing/atomic-command';
 import type { WorkbenchLayoutRead } from '../src/read-model';
 
@@ -48,7 +49,7 @@ export interface BufferOpenOptions {
 
 export interface WorkbenchBufferSnapshot {
   readonly bufferId: DocumentId;
-  readonly path: string;
+  readonly path: string | undefined;
   readonly documentId: DocumentId;
   readonly documentVersion: DocumentVersion;
   readonly revisionId: DocumentSnapshot['revisionId'];
@@ -129,7 +130,7 @@ export interface WorkbenchSessionOptions {
 
 interface BufferRecord {
   readonly bufferId: DocumentId;
-  path: string;
+  path: string | undefined;
   readonly document: TextFileDocument;
   readonly coordinator: AtomicCommandCoordinator;
   readonly viewIds: Set<ViewId>;
@@ -155,6 +156,10 @@ interface WorkbenchReadView {
   readonly session: VimSessionSnapshot;
   readonly document: DocumentSnapshot;
   readonly selections: SelectionSet;
+  /** Viewport scroll offset, in document line index (0-based). */
+  readonly scrollTop: number;
+  /** Viewport scroll offset, in terminal cell columns (0-based). */
+  readonly scrollLeft: number;
 }
 
 /**
@@ -172,6 +177,9 @@ export class WorkbenchSession implements VimSessionReader {
   readonly #views = new Map<ViewId, ViewRecord>();
   #root: SplitNode | undefined;
   #layoutReadCache: WorkbenchLayoutRead | undefined;
+  /** Per-view read cache, self-validating on the coordinator state/document identity that produced it. */
+  readonly #readViewCache = new Map<ViewId, { readonly state: AtomicWorkbenchState; readonly document: DocumentSnapshot; readonly scrollTop: number; readonly scrollLeft: number; readonly result: WorkbenchReadView }>();
+  readonly #viewSnapshotCache = new Map<ViewId, { readonly read: WorkbenchReadView; readonly paneId: string; readonly scrollTop: number; readonly scrollLeft: number; readonly result: WorkbenchViewStateSnapshot }>();
   #activeViewId: ViewId | undefined;
   #nextNode = 1;
   #nextView = 1;
@@ -210,7 +218,7 @@ export class WorkbenchSession implements VimSessionReader {
     const coordinator = new AtomicCommandCoordinator(document, atomicState.value);
     const buffer: BufferRecord = {
       bufferId: document.id,
-      path: options.path ?? '[No Name]',
+      path: options.path,
       document,
       coordinator,
       viewIds: new Set([viewId]),
@@ -532,20 +540,28 @@ export class WorkbenchSession implements VimSessionReader {
     return this.applyTextEdits(viewId, edits, undoGroup, origin, false);
   }
 
-  /** Read-only workbench boundary consumed by the UI adapter. */
+  /** Read-only workbench boundary consumed by the UI adapter. Cached until the coordinator state or document snapshot changes. */
   readView(viewId: ViewId): WorkbenchReadView | undefined {
     const view = this.#views.get(viewId);
     if (view === undefined) return undefined;
     const buffer = this.#buffers.get(view.bufferId);
     if (buffer === undefined) return undefined;
-    const state = buffer.coordinator.readState().views.find((candidate) => candidate.viewId === viewId);
-    if (state === undefined) return undefined;
+    const coordinatorState = buffer.coordinator.readState();
     const document = buffer.document.snapshot();
-    return Object.freeze({
-      session: Object.freeze({ viewId, documentId: document.id, documentVersion: document.version, selections: state.selections, mode: publicMode(state.mode) }),
+    const cached = this.#readViewCache.get(viewId);
+    if (cached !== undefined && cached.state === coordinatorState && cached.document === document
+      && cached.scrollTop === view.scrollTop && cached.scrollLeft === view.scrollLeft) return cached.result;
+    const target = coordinatorState.views.find((candidate) => candidate.viewId === viewId);
+    if (target === undefined) { this.#readViewCache.delete(viewId); return undefined; }
+    const result: WorkbenchReadView = Object.freeze({
+      session: Object.freeze({ viewId, documentId: document.id, documentVersion: document.version, selections: target.selections, mode: publicMode(target.mode) }),
       document,
-      selections: state.selections,
+      selections: target.selections,
+      scrollTop: view.scrollTop,
+      scrollLeft: view.scrollLeft,
     });
+    this.#readViewCache.set(viewId, { state: coordinatorState, document, scrollTop: view.scrollTop, scrollLeft: view.scrollLeft, result });
+    return result;
   }
 
   /** Install the engine-owned state for one view without taking ownership of text or parsing. */
@@ -561,6 +577,7 @@ export class WorkbenchSession implements VimSessionReader {
     const state = buffer.coordinator.readState();
     const target = state.views.find((candidate) => candidate.viewId === viewId);
     if (target === undefined) return { ok: false, error: { kind: 'view-not-found', viewId } };
+    if (target.selections === selections && target.mode === mode) return { ok: true, value: undefined };
     const replaced = buffer.coordinator.replaceState({
       activeViewId: state.activeViewId,
       views: state.views.map((candidate) => candidate.viewId === viewId
@@ -676,7 +693,7 @@ export class WorkbenchSession implements VimSessionReader {
   }
 
   layoutSnapshot(): WorkbenchLayoutSnapshot {
-    const buffers: WorkbenchLayoutBuffer[] = [...this.#buffers.values()].map((buffer) => Object.freeze({ bufferId: buffer.bufferId, path: buffer.path, preview: buffer.preview, pinned: buffer.pinned, viewIds: Object.freeze([...buffer.viewIds]) }));
+    const buffers: WorkbenchLayoutBuffer[] = [...this.#buffers.values()].map((buffer) => Object.freeze({ bufferId: buffer.bufferId, path: buffer.path ?? '', preview: buffer.preview, pinned: buffer.pinned, viewIds: Object.freeze([...buffer.viewIds]) }));
     const viewStates: WorkbenchLayoutViewState[] = [...this.#views.values()].map((view) => Object.freeze({ viewId: view.viewId, bufferId: view.bufferId, scrollTop: view.scrollTop, scrollLeft: view.scrollLeft }));
     return Object.freeze({ schemaVersion: LAYOUT_SCHEMA_VERSION, workspaceId: this.#workspaceId, ...(this.#activeViewId === undefined ? {} : { activeViewId: this.#activeViewId }), buffers: Object.freeze(buffers), viewStates: Object.freeze(viewStates), split: this.splitSnapshot() });
   }
@@ -758,12 +775,30 @@ export class WorkbenchSession implements VimSessionReader {
 
   private viewSnapshot(view: ViewRecord): WorkbenchViewStateSnapshot | undefined {
     const read = this.readView(view.viewId);
-    return read === undefined ? undefined : Object.freeze({ viewId: view.viewId, bufferId: view.bufferId, paneId: view.paneId, scrollTop: view.scrollTop, scrollLeft: view.scrollLeft, session: read.session });
+    if (read === undefined) { this.#viewSnapshotCache.delete(view.viewId); return undefined; }
+    const cached = this.#viewSnapshotCache.get(view.viewId);
+    if (cached !== undefined && cached.read === read && cached.paneId === view.paneId && cached.scrollTop === view.scrollTop && cached.scrollLeft === view.scrollLeft) {
+      return cached.result;
+    }
+    const result = Object.freeze({ viewId: view.viewId, bufferId: view.bufferId, paneId: view.paneId, scrollTop: view.scrollTop, scrollLeft: view.scrollLeft, session: read.session });
+    this.#viewSnapshotCache.set(view.viewId, { read, paneId: view.paneId, scrollTop: view.scrollTop, scrollLeft: view.scrollLeft, result });
+    return result;
   }
 
   private mapExternalChange(buffer: BufferRecord, change: CommittedDocumentChange): void {
     if (this.#disposed || this.#buffers.get(buffer.bufferId) !== buffer) return;
     const state = buffer.coordinator.readState();
+    // A vim-origin commit on a buffer with exactly one view is about to be
+    // followed, synchronously within the same handleKey call, by that view's
+    // own syncViewSession publishing the authoritative post-command
+    // selections/mode. Mapping and replacing state here would just be
+    // discarded work (see docs/plan/15-keystroke-latency.md). A buffer with
+    // more than one view still needs every stale view mapped below, since
+    // only the active view gets an authoritative sync.
+    if (change.origin === 'vim' && state.views.length <= 1) {
+      this.#onDocumentChange?.(change);
+      return;
+    }
     const views: AtomicViewState[] = [];
     let changed = false;
     for (const view of state.views) {

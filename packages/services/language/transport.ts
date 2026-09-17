@@ -94,7 +94,7 @@ function idKey(value: unknown): string | undefined {
 function asErrorMessage(error: unknown): string {
   if (error instanceof FrameProtocolError) return `${error.kind}: ${error.message}`;
   if (error instanceof LanguageProtocolError) return `${error.kind}: ${error.message}`;
-  if (error instanceof Error) return `${error.name}: language transport operation failed`;
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
   return 'language transport failed';
 }
 
@@ -105,6 +105,7 @@ function makePlatformError(message: string): Error {
 class ResponseTracker {
   private readonly pending = new Set<string>();
   private readonly cancelled = new Map<string, 'awaiting-response' | 'responded'>();
+  private readonly cancelledOrder: string[] = [];
   private readonly completed = new Set<string>();
   private readonly completedOrder: string[] = [];
   private readonly historyLimit: number;
@@ -172,26 +173,27 @@ class ResponseTracker {
 
   private rememberCancelled(key: string): void {
     this.cancelled.set(key, 'awaiting-response');
+    this.cancelledOrder.push(key);
     this.trimHistory();
   }
 
+  /**
+   * Bounds total remembered history (completed + cancelled) by count, including
+   * cancellations a server never answers. Without this, a cancelled request the
+   * server never responds to would stay 'awaiting-response' forever and the
+   * pending-request-limit check in `outgoing()` would count it indefinitely.
+   */
   private trimHistory(): void {
-    while (this.completedOrder.length + this.respondedCancellationCount() > this.historyLimit) {
+    while (this.completedOrder.length + this.cancelled.size > this.historyLimit) {
       const oldestCompleted = this.completedOrder.shift();
       if (oldestCompleted !== undefined) {
         this.completed.delete(oldestCompleted);
-      } else {
-        const oldestCancelled = [...this.cancelled.entries()].find(([, state]) => state === 'responded')?.[0];
-        if (oldestCancelled === undefined) break;
-        this.cancelled.delete(oldestCancelled);
+        continue;
       }
+      const oldestCancelled = this.cancelledOrder.shift();
+      if (oldestCancelled === undefined) break;
+      this.cancelled.delete(oldestCancelled);
     }
-  }
-
-  private respondedCancellationCount(): number {
-    let count = 0;
-    for (const state of this.cancelled.values()) if (state === 'responded') count += 1;
-    return count;
   }
 }
 
@@ -264,7 +266,9 @@ class ProcessMessageWriter extends AbstractMessageWriter {
       this.tracker.outgoing(message);
     } catch (error) {
       this.fireError(error, message);
-      this.onFailure(error);
+      // A bounded pending-request limit rejects only this caller's request; it is not
+      // a transport/protocol failure and must not tear down the whole connection.
+      if (!(error instanceof LanguageProtocolError && error.kind === 'pending-request-limit')) this.onFailure(error);
       throw error;
     }
 

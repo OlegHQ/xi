@@ -1,11 +1,11 @@
-import { asCellColumn, asIdentifier, asLineIndex, asUtf16Offset, type DocumentId, type SelectionId, type UndoGroupId, type ViewId, type Utf16Offset } from '../../contracts/src/index';
+import { asCellColumn, asIdentifier, asLineIndex, asUtf16Offset, type UndoGroupId, type ViewId, type Utf16Offset } from '../../contracts/src/index';
 import type { CanonicalInputEvent } from '../../contracts/src/index';
 import type { CommittedDocumentChange, DocumentEdit, DocumentReadPort, DocumentSnapshot, TextFileDocument } from '../../document/src/index';
-import { createSelectionSet, mapSelectionSet, updateSelectionSet, type EndpointInput, type SelectionSetSnapshot, type SelectionMemberInput } from '../../selections/src/index';
+import { createDocumentAnchor, DocumentChangeMap } from '../../document/src/index';
+import { createSelectionSet, mapSelectionSet, updateSelectionSet, type SelectionSetSnapshot, type SelectionMemberInput } from '../../selections/src/index';
 import {
   beginVimMultiInsert,
   createVimMotionCursor,
-  createVimParserState,
   normalizeVimInput,
   parseVimInput,
   prepareVimDirectChange,
@@ -43,80 +43,61 @@ import {
 } from '../../vim/src/entrypoints/launch';
 import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../src/read-model';
 import type { VimHostCommand } from '../../vim/src/index';
+import {
+  createVimInsertRepeatTarget,
+  createVimOperatorRepeatTarget,
+  createVimRepeatState,
+  recordVimRepeatTarget,
+  replayVimDot,
+  type VimRepeatState,
+} from '../../vim/src/index';
+import {
+  beginVimMacroRecording,
+  commitVimMacroRecording,
+  createVimMacroStore,
+  executeVimMacro,
+  recordVimMacroKey,
+  type VimMacroRecordingSession,
+  type VimMacroRegisterName,
+  type VimMacroStore,
+} from '../../vim/src/index';
 import type { PointerCell, PointerSelectionIntent } from '../../vim/src/entrypoints/launch';
 import type { PrefixHelpParserContinuation } from '../commands/prefix-help';
 import { createVimRegisterBank, type VimRegisterBank, type VimRegisterName, type VimRegisterType } from '../../vim/src/entrypoints/launch';
+import type { OwnedVimKeyEvent, OwnedVimSessionOptions, OwnedVimSession, VimPrefixHelpState, VimCommandLineState } from './types';
+export type { OwnedVimKeyEvent, OwnedVimSessionOptions, OwnedVimSession, VimPrefixHelpState, VimCommandLineState } from './types';
+import { hostTarget, hostWindowAction, isHostTokenCharacter } from './host-commands';
+import { parseXiSelectionCommand, selectionModeFor, SELECTION_COMMANDS, PATTERN_SELECTION_COMMANDS, SELECTION_HISTORY_LIMIT, type XiSelectionCommandInput } from './selection-commands';
+import { addPointerCaret, pointerVisualCursor, pointerWordRange } from './pointer';
+import { commitPlan, makeInsertSelections, mapExternalInsertSession, INSERT_GROUP } from './insert-plan';
+import {
+  applyRegisterEffect,
+  buildParser,
+  coreOperator,
+  encodeKeyBytes,
+  id,
+  isDirectChangeKey,
+  isInsertEntryKey,
+  isInsertMode,
+  isMotionKey,
+  isMotionLike,
+  isVisualMode,
+  keyName,
+  makeMotionCursor,
+  makeNormalSelection,
+  makeSelection,
+  makeView,
+  motionInvocation,
+  nonEmptyTuple,
+  notifyCommitted,
+  offset,
+  selectionOffset,
+} from './helpers';
 
-export interface OwnedVimKeyEvent {
-  readonly name: string;
-  readonly raw: string;
-  readonly shift: boolean;
-  readonly option: boolean;
-  readonly ctrl: boolean;
-  readonly meta: boolean;
-}
-
-export interface OwnedVimSessionOptions {
-  readonly viewId: ViewId;
-  readonly initialLine?: number;
-  readonly initialSelections?: SelectionSetSnapshot;
-  readonly initialMode?: VimMode;
-  readonly onMessage?: (message: string) => void;
-  readonly onSave?: (path?: string) => Promise<boolean>;
-  /** Give the workbench first refusal for host commands such as split/close. */
-  readonly onExCommand?: (source: string) => Promise<'handled' | 'unhandled' | 'quit'> | 'handled' | 'unhandled' | 'quit';
-  /** Route host-dependent native commands without putting I/O on the key path. */
-  readonly onHostCommand?: (command: VimHostCommand) => void | Promise<void>;
-  /** Publish the owned engine state to the workbench after each input event. */
-  readonly onStateChange?: (state: { readonly selections: SelectionSetSnapshot; readonly mode: VimMode }) => void;
-  /** Publish parser-owned continuation metadata to the passive help surface. */
-  readonly onPrefixStateChange?: (state: VimPrefixHelpState) => void;
-  /** Publish the command-line source to the read-only Ex surface. */
-  readonly onCommandLineChange?: (state: VimCommandLineState | undefined) => void;
-  /** Publish each committed document change to language/service owners. */
-  readonly onDocumentChange?: (change: CommittedDocumentChange) => void;
-}
-
-export interface VimPrefixHelpState {
-  readonly pendingKeys: readonly string[];
-  readonly parserContinuations: readonly PrefixHelpParserContinuation[];
-}
-
-export interface VimCommandLineState {
-  /** The leading ':' is included; cursorOffset is UTF-16 based. */
-  readonly source: string;
-  readonly cursorOffset: number;
-}
-
-export interface OwnedVimSession extends WorkbenchReadPort {
-  handleKey(event: OwnedVimKeyEvent): boolean | 'quit' | Promise<boolean | 'quit'>;
-  readonly commandLineActive: boolean;
-  readonly commandLine: VimCommandLineState | undefined;
-  readonly prefixHelp: VimPrefixHelpState;
-  /** Re-anchor the engine after a document owner commits an external edit. */
-  applyExternalChange(change: CommittedDocumentChange): void;
-  /** Close a Vim Insert group before a service-originated edit takes ownership of history. */
-  closeInsertUndoGroup(): boolean;
-  /** Move the active insert caret after a service inserts a snippet field. */
-  setInsertCursor(offset: number): boolean;
-  /** Move every insert caret in one selection-only update. */
-  setInsertCursors(offsets: ReadonlyMap<string, number>): boolean;
-  /** Place the primary Normal cursor at a host-resolved zero-based line/column. */
-  setCursorPosition(line: number, utf16Column?: number): boolean;
-  /** Apply a versioned pointer intent after layout has resolved its text target. */
-  placePointer(intent: PointerSelectionIntent): boolean;
-  /** Cancel a pending Vim prefix before a pointer placement. */
-  cancelPendingOperator(): void;
-  /** Replace the accepted Ex source while its command line is active. */
-  setCommandLineSource(source: string, cursorOffset?: number): boolean;
-  /** Execute the displayed Ex source through the owning session. */
-  submitCommandLine(source?: string): Promise<boolean | 'quit'>;
-}
-
-const INSERT_GROUP = id<UndoGroupId>('xi-workbench-insert');
 const DIRECT_GROUP = id<UndoGroupId>('xi-workbench-direct');
 const EX_GROUP = id<UndoGroupId>('xi-workbench-ex');
 const OPERATOR_GROUP = id<UndoGroupId>('xi-workbench-operator');
+const EMPTY_PREFIX_KEYS: readonly string[] = Object.freeze([]);
 
 export function createOwnedVimSession(document: TextFileDocument, options: OwnedVimSessionOptions): OwnedVimSession {
   const documentId = document.id;
@@ -124,7 +105,15 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   const snapshot = document.snapshot();
   let mode: VimMode = options.initialMode ?? 'normal';
   let selections = options.initialSelections ?? makeSelection(snapshot, options.initialLine);
-  let parser = makeParser(mode, selections);
+  let parser = buildParser(mode, selections);
+  // Reuses the current parser state when neither mode nor the selection set
+  // reference changed (a no-op key, e.g. a boundary motion or repeated
+  // Escape) instead of rebuilding it every key. `parser` is this session's
+  // own closure variable, so this cannot leak across concurrent sessions.
+  function makeParser(nextMode: VimMode, nextSelections: SelectionSetSnapshot): VimParserState {
+    if (parser.session.mode === nextMode && parser.session.selections === nextSelections) return parser;
+    return buildParser(nextMode, nextSelections);
+  }
   let insert: VimMultiInsertSession | null = null;
   let motionCursor = makeMotionCursor(document.snapshot(), selections);
   let undoOpen = false;
@@ -132,14 +121,49 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   let lastFind: VimLastFind | null = null;
   let commandLine: string | undefined;
   let commandLineCursorOffset = 0;
-  let prefixKeys: string[] = [];
+  let prefixKeys: readonly string[] = EMPTY_PREFIX_KEYS;
+  // `prefixKeys` and `parser.legalContinuations` are already frozen at their
+  // source (updatePrefixKeys / freezeContinuations), and both are replaced
+  // by reference (never mutated in place) whenever their content actually
+  // changes. Memoizing on that reference pair turns the common no-pending
+  // key into a cache hit instead of reallocating on every keystroke.
+  let prefixHelpCache: { readonly keys: readonly string[]; readonly continuations: VimPrefixHelpState['parserContinuations']; readonly value: VimPrefixHelpState } | undefined;
   let selectionHistory: SelectionSetSnapshot[] = [];
+  // Dot-repeat (T130): a single most-recent semantic target, matching T024's tested
+  // model exactly (operator xor insert xor visual xor put; last completed one wins).
+  // Only the delete/change-motion and plain-insert cases below are wired; visual-change
+  // and put targets remain unwired. An operator that transitions into insert (e.g. 'ciw')
+  // *is* replayed as one atomic "delete then insert" unit, but through a session-local
+  // `changeRepeatTarget` alongside T024's own repeatState (its schema has no combined
+  // variant) rather than by extending T024's already oracle-tested module itself.
+  let repeatState: VimRepeatState = createVimRepeatState();
+  let insertEntryKey: VimInsertEntryKey | undefined;
+  let insertTypedChars: string[] = [];
+  let insertTainted = false;
+  let pendingChangeOperatorMotion: { readonly motionKey: string; readonly linewise: boolean } | undefined;
+  let changeRepeatTarget: { readonly motionKey: string; readonly text: string; readonly linewise: boolean } | undefined;
+  let lastRepeatKind: 'engine' | 'change' = 'engine';
+  // Macro record/playback (T130). Starting a recording is exposed through
+  // beginMacroRecording (see the leader-key wiring in apps/xi/src/main.ts) rather than
+  // through the parser's own 'q'+register literal-command, because bare 'q' in Normal mode
+  // is already Xi's documented quick-quit shortcut (docs/evidence/T038.md) and that
+  // extensively-relied-upon, already-shipped behavior is out of scope to remove here.
+  // Stopping (bare 'q' while a recording is active) and playback (real '@'/'@@' keys) have
+  // no such conflict and are wired to their natural Vim keys below.
+  let macroStore: VimMacroStore = createVimMacroStore();
+  let macroRecording: VimMacroRecordingSession | null = null;
+  let lastMacroRegister: VimMacroRegisterName | undefined;
+  // No timers or document/prefix-help subscriptions are held by this factory: every
+  // handle above is a plain closure variable owned by this session. dispose() only
+  // needs to drop pending state and stop publishing further state changes.
+  let disposed = false;
   const readPort: DocumentReadPort = {
     snapshot: () => document.snapshot(),
     slice: (start, end, expectedVersion) => document.slice(start, end, expectedVersion),
   };
 
   function handleKey(event: OwnedVimKeyEvent): boolean | 'quit' | Promise<boolean | 'quit'> {
+    if (disposed) return true;
     const key = keyName(event);
     if (canHandleSynchronously(event, key)) {
       const result = handleSynchronousKey(event, key);
@@ -156,6 +180,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
   async function handleKeyInternal(event: OwnedVimKeyEvent): Promise<boolean | 'quit'> {
     const key = keyName(event);
+    recordMacroKeyIfActive(key);
     if (commandLine !== undefined) {
       if (key === '<Esc>') {
         commandLine = undefined;
@@ -182,7 +207,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     if (!isInsertMode(mode) && key === ':') {
       commandLine = '';
       commandLineCursorOffset = 1;
-      prefixKeys = [];
+      prefixKeys = EMPTY_PREFIX_KEYS;
       return true;
     }
     if (event.ctrl && (key === 's' || key === 'S')) {
@@ -192,7 +217,26 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (options.onSave !== undefined) void options.onSave().catch(() => options.onMessage?.('xi: save failed\n'));
       return true;
     }
-    if (mode === 'normal' && key === 'q') return false;
+      // Bare 'q' while a macro is recording stops it (real Vim needs no register key to
+      // stop). Otherwise 'q' is Xi's documented quick-quit shortcut (see the placeholder
+      // buffer's own "Press q or Ctrl-C to quit" text), but it must carry the exact same
+      // unsaved-changes refusal as ':q' rather than silently discarding a dirty buffer —
+      // route it through the identical Ex-quit path instead of destroying the renderer
+      // unconditionally.
+    if (mode === 'normal' && key === 'q') {
+      if (macroRecording !== null) {
+        const committed = commitVimMacroRecording(macroStore, macroRecording);
+        if (committed.ok) {
+          macroStore = committed.value.store;
+          lastMacroRegister = committed.value.recording.register;
+        } else {
+          message(`xi: macro recording ${committed.error.kind}\n`);
+        }
+        macroRecording = null;
+        return true;
+      }
+      return submitCommandLine('q');
+    }
     if (mode === 'normal' && event.ctrl && (key === 'c' || key === 'C')) return false;
       const input: CanonicalInputEvent = {
       kind: 'key',
@@ -220,6 +264,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   }
 
   function handleSynchronousKey(event: OwnedVimKeyEvent, key: string): boolean {
+    recordMacroKeyIfActive(key);
     const input: CanonicalInputEvent = {
       kind: 'key',
       key,
@@ -237,6 +282,74 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   }
 
   function message(value: string): void { options.onMessage?.(value); }
+
+  /** Every user keystroke while a macro is recording is appended verbatim, except the
+   * terminating bare 'q' itself (handled separately, see the 'q' branch below). */
+  function recordMacroKeyIfActive(key: string): void {
+    if (macroRecording === null || (mode === 'normal' && key === 'q')) return;
+    const recorded = recordVimMacroKey(macroRecording, { key, source: 'user' });
+    if (recorded.ok) macroRecording = recorded.value;
+  }
+
+  /** Replay one recorded key through the same parse+execute path a live keystroke uses.
+   * Ex-command-line sequences (a ':' key) are not replayed -- a disclosed limitation,
+   * not attempted, since the session's Ex submission is asynchronous and this dispatch
+   * loop (packages/vim/macros/index.ts's executeVimMacro) is synchronous. */
+  function replayMacroKey(key: string): void {
+    if (key === ':') return;
+    const normalized = { kind: 'key' as const, key, phase: 'press' as const, modifiers: Object.freeze({ shift: false, alt: false, ctrl: false, meta: false }), atMilliseconds: performance.now() };
+    const outcome = parseVimInput(parser, normalized);
+    parser = outcome.state;
+    if (outcome.kind === 'command') executeCommand(outcome.command);
+  }
+
+  function beginMacroRecordingInternal(register: string): boolean {
+    if (mode !== 'normal' || macroRecording !== null) return false;
+    const started = beginVimMacroRecording(register);
+    if (!started.ok) return false;
+    macroRecording = started.value;
+    return true;
+  }
+
+  function beginInsertRecording(entryKey: VimInsertEntryKey): void {
+    insertEntryKey = entryKey;
+    insertTypedChars = [];
+    insertTainted = false;
+    pendingChangeOperatorMotion = undefined;
+  }
+
+  /** Called once an insert session ends (Escape/Ctrl-C). If this insert was entered by a
+   * 'change' operator (pendingChangeOperatorMotion set by executeOperator/applyOperatorPlan),
+   * records the combined "delete then insert" as one atomic changeRepeatTarget instead of a
+   * plain insert target -- real Vim's '.' after 'ciw<text><Esc>' redoes both, not just the
+   * retype. Otherwise records the typed text as T024's own plain insert target, unless a
+   * non-literal key (Backspace, arrows, Enter, ...) was seen. */
+  function finishInsertRecording(): void {
+    const entryKey = insertEntryKey;
+    const changeMotion = pendingChangeOperatorMotion;
+    insertEntryKey = undefined;
+    pendingChangeOperatorMotion = undefined;
+    if (entryKey === undefined || insertTainted) return;
+    const text = insertTypedChars.join('');
+    if (changeMotion !== undefined) {
+      changeRepeatTarget = { motionKey: changeMotion.motionKey, text, linewise: changeMotion.linewise };
+      lastRepeatKind = 'change';
+      return;
+    }
+    if (text.length === 0) return;
+    const created = createVimInsertRepeatTarget({ entryKey, mode: 'insert', text });
+    if (!created.ok) return;
+    const recorded = recordVimRepeatTarget(repeatState, created.value);
+    if (recorded.ok) { repeatState = recorded.value; lastRepeatKind = 'engine'; }
+  }
+
+  function recordOperatorRepeat(operator: 'delete' | 'change', motionKey: string, count: number, forcedKind?: 'linewise'): void {
+    const created = createVimOperatorRepeatTarget({ operator, motionKey, count, ...(forcedKind === undefined ? {} : { forcedKind }) });
+    if (!created.ok) return;
+    lastRepeatKind = 'engine';
+    const recorded = recordVimRepeatTarget(repeatState, created.value);
+    if (recorded.ok) repeatState = recorded.value;
+  }
 
   function emitHostCommand(command: VimHostCommand): void {
     const result = options.onHostCommand?.(command);
@@ -256,13 +369,13 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     readDocument(candidate): DocumentReadPort | undefined { return candidate === viewId ? readPort : undefined; },
     handleKey,
     cancelPendingOperator(): void {
-      if (commandLine !== undefined) return;
+      if (disposed || commandLine !== undefined) return;
       parser = makeParser(mode, selections);
-      prefixKeys = [];
+      prefixKeys = EMPTY_PREFIX_KEYS;
       options.onPrefixStateChange?.(readPrefixHelp());
     },
     applyExternalChange(change): void {
-      if (change.documentId !== documentId || selections.documentVersion !== change.before) return;
+      if (disposed || change.documentId !== documentId || selections.documentVersion !== change.before) return;
       if (change.origin !== 'vim') {
         insert = insert === null ? null : mapExternalInsertSession(insert, change.changeMap.orderedEdits);
         // The document undo tree closes a Vim group when another origin commits.
@@ -286,6 +399,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       return true;
     },
     setInsertCursor(value): boolean {
+      if (disposed) return false;
       const current = document.snapshot();
       const target = asUtf16Offset(value);
       if (!target.ok || !isInsertMode(mode)) return false;
@@ -320,6 +434,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       return true;
     },
     setInsertCursors(offsets): boolean {
+      if (disposed) return false;
       const current = document.snapshot();
       if (!isInsertMode(mode) || offsets.size === 0) return false;
       const members: SelectionMemberInput[] = [];
@@ -361,7 +476,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       return true;
     },
     setCursorPosition(line, utf16Column = 0): boolean {
-      if (mode !== 'normal' || !Number.isSafeInteger(line) || line < 0 || !Number.isSafeInteger(utf16Column) || utf16Column < 0) return false;
+      if (disposed || mode !== 'normal' || !Number.isSafeInteger(line) || line < 0 || !Number.isSafeInteger(utf16Column) || utf16Column < 0) return false;
       const current = document.snapshot();
       const lineIndex = asLineIndex(Math.min(line, Math.max(0, current.lineCount - 1)));
       if (!lineIndex.ok) return false;
@@ -375,7 +490,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       return true;
     },
     placePointer(intent): boolean {
-      if (commandLine !== undefined || intent.viewId !== String(viewId)) return false;
+      if (disposed || commandLine !== undefined || intent.viewId !== String(viewId)) return false;
       const current = document.snapshot();
       const target = intent.head.target;
       if (target === undefined || !Number.isSafeInteger(target.offset) || target.offset < 0 || target.offset > current.lengthUtf16) return false;
@@ -425,7 +540,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       return true;
     },
     setCommandLineSource(source, cursorOffset = source.length): boolean {
-      if (commandLine === undefined || typeof source !== 'string' || !Number.isSafeInteger(cursorOffset)) return false;
+      if (disposed || commandLine === undefined || typeof source !== 'string' || !Number.isSafeInteger(cursorOffset)) return false;
       const hasColon = source.startsWith(':');
       const internal = hasColon ? source.slice(1) : source;
       const internalOffset = hasColon ? cursorOffset - 1 : cursorOffset;
@@ -436,7 +551,48 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       return true;
     },
     submitCommandLine(source): Promise<boolean | 'quit'> {
+      if (disposed) return Promise.resolve(true);
       return submitCommandLine(source ?? readCommandLine()?.source ?? ':');
+    },
+    beginMacroRecording(register: string): boolean {
+      return !disposed && beginMacroRecordingInternal(register);
+    },
+    handlePaste(bytes: Uint8Array): boolean {
+      if (disposed) return true;
+      if (!isInsertMode(mode) || insert === null) {
+        message('xi: paste is only supported while inserting\n');
+        return true;
+      }
+      const planned = planVimMultiInsertInput(document.snapshot(), insert, { kind: 'paste', bytes });
+      if (!planned.ok) { message(`xi: paste failed: ${planned.error.kind}\n`); return true; }
+      commitPlan(document, planned.value, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
+      // Pasted text is one opaque, atomic insertion, not a stream of single keys -- taint
+      // any in-progress dot-repeat recording rather than risk misrepresenting it (T130).
+      insertTainted = true;
+      insert = planned.value.nextSession;
+      if (insert === null) {
+        mode = 'normal';
+        const primary = planned.value.members.find((member) => member.id === selections.primaryId) ?? planned.value.members[0];
+        const transition = primary?.transition;
+        const cursor = transition?.kind === 'exited' ? transition.lastInsertCursorOffset : planned.value.members[0]?.transition.plan.cursorOffset;
+        selections = makeNormalSelection(document.snapshot(), cursor ?? offset(0), (selections.selectionGeneration as number) + 1);
+        motionCursor = makeMotionCursor(document.snapshot(), selections);
+        insertEntryKey = undefined;
+      } else {
+        selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
+      }
+      parser = makeParser(mode, selections);
+      return true;
+    },
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      commandLine = undefined;
+      commandLineCursorOffset = 0;
+      prefixKeys = EMPTY_PREFIX_KEYS;
+      macroRecording = null;
+      insert = null;
+      motionCursor = undefined;
     },
   };
 
@@ -450,10 +606,13 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   }
 
   function readPrefixHelp(): VimPrefixHelpState {
-    return Object.freeze({
-      pendingKeys: Object.freeze([...prefixKeys]),
-      parserContinuations: Object.freeze(parser.legalContinuations.map((item) => Object.freeze({ ...item }))),
-    });
+    const continuations = parser.legalContinuations;
+    if (prefixHelpCache !== undefined && prefixHelpCache.keys === prefixKeys && prefixHelpCache.continuations === continuations) {
+      return prefixHelpCache.value;
+    }
+    const value = Object.freeze({ pendingKeys: prefixKeys, parserContinuations: continuations });
+    prefixHelpCache = { keys: prefixKeys, continuations, value };
+    return value;
   }
 
   function publishAuxiliaryState(): void {
@@ -462,7 +621,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   }
 
   function updatePrefixKeys(key: string, outcomeKind: string): void {
-    prefixKeys = outcomeKind === 'pending' ? [...prefixKeys, key] : [];
+    prefixKeys = outcomeKind === 'pending' ? Object.freeze([...prefixKeys, key]) : EMPTY_PREFIX_KEYS;
   }
 
   async function submitCommandLine(source: string): Promise<boolean | 'quit'> {
@@ -599,12 +758,18 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         motionCursor = undefined;
         selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
         parser = makeParser(mode, selections);
+        if (members.length === 1) beginInsertRecording(key); else insertEntryKey = undefined;
         return;
       }
       if (command.kind === 'insert-key' && isInsertMode(mode) && insert !== null) {
         const planned = planVimMultiInsertInput(document.snapshot(), insert, { kind: 'key', key: command.key });
         if (!planned.ok) throw new Error(`xi-insert:${planned.error.kind}`);
         commitPlan(document, planned.value, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
+        if (insertEntryKey !== undefined) {
+          const character = command.key === '<Space>' ? ' ' : command.key;
+          if (character.length === 1) insertTypedChars.push(character);
+          else insertTainted = true;
+        }
         insert = planned.value.nextSession;
         if (insert === null) {
           mode = 'normal';
@@ -613,6 +778,10 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
           const cursor = transition?.kind === 'exited' ? transition.lastInsertCursorOffset : planned.value.members[0]?.transition.plan.cursorOffset;
           selections = makeNormalSelection(document.snapshot(), cursor ?? offset(0), (selections.selectionGeneration as number) + 1);
           motionCursor = makeMotionCursor(document.snapshot(), selections);
+          // Not the explicit Escape/Ctrl-C leave-mode path below; whether the closing
+          // key itself was inserted text is ambiguous here, so discard rather than
+          // risk recording a wrong dot target.
+          insertEntryKey = undefined;
         } else {
           selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
         }
@@ -630,6 +799,9 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1);
         motionCursor = makeMotionCursor(document.snapshot(), selections);
         parser = makeParser(mode, selections);
+        // Real Vim's dot never replays an insert interrupted by Ctrl-C; only a clean
+        // Escape finalizes the recorded text as the new dot target.
+        if (command.via === 'ctrl-c') insertEntryKey = undefined; else finishInsertRecording();
       }
       if (command.kind === 'leave-mode' && isVisualMode(mode)) {
         const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
@@ -676,6 +848,10 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       }
       if (command.kind === 'single-key' && isVisualMode(mode) && (command.key === 'd' || command.key === 'c' || command.key === 'y')) {
         executeVisualOperator(command.key);
+        return;
+      }
+      if (command.kind === 'single-key' && mode === 'normal' && command.key === '.') {
+        executeDotRepeat(command.count.value);
         return;
       }
       if (command.kind === 'single-key' && mode === 'normal' && (command.key === 'p' || command.key === 'P')) {
@@ -755,6 +931,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
           insert = entered.value.session;
           selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
           parser = makeParser(mode, selections);
+          beginInsertRecording('i');
           return;
         }
         if (prepared.value.transaction === null) return;
@@ -791,7 +968,11 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
           state: { mode: 'normal', repeatTarget: null },
         });
         if (!single.ok || single.value.kind === 'failed') return;
-        applyOperatorPlan(single.value);
+        applyOperatorPlan(
+          single.value,
+          operator === 'delete' ? { motionKey: command.operator.key, count: command.count.value } : undefined,
+          operator === 'change' ? command.operator.key : undefined,
+        );
         return;
       }
       const motionCommand = command.kind === 'operator-text-object' || command.kind === 'operator-motion' ? command : null;
@@ -841,12 +1022,239 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         mode = entered.value.session.mode;
         selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
         motionCursor = undefined;
+        beginInsertRecording('i');
+        if (operator === 'change') {
+          pendingChangeOperatorMotion = { motionKey: motionCommand.kind === 'operator-text-object' ? motionCommand.textObject : motionCommand.motion, linewise: false };
+        }
       } else {
         mode = 'normal';
         selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
         motionCursor = makeMotionCursor(document.snapshot(), selections);
+        // 'change' always transitions through insert above; only 'delete' finishes here
+        // directly, and only 'delete'/'change' are dot-repeatable operators (T024).
+        if (operator === 'delete') {
+          const motionKey = motionCommand.kind === 'operator-text-object' ? motionCommand.textObject : motionCommand.motion;
+          recordOperatorRepeat('delete', motionKey, motionCommand.motionCount.value * motionCommand.operatorCount.value);
+        }
       }
       parser = makeParser(mode, selections);
+    }
+
+    /** T130: dot-repeat, wired only for the single-cursor delete-operator and plain-insert
+     * targets T024 already models and tests; visual-change and put targets, and treating
+     * an operator that entered insert as one atomic replay unit, remain unimplemented. */
+    /** Replay one recorded insert session's literal text at `atOffset`, ending in Normal
+     * mode exactly as a live Escape would; returns the cursor Escape would leave. Shared by
+     * plain insert-target replay and the "delete then insert" combined change replay below. */
+    /** prepareVimOperator's cursorOffset for a linewise delete's "next line" case is
+     * computed against the pre-edit snapshot (see packages/vim/operators/core.ts's
+     * cursorAfterOperator and its own oracle test's mapOffsetThroughEdits helper, which
+     * exists precisely because callers, not that function, own translating it) -- it is
+     * not yet a valid offset into the document the edit just produced. Map it through the
+     * same DocumentChangeMap/anchor machinery packages/vim/multi.ts's mapOperatorCursors
+     * already uses for the multi-cursor path, so a single delete-line cursor lands
+     * correctly instead of one deleted-span's-length too far into the document. */
+    function mapOffsetThroughCommit(beforeSnapshot: DocumentSnapshot, edits: readonly DocumentEdit[], offset: Utf16Offset): Utf16Offset {
+      if (edits.length === 0) return offset;
+      const afterVersion = ((beforeSnapshot.version as number) + 1) as DocumentSnapshot['version'];
+      const changeMap = DocumentChangeMap.create(beforeSnapshot, afterVersion, edits);
+      if (!changeMap.ok) return offset;
+      const anchor = createDocumentAnchor(beforeSnapshot, offset, 'right');
+      if (!anchor.ok) return offset;
+      const mapped = changeMap.value.mapAnchor(anchor.value);
+      return mapped.ok ? mapped.value.offset : offset;
+    }
+
+    function replayInsertText(entryKey: VimInsertEntryKey, text: string, atOffset: Utf16Offset): Utf16Offset {
+      const entered = beginVimMultiInsert(document.snapshot(), [{ id: selections.primaryId, cursorOffset: atOffset }], entryKey);
+      if (!entered.ok) return atOffset;
+      commitPlan(document, entered.value.plan, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
+      let session: VimMultiInsertSession | null = entered.value.session;
+      for (const char of text) {
+        if (session === null) break;
+        const planned = planVimMultiInsertInput(document.snapshot(), session, { kind: 'key', key: char });
+        if (!planned.ok) break;
+        commitPlan(document, planned.value, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
+        session = planned.value.nextSession;
+      }
+      let closedMembers: VimMultiInsertPlan['members'] | undefined;
+      if (session !== null) {
+        const closing = planVimMultiInsertInput(document.snapshot(), session, { kind: 'key', key: '<Esc>' });
+        if (closing.ok) {
+          commitPlan(document, closing.value, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
+          closedMembers = closing.value.members;
+        }
+      }
+      insert = null;
+      const closedPrimary = closedMembers?.find((member) => member.id === selections.primaryId) ?? closedMembers?.[0];
+      const transition = closedPrimary?.transition;
+      return transition?.kind === 'exited' ? transition.lastInsertCursorOffset : offset(0);
+    }
+
+    /** Prepare+commit a linewise delete/change (e.g. 'dd'/'cc') at the current primary
+     * cursor for `count` lines; returns the resulting cursor offset, or undefined on
+     * failure. Mirrors the manual lineMotion construction in executeOperator's
+     * operator-line branch above, since motionInvocation()/prepareVimMultiOperator only
+     * understand real motion/text-object keys, not a linewise operator's own doubled key. */
+    function replayLinewiseOperator(operator: 'delete' | 'change', motionKey: string, count: number, atOffset: Utf16Offset): Utf16Offset | undefined {
+      const current = document.snapshot();
+      const lineMotion = {
+        origin: { documentVersion: current.version, offset: atOffset },
+        target: { documentVersion: current.version, offset: atOffset },
+        direction: 'forward' as const,
+        motionKind: 'linewise' as const,
+        inclusive: true,
+        motionKey,
+        forceKind: 'linewise' as const,
+        lineCount: count,
+      };
+      const prepared = prepareVimOperator(current, {
+        operator,
+        motion: { ok: true, value: lineMotion },
+        operatorCount: 1,
+        motionCount: count,
+        doubled: true,
+        state: { mode: 'normal', repeatTarget: null },
+      });
+      if (!prepared.ok || prepared.value.kind === 'failed') return undefined;
+      const plan = prepared.value;
+      if (plan.transaction !== null) {
+        const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
+        if (!opened.ok) return undefined;
+        const committed = document.commit({ documentId: plan.transaction.documentId, expectedVersion: plan.transaction.expectedVersion, edits: plan.transaction.edits, origin: 'vim', undoGroup: OPERATOR_GROUP });
+        if (!committed.ok) { document.endUndoGroup(OPERATOR_GROUP); return undefined; }
+        if (!document.endUndoGroup(OPERATOR_GROUP).ok) return undefined;
+        notifyCommitted(committed, options.onDocumentChange);
+      }
+      registers = applyRegisterEffect(registers, plan.registerEffect);
+      // Only the delete/normal-mode cursor needs remapping; see mapOffsetThroughCommit's own
+      // comment. The 'change' case's insertionOffset is the edit's own start and needs none.
+      return plan.mode === 'insert' ? plan.cursorOffset : mapOffsetThroughCommit(current, plan.transaction?.edits ?? [], plan.cursorOffset);
+    }
+
+    function executeDotRepeat(explicitCount: number): void {
+      const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
+      if (primary === undefined || primary.kind !== 'normal-cursor' || selections.members.length !== 1) return;
+
+      if (lastRepeatKind === 'change' && changeRepeatTarget !== undefined) {
+        const target = changeRepeatTarget;
+        const deleteCursor = target.linewise
+          ? replayLinewiseOperator('change', target.motionKey, explicitCount, primary.anchor.at.offset)
+          : (() => {
+              const motion = motionInvocation(target.motionKey, explicitCount);
+              if (motion === null) return undefined;
+              const prepared = prepareVimMultiOperator({
+                snapshot: document.snapshot(), selections, operator: 'change', motion,
+                operatorCount: 1, motionCount: explicitCount, state: { mode: 'normal', repeatTarget: null },
+                failurePolicy: 'reject-command',
+              });
+              if (!prepared.ok) return undefined;
+              if (prepared.value.transaction !== null) {
+                const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
+                if (!opened.ok) return undefined;
+                const committed = document.commit({
+                  documentId: prepared.value.transaction.documentId, expectedVersion: prepared.value.transaction.expectedVersion,
+                  edits: prepared.value.transaction.edits, origin: 'vim', undoGroup: OPERATOR_GROUP,
+                });
+                if (!committed.ok) { document.endUndoGroup(OPERATOR_GROUP); return undefined; }
+                if (!document.endUndoGroup(OPERATOR_GROUP).ok) return undefined;
+                notifyCommitted(committed, options.onDocumentChange);
+              }
+              for (const effect of prepared.value.registerEffects) registers = applyRegisterEffect(registers, effect);
+              const primaryOffset = prepared.value.cursorOffsets.find((member) => member.id === selections.primaryId) ?? prepared.value.cursorOffsets[0];
+              return primaryOffset?.offset ?? selectionOffset(selections.members[0]);
+            })();
+        if (deleteCursor === undefined) { message('xi: repeat unavailable for the last change\n'); return; }
+        const cursor = replayInsertText('i', target.text, deleteCursor);
+        mode = 'normal';
+        selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1);
+        motionCursor = makeMotionCursor(document.snapshot(), selections);
+        parser = makeParser(mode, selections);
+        changeRepeatTarget = target;
+        lastRepeatKind = 'change';
+        return;
+      }
+
+      const engineTarget = repeatState.target;
+      if (engineTarget !== null && engineTarget.kind === 'operator' && engineTarget.forcedKind === 'linewise') {
+        const cursor = replayLinewiseOperator(engineTarget.operator, engineTarget.motionKey, explicitCount, primary.anchor.at.offset);
+        if (cursor === undefined) { message('xi: repeat unavailable for the last change\n'); return; }
+        mode = 'normal';
+        selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
+        motionCursor = makeMotionCursor(document.snapshot(), selections);
+        parser = makeParser(mode, selections);
+        recordOperatorRepeat('delete', engineTarget.motionKey, explicitCount, 'linewise');
+        return;
+      }
+
+      type Resolved =
+        | { readonly kind: 'operator'; readonly prepared: Extract<ReturnType<typeof prepareVimMultiOperator>, { readonly ok: true }>['value']; readonly motionKey: string }
+        | { readonly kind: 'insert'; readonly entryKey: VimInsertEntryKey; readonly text: string };
+      const replay = replayVimDot(repeatState, {
+        snapshot: document.snapshot(),
+        cursorOffset: primary.anchor.at.offset,
+        count: explicitCount,
+      }, (context): { ok: true; value: Resolved } | { ok: false; error: { readonly kind: 'invalid-target'; readonly reason: 'operator' | 'insert' | 'visual' | 'put' } } => {
+        if (context.target.kind === 'operator') {
+          const motion = motionInvocation(context.target.motionKey, context.count);
+          if (motion === null) return { ok: false, error: { kind: 'invalid-target', reason: 'operator' } };
+          const prepared = prepareVimMultiOperator({
+            snapshot: context.snapshot,
+            selections,
+            operator: context.target.operator,
+            motion,
+            operatorCount: 1,
+            motionCount: context.count,
+            state: { mode: 'normal', repeatTarget: null },
+            failurePolicy: 'reject-command',
+          });
+          if (!prepared.ok) return { ok: false, error: { kind: 'invalid-target', reason: 'operator' } };
+          return { ok: true, value: { kind: 'operator', prepared: prepared.value, motionKey: context.target.motionKey } };
+        }
+        if (context.target.kind === 'insert') return { ok: true, value: { kind: 'insert', entryKey: context.target.entryKey, text: context.target.text } };
+        return { ok: false, error: { kind: 'invalid-target', reason: context.target.kind } };
+      });
+      if (!replay.ok) {
+        message(replay.error.kind === 'no-target' ? 'xi: nothing to repeat\n' : 'xi: repeat unavailable for the last change\n');
+        return;
+      }
+      const resolved = replay.value.resolved;
+      if (resolved.kind === 'operator') {
+        const prepared = resolved.prepared;
+        if (prepared.transaction !== null) {
+          const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
+          if (!opened.ok) return;
+          const committed = document.commit({
+            documentId: prepared.transaction.documentId,
+            expectedVersion: prepared.transaction.expectedVersion,
+            edits: prepared.transaction.edits,
+            origin: 'vim',
+            undoGroup: OPERATOR_GROUP,
+          });
+          if (!committed.ok) { document.endUndoGroup(OPERATOR_GROUP); return; }
+          if (!document.endUndoGroup(OPERATOR_GROUP).ok) return;
+          notifyCommitted(committed, options.onDocumentChange);
+        }
+        for (const effect of prepared.registerEffects) registers = applyRegisterEffect(registers, effect);
+        const primaryOffset = prepared.cursorOffsets.find((member) => member.id === selections.primaryId) ?? prepared.cursorOffsets[0];
+        const cursor = primaryOffset?.offset ?? selectionOffset(selections.members[0]);
+        mode = 'normal';
+        selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
+        motionCursor = makeMotionCursor(document.snapshot(), selections);
+        parser = makeParser(mode, selections);
+        recordOperatorRepeat('delete', resolved.motionKey, replay.value.count);
+        return;
+      }
+      const cursor = replayInsertText(resolved.entryKey, resolved.text, primary.anchor.at.offset);
+      mode = 'normal';
+      selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1);
+      motionCursor = makeMotionCursor(document.snapshot(), selections);
+      parser = makeParser(mode, selections);
+      const created = createVimInsertRepeatTarget({ entryKey: resolved.entryKey, mode: 'insert', text: resolved.text });
+      if (created.ok) {
+        const recorded = recordVimRepeatTarget(repeatState, created.value);
+        if (recorded.ok) { repeatState = recorded.value; lastRepeatKind = 'engine'; }
+      }
     }
 
     function executeVisualOperator(key: 'd' | 'c' | 'y'): void {
@@ -873,7 +1281,12 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       parser = makeParser(mode, selections);
     }
 
-    function applyOperatorPlan(plan: Extract<VimOperatorPreparation, { readonly kind: 'prepared' }>): void {
+    function applyOperatorPlan(
+      plan: Extract<VimOperatorPreparation, { readonly kind: 'prepared' }>,
+      deleteLineRepeat?: { readonly motionKey: string; readonly count: number },
+      changeLineMotionKey?: string,
+    ): void {
+      const beforeSnapshot = document.snapshot();
       if (plan.transaction !== null) {
         const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
         if (!opened.ok) return;
@@ -882,7 +1295,9 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         notifyCommitted(committed, options.onDocumentChange);
       }
       registers = applyRegisterEffect(registers, plan.registerEffect);
-      const cursor = plan.cursorOffset;
+      // Only the delete/normal-mode cursor needs this: prepareVimOperator's insertionOffset
+      // for a 'change' plan is the start of the edit and stays valid pre- and post-commit.
+      const cursor = plan.mode === 'insert' ? plan.cursorOffset : mapOffsetThroughCommit(beforeSnapshot, plan.transaction?.edits ?? [], plan.cursorOffset);
       if (plan.mode === 'insert') {
         const primaryId = selections.primaryId;
         const entered = beginVimMultiInsert(document.snapshot(), [{ id: primaryId, cursorOffset: cursor }], 'i');
@@ -892,10 +1307,13 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         mode = entered.value.session.mode;
         selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
         motionCursor = undefined;
+        beginInsertRecording('i');
+        if (changeLineMotionKey !== undefined) pendingChangeOperatorMotion = { motionKey: changeLineMotionKey, linewise: true };
       } else {
         mode = 'normal';
         selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
         motionCursor = makeMotionCursor(document.snapshot(), selections);
+        if (deleteLineRepeat !== undefined) recordOperatorRepeat('delete', deleteLineRepeat.motionKey, deleteLineRepeat.count, 'linewise');
       }
       parser = makeParser(mode, selections);
     }
@@ -903,6 +1321,23 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     function executeLiteral(command: Extract<VimCommandIntent, { readonly kind: 'literal-command' }>): void {
       const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
       if (primary === undefined || primary.kind !== 'normal-cursor') return;
+      if (command.command === 'record-macro') {
+        // Unreachable through the keyboard today (bare 'q' is intercepted earlier for
+        // the quit-shortcut/stop-recording split above); kept correct and complete in
+        // case another path ever feeds this literal-command synthetically.
+        beginMacroRecordingInternal(command.argument);
+        parser = makeParser(mode, selections);
+        return;
+      }
+      if (command.command === 'play-macro') {
+        const execution = executeVimMacro(macroStore, command.argument, (context) => {
+          if (context.token.kind === 'key') replayMacroKey(context.token.key);
+          return { ok: true, value: { kind: 'continue', committed: true } };
+        }, { count: command.count.value, ...(lastMacroRegister === undefined ? {} : { lastRegister: lastMacroRegister }) });
+        if (!execution.ok) { message(`xi: macro ${execution.error.kind}\n`); return; }
+        lastMacroRegister = execution.value.lastRegister;
+        return;
+      }
       if (command.command === 'find-forward' || command.command === 'find-backward' || command.command === 'till-forward' || command.command === 'till-backward') {
         const key = command.command === 'find-forward' ? 'f' : command.command === 'find-backward' ? 'F' : command.command === 'till-forward' ? 't' : 'T';
         const cursor = makeMotionCursor(document.snapshot(), selections);
@@ -992,6 +1427,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
         motionCursor = undefined;
         parser = makeParser(mode, selections);
+        beginInsertRecording(`g${command.key}` as VimInsertEntryKey);
         return;
       }
       if (mode === 'normal' && command.prefix === 'g') {
@@ -1021,574 +1457,3 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     }
   return session;
   }
-function makeView(viewId: ViewId, documentId: DocumentId, snapshot: DocumentSnapshot, selections: SelectionSetSnapshot, mode: VimMode): WorkbenchViewSnapshot {
-  return {
-    session: { viewId, documentId, documentVersion: snapshot.version, selections, mode: publicMode(mode) },
-    document: snapshot,
-    selections,
-  };
-}
-
-interface HostTarget {
-  readonly target: string;
-  readonly line?: number;
-}
-
-/** Extract only the bounded current line needed by gf/gF and tag commands. */
-function hostTarget(snapshot: DocumentSnapshot, member: SelectionSetSnapshot['members'][number] | undefined, lineAware = false): HostTarget | undefined {
-  if (member === undefined) return undefined;
-  const line = snapshot.lineIndexAt(member.anchor.at.offset);
-  if (!line.ok) return undefined;
-  const start = snapshot.lineStartOffset(line.value);
-  if (!start.ok) return undefined;
-  const nextLine = (line.value as number) + 1;
-  const nextLineIndex = asLineIndex(nextLine);
-  const end = nextLine < snapshot.lineCount && nextLineIndex.ok
-    ? snapshot.lineStartOffset(nextLineIndex.value)
-    : asUtf16Offset(snapshot.lengthUtf16);
-  if (!end.ok) return undefined;
-  const text = snapshot.slice(start.value, end.value);
-  if (!text.ok) return undefined;
-  const cursor = Math.min(Math.max(0, (member.anchor.at.offset as number) - (start.value as number)), text.value.length);
-  if (cursor >= text.value.length || !isHostTokenCharacter(text.value[cursor] ?? '')) return undefined;
-  let tokenStart = cursor;
-  while (tokenStart > 0 && isHostTokenCharacter(text.value[tokenStart - 1] ?? '')) tokenStart -= 1;
-  let tokenEnd = cursor + 1;
-  while (tokenEnd < text.value.length && isHostTokenCharacter(text.value[tokenEnd] ?? '')) tokenEnd += 1;
-  const raw = text.value.slice(tokenStart, tokenEnd);
-  if (raw.length === 0 || raw.length > 4096) return undefined;
-  const numbered = /^(.*):([1-9][0-9]*)$/u.exec(raw);
-  if (numbered?.[1] === undefined || numbered[1].length === 0) return { target: raw };
-  const parsedLine = Number(numbered[2]);
-  if (!Number.isSafeInteger(parsedLine) || parsedLine < 1) return { target: raw };
-  return { target: numbered[1], ...(lineAware ? { line: parsedLine - 1 } : {}) };
-}
-
-function isHostTokenCharacter(value: string): boolean {
-  return value.length === 1 && !/\s/u.test(value) && !"'\"`<>()[]{};,".includes(value);
-}
-
-function hostWindowAction(
-  prefix: 'ctrl-w' | 'ctrl-w-g',
-  key: string,
-): Extract<VimHostCommand, { readonly kind: 'window' }>['action'] | undefined {
-  if (prefix === 'ctrl-w-g') {
-    switch (key) {
-      case 't': return 'move-tab';
-      case 'T': return 'move-tab';
-      case 'g': return 'focus-first';
-      case 'G': return 'focus-last';
-      case '+': return 'resize-increase';
-      case '-': return 'resize-decrease';
-      case '<': return 'resize-left';
-      case '>': return 'resize-right';
-      case '_': return 'resize-top';
-      case '|': return 'resize-right';
-      default: return undefined;
-    }
-  }
-  switch (key) {
-    case 'h': return 'focus-left';
-    case 'j': return 'focus-down';
-    case 'k': return 'focus-up';
-    case 'l': return 'focus-right';
-    case 'w': return 'focus-next';
-    case 'W': return 'focus-previous';
-    case 'p': return 'focus-previous';
-    case 't': return 'focus-first';
-    case 'b': return 'focus-last';
-    case 'c':
-    case 'q': return 'close';
-    case 'o':
-    case 'O': return 'only';
-    case 's': return 'split-horizontal';
-    case 'S': return 'split-vertical';
-    case 'v': return 'split-vertical';
-    case '=': return 'equalize';
-    case '+': return 'resize-increase';
-    case '-': return 'resize-decrease';
-    case '<': return 'resize-left';
-    case '>': return 'resize-right';
-    case '_': return 'resize-top';
-    case '|': return 'resize-right';
-    case 'x': return 'exchange-next';
-    case 'X': return 'exchange-previous';
-    case 'r': return 'rotate';
-    case 'R': return 'rotate-reverse';
-    case 'B': return 'move-bottom';
-    case 'P': return 'move-top';
-    case 'T': return 'move-tab';
-    case 'n': return 'focus-next';
-    case 'C': return 'new-window';
-    default: return undefined;
-  }
-}
-
-const SELECTION_HISTORY_LIMIT = 100;
-
-interface XiSelectionCommandInput {
-  readonly command: VimSelectionCommand;
-  readonly pattern?: string;
-  readonly limit?: number;
-  readonly ignoreCase?: boolean;
-}
-
-function parseXiSelectionCommand(source: string): XiSelectionCommandInput | undefined {
-  const match = /^xi\s+(selection\.[a-z-]+)(?:\s+([\s\S]*))?$/iu.exec(source);
-  if (match === null) return undefined;
-  const command = match[1] as VimSelectionCommand;
-  if (!SELECTION_COMMANDS.has(command)) return undefined;
-  const argument = match[2]?.trim() ?? '';
-  if (PATTERN_SELECTION_COMMANDS.has(command)) {
-    if (argument.length === 0) return { command };
-    const flags = /\s+--(ignore-case|limit=\d+)$/u.exec(argument);
-    const pattern = flags === null ? argument : argument.slice(0, flags.index).trimEnd();
-    const limitFlag = flags?.[1]?.startsWith('limit=') === true ? Number(flags[1].slice('limit='.length)) : undefined;
-    return {
-      command,
-      ...(pattern.length === 0 ? {} : { pattern }),
-      ...(flags?.[1] === 'ignore-case' ? { ignoreCase: true } : {}),
-      ...(limitFlag === undefined ? {} : { limit: limitFlag }),
-    };
-  }
-  if (argument.length !== 0) return undefined;
-  return { command };
-}
-
-const SELECTION_COMMANDS: ReadonlySet<string> = new Set([
-  'selection.add-above', 'selection.add-below', 'selection.add-next-match', 'selection.skip-next-match',
-  'selection.select-all-matches', 'selection.split-lines', 'selection.select-regex', 'selection.keep-matching',
-  'selection.remove-primary', 'selection.keep-primary', 'selection.rotate-primary-next',
-  'selection.rotate-primary-previous', 'selection.collapse', 'selection.flip', 'selection.merge', 'selection.undo',
-]);
-
-const PATTERN_SELECTION_COMMANDS: ReadonlySet<VimSelectionCommand> = new Set([
-  'selection.add-next-match', 'selection.skip-next-match', 'selection.select-all-matches',
-  'selection.select-regex', 'selection.keep-matching',
-]);
-
-function selectionModeFor(kind: SelectionSetSnapshot['members'][number]['kind'] | undefined): VimMode {
-  switch (kind) {
-    case 'insert-caret': return 'insert';
-    case 'visual-character': return 'visual-character';
-    case 'visual-line': return 'visual-line';
-    case 'visual-block': return 'visual-block';
-    case 'normal-cursor':
-    default: return 'normal';
-  }
-}
-
-function makeParser(mode: VimMode, selections: SelectionSetSnapshot): VimParserState {
-  const created = createVimParserState(mode, selections);
-  if (!created.ok) throw new Error(`xi-parser:${created.error.kind}`);
-  return created.value;
-}
-
-function publicMode(mode: VimMode): 'normal' | 'insert' | 'replace' | 'visual' {
-  if (mode === 'visual-character' || mode === 'visual-line' || mode === 'visual-block' || mode === 'select-character' || mode === 'select-line' || mode === 'select-block') return 'visual';
-  if (mode === 'virtual-replace') return 'replace';
-  return mode;
-}
-
-function isInsertMode(mode: VimMode): mode is 'insert' | 'replace' | 'virtual-replace' {
-  return mode === 'insert' || mode === 'replace' || mode === 'virtual-replace';
-}
-
-function isVisualMode(mode: VimMode): mode is 'visual-character' | 'visual-line' | 'visual-block' {
-  return mode === 'visual-character' || mode === 'visual-line' || mode === 'visual-block';
-}
-
-function selectionOffset(member: SelectionSetSnapshot['members'][number] | undefined): Utf16Offset {
-  return member?.head.at.offset ?? offset(0);
-}
-
-function coreOperator(name: string): VimCoreOperator | null {
-  return name === 'delete' || name === 'change' || name === 'yank' ? name : null;
-}
-
-function isMotionLike(key: string): boolean {
-  return isMotionKey(key) || isWordMotionKey(key) || isTextObjectKey(key);
-}
-
-function motionInvocation(key: string, count: number): VimMultiMotionInvocation | null {
-  if (isMotionKey(key)) return { key, count };
-  if (isWordMotionKey(key)) return { key, count };
-  if (isTextObjectKey(key)) return { key, count };
-  return null;
-}
-
-function isWordMotionKey(key: string): key is VimWordMotionKey {
-  return key === 'w' || key === 'W' || key === 'b' || key === 'B' || key === 'e' || key === 'E' || key === 'ge' || key === 'gE';
-}
-
-function isTextObjectKey(key: string): key is VimTextObjectKey {
-  return /^([ia])(?:w|W|s|p|["'`()[\]{}<>bBit])$/u.test(key);
-}
-
-function applyRegisterEffect(bank: VimRegisterBank, effect: { readonly operation: string; readonly destination: string; readonly lines: readonly string[]; readonly type: string }): VimRegisterBank {
-  const type: VimRegisterType = effect.type === 'V' || effect.type === 'linewise'
-    ? 'linewise'
-    : effect.type === 'blockwise' || effect.type === '\u0016'
-      ? 'blockwise'
-      : 'characterwise';
-  const value = { lines: effect.lines, type };
-  const destination = effect.destination as VimRegisterName;
-  const result = effect.operation === 'yank'
-    ? bank.yank(value, destination)
-    : bank.delete(value, { destination, small: destination === '-' });
-  return result.ok ? result.value : bank;
-}
-
-function makeMotionCursor(snapshot: DocumentSnapshot, selections: SelectionSetSnapshot): VimMotionCursor | undefined {
-  const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
-  if (primary === undefined || primary.kind !== 'normal-cursor') return undefined;
-  const created = createVimMotionCursor(snapshot, primary.anchor.at.offset);
-  return created.ok ? created.value : undefined;
-}
-
-function makeSelection(snapshot: DocumentSnapshot, lineNumber?: number): SelectionSetSnapshot {
-  const selectionId = id<SelectionId>('xi-launch-selection');
-  return makeNormalSelection(snapshot, lineStart(snapshot, lineNumber), 0, selectionId);
-}
-
-function lineStart(snapshot: DocumentSnapshot, lineNumber?: number): Utf16Offset {
-  if (lineNumber === undefined || !Number.isSafeInteger(lineNumber)) return offset(0);
-  const requested = Math.max(1, lineNumber) - 1;
-  const line = asLineIndex(Math.min(requested, Math.max(0, snapshot.lineCount - 1)));
-  if (!line.ok) return offset(0);
-  const start = snapshot.lineStartOffset(line.value);
-  return start.ok ? start.value : offset(0);
-}
-
-function makeNormalSelection(snapshot: DocumentSnapshot, value: Utf16Offset, generation: number, selectionId = id<SelectionId>('xi-launch-selection')): SelectionSetSnapshot {
-  let at = Math.min(Math.max(value as number, 0), Math.max(0, snapshot.lengthUtf16 - 1));
-  while (at > 0) {
-    const character = snapshot.slice(at as Utf16Offset, (at + 1) as Utf16Offset);
-    if (!character.ok || character.value !== '\n') break;
-    at -= 1;
-  }
-  const endpoint = snapshot.lengthUtf16 === 0
-    ? { kind: 'eof' as const }
-    : (() => {
-      const offset = asUtf16Offset(at);
-      const after = asUtf16Offset(Math.min(at + 1, snapshot.lengthUtf16));
-      if (!offset.ok || !after.ok) throw new Error('xi selection offset');
-      return { kind: 'character' as const, offset: offset.value, after: after.value };
-    })();
-  const created = createSelectionSet(snapshot, {
-    primaryId: selectionId,
-    selectionGeneration: generation,
-    members: [{ id: selectionId, kind: 'normal-cursor', direction: 'forward', anchor: endpoint, head: endpoint }],
-  });
-  if (!created.ok) throw new Error(`xi selection: ${created.error.kind}`);
-  return created.value.selectionSet;
-}
-
-function addPointerCaret(
-  snapshot: DocumentSnapshot,
-  target: PointerCell['target'],
-  current: SelectionSetSnapshot,
-  install: (next: SelectionSetSnapshot) => void,
-): boolean {
-  if (target === undefined || current.members.some((member) => member.kind !== 'normal-cursor')) return false;
-  const nextId = id<SelectionId>(`xi-pointer-selection-${current.selectionGeneration as number}-${current.members.length}`);
-  const targetOffset = asUtf16Offset(target.offset);
-  if (!targetOffset.ok) return false;
-  const single = makeNormalSelection(snapshot, targetOffset.value, current.selectionGeneration as number, nextId);
-  const member = single.members[0];
-  if (member === undefined || member.kind !== 'normal-cursor') return false;
-  const existing: SelectionMemberInput[] = current.members.map((source): SelectionMemberInput => {
-    if (source.kind !== 'normal-cursor') throw new Error('xi-pointer-mixed-selection');
-    return {
-      id: source.id,
-      kind: source.kind,
-      direction: source.direction,
-      anchor: pointerNormalEndpoint(source.anchor),
-      head: pointerNormalEndpoint(source.head),
-      desiredColumn: source.desiredColumn,
-      creationOrdinal: source.creationOrdinal,
-    };
-  });
-  const updated = updateSelectionSet(snapshot, current, {
-    primaryId: nextId,
-    members: [...existing, pointerNormalEndpointMember(member, false)],
-  });
-  if (!updated.ok) return false;
-  install(updated.value.selectionSet);
-  return true;
-}
-
-function pointerNormalEndpointMember(member: Extract<SelectionSetSnapshot['members'][number], { readonly kind: 'normal-cursor' }>, preserveOrdinal = true): SelectionMemberInput {
-  return {
-    id: member.id,
-    kind: member.kind,
-    direction: member.direction,
-    anchor: pointerNormalEndpoint(member.anchor),
-    head: pointerNormalEndpoint(member.head),
-    desiredColumn: member.desiredColumn,
-    ...(preserveOrdinal ? { creationOrdinal: member.creationOrdinal } : {}),
-  };
-}
-
-function pointerNormalEndpoint(endpoint: Extract<SelectionSetSnapshot['members'][number], { readonly kind: 'normal-cursor' }>['anchor']): EndpointInput {
-  switch (endpoint.kind) {
-    case 'character': return { kind: 'character', offset: endpoint.at.offset, after: endpoint.after.offset, affinity: endpoint.at.affinity, afterAffinity: endpoint.after.affinity };
-    case 'empty-line': return { kind: 'empty-line', lineIndex: endpoint.lineIndex, affinity: endpoint.at.affinity };
-    case 'eof': return { kind: 'eof', affinity: endpoint.at.affinity };
-  }
-}
-
-function pointerVisualCursor(snapshot: DocumentSnapshot, target: NonNullable<PointerCell['target']>): VimVisualCursor | undefined {
-  if (!Number.isSafeInteger(target.lineIndex) || target.lineIndex < 0
-    || !Number.isSafeInteger(target.offset) || target.offset < 0 || target.offset > snapshot.lengthUtf16
-    || !Number.isSafeInteger(target.displayCellColumn) || target.displayCellColumn < 0
-    || !Number.isSafeInteger(target.virtualCell) || target.virtualCell < 0) return undefined;
-  const safeOffset = target.cellPart === 'padding' ? pointerPreviousCharacter(snapshot, target.offset) : target.offset;
-  const offsetValue = asUtf16Offset(safeOffset);
-  const displayValue = asCellColumn(target.displayCellColumn);
-  if (!offsetValue.ok || !displayValue.ok) return undefined;
-  return {
-    documentVersion: snapshot.version,
-    offset: offsetValue.value,
-    displayCellColumn: displayValue.value,
-    virtualCells: target.virtualCell,
-  };
-}
-
-function pointerWordRange(
-  snapshot: DocumentSnapshot,
-  anchor: VimVisualCursor,
-  head: VimVisualCursor,
-): { readonly anchor: VimVisualCursor; readonly head: VimVisualCursor } | undefined {
-  const anchorRange = pointerWordAt(snapshot, anchor.offset as number);
-  const headRange = pointerWordAt(snapshot, head.offset as number);
-  if (anchorRange === undefined || headRange === undefined) return undefined;
-  const forward = (anchor.offset as number) <= (head.offset as number);
-  const anchorOffset = forward ? anchorRange.start : pointerLastCharacter(snapshot, anchorRange.end);
-  const headOffset = forward ? pointerLastCharacter(snapshot, headRange.end) : headRange.start;
-  const anchorTarget = pointerTargetAt(snapshot, anchorOffset);
-  const headTarget = pointerTargetAt(snapshot, headOffset);
-  if (anchorTarget === undefined || headTarget === undefined) return undefined;
-  const anchorCursor = pointerVisualCursor(snapshot, anchorTarget);
-  const headCursor = pointerVisualCursor(snapshot, headTarget);
-  return anchorCursor === undefined || headCursor === undefined ? undefined : { anchor: anchorCursor, head: headCursor };
-}
-
-function pointerWordAt(snapshot: DocumentSnapshot, offsetValue: number): { readonly start: number; readonly end: number } | undefined {
-  const safeOffset = asUtf16Offset(Math.max(0, Math.min(offsetValue, snapshot.lengthUtf16)));
-  if (!safeOffset.ok) return undefined;
-  const line = snapshot.lineIndexAt(safeOffset.value);
-  if (!line.ok) return undefined;
-  const start = snapshot.lineStartOffset(line.value);
-  if (!start.ok) return undefined;
-  const next = (line.value as number) + 1;
-  const nextLine = asLineIndex(next);
-  const end = next < snapshot.lineCount && nextLine.ok ? snapshot.lineStartOffset(nextLine.value) : asUtf16Offset(snapshot.lengthUtf16);
-  if (!end.ok) return undefined;
-  const text = snapshot.slice(start.value, end.value);
-  if (!text.ok) return undefined;
-  const units = [...text.value].map((value, index) => ({ value, start: index, end: index + value.length }));
-  if (units.length === 0) return undefined;
-  let local = Math.max(0, offsetValue - (start.value as number));
-  let selected = units.findIndex((unit) => local >= unit.start && local < unit.end);
-  if (selected < 0) selected = units.length - 1;
-  const kind = pointerWordKind(units[selected]?.value ?? '');
-  let first = selected;
-  while (first > 0 && pointerWordKind(units[first - 1]?.value ?? '') === kind) first -= 1;
-  let last = selected;
-  while (last + 1 < units.length && pointerWordKind(units[last + 1]?.value ?? '') === kind) last += 1;
-  return { start: (start.value as number) + (units[first]?.start ?? 0), end: (start.value as number) + (units[last]?.end ?? 0) };
-}
-
-function pointerWordKind(value: string): 'space' | 'keyword' | 'punctuation' {
-  if (/\s/u.test(value)) return 'space';
-  return /^[\p{L}\p{N}_]$/u.test(value) ? 'keyword' : 'punctuation';
-}
-
-function pointerTargetAt(snapshot: DocumentSnapshot, offsetValue: number): NonNullable<PointerCell['target']> | undefined {
-  const safeOffset = asUtf16Offset(offsetValue);
-  if (!safeOffset.ok) return undefined;
-  const line = snapshot.lineIndexAt(safeOffset.value);
-  if (!line.ok) return undefined;
-  const start = snapshot.lineStartOffset(line.value);
-  if (!start.ok) return undefined;
-  return {
-    lineIndex: line.value as number,
-    offset: offsetValue,
-    displayCellColumn: pointerDisplayColumn(snapshot, offsetValue, start.value as number),
-    virtualCell: 0,
-    cellPart: 'glyph',
-  };
-}
-
-function pointerDisplayColumn(snapshot: DocumentSnapshot, offsetValue: number, lineStartValue: number): number {
-  const start = asUtf16Offset(lineStartValue);
-  const end = asUtf16Offset(Math.max(lineStartValue, offsetValue));
-  if (!start.ok || !end.ok) return 0;
-  const prefix = snapshot.slice(start.value, end.value);
-  if (!prefix.ok) return 0;
-  let column = 0;
-  for (const cluster of prefix.value) column += cluster === '\t' ? 8 - (column % 8) : pointerClusterWidth(cluster);
-  return column;
-}
-
-function pointerClusterWidth(cluster: string): number {
-  const codePoint = cluster.codePointAt(0) ?? 0;
-  if (/\p{Mark}/u.test(cluster) || codePoint === 0x200d) return 0;
-  return codePoint >= 0x1100 && (codePoint <= 0x115f || codePoint >= 0x2e80) ? 2 : 1;
-}
-
-function pointerPreviousCharacter(snapshot: DocumentSnapshot, offsetValue: number): number {
-  if (offsetValue <= 0) return 0;
-  const candidate = offsetValue - 1;
-  const start = asUtf16Offset(candidate);
-  const end = asUtf16Offset(offsetValue);
-  if (!start.ok || !end.ok) return candidate;
-  const unit = snapshot.slice(start.value, end.value);
-  if (unit.ok && unit.value.length === 1) {
-    const code = unit.value.charCodeAt(0);
-    if (code >= 0xdc00 && code <= 0xdfff) return Math.max(0, offsetValue - 2);
-  }
-  return candidate;
-}
-
-function pointerLastCharacter(snapshot: DocumentSnapshot, endValue: number): number {
-  return pointerPreviousCharacter(snapshot, endValue);
-}
-
-function makeInsertSelections(snapshot: DocumentSnapshot, session: VimMultiInsertSession, generation: number): SelectionSetSnapshot {
-  const members = session.members.map((member) => ({
-    id: member.id,
-    kind: 'insert-caret' as const,
-    direction: 'forward' as const,
-    anchor: { kind: 'gap' as const, offset: member.session.cursorOffset },
-    head: { kind: 'gap' as const, offset: member.session.cursorOffset },
-  }));
-  const primaryId = session.members[0]?.id;
-  if (primaryId === undefined) throw new Error('xi-empty-insert-session');
-  const created = createSelectionSet(snapshot, { primaryId, selectionGeneration: generation, members });
-  if (!created.ok) throw new Error(`xi-insert-selection:${created.error.kind}`);
-  return created.value.selectionSet;
-}
-
-function commitPlan(document: TextFileDocument, plan: VimMultiInsertPlan, undoOpen: boolean, setUndoOpen: (value: boolean) => void, onDocumentChange?: (change: CommittedDocumentChange) => void): void {
-  if (plan.undoAction === 'open' && !undoOpen) {
-    const opened = document.beginUndoGroup(INSERT_GROUP, 'vim');
-    if (!opened.ok) throw new Error(`xi-undo-open:${opened.error.kind}`);
-    setUndoOpen(true);
-  }
-  if (plan.edits.length > 0) {
-    const committed = document.commit({
-      documentId: plan.documentId,
-      expectedVersion: plan.expectedVersion,
-      edits: plan.edits.map((edit) => ({ start: edit.start, end: edit.end, text: edit.text } satisfies DocumentEdit)),
-      origin: 'vim',
-      undoGroup: INSERT_GROUP,
-    });
-    if (!committed.ok) throw new Error(`xi-commit:${committed.error.kind}`);
-    notifyCommitted(committed, onDocumentChange);
-  }
-  if (plan.undoAction === 'close' && undoOpen) {
-    const closed = document.endUndoGroup(INSERT_GROUP);
-    if (!closed.ok) throw new Error(`xi-undo-close:${closed.error.kind}`);
-    setUndoOpen(false);
-  }
-}
-
-function mapExternalInsertSession(session: VimMultiInsertSession, edits: readonly DocumentEdit[]): VimMultiInsertSession {
-  const map = (value: Utf16Offset, affinity: 'left' | 'right'): Utf16Offset => offset(mapExternalInsertOffset(value as number, edits, affinity));
-  return Object.freeze({
-    ...session,
-    members: nonEmptyTuple(session.members.map((member) => Object.freeze({
-      ...member,
-      session: Object.freeze({
-        ...member.session,
-        cursorOffset: map(member.session.cursorOffset, 'right'),
-        entryOffset: map(member.session.entryOffset, 'left'),
-        autoIndentSpan: member.session.autoIndentSpan === null
-          ? null
-          : Object.freeze({ start: map(member.session.autoIndentSpan.start, 'left'), end: map(member.session.autoIndentSpan.end, 'right') }),
-        replaceStack: Object.freeze(member.session.replaceStack.map((frame) => Object.freeze({
-          ...frame,
-          start: map(frame.start, 'left'),
-          cursorBefore: map(frame.cursorBefore, 'left'),
-        }))),
-      }),
-    }))),
-  });
-}
-
-function mapExternalInsertOffset(value: number, edits: readonly DocumentEdit[], affinity: 'left' | 'right'): number {
-  let delta = 0;
-  for (const edit of edits) {
-    const start = edit.start as number;
-    const end = edit.end as number;
-    if (start === end && value === start) return start + delta + (affinity === 'right' ? edit.text.length : 0);
-    if (value >= end) {
-      delta += edit.text.length - (end - start);
-      continue;
-    }
-    if (value >= start) return start + delta + (affinity === 'right' ? edit.text.length : 0);
-    break;
-  }
-  return value + delta;
-}
-
-function nonEmptyTuple<T>(values: readonly T[]): readonly [T, ...T[]] {
-  const first = values[0];
-  if (first === undefined) throw new Error('xi-empty-tuple');
-  return [first, ...values.slice(1)];
-}
-
-function notifyCommitted(result: ReturnType<TextFileDocument['commit']>, listener: ((change: CommittedDocumentChange) => void) | undefined): void {
-  if (listener !== undefined && result.ok && result.value.kind === 'committed') listener(result.value.change);
-}
-
-function isInsertEntryKey(key: string): key is VimInsertEntryKey {
-  return key === 'i' || key === 'I' || key === 'a' || key === 'A' || key === 'o' || key === 'O' || key === 'R' || key === 'gR' || key === 'gi' || key === 'gI';
-}
-
-function isDirectChangeKey(key: string): key is VimDirectChangeKey {
-  return key === 's' || key === 'S' || key === 'C' || key === 'x' || key === 'X' || key === 'D' || key === '~';
-}
-
-function isMotionKey(key: string): key is VimMotionKey {
-  return key === 'h' || key === 'l' || key === 'j' || key === 'k' || key === '0' || key === '^' || key === '$'
-    || key === 'g_' || key === '|' || key === '+' || key === '-' || key === '_' || key === 'gg' || key === 'G'
-    || key === '<Left>' || key === '<Right>' || key === '<Up>' || key === '<Down>' || key === '<Home>' || key === '<End>'
-    || key === '<C-Home>' || key === '<C-End>' || key === '<BS>' || key === '<C-H>' || key === '<Space>'
-    || key === '<NL>' || key === '<CR>' || key === '<C-M>' || key === '<C-J>' || key === '<C-N>' || key === '<C-P>';
-}
-
-function keyName(event: OwnedVimKeyEvent): string {
-  switch (event.name) {
-    case 'ESC':
-    case 'Escape':
-    case 'escape': return '<Esc>';
-    case 'return': return '<CR>';
-    case 'linefeed': return '<NL>';
-    case 'space': return '<Space>';
-    case 'backspace': return '<BS>';
-    default: return event.name;
-  }
-}
-
-function encodeKeyBytes(raw: string): Uint8Array {
-  if (raw.length === 1) {
-    const code = raw.charCodeAt(0);
-    if (code <= 0x7f) return Uint8Array.of(code);
-  }
-  return new TextEncoder().encode(raw);
-}
-
-function offset(value: number): Utf16Offset {
-  const result = asUtf16Offset(value);
-  if (!result.ok) throw new Error('xi-offset');
-  return result.value;
-}
-
-function id<T extends string>(value: string): T {
-  const result = asIdentifier<T>(value, 'xi-id');
-  if (!result.ok) throw new Error(result.error.message);
-  return result.value;
-}

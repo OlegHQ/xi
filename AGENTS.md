@@ -22,6 +22,10 @@ Measure tails and maxima, cold/first-key behavior, held arrows, bursts, GC, long
 
 Use `.agents/skills/xi-implement/SKILL.md` for ticket implementation. Use `xi-vim-parity` for engine semantics and `xi-validate` for relevant behavioral, PTY, or performance validation. Read only the relevant specifications after reading `docs/plan/06-execution.md`. `python3 tools/plan.py next` lists tickets whose dependencies are done. `show ID` prints the full contract. Never mark a prerequisite done merely to unlock a ticket.
 
+`.claude/skills` is a symlink to `.agents/skills`; run `bun run skills:sync` after adding or editing a skill so both trees stay identical, and never let them diverge by hand.
+
+Use the `ponytail` skill whenever writing or changing code: prefer the simplest, shortest solution that actually works before adding abstraction, dependencies, or boilerplate.
+
 Keep tickets small. A ticket that cannot be independently reviewed should be split with acceptance checks and dependency edges preserved. New discoveries update the relevant specification and backlog; they do not silently narrow parity or performance requirements.
 
 ## Ownership

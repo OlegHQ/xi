@@ -79,6 +79,8 @@ async function renderFixture(
     session: { viewId, documentId, documentVersion: snapshot.version, selections: selectionSet, mode: selectionSet.members[0]?.kind.startsWith('visual') === true ? 'visual' : 'normal' },
     document: snapshot,
     selections: selectionSet,
+    scrollTop: 0,
+    scrollLeft: 0,
   };
   const document: DocumentReadPort = {
     snapshot: () => snapshot,

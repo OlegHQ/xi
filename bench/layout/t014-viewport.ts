@@ -124,6 +124,107 @@ console.log(JSON.stringify({
   cacheStats: stats,
 }, null, 2));
 
+// Production non-wrapping shape (packages/ui/src/workbench.ts uses
+// `{ wrap: false, gutterWidthCells: 6 }`) at a 200x50 viewport: repeatedly typing one
+// character on the first visible line. Every keystroke shifts the absolute UTF-16
+// offset of every one of the other ~49 visible lines without changing their text,
+// which is exactly the materialized-row cache-key defect this ticket fixes.
+const prodLineCount = 5_000;
+const prodContent = Array.from({ length: prodLineCount }, (_, index) =>
+  `const value_${index} = { column: ${index}, label: 'Xi production-shape fixture ${index % 97}' };`).join('\n');
+const prodEndings = Array.from({ length: prodLineCount - 1 }, () => 'lf' as const);
+const prodDocumentId = identifier<DocumentId>('T014-benchmark-production-document');
+const prodPrimaryId = identifier<SelectionId>('T014-benchmark-production-primary');
+const prodUndoGroup = identifier<UndoGroupId>('T014-benchmark-production-edit');
+const prodViewId = identifier<ViewId>('T014-benchmark-production-view');
+const prodCreated = TextFileDocument.create(prodDocumentId, prodContent, prodEndings, 'lf');
+if (!prodCreated.ok) throw new Error(`T014-benchmark-production-document:${prodCreated.error.kind}`);
+const prodDocument = prodCreated.value;
+const prodSelectionResult = createSelectionSet(prodDocument.snapshot(), {
+  primaryId: prodPrimaryId,
+  members: [{
+    id: prodPrimaryId,
+    kind: 'normal-cursor',
+    direction: 'forward',
+    anchor: { kind: 'character', offset: 0 as never, after: 1 as never },
+    head: { kind: 'character', offset: 0 as never, after: 1 as never },
+  }],
+});
+if (!prodSelectionResult.ok) throw new Error(`T014-benchmark-production-selection:${prodSelectionResult.error.kind}`);
+
+const prodLayout = new ViewportLayout();
+const prodTotal = 300;
+const prodOptions = { wrap: false as const, gutterWidthCells: 6 };
+const prodSamples: number[] = [];
+let prodSelection: SelectionSetSnapshot = prodSelectionResult.value.selectionSet;
+const materializedMissesByIndex: number[] = [];
+const rowsBuiltByIndex: number[] = [];
+for (let index = 0; index < prodTotal + 30; index += 1) {
+  const before = prodDocument.snapshot();
+  // Real typing: monotonically insert one character at the start of the first
+  // visible line every keystroke, like a person actually typing there. This keeps
+  // pushing every lower line's absolute base offset to a value it has never had
+  // before, which is exactly what defeats a base-offset-keyed materialized-row
+  // cache; an insert/delete toggle would only ever visit two offsets and mask the
+  // regression this benchmark exists to catch.
+  const proposal: EditProposal = {
+    documentId: prodDocumentId,
+    expectedVersion: before.version,
+    edits: [{ start: 0 as never, end: 0 as never, text: 'x' }],
+    origin: 'vim',
+    undoGroup: prodUndoGroup,
+  };
+  const committed = prodDocument.commit(proposal);
+  if (!committed.ok || committed.value.kind !== 'committed') throw new Error('T014-benchmark-production-edit-failed');
+  const mapped = mapSelectionSet(prodSelection, committed.value.change.changeMap, committed.value.change.snapshot);
+  if (!mapped.ok) throw new Error(`T014-benchmark-production-selection-map:${mapped.error.kind}`);
+  prodSelection = mapped.value.selectionSet;
+  prodLayout.observeDocumentChange(committed.value.change);
+  const statsBefore = prodLayout.cacheStats;
+  const start = performance.now();
+  const frame = prodLayout.project({
+    viewId: prodViewId,
+    snapshot: committed.value.change.snapshot,
+    selection: prodSelection,
+    widthCells: 200,
+    heightCells: 50,
+    options: prodOptions,
+  });
+  if (!frame.ok) throw new Error(`T014-benchmark-production-layout:${frame.error.kind}`);
+  const elapsed = performance.now() - start;
+  const statsAfter = prodLayout.cacheStats;
+  if (index >= 30) {
+    prodSamples.push(elapsed);
+    materializedMissesByIndex.push(statsAfter.materializedLineMisses - statsBefore.materializedLineMisses);
+    rowsBuiltByIndex.push(statsAfter.rowsBuilt - statsBefore.rowsBuilt);
+  }
+}
+prodSamples.sort((left, right) => left - right);
+const sum = (values: readonly number[]): number => values.reduce((total, value) => total + value, 0);
+console.log(JSON.stringify({
+  fixture: 'T014-LAYOUT-PRODUCTION-SHAPE-TYPING-01',
+  host: { platform: process.platform, architecture: process.arch, bun: Bun.version },
+  corpus: {
+    lines: prodLineCount, utf16Units: prodContent.length, viewport: '200x50', wrap: false, gutterWidthCells: 6,
+    warmup: 30, samples: prodTotal,
+  },
+  perFrameMs: {
+    p50: percentile(prodSamples, 0.5),
+    p95: percentile(prodSamples, 0.95),
+    p99: percentile(prodSamples, 0.99),
+    max: prodSamples.at(-1) ?? 0,
+  },
+  materializedLineMissesPerFrame: {
+    mean: sum(materializedMissesByIndex) / materializedMissesByIndex.length,
+    max: Math.max(...materializedMissesByIndex),
+  },
+  rowsBuiltPerFrame: {
+    mean: sum(rowsBuiltByIndex) / rowsBuiltByIndex.length,
+    max: Math.max(...rowsBuiltByIndex),
+  },
+  cacheStats: prodLayout.cacheStats,
+}, null, 2));
+
 function identifier<T extends string>(value: string): T {
   const result = asIdentifier<T>(value, 'fixture-id');
   if (!result.ok) throw new Error(result.error.message);

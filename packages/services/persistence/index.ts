@@ -132,9 +132,22 @@ export interface SessionSnapshot {
   readonly activeDocumentId?: string;
 }
 
+interface JournalEntryEncoding {
+  readonly json: string;
+  readonly bytes: number;
+}
+
+interface JournalCacheEntry {
+  /** Size/mtime observed when this cache entry was produced; `null` means "file absent". Invalidated by a differing stat. */
+  readonly info: { readonly sizeBytes: number; readonly modifiedMilliseconds: number } | null;
+  readonly entries: readonly RecoveryCheckpoint[];
+  readonly encoded: readonly JournalEntryEncoding[];
+}
+
 export class PersistenceService {
   readonly #filesystem: FilesystemPort;
   readonly #opened = new Map<string, FileIdentity>();
+  readonly #journalCache = new Map<string, JournalCacheEntry>();
 
   constructor(filesystem: FilesystemPort) {
     this.#filesystem = filesystem;
@@ -214,7 +227,7 @@ export class PersistenceService {
       return { ok: false, error: { kind: 'stale-document-version', expected: options.expectedVersion, actual: snapshot.version } };
     }
     const expected = options.expectedDisk === undefined ? this.#opened.get(document.id) ?? null : options.expectedDisk;
-    const current = await this.#readIdentity(path, cancellation);
+    const current = await this.#readIdentity(path, cancellation, expected);
     if (!current.ok) return current;
     if (!sameIdentity(expected, current.value)) {
       return { ok: false, error: { kind: 'external-change', path, expected, actual: current.value } };
@@ -297,21 +310,36 @@ export class PersistenceService {
       hasUtf8Bom: snapshot.hasUtf8Bom,
     });
     const journalPath = options.journalPath ?? recoveryJournalPath(path);
-    const existing = await this.#readJournal(journalPath, cancellation);
+    // Reuse the decoded journal kept from the previous checkpoint/recover on
+    // this path when the file's stat has not changed since, instead of
+    // re-reading and JSON.parsing up to DEFAULT_MAX_RECOVERY_BYTES on every
+    // keystroke-triggered checkpoint.
+    const existing = await this.#readJournalCache(journalPath, cancellation);
     if (!existing.ok) return existing;
-    const entries = [...existing.value, checkpoint];
+    const entries = [...existing.value.entries, checkpoint];
+    const encodedEntries = [...existing.value.encoded, journalEntryEncoding(checkpoint)];
     const maxEntries = Math.min(DEFAULT_MAX_RECOVERY_ENTRIES, boundedPositive(options.maxEntries, DEFAULT_MAX_RECOVERY_ENTRIES));
-    while (entries.length > maxEntries) entries.shift();
+    while (entries.length > maxEntries) { entries.shift(); encodedEntries.shift(); }
     const maxBytes = boundedPositive(options.maxBytes, DEFAULT_MAX_RECOVERY_BYTES);
-    let encoded = encodeJson(entries);
-    while (encoded.length > maxBytes && entries.length > 1) {
+    // Only the new entry is ever JSON.stringify'd here; older, unchanged
+    // entries reuse their cached encoding instead of being re-serialized.
+    let totalBytes = journalTotalBytes(encodedEntries);
+    while (totalBytes > maxBytes && entries.length > 1) {
       entries.shift();
-      encoded = encodeJson(entries);
+      encodedEntries.shift();
+      totalBytes = journalTotalBytes(encodedEntries);
     }
-    if (encoded.length > maxBytes) return { ok: false, error: { kind: 'journal-too-large', path: journalPath, bytes: encoded.length } };
+    if (totalBytes > maxBytes) return { ok: false, error: { kind: 'journal-too-large', path: journalPath, bytes: totalBytes } };
     if (cancellation.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
-    const written = await this.#filesystem.writeFileAtomic(journalPath, encoded, cancellation);
+    const buffer = new TextEncoder().encode(joinJournalEntries(encodedEntries));
+    const written = await this.#filesystem.writeFileAtomic(journalPath, buffer, cancellation);
     if (!written.ok) return this.#platform(written.error);
+    const info = await this.#stat(journalPath, cancellation);
+    this.#journalCache.set(journalPath, {
+      info: info.ok && info.value !== undefined ? { sizeBytes: info.value.sizeBytes, modifiedMilliseconds: info.value.modifiedMilliseconds } : null,
+      entries,
+      encoded: encodedEntries,
+    });
     return { ok: true, value: checkpoint };
   }
 
@@ -330,7 +358,7 @@ export class PersistenceService {
     if (checkpoint === undefined) return { ok: true, value: { kind: 'none', path } };
     const restored = restoreCheckpoint(checkpoint, documentId, options.seed ?? 41027);
     if (!restored.ok) return restored;
-    const disk = await this.#readIdentity(path, cancellation);
+    const disk = await this.#readIdentity(path, cancellation, checkpoint.baseDisk);
     if (!disk.ok) return disk;
     if (sameIdentity(checkpoint.baseDisk, disk.value)) {
       return {
@@ -350,9 +378,19 @@ export class PersistenceService {
   async clearRecovery(path: string, cancellation: CancellationToken, journalPath = recoveryJournalPath(path)): Promise<Result<void, PersistenceFailure>> {
     const present = await this.#stat(journalPath, cancellation);
     if (!present.ok) return present;
-    if (present.value === undefined) return { ok: true, value: undefined };
+    if (present.value === undefined) {
+      this.#journalCache.delete(journalPath);
+      return { ok: true, value: undefined };
+    }
     const written = await this.#filesystem.writeFileAtomic(journalPath, encodeJson([]), cancellation);
-    return written.ok ? written : this.#platform(written.error);
+    if (!written.ok) return this.#platform(written.error);
+    const info = await this.#stat(journalPath, cancellation);
+    this.#journalCache.set(journalPath, {
+      info: info.ok && info.value !== undefined ? { sizeBytes: info.value.sizeBytes, modifiedMilliseconds: info.value.modifiedMilliseconds } : null,
+      entries: [],
+      encoded: [],
+    });
+    return written;
   }
 
   async saveSession(path: string, session: SessionSnapshot, cancellation: CancellationToken): Promise<Result<void, PersistenceFailure>> {
@@ -378,25 +416,67 @@ export class PersistenceService {
     return this.#platform(result.error);
   }
 
-  async #readIdentity(path: string, cancellation: CancellationToken): Promise<Result<FileIdentity | null, PersistenceFailure>> {
+  /**
+   * Reads the current on-disk identity. `hint` is the identity last observed
+   * for this path (from open/save); when a `stat` shows the same size, mtime,
+   * device and inode, content cannot have changed, so the file is not
+   * re-read and re-hashed — the hint's hash is reused as-is.
+   */
+  async #readIdentity(path: string, cancellation: CancellationToken, hint?: FileIdentity | null): Promise<Result<FileIdentity | null, PersistenceFailure>> {
     const info = await this.#stat(path, cancellation);
     if (!info.ok) return info;
     if (info.value === undefined) return { ok: true, value: null };
     if (info.value.kind !== 'file' && info.value.kind !== 'symlink') {
       return { ok: false, error: { kind: 'invalid-open', reason: `path is ${info.value.kind}` } };
     }
+    if (hint != null && identityMatchesStat(hint, path, info.value)) return { ok: true, value: hint };
     const read = await this.#filesystem.readFile(path, cancellation);
     if (!read.ok) return this.#platform(read.error);
     return { ok: true, value: makeIdentity(path, info.value, read.value) };
   }
 
   async #readJournal(path: string, cancellation: CancellationToken): Promise<Result<RecoveryCheckpoint[], PersistenceFailure>> {
+    const cached = await this.#readJournalCache(path, cancellation);
+    if (!cached.ok) return cached;
+    return { ok: true, value: [...cached.value.entries] };
+  }
+
+  /**
+   * Stats the journal file and reuses the in-memory decoded journal for this
+   * path when size/mtime match what produced it, avoiding a re-read and
+   * re-parse of up to DEFAULT_MAX_RECOVERY_BYTES of JSON per call. A changed
+   * stat (external edit, or a previous write we made) forces a fresh read.
+   */
+  async #readJournalCache(path: string, cancellation: CancellationToken): Promise<Result<JournalCacheEntry, PersistenceFailure>> {
+    const info = await this.#stat(path, cancellation);
+    if (!info.ok) return info;
+    if (info.value === undefined) {
+      const empty: JournalCacheEntry = { info: null, entries: [], encoded: [] };
+      this.#journalCache.set(path, empty);
+      return { ok: true, value: empty };
+    }
+    const cached = this.#journalCache.get(path);
+    if (cached !== undefined && cached.info !== null && cached.info.sizeBytes === info.value.sizeBytes && cached.info.modifiedMilliseconds === info.value.modifiedMilliseconds) {
+      return { ok: true, value: cached };
+    }
     const read = await this.#filesystem.readFile(path, cancellation);
     if (!read.ok) {
-      if (isNotFound(read.error)) return { ok: true, value: [] };
+      if (isNotFound(read.error)) {
+        const empty: JournalCacheEntry = { info: null, entries: [], encoded: [] };
+        this.#journalCache.set(path, empty);
+        return { ok: true, value: empty };
+      }
       return this.#platform(read.error);
     }
-    return decodeJournal(read.value, path);
+    const decoded = decodeJournal(read.value, path);
+    if (!decoded.ok) return decoded;
+    const entry: JournalCacheEntry = {
+      info: { sizeBytes: info.value.sizeBytes, modifiedMilliseconds: info.value.modifiedMilliseconds },
+      entries: decoded.value,
+      encoded: decoded.value.map(journalEntryEncoding),
+    };
+    this.#journalCache.set(path, entry);
+    return { ok: true, value: entry };
   }
 
   #platform(failure: PlatformFailure): { readonly ok: false; readonly error: PersistenceFailure } {
@@ -580,20 +660,23 @@ function makeIdentityFromHash(path: string, info: FileInfo, contentHash: string)
   });
 }
 
+// Content identity only needs a stable, collision-resistant digest for equality
+// checks; it is never validated against a fixed format (validateIdentity only
+// requires a string), so the algorithm can change freely. Bun's native
+// CryptoHasher is hardware-accelerated and supports incremental updates for
+// the streaming read/write paths, unlike the previous per-byte BigInt FNV loop.
 function createFingerprintAccumulator(): { update(bytes: Uint8Array): void; value(): string } {
-  let low = 0x84222325;
-  let high = 0xcbf29ce4;
+  const hasher = new Bun.CryptoHasher('sha256');
   return {
-    update(bytes: Uint8Array): void {
-      for (const byte of bytes) {
-        const xorLow = (low ^ byte) >>> 0;
-        const product = xorLow * 0x1b3;
-        low = product >>> 0;
-        high = (Math.floor(product / 0x1_0000_0000) + high * 0x1b3 + xorLow * 0x100) >>> 0;
-      }
-    },
-    value(): string { return `fnv1a64-${high.toString(16).padStart(8, '0')}${low.toString(16).padStart(8, '0')}`; },
+    update(bytes: Uint8Array): void { hasher.update(bytes); },
+    value(): string { return `sha256-${hasher.digest('hex')}`; },
   };
+}
+
+function identityMatchesStat(hint: FileIdentity, path: string, info: FileInfo): boolean {
+  return hint.path === path && hint.kind === info.kind && hint.sizeBytes === info.sizeBytes
+    && hint.modifiedMilliseconds === info.modifiedMilliseconds && hint.device === info.device && hint.inode === info.inode
+    && hint.linkCount === info.linkCount;
 }
 
 function sameIdentity(expected: FileIdentity | null, actual: FileIdentity | null): boolean {
@@ -603,13 +686,28 @@ function sameIdentity(expected: FileIdentity | null, actual: FileIdentity | null
 }
 
 function fingerprint(bytes: Uint8Array): string {
-  const hash = createFingerprintAccumulator();
-  hash.update(bytes);
-  return hash.value();
+  return `sha256-${Bun.CryptoHasher.hash('sha256', bytes, 'hex')}`;
 }
 
 function encodeJson(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
+}
+
+function journalEntryEncoding(entry: RecoveryCheckpoint): JournalEntryEncoding {
+  const json = JSON.stringify(entry);
+  return { json, bytes: Buffer.byteLength(json, 'utf8') };
+}
+
+/** Byte length of `JSON.stringify(entries.map(e => JSON.parse(e.json)))`, computed from cached per-entry sizes. */
+function journalTotalBytes(encoded: readonly JournalEntryEncoding[]): number {
+  if (encoded.length === 0) return 2; // "[]"
+  let total = 2 + (encoded.length - 1); // brackets + commas
+  for (const entry of encoded) total += entry.bytes;
+  return total;
+}
+
+function joinJournalEntries(encoded: readonly JournalEntryEncoding[]): string {
+  return `[${encoded.map((entry) => entry.json).join(',')}]`;
 }
 
 function asOffset(value: number): Parameters<TextFileSnapshot['slice']>[0] {

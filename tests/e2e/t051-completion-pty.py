@@ -69,7 +69,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t051-completion-") as temporary:
         read_until(master, captured, b"XI_COMPLETION_APPLIED", 5)
         os.write(master, b"\x1b")
         time.sleep(0.1)
-        os.write(master, b"q")
+        # The applied completion left the buffer dirty; bare 'q' now correctly refuses a
+        # dirty buffer like ':q' does, so discard the scratch edit explicitly.
+        os.write(master, b":q!\r")
         child.wait(timeout=5)
     finally:
         if child.poll() is None:

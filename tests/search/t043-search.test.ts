@@ -159,10 +159,62 @@ async function processExitRaceRejectsLateOutput(): Promise<void> {
   service.dispose();
 }
 
+class StreamingBatchBackend implements SearchBackend {
+  async search(query: SearchQuery, _token: CancellationToken, generation: number, onBatch?: (matches: readonly import('../../packages/services/search/index').SearchMatch[]) => void): Promise<Result<readonly import('../../packages/services/search/index').SearchMatch[], never>> {
+    const files = [
+      { path: 'src/z.ts', line: 3 },
+      { path: 'src/a.ts', line: 1 },
+      { path: 'src/m.ts', line: 5 },
+    ];
+    const all = files.map((file, index) => Object.freeze({
+      id: `${query.rootId}:${file.path}:${file.line}:0:${generation}`,
+      rootId: query.rootId,
+      path: file.path,
+      line: file.line,
+      range: Object.freeze({ startUtf16: 0, endUtf16: 6 }),
+      lineText: 'needle',
+      snippet: 'needle',
+      source: 'disk' as const,
+      generation,
+      _order: index,
+    }));
+    for (const match of all) {
+      onBatch?.(Object.freeze([match]));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return { ok: true, value: Object.freeze(all) };
+  }
+}
+
+async function streamedBatchesScanBuffersOnceAndMergeCorrectly(): Promise<void> {
+  let textReads = 0;
+  const bufferSource = {
+    rootId: 'root',
+    path: 'src/buffered.ts',
+    version: 3,
+    get text(): string { textReads += 1; return 'needle here\nsecond needle'; },
+  };
+  const service = new RealtimeSearchService({
+    backend: new StreamingBatchBackend(),
+    debounceMilliseconds: 0,
+    defaultLimit: 100,
+    bufferSourceProvider: () => [bufferSource],
+  });
+  const result = await service.query(query('needle'));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(textReads, 1, 'dirty-buffer text is scanned once per query run, not once per streamed batch');
+  const paths = result.value.matches.map((match) => match.path);
+  assert.deepEqual(paths, ['src/a.ts', 'src/buffered.ts', 'src/buffered.ts', 'src/m.ts', 'src/z.ts'], 'final published matches are sorted by path/line regardless of streaming arrival order');
+  assert.equal(result.value.totalMatches, 5);
+  service.dispose();
+}
+
 await contentAndBufferSources();
 await staleGenerationIsRejected();
 await invalidRegexKeepsPriorResults();
 await productionRipgrepPath();
 await cancelledDebounceResolves();
 await processExitRaceRejectsLateOutput();
-console.log('T043 search passed production ripgrep, encoded paths, UTF-16 ranges, output bounds, dirty-buffer replacement, regex flags and process-exit cancellation fixtures');
+await streamedBatchesScanBuffersOnceAndMergeCorrectly();
+console.log('T043 search passed production ripgrep, encoded paths, UTF-16 ranges, output bounds, dirty-buffer replacement, regex flags, process-exit cancellation and streamed-batch merge fixtures');

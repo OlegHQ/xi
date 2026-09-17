@@ -107,8 +107,8 @@ export { WorkbenchControlRegistry, SplitterDragController, TerminalRestoration }
 export type { WorkbenchControl, SplitGeometry, TerminalModePort } from '../input/controls';
 export { MultiCursorLanguageEditCoordinator } from '../editing/language-edits';
 export type { SelectionEdit, AdditionalEdit, MultiCursorLanguageResponse, MultiCursorEditFailure, MultiCursorEditPort } from '../editing/language-edits';
-export { ViewSelectionPersistence } from '../selection-persistence';
-export type { PersistedSelectionMember, PersistedViewSelection, SelectionPersistenceSnapshot, SelectionPersistenceFailure } from '../selection-persistence';
+export { ViewSelectionPersistence } from '../session/selection-persistence';
+export type { PersistedSelectionMember, PersistedViewSelection, SelectionPersistenceSnapshot, SelectionPersistenceFailure } from '../session/selection-persistence';
 export { WorkbenchResourceCoordinator, largeResourceProfile, DEFAULT_SMALL_RESOURCE_CAPACITY_BYTES, DEFAULT_RESOURCE_PRESSURE_RATIO } from '../resources/index';
 export type { LargeResourceProfile, WorkbenchResourceCoordinatorOptions } from '../resources/index';
 export { createOwnedVimSession } from '../vim-session/index';
@@ -119,3 +119,180 @@ export type {
   VimCommandLineState,
   VimPrefixHelpState,
 } from '../vim-session/index';
+export { BufferHost } from '../host/index';
+export type {
+  BufferHostOptions,
+  BufferHostPanel,
+  HostCommandPort,
+  OpenBufferAtPathOptions,
+  OpenBufferAtPathResult,
+} from '../host/index';
+export { PickerController, ThemeController } from '../picker/index';
+export type {
+  PickerControllerOptions,
+  PickerModelPort,
+  ThemeControllerOptions,
+  ThemeFilesystemPort,
+  WorkbenchPickerEntry,
+  WorkbenchPickerFailure,
+  WorkbenchPickerMode,
+} from '../picker/index';
+export { ExplorerController } from '../explorer/index';
+export type {
+  ExplorerControllerOptions,
+  ExplorerFileOperationsPort,
+  ExplorerKeyEvent,
+  ExplorerNavigationPort,
+  ExplorerSessionPort,
+  ExplorerTreeModel,
+  ExplorerTreeNode,
+  ExplorerTreeNodeKind,
+  ExplorerTreePort,
+} from '../explorer/index';
+export { SearchController } from '../search/index';
+export type {
+  ApplyReplacementEditsFn,
+  ReplaceServicePort,
+  SearchControllerOptions,
+  SearchFilesystemPort,
+  SearchKeyEvent,
+  SearchServicePort,
+  SearchSessionBuffer,
+  SearchSessionPort,
+  WorkbenchReplaceApplyPort,
+  WorkbenchReplaceApplyResult,
+  WorkbenchReplaceFailure,
+  WorkbenchReplaceJournal,
+  WorkbenchReplaceJournalEntry,
+  WorkbenchReplacePlan,
+  WorkbenchReplaceTarget,
+  WorkbenchReplacementEdit,
+  WorkbenchSearchBufferSource,
+  WorkbenchSearchMatch,
+  WorkbenchSearchModel,
+  WorkbenchSearchQuery,
+} from '../search/index';
+export { ProblemsController } from '../problems/index';
+export type {
+  DiagnosticsPort,
+  ProblemsControllerOptions,
+  ProblemsDiagnostic,
+  ProblemsDiagnosticEntry,
+  ProblemsDiagnosticPublish,
+  ProblemsDiagnosticRange,
+  ProblemsKeyEvent,
+  ProblemsReadModel,
+  TaskControllerPort,
+  WorkbenchTaskConfig,
+  WorkbenchTaskFailure,
+  WorkbenchTaskMatchedProblem,
+  WorkbenchTaskOutputSnapshot,
+  WorkbenchTaskSpec,
+} from '../problems/index';
+export { buildNavigationRequest, CompletionSnippetController, LanguageOverlayController, nonOverlappingDocumentEdits, planCompletionEdits, WorkspaceEditsController } from '../language/index';
+export type {
+  AppliedWorkspaceEditProposal,
+  CompletionControllerPort,
+  CompletionKeyEvent,
+  CompletionModelRead,
+  CompletionProviderPort,
+  CompletionSnippetControllerOptions,
+  ExecuteLanguageCodeActionFn,
+  ExpandSnippetFn,
+  HoverOverlayModel,
+  LanguageCodeActionPort,
+  LanguageOverlayControllerOptions,
+  LanguageOverlayKeyEvent,
+  LanguageOverlayReadPort,
+  LanguageServerSessionPort,
+  LanguageWorkbenchSessionPort,
+  NavigationControllerPort,
+  OutlineOverlayModel,
+  RenameRetryOptionsPort,
+  SignatureControllerPort,
+  SignatureModelRead,
+  SnippetSessionCtor,
+  SnippetSessionPort,
+  SnippetSupport,
+  WorkbenchCompletionAction,
+  WorkbenchCompletionFailure,
+  WorkbenchCompletionItem,
+  WorkbenchCompletionList,
+  WorkbenchCompletionModel,
+  WorkbenchCompletionPosition,
+  WorkbenchCompletionRequest,
+  WorkbenchCompletionTextEdit,
+  WorkbenchNavigationModel,
+  WorkbenchNavigationRequest,
+  WorkbenchNavigationSymbol,
+  WorkbenchSignatureFailure,
+  WorkbenchSignatureInformation,
+  WorkbenchSignatureList,
+  WorkbenchSignatureModel,
+  WorkbenchSignatureParameter,
+  WorkbenchSnippetEdit,
+  WorkbenchSnippetExpansion,
+  WorkbenchSnippetFailure,
+  WorkbenchSnippetTabstop,
+  WorkbenchSnippetTransform,
+  WorkspaceEditableDocumentPort,
+  WorkspaceEditFailurePort,
+  WorkspaceEditFilesystemPort,
+  WorkspaceEditPosition,
+  WorkspaceEditProposalPort,
+  WorkspaceEditProviderFailurePort,
+  WorkspaceEditProviderPort,
+  WorkspaceEditRequestPort,
+  WorkspaceEditsControllerOptions,
+  WorkspaceEditTargetPort,
+  WorkspaceResourceOperationPort,
+  WorkspaceTextEditPort,
+} from '../language/index';
+export { WorkbenchInputRouter } from '../input/router';
+export type {
+  RouterCompletionPort,
+  RouterExplorerPort,
+  RouterKeyEvent,
+  RouterOverlayPort,
+  RouterPickerMode,
+  RouterPickerPort,
+  RouterProblemsPort,
+  RouterSearchPort,
+  RouterWorkspaceEditsPort,
+  WorkbenchInputRouterOptions,
+} from '../input/router';
+export { WorkbenchPointerRouter } from '../input/pointer-router';
+export type {
+  ContextMenuItemInput,
+  ContextMenuPort,
+  PointerControlEvent,
+  PointerExplorerPort,
+  PointerPanelEvent,
+  PointerPickerEntry,
+  PointerPickerModelPort,
+  PointerPickerPort,
+  PointerProblemsPort,
+  PointerSearchPort,
+  PointerWorkbenchEvent,
+  WorkbenchPointerRouterOptions,
+} from '../input/pointer-router';
+export { WorkbenchHostCommands } from '../commands/host-commands';
+export type {
+  HostCommandsFilesystemPort,
+  HostCommandsOptions,
+  HostCommandsProblemsPort,
+  HostCommandsSaveCoordinatorPort,
+  HostCommandsWorkspaceEditsPort,
+  HostNavigationFailure,
+  HostNavigationLocation,
+  HostNavigationPort,
+} from '../commands/host-commands';
+export { SaveCoordinator } from '../editing/save-coordinator';
+export type {
+  FormatterFailure,
+  FormatterFormatResult,
+  FormatterPipelinePort,
+  PersistenceFailure,
+  SaveCoordinatorOptions,
+  SaveCoordinatorPersistencePort,
+} from '../editing/save-coordinator';

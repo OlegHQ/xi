@@ -102,10 +102,17 @@ interface InternalStep extends FileOperationStep {
  * Every individual move/copy is journaled before and after it runs. A failed
  * plan remains recoverable and is never silently rolled back over external data.
  */
+/** Bounds the fingerprint cache so a long-lived service instance cannot retain unbounded per-path memory. */
+const MAX_FINGERPRINT_CACHE_ENTRIES = 256;
+
 export class JournaledFilesystemOperations {
   readonly #filesystem: JournaledFilesystemPort;
   readonly #hooks: FileOperationHooks | undefined;
   readonly #defaultTrashRoot: string | undefined;
+  // Preflight, executeStep and restoreStep each fingerprint the same source
+  // and destination paths; caching by path with a stat-based validity check
+  // (below) avoids reading and hashing an unchanged file more than once.
+  readonly #fingerprintCache = new Map<string, FileFingerprint>();
   #counter = 0;
 
   constructor(filesystem: JournaledFilesystemPort, options: Pick<JournaledFileOperationOptions, 'hooks' | 'trashRoot'> = {}) {
@@ -392,23 +399,34 @@ export class JournaledFilesystemOperations {
   private async fingerprint(path: string, cancellation: CancellationToken): Promise<Result<FileFingerprint | undefined, FileOperationFailure>> {
     const stat = await this.#filesystem.stat(path, cancellation);
     if (!stat.ok) {
-      if (stat.error.code === 'ENOENT' || stat.error.code === 'ENOTDIR') return { ok: true, value: undefined };
+      if (stat.error.code === 'ENOENT' || stat.error.code === 'ENOTDIR') {
+        this.#fingerprintCache.delete(path);
+        return { ok: true, value: undefined };
+      }
       return platformFailure(path, stat.error);
+    }
+    const cached = this.#fingerprintCache.get(path);
+    if (cached !== undefined && cached.kind === stat.value.kind && cached.sizeBytes === stat.value.sizeBytes
+      && cached.modifiedMilliseconds === stat.value.modifiedMilliseconds && cached.device === stat.value.device && cached.inode === stat.value.inode) {
+      return { ok: true, value: cached };
     }
     const hash = stat.value.kind === 'file' ? await this.hash(path, cancellation) : { ok: true as const, value: undefined };
     if (!hash.ok) return hash;
-    return {
-      ok: true,
-      value: Object.freeze({
-        path,
-        kind: stat.value.kind,
-        sizeBytes: stat.value.sizeBytes,
-        modifiedMilliseconds: stat.value.modifiedMilliseconds,
-        device: stat.value.device,
-        inode: stat.value.inode,
-        contentHash: hash.value,
-      }),
-    };
+    const value: FileFingerprint = Object.freeze({
+      path,
+      kind: stat.value.kind,
+      sizeBytes: stat.value.sizeBytes,
+      modifiedMilliseconds: stat.value.modifiedMilliseconds,
+      device: stat.value.device,
+      inode: stat.value.inode,
+      contentHash: hash.value,
+    });
+    this.#fingerprintCache.set(path, value);
+    if (this.#fingerprintCache.size > MAX_FINGERPRINT_CACHE_ENTRIES) {
+      const oldest = this.#fingerprintCache.keys().next().value;
+      if (oldest !== undefined) this.#fingerprintCache.delete(oldest);
+    }
+    return { ok: true, value };
   }
 
   private async requireFingerprint(path: string, cancellation: CancellationToken): Promise<Result<FileFingerprint, { readonly path: string; readonly message: string }>> {
@@ -603,15 +621,17 @@ function parentPath(path: string): string {
 }
 function basename(path: string): string { const canonical = canonicalPath(path); return canonical.slice(canonical.lastIndexOf('/') + 1) || 'entry'; }
 
-/** Stable non-cryptographic content fingerprint used alongside platform identity. */
+// Stable non-cryptographic content fingerprint used alongside platform
+// identity. Only ever compared for equality within/across journaled
+// operations (never validated against a fixed format by isJournal), so the
+// algorithm is free to change; Bun's native hash replaces the previous
+// per-byte double-BigInt-multiply loop, which ran on the main isolate for
+// every fingerprinted file. NOTE: a journal written before this change and
+// still 'running' across an app upgrade would carry old-format hashes; a
+// restore recomputes fresh hashes and compares by string equality, so such a
+// journal would report a (spurious) content mismatch instead of restoring.
+// This is an accepted, narrow compatibility gap (crash-during-operation +
+// same-moment upgrade), not a schema version bump.
 function stableHash(bytes: Uint8Array): string {
-  let first = 0xcbf29ce484222325n;
-  let second = 0x9e3779b185ebca87n;
-  for (const byte of bytes) {
-    first ^= BigInt(byte);
-    first = BigInt.asUintN(64, first * 0x100000001b3n);
-    second ^= first >> 29n;
-    second = BigInt.asUintN(64, second * 0x9e3779b185ebca87n);
-  }
-  return `${first.toString(16).padStart(16, '0')}${second.toString(16).padStart(16, '0')}`;
+  return Bun.hash(bytes).toString(16).padStart(16, '0');
 }

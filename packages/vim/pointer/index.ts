@@ -11,7 +11,7 @@ export interface PointerTextTarget {
 export interface PointerCell { readonly row: number; readonly column: number; readonly target?: PointerTextTarget; }
 export interface PointerEvent { readonly phase: 'down' | 'move' | 'up' | 'wheel'; readonly viewId: string; readonly cell: PointerCell; readonly button: number | null; readonly modifiers: InputModifiers; readonly wheelDelta: number; readonly frameId: number; readonly viewportHeight?: number; }
 export interface PointerSelectionIntent { readonly kind: PointerGestureKind; readonly viewId: string; readonly anchor: PointerCell; readonly head: PointerCell; readonly modifiers: InputModifiers; }
-export interface PointerEnginePort { cancelPendingOperator(): void; place(intent: PointerSelectionIntent): void; scroll(viewId: string, delta: number): void; }
+export interface PointerEnginePort { cancelPendingOperator(): void; place(intent: PointerSelectionIntent): void; scroll(viewId: string, delta: number, viewportHeight: number | undefined): void; }
 
 /** Captures a pointer gesture to its press view until release/cancellation. */
 export class PointerGestureController implements Disposable {
@@ -23,7 +23,7 @@ export class PointerGestureController implements Disposable {
   get capturedViewId(): string | undefined { return this.#capture?.viewId; }
   handle(event: PointerEvent): boolean {
     if (this.#disposed) return false;
-    if (event.phase === 'wheel') { this.#engine.scroll(event.viewId, event.wheelDelta); return true; }
+    if (event.phase === 'wheel') { this.#engine.scroll(event.viewId, event.wheelDelta, event.viewportHeight); return true; }
     if (event.phase === 'down' && event.button === 0) {
       const now = performance.now();
       const previous = this.#lastClick;
@@ -48,8 +48,8 @@ export class PointerGestureController implements Disposable {
         this.#engine.place({ kind: current.kind, viewId: current.viewId, anchor: current.anchor, head: event.cell, modifiers: current.modifiers });
         const viewportHeight = event.viewportHeight;
         if (viewportHeight !== undefined && Number.isSafeInteger(viewportHeight) && viewportHeight > 1) {
-          if (event.cell.row === 0) this.#engine.scroll(event.viewId, -1);
-          else if (event.cell.row === viewportHeight - 1) this.#engine.scroll(event.viewId, 1);
+          if (event.cell.row === 0) this.#engine.scroll(event.viewId, -1, viewportHeight);
+          else if (event.cell.row === viewportHeight - 1) this.#engine.scroll(event.viewId, 1, viewportHeight);
         }
       }
       return true;

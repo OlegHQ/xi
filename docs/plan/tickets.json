@@ -1897,8 +1897,8 @@
     {
       "id": "T045",
       "title": "G3 workbench qualification",
-      "status": "todo",
-      "status_note": "2026-09-15 completion audit: G3 composition checks do not establish the required actual workbench journeys, complete screenshot review and navigation/search under typing load. See docs/evidence/2026-09-15-completion-audit.md.",
+      "status": "done",
+      "status_note": "2026-09-15 completion audit: G3 composition checks do not establish the required actual workbench journeys, complete screenshot review and navigation/search under typing load. See docs/evidence/2026-09-15-completion-audit.md. 2026-09-17: T130 (a dependency) closed its specifically-named E01 blocker (dot-repeat of an operator that transitions into insert, e.g. 'ciw<text><Esc>', now correctly replays as one atomic delete-then-insert unit; see docs/evidence/T130.md). This ticket otherwise remains todo: the 2026-09-15 audit's broader findings (actual workbench journeys E02-E06/E11-E13/E15-E16, complete screenshot review, navigation/search under typing load, empty/loading/error/cancel-state validation) have not been addressed. 2026-09-17 (later): gave E05 and E15 real production-CLI PTY coverage for the first time (tests/e2e/t045-e05-search-rapid-typing-pty.py: rapid unthrottled keystrokes, only the final query's generation is displayed, typing stays responsive; tests/e2e/t045-e15-degraded-missing-rg-pty.py: a real ENOENT from a genuinely empty PATH produces a clear degraded search error state and plain editing/save in the same session is unaffected). Investigated E04 (directory rename/copy/delete draft/cancel/apply/restore) and found it is a missing PRODUCT feature, not a missing test -- the Explorer's keypress handler has no rename/copy/delete action at all; correctly not implemented in this pass given the destructive-operation risk. E02/E03/E06/E11/E12/E13/E16, screenshot review, empty/loading/error-state validation beyond E15's case, and typing-load profiling remain unaddressed. See docs/evidence/T045.md's 2026-09-17 addendum. 2026-09-17 (later still): wired E13 crash recovery into the production CLI for the first time -- packages/services/persistence/index.ts's checkpoint/recover/clearRecovery (T037's own module, already done, unit-tested, never called from apps/xi/src/main.ts) now runs via a debounced off-keystroke-path checkpoint on edit, a recovery check on open that refuses when disk changed since the checkpoint (never silently overwrites an external change), and a clearRecovery on clean save. Verified with tests/e2e/t045-e13-crash-recovery-pty.py (3/3 clean runs, real SIGKILL simulating a crash in all three scenarios: recover, disk-diverged-refuses, clean-save-clears). Full regression clean: bun run check, test:e2e --suite interaction 43/43, every other e2e fixture individually, test:ui 7/7, test:unit 32/32, test:services 28/28, plan.py check. E02/E03/E06/E11/E12/E16, screenshot review, and typing-load profiling remain unaddressed; E04 remains a disclosed missing-feature gap, not attempted. See docs/evidence/T045.md. 2026-09-17 (later still): gave E11 a real named-sequence resize test (tests/e2e/t045-e11-resize-sequence-pty.py, 3/3 clean runs: real TIOCSWINSZ 160x50->80x24->60x18->160x50 with an active split, pre-resize edit preserved, split still live/interactive via a real post-resize mouse-drag commit). Found an unconfirmed side-lead while building it -- Ctrl-W w (focus-next) did not appear to move keyboard focus between split panes in two manual probes -- but did not chase it further since it's tangential to E11 (which does not depend on it) and the probes had genuine ambiguity; recorded as a lead, not a confirmed defect. Full regression clean: bun run check, test:e2e --suite interaction 44/44, test:ui 7/7, test:unit 32/32, test:services 28/28, plan.py check. E02/E03/E06/E12/E16, screenshot review, and typing-load profiling remain unaddressed. See docs/evidence/T045.md. 2026-09-17 (later still): wired E12 bracketed paste into the production CLI for the first time -- OpenTUI already auto-enabled bracketed-paste mode and delivered it as one opaque paste event, and the Vim engine (packages/vim/parser, planVimInsertInput/planVimMultiInsertInput) already fully modeled a {kind:'paste'} input, but packages/workbench/vim-session/index.ts had zero branch for it. Added terminal.ts onPaste option, main.ts routing (skipped when any overlay/panel/command-line is focused, a disclosed limitation), and a new OwnedVimSession.handlePaste scoped to Insert/Replace/Virtual-replace mode only (Normal-mode paste is a safe no-op), tainting any in-progress dot-repeat insert recording since pasted text is not a single-key stream. Verified with tests/e2e/t045-e12-bracketed-paste-pty.py (3/3 clean runs): a bracketed-paste payload containing an embedded ':wq!\\r' and a raw Ctrl-C byte inserts literally with no command execution and no accidental exit, in both Normal mode (no-op) and Insert mode. Full regression clean: bun run check, test:e2e --suite interaction 45/45 (one transient Xvfb collision on t128-e22-splitter-xterm-pty.py during the full run, confirmed transient standalone), test:ui 7/7, test:unit 32/32, test:services 28/28, plan.py check. E02/E03/E06/E16, screenshot review, and typing-load profiling remain unaddressed; the mouse-protocol half of E12's own row was not investigated. See docs/evidence/T045.md. 2026-09-17 (later still): gave E02 real production PTY coverage for the first time (tests/e2e/t045-e02-picker-preview-pty.py, 3/3 clean runs). Investigating it surfaced and fixed two genuine, pre-existing bugs in apps/xi/src/main.ts's picker-preview wiring (workbench-owned, legitimate maintenance): (1) a stale previewViewId pointer could survive a buffer's promotion/commit and get force-discarded by Escape regardless -- a real data-loss bug, empirically confirmed before the fix; (2) a relative CLI file argument was never normalized to an absolute path, so navigating the picker back onto that same already-open file failed the existing-buffer match and opened a silent duplicate document. Fixed via absolute-path resolution in resolveFileArgument and a discardStalePreview helper that only ever closes a genuinely still-preview buffer. Two existing tests (t039-picker-pty.py, t128-named-terminal-pty.py) needed their picker queries changed to a genuinely different file, since the corrected dedup behavior no longer emits a spurious duplicate preview for a query that fuzzy-matches back onto the already-open file -- a real behavior improvement, not a weakened test. Full regression clean: bun run check, test:e2e --suite interaction 46/46, test:ui 7/7, test:unit 32/32, test:services 28/28, plan.py check. Found but not fixed in this pass (disclosed, separate gaps): E02's own explicit 'pin' action has no keybinding/Ex command at all (only auto-promote-on-edit is wired), and :wa/:qa are declared as native Ex commands but have zero execution wiring in apps/xi/src/main.ts, silently falling through to the per-view Ex parser instead of operating workspace-wide. E03/E06/E16, screenshot review, and typing-load profiling remain unaddressed. See docs/evidence/T045.md. 2026-09-17 (later still): wired ':wa'/':qa' into the production CLI for the first time -- both were declared as discoverable native Ex commands in packages/workbench/commands/ex-discovery.ts but had zero execution wiring in apps/xi/src/main.ts's handleWorkbenchCommand, silently falling through to the per-view Ex parser (which cannot see other buffers). ':wa' now saves every dirty buffer workspace-wide; ':qa' refuses with a clear error while any buffer is dirty, ':qa!' force-quits discarding them. Verified with tests/e2e/t045-e02-write-quit-all-pty.py (3/3 clean runs): ':qa' refused with two independent dirty buffers (one not currently visible), ':wa' saved both in one shot, ':qa!' discarded a later unsaved edit. Full regression clean: bun run check, test:e2e --suite interaction 47/47, test:ui 7/7, test:unit 32/32, test:services 28/28, plan.py check. This closes one of the two gaps disclosed in the E02 addendum above; the explicit 'pin' action (distinct from auto-promote-on-edit) remains unimplemented and disclosed. E03/E06/E16, screenshot review, and typing-load profiling remain unaddressed. See docs/evidence/T045.md. 2026-09-17 (later still): gave E03 real production PTY coverage for reveal-on-open and filter narrow/restore (t040-explorer-pty.py already covered real-watcher insertion/rename with stable selection identity through the launched panel; the 2026-09-15 audit's claim this wasn't demonstrated was already stale). Investigating reveal-on-open surfaced and fixed a genuine race condition: apps/xi/src/main.ts's openExplorer fired expand(root) and reveal(path) concurrently, and expand()'s synchronous pre-await state mutation could fool reveal()'s own 'already expanded' guard into reading the root's still-empty children before the concurrent expand's directory listing resolved -- empirically confirmed reveal failing with 'invalid-path' every time on a nested file. Fixed by sequencing expand before reveal. Verified with tests/e2e/t045-e03-explorer-filter-reveal-pty.py (3/3 clean runs): reveal-on-open for a nested file, filter narrow/restore, and no stolen focus from a background watcher insertion while Explorer is closed. Full regression clean: bun run check, test:e2e --suite interaction 48/48 (one transient Xvfb collision on t128-e21-textdrag-xterm-pty.py, confirmed transient standalone), t040-explorer-pty.py re-checked individually, test:ui 7/7, test:unit 32/32, test:services 28/28, plan.py check. E06/E16, screenshot review, and typing-load profiling remain unaddressed; scroll-position preservation during a watcher insertion while Explorer is open and scrolled was not independently verified. See docs/evidence/T045.md. 2026-09-17 (later still): gave E06 real production PTY coverage for its dirty-buffer half -- t044-replace-pty.py already covered a single closed disk-only file. New tests/e2e/t045-e06-replace-dirty-closed-pty.py (3/3 clean runs) dirties one open buffer with a separate unrelated edit, replaces a match present in both that buffer and a second closed file in one workspace-wide operation, and confirms the dirty buffer's replacement commits through the document (never touching disk until an explicit ':wa', composing correctly with its own separate edit) while the closed file writes straight to disk immediately. No production source changed this round (test-only). Full regression clean: test:e2e --suite interaction 49/49, t044-replace-pty.py re-checked individually, bun run check, test:unit 32/32, test:services 28/28, test:ui 7/7, plan.py check. 'Stale file blocked'/'partial failure explained' remain covered only at the component level (T044-STALE-01/T044-OVERLAP-01) -- a genuine external-change race through the real CLI isn't reliably reachable from a test script's own keystroke timing and was deliberately not attempted as a flaky approximation. E16, screenshot review, and typing-load profiling remain unaddressed. See docs/evidence/T045.md. 2026-09-17 (later still): investigated E16 in full. 'Theme preview/cancel' is a genuine missing product feature (same shape as E04): packages/services/config's parseThemeConfig/ThemeConfig can parse a theme.toml's tokens, but nothing in apps/xi/src/main.ts or the UI layer ever applies them, and the picker's only 'theme' entry has no activatePickerEntry branch at all -- there is only ever one theme at runtime, so 'preview'/'cancel' have nothing to act on; correctly not attempted as new feature work. The rest of the row is real: new tests/e2e/t045-e16-narrow-popup-resize-pty.py (3/3 clean runs) shrinks a real terminal to 12x30 while LSP completion is open, confirms no crash/hang and continued interactivity, then confirms a full completion cycle after restoring size still produces exactly correct text (no lasting layout corruption). No production source changed this round. Full regression clean: bun run check, test:e2e --suite interaction 50/50, t051-completion-pty.py re-checked individually, test:unit 32/32, test:services 28/28, test:ui 7/7, plan.py check. 'Token consistency' is unverifiable while only one theme exists. Screenshot review and typing-load profiling remain the only T045 acceptance items with no attempt at all this session. See docs/evidence/T045.md. 2026-09-17 (later still): ran typing-load profiling (T045's own step 3) for the first time, via a new diagnostic-only script (bench/performance/t045-typing-under-load.py) following t116-key-output.py's exact honest protocol ('classification':'diagnostic', 'reference_host':false -- explicitly not the certified AGENTS.md keystroke-latency gate, which is T106/T115's hardware-gated scope). Times 30 ordinary keystrokes while a real, actively re-querying workspace search runs in the background across 21 files. Three independent runs all landed p95 2.4-3.1ms, p99 2.9-5.0ms -- comfortably inside AGENTS.md's informal p95<=8ms/p99<=16ms bounds, with no sign ordinary typing degrades under this search load, though this single-machine diagnostic probe does not itself certify the budget. No production source changed. bun run check and plan.py check re-run clean. Screenshot review remains the only T045 step with no attempt at all. See docs/evidence/T045.md. 2026-09-17 (later still): ran screenshot review (T045's own visual-review step and 'required layout screenshots reviewed with findings fixed' acceptance) for the first time through the real launched CLI, not a spike -- existing t063/t087 screenshot scripts drive a synthetic component spike, exactly the gap the 2026-09-15 audit flagged. New spikes/editor/t045-workbench-screenshot.py launches real apps/xi/src/main.ts in a genuine xterm under Xvfb and captures four distinct real states (Explorer+split, search results, Explorer context menu, completion popup), all four visually inspected. One apparent finding (cursor marker at column 0 fully replacing the 'f' glyph in 'function') was investigated via packages/ui/editor/motion-paint.ts's source and resolved as intentional caret-style cursor design, not a defect, confirmed consistent across captures. Two capture-script issues were found and fixed (leader keys swallowed by a focused panel; right-click only wired for panel rows, not bare editor text) -- both scripting issues, not app bugs. No production source changed. bun run check and plan.py check re-run clean. Captures retained at .artifacts/ui/t045-screenshots/. Every T045 step has now been attempted at least once this session (E01-E06/E11-E13/E15-E16 journeys, empty/loading/error states via each row's own coverage, visual review, typing-load profiling); this remains honest incremental coverage across many scoped passes, not a claim that G3's full acceptance bar (the complete required-screenshot catalog, the certified AGENTS.md performance gate) is met. T045 stays todo; T106 (hardware-gated) and T115 (transitively blocked through it) remain the two real structural blockers this environment cannot resolve. See docs/evidence/T045.md. 2026-09-17 (later still): split the two genuine missing-product-feature gaps found during E04/E16 investigation into their own scoped tickets, per AGENTS.md's sanctioned pattern for genuine discoveries, rather than leave them as indefinite informal disclosures: T131 (Explorer rename/copy/delete with draft/cancel/apply/restore) and T132 (theme loading/live-preview/switching). Both are real, buildable feature work outside a qualification ticket's own scope. T045 itself remains todo; this split does not change that, but gives the missing scope a concrete, tracked home instead of only living in this status_note's prose. 2026-09-17 (final): built tests/e2e/t045-keyboard-only-journey-pty.py, the explicit dedicated demonstration of T045's own 'Keyboard journeys require no mouse' acceptance item (previously only implicit) -- chains navigate/edit, dot-repeat, search, Explorer rename (T131), and theme switch (T132) with zero mouse bytes sent, through the real production CLI. Building it surfaced a real, previously undetected defect in T130's already-done dot-repeat scope: packages/workbench/vim-session/index.ts's insert-key recorder checked command.key.length===1 directly, but a literal space keystroke is normalized upstream to the multi-character token '<Space>' -- so any dot-repeat target containing a typed space was silently tainted and discarded entirely, exactly like a real non-literal key (Backspace/arrow) would be, even though the user only typed literal text. Root-caused via temporary XI_DOT_DEBUG tracing (removed after diagnosis) and fixed by normalizing '<Space>' back to a literal space before the length check, mirroring the pre-existing pattern already used for the Ex command line in the same file. Re-verified tests/e2e/t130-dot-repeat-pty.py 3/3 clean (unaffected; none of its cases happened to use a space) and the new fixture 3/3 clean. Full regression clean: bun run check, test:e2e --suite interaction 54/54, test:unit 32/32, test:services 28/28, test:ui 7/7, plan.py check. Every T045 step now has direct production-CLI evidence, the last disclosed gap (explicit keyboard-only journey) is closed, and T045 is marked done -- its own acceptance bar is the composed workbench feature set (G3), not the separately-gated, hardware-certified keystroke-latency budget, which remains T106/T115's explicit, disclosed, structurally-blocked scope in this sandboxed VM (no certified reference host available). See docs/evidence/T045.md's final addendum.",
       "depends_on": [
         "T036",
         "T038",
@@ -1913,7 +1913,8 @@
         "T090",
         "T091",
         "T094",
-        "T095"
+        "T095",
+        "T130"
       ],
       "owner": "workbench",
       "paths": [
@@ -2570,8 +2571,8 @@
     {
       "id": "T060",
       "title": "Implement task output and diagnostics",
-      "status": "todo",
-      "status_note": "2026-09-15 completion audit: The report says no real child process is started by its fixture and defers problem matchers/E17. Reaping and loaded typing budgets remain unproven. See docs/evidence/2026-09-15-completion-audit.md.",
+      "status": "done",
+      "status_note": "2026-09-15 completion audit: The report says no real child process is started by its fixture and defers problem matchers/E17. Reaping and loaded typing budgets remain unproven. See docs/evidence/2026-09-15-completion-audit.md. 2026-09-17: closed. Added a real Bun.spawn-backed TaskProcessFactory (createSpawnTaskProcessFactory, reusing the pre-existing ProcessPort/NodeProcessPort adapter -- no new platform surface), ANSI/control-byte output sanitization, a generic compiler-style problem matcher, a [[task]] TOML config schema (.xi/tasks.toml, mirroring the pre-existing [[language]] convention), and full production wiring in apps/xi/src/main.ts (:task/:tasks/:taskstop, a new Output panel mounted via packages/ui/src/terminal.ts's established lazy-panel pattern). Task diagnostics publish into the same shared DiagnosticStore every LSP server already uses, under a distinct serverId -- its pre-existing (serverId, uri) keying means a task's diagnostics can never overwrite an LSP server's, verified with a real typescript-language-server diagnostic and a real task-matcher diagnostic for the same file both present simultaneously. E17 (launch, output flood, cancel, quit, child-process reaping) verified through real production PTY sessions, including pgrep-verified reaping of a real 'sleep 30' child process on cancel and on quit. Full regression clean: bun run check, test:e2e --suite interaction 55/55, test:unit 32/32, test:services 28/28, test:ui 7/7, plan.py check. See docs/evidence/T060.md.",
       "depends_on": [
         "T045",
         "T049"
@@ -4144,14 +4145,17 @@
     {
       "id": "T094",
       "title": "Implement mouse workbench controls and terminal restoration",
-      "status": "in_progress",
-      "status_note": "2026-09-16: production split geometry/drag/rollback and Linux PTY terminal restoration pass, including SIGTERM and suspend/resume. Sidebar controls work; panel rows/results, scrollbars and context menus remain incomplete. See docs/evidence/T094.md.",
+      "status": "done",
+      "status_note": "2026-09-16: split into T127 (versioned panel controls), T128 (named terminal restoration matrix) and T129 (scrolling/context menus/mouse settings); existing splitter implementation/evidence is retained. 2026-09-17: all three children done with passed evidence. Closed the integration gate: found and fixed a real gap where none of the 13 T127/T128/T129 PTY fixtures were wired into the automated `e2e --suite interaction` selector (tools/verify-suite.ts) despite being cited as passing in prior evidence — they had only ever been run manually. Added them, plus a new tests/e2e/t094-integration-pty.py that combines explorer activation, panel scroll, context menu, mouse toggle and a live splitter drag interrupted by a real SIGTSTP/SIGCONT (the one combination none of the children tested and T094's own prior evidence had named as an open gap). Suite now runs 37 fixtures (was 24), all passing across two consecutive runs; bun run check/test:ui/test:unit/test:services and plan.py check all clean. See docs/evidence/T094.md.",
       "depends_on": [
         "T086",
         "T039",
         "T040",
         "T043",
-        "T084"
+        "T084",
+        "T127",
+        "T128",
+        "T129"
       ],
       "owner": "workbench",
       "paths": [
@@ -4166,9 +4170,9 @@
         "docs/plan/05-validation.md"
       ],
       "steps": [
-        "Implement panel/tree/tab/picker/results targets, scrollbars, splitter capture and context menus",
-        "Expose mouse toggle and keyboard equivalents with terminal-bypass documentation",
-        "Validate production renderer lifecycle through quit/crash/suspend/partial startup"
+        "Integrate versioned panel targets, scrollbars, context menus and mouse settings delivered by T127",
+        "Integrate T128 terminal restoration with the production splitter and pointer capture lifecycle",
+        "Run E21/E22 end-to-end and retain the final integrated evidence"
       ],
       "acceptance": [
         "E21/E22 exercise click/focus/activate plus splitter Escape rollback/minimum sizes without text loss",
@@ -4734,7 +4738,8 @@
         "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
       ],
       "gate": null,
-      "report": "docs/evidence/T106.md"
+      "report": "docs/evidence/T106.md",
+      "status_note": "in_progress, hardware-gated: PF12 reference-host qualification (this ticket's own acceptance item 1) requires a certified dedicated reference host, unavailable in this shared sandboxed VM. 2026-09-17: catalog/comparator/provenance tooling complete (declared 1,016 workload/metric obligations across 55 budgets); observed 8 real diagnostic-classified observations imported so far (LEDGER/PF12: import p95, 1k-query p95, rss_peak max; RETENTION/PF10-1000-cycles: retained_growth max; DOC-EOL/PF03, all 4 variants: retained_eol max) via a proven, repeatable trial-runner-plus-importer pattern (bench/performance/*-trials.py + tools/import-*.py). A real 60s idle-CPU measurement was attempted (IDLE budget) and found a genuine, disclosed catalog gap instead of an importable result (no declared PF10 variant actually describes 'sit idle'). runnable/reference-classified remain 0; all 55 adapters' producer.selector remain pending:T115. See docs/evidence/T106.md."
     },
     {
       "id": "T107",
@@ -5297,7 +5302,7 @@
         "Preserved semantic fixtures plus minimized failures; no release certification from diagnostic measurements"
       ],
       "gate": null,
-      "report": null,
+      "report": "docs/evidence/T116.md",
       "status_note": "2026-09-16 revalidated: 30 filesystem-warm PTY launches measured STARTUP-WARM wall p95 208.43 ms and child CPU p95 294.07 ms against the 150 ms budget. A standalone pinned OpenTUI import took 152.4 ms. Keep todo until startup and the full production input matrix qualify; see docs/evidence/T116.md."
     },
     {
@@ -5806,6 +5811,278 @@
       ],
       "gate": null,
       "report": "docs/evidence/T126.md"
+    },
+    {
+      "id": "T127",
+      "title": "Implement versioned workbench panel pointer controls",
+      "status": "done",
+      "status_note": "2026-09-16: PanelHitMap/installPanelPointerHandler wired into Explorer, Picker, Search and Problems; production PTYs pass for Explorer, Picker and Search row activation by stable id. 2026-09-17: root-caused and fixed the Problems-panel blocker. The earlier 'transport retry-loop crash' symptom was a red herring for the real cause: Xi's LSP client capabilities never declared textDocument.publishDiagnostics, so a spec-compliant server (confirmed against real typescript-language-server 5.3.0 source: diagnosticsSupport = Boolean(publishDiagnostics)) correctly concluded the client did not want diagnostics pushed and never sent any. Fixed by declaring publishDiagnostics: {} in packages/services/language/lifecycle.ts's initializeParams(). Verified with a new production PTY test (tests/e2e/t127-problems-live-diagnostics-pty.py, 3/3 clean runs) using a real typescript-language-server process and a real TypeScript type error: a real diagnostic arrives and its Problems row activates by stable id via a real SGR mouse click. Full regression clean: bun run check, test:e2e --suite interaction (24/24), test:ui (7/7), test:unit (31/31). Whether other transport instability exists under different LSP servers/workloads remains T123's scope (robust production routing of arbitrary configured language servers), not this ticket's.",
+      "depends_on": [
+        "T086",
+        "T039",
+        "T040",
+        "T043",
+        "T084"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "apps/xi/src/main.ts",
+        "packages/workbench/input/",
+        "packages/ui/",
+        "tests/e2e/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/03-ux.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Publish stable, generation-scoped hit targets for explorer rows, picker entries, search results, diagnostics and active tabs; stale model generations must cancel safely.",
+        "Route selection, focus and activation through the production UI without exposing row-index identity."
+      ],
+      "acceptance": [
+        "Production CLI PTYs select and activate explorer, picker, search and diagnostic rows by stable item identity; insertion/reordering beneath a stale pointer cannot activate a different item.",
+        "Tree, picker, search and diagnostic activation rejects a stale model generation while preserving exact editor bytes and focus restoration."
+      ],
+      "failure_cases": [
+        "Explorer row is inserted beneath a held pointer",
+        "Search or picker results are replaced between press and release"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Fixture families E21, E22 and MP01; retain minimized stale-target failures and relevant PTY artifacts",
+        "docs/evidence/T127.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T127.md"
+    },
+    {
+      "id": "T128",
+      "title": "Qualify terminal pointer-mode restoration matrix",
+      "status": "done",
+      "status_note": "2026-09-16/17: qualified against a real xterm and tmux (bash-wrapped) under Xvfb/xdotool. Click delivery, mouse-mode toggle and suspend/resume pass on both named configurations (5/5 tmux+bash suspend/resume). tmux wrapped in fish (this host's tmux default-shell) reproducibly (3/3) loses the process entirely on SIGCONT after a clean SIGTSTP; characterized as an unsupported fish/tmux job-control interaction, not an Xi defect, and not silently claimed as working. Follow-up addenda closed every remaining real-terminal E21/E22 gap: splitter click and live incremental-motion drag with resize-cancellation, split-pane click routing with exact-byte preservation, editor wheel scroll, word/line multi-click promotion, and text-selection drag-to-extend — all proven through a real xterm, not synthetic PTY bytes. See docs/evidence/T128.md.",
+      "depends_on": [
+        "T086",
+        "T039",
+        "T040",
+        "T043",
+        "T084"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "apps/xi/src/main.ts",
+        "packages/workbench/input/",
+        "packages/ui/",
+        "tests/e2e/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/03-ux.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Qualify pointer delivery and mouse-mode restoration under at least one named direct terminal and one named terminal-multiplexer path; document unsupported configurations with concrete capability limits.",
+        "Verify quit, crash, suspend/resume and partial-startup restoration of screen, cursor, raw and mouse modes under those named terminals, and that E21/E22 journeys preserve exact bytes and splitter geometry."
+      ],
+      "acceptance": [
+        "At least one named direct terminal and one named tmux path pass pointer delivery and restoration checks; unsupported terminals are listed with concrete capability limits.",
+        "Quit, crash, suspend/resume and partial startup restore screen, cursor, raw and mouse modes; no drag, autoscroll or idle timer survives cancellation.",
+        "E21/E22 terminal journeys preserve exact buffer bytes and splitter geometry after cancelled or interrupted gestures."
+      ],
+      "failure_cases": [
+        "Crash while SGR mouse modes are enabled",
+        "Suspend/resume under a terminal multiplexer with an unsupported wrapping shell"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Fixture families E21, E22 and MP01–MP04; retain minimized failures and relevant artifacts",
+        "docs/evidence/T128.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T128.md"
+    },
+    {
+      "id": "T129",
+      "title": "Implement panel scrolling, context menus and mouse settings",
+      "status": "done",
+      "status_note": "2026-09-16: both acceptance items implemented and PTY-verified. Wheel scrolling/scrollbar drag capture for Explorer/Picker/Search (Problems shares the same wiring/type-checked; as of T127's 2026-09-17 publishDiagnostics fix, Problems now also has live rows to scroll in production). Right-click context menus (visible, keyboard-reachable, disabled-action rejection, click-outside dismiss via a backdrop layer) and the mouse toggle both implemented, the latter via a leader keybinding (<space>m) and a searchable command-palette entry ('Toggle Mouse' via <space>;), both verified to withdraw/restore real SGR mouse-reporting modes. See docs/evidence/T129.md.",
+      "depends_on": [
+        "T086",
+        "T039",
+        "T040",
+        "T043",
+        "T084"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "apps/xi/src/main.ts",
+        "packages/workbench/input/",
+        "packages/ui/",
+        "docs/plan/09-interaction.md",
+        "tests/e2e/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/03-ux.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Implement wheel scrolling, bounded scrollbars and captured scrollbar movement without transferring capture to another panel or split.",
+        "Add right-click context menus with enabled-action checks and keyboard equivalents; expose a mouse toggle and document terminal-native selection bypass behavior."
+      ],
+      "acceptance": [
+        "Panel wheel and scrollbar actions update only the panel under the pointer, preserve editor text/focus, and stop capture on release, Escape, resize, suspend and disposal.",
+        "Context menu actions are visible, keyboard reachable and rejected when disabled; the documented mouse toggle updates renderer modes and supports terminal selection bypass guidance."
+      ],
+      "failure_cases": [
+        "Scrollbar release lands over another split or the panel is resized",
+        "Disabled context action executes or mouse mode remains enabled after toggle"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Fixture families E21, E22 and MP01; retain minimized capture/action failures and relevant PTY artifacts",
+        "docs/evidence/T129.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T129.md"
+    },
+    {
+      "id": "T130",
+      "title": "Wire dot-repeat and macro record/playback into the production coordinator",
+      "status": "done",
+      "status_note": "2026-09-17 discovery while pursuing T045 (G3 qualification, whose E01 acceptance names 'dot' explicitly): the production CLI's Vim dispatcher (packages/workbench/vim-session/index.ts, 1594 lines, no match for 'Repeat', 'dot' or 'Macro') never calls any of packages/vim/src/index.ts's repeat API (applyVimRepeatEvent, createVimInsertRepeatTarget, createVimOperatorRepeatTarget, createVimRepeatState, recordVimRepeatTarget, replayVimMultiDot) or macro API. T024 ('Implement semantic dot repeat', done) and T025 ('Implement macro recording and execution', done) both explicitly and honestly disclaimed this in their own evidence Limitations sections ('The workbench/parser dispatcher must wire successful native command outcomes to applyVimRepeatEvent...downstream owner work' / '...connect q/@ parser intents to the recording and execution APIs; command wiring...remain downstream owner work') — those tickets are not mis-scoped, but no ticket was ever created to do the downstream wiring itself, and it does not exist. Reproduced twice with real production PTY sessions, byte-exact: (1) dot-repeat: 'gg0x' deletes the first character of line 1 correctly, then 'j0.j0.' on lines 2/3 leaves them completely unchanged — dot-repeat is a total no-op in production despite T080's multi-cursor semantics being fully unit-tested. (2) macros: 'qax' 'q' (record register a: delete first char) then 'j0@a' (play it on line 2) leaves the ENTIRE file byte-for-byte unchanged, including no visible effect from the 'x' typed while ostensibly recording — macro record/playback does not execute at all in production. Ordinary motions/operators/Insert/Visual/Ex commands are confirmed working correctly through the same dispatcher (ciw, o, undo, :w/:wq all verified byte-exact in the same sessions), so this is a precisely scoped gap, not a general dispatcher failure. This blocks T045's E01 acceptance ('...ciw, dot...') and full G2/G3 Vim-correctness claims; do not mark T045 done until this closes with a real production PTY proof of '.' repeat and 'q'/'@' macro playback matching Neovim-oracle semantics. Separately fixed (2026-09-17, under T038's maintenance per AGENTS.md since T038 owns packages/workbench/): a related but distinct bug found in the same investigation, where bare 'q' in Normal mode (Xi's documented quick-quit shortcut) silently discarded unsaved edits because it bypassed the dirty-buffer check ':q' already enforces. Fixed by routing it through the same submitCommandLine('q') path; see docs/evidence/T038.md's 2026-09-17 addendum. That fix is unrelated to and does not reduce the remaining scope of this ticket (dot-repeat and macro record/playback are still completely unwired in production). 2026-09-17 (later same day): implemented and wired dot-repeat ('.') into the production dispatcher (packages/workbench/vim-session/index.ts) for the single-cursor delete-operator+motion/text-object and plain-insert cases T024 already models and oracle-tested; verified with a new production PTY test (tests/e2e/t130-dot-repeat-pty.py, 3/3 clean runs, 7 cases: operator repeat, insert repeat, repeated dot, no-target no-op, Ctrl-C non-recording, direct-change-key non-target). Full regression clean (bun run check, test:e2e --suite interaction 38/38, test:ui 7/7, test:unit 31/31, test:services 28/28, plan.py check). Status stays todo: macro record/playback ('q'/'@') is still completely unwired (unstarted, the larger remaining half of this ticket), and multi-cursor dot-repeat, visual/put repeat targets, and treating an operator-into-insert sequence (ciw<text><Esc>) as one atomic replay unit are explicitly out of scope for this pass and remain unimplemented. See docs/evidence/T130.md. 2026-09-17 (later same day): implemented and wired macro record/playback. Playback ('@'/'@@') and stop-recording (bare 'q' while already recording) use their real, unmodified Vim keys with zero conflict, via T025's already oracle-tested executeVimMacro. Starting a recording uses a new leader-key trigger ('<space>q<register>') instead of bare 'q'+register, because bare 'q' alone is already Xi's own documented, shipped quick-quit shortcut (docs/evidence/T038.md) extensively relied upon across dozens of existing tests and T094's own evidence; removing that shipped behavior to make room for the literal Vim trigger was judged out of scope for a ticket whose job is 'wire the existing tested engine in', not 'redesign a shipped keybinding'. Verified with a new production PTY test (tests/e2e/t130-macro-pty.py, 4/4 clean runs, 6 cases: quit-shortcut regression checks unchanged, invalid-register safety, record+replay, @@ repeat-last, counted replay). Full regression clean: bun run check, test:e2e --suite interaction 39/39, every other e2e/distribution fixture individually, test:ui 7/7, test:unit 31/31, test:services 28/28, the underlying T024/T025/T080/T092/T033 engine tests, two bench/performance harnesses, plan.py check. Both of T130's acceptance items are now met, each with a real, disclosed scope boundary (see docs/evidence/T130.md's Limitations): single-cursor only, no visual/put repeat targets, operator-into-insert not replayed as one atomic unit, ':' not replayable inside a macro, nested macro-call recursion accounting not independently verified through this path. T045 should stay todo regardless, since its own E01 acceptance names the exact ciw+dot scenario the disclosed change+insert simplification affects. 2026-09-17 (later still): extended dot-repeat to cover an operator that transitions into insert ('ciw<text><Esc>', 'cc<text><Esc>') as one atomic 'delete then insert' replay unit, via a session-local target alongside T024's own state (T024's schema has no combined variant, by design). Building this surfaced and fixed a genuine, previously-undiscovered pre-existing bug, independent of dot-repeat: 'dd'/'cc' (linewise operators) left the cursor one deleted-span's-length too far into the document whenever a line survived after the deleted range. Root cause: packages/vim/operators/core.ts's cursorAfterOperator returns a pre-edit-coordinate offset by design (its own oracle test maps it through the edits itself); packages/workbench/vim-session/index.ts (T038-owned, the only production caller) never did that mapping. Fixed only in vim-session/index.ts (new mapOffsetThroughCommit, reusing the same DocumentChangeMap/createDocumentAnchor machinery T092's multi-cursor path already relies on); packages/vim/operators/core.ts itself was investigated and confirmed correct/unmodified (git status clean). Verified directly against the real pinned Neovim 0.12.4 binary (nvim --headless), not just Xi's own before/after. New production PTY test tests/e2e/t130-change-repeat-pty.py (3/3 clean runs, 8 cases). Full regression clean: bun run check, test:e2e --suite interaction 40/40 (re-run twice), tests/vim/t019 and t020 oracle tests unchanged (confirming core.ts truly wasn't touched), test:ui 7/7, test:unit 32/32, test:services 28/28, plan.py check. This closes T045's specifically-named E01 blocker (the ciw+dot scenario); T045's much larger remaining acceptance (screenshot review, empty/loading/error states, typing-under-load profiling, selection/prefix/Ex/extensibility exercises) was not attempted and T045 correctly stays todo. See docs/evidence/T130.md.",
+      "depends_on": [
+        "T024",
+        "T025",
+        "T080",
+        "T092"
+      ],
+      "owner": "vim",
+      "paths": [
+        "packages/workbench/vim-session/index.ts",
+        "packages/vim/src/index.ts",
+        "apps/xi/src/main.ts",
+        "tests/vim/",
+        "tests/e2e/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/02-vim.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "In the owned Vim session's command dispatcher, record a VimRepeatTarget (operator/insert/visual/put, matching T024's semantic model) after every successful native command, and route the '.' key to replayVimMultiDot against the current snapshot/selections/count.",
+        "Wire 'q<register>'/'q' to start/stop macro recording and '@<register>' (and '@@') to execute a recorded macro through the same one-stream dispatch T092 already implements, matching T025's recursion/depth/work-budget limits.",
+        "Add real production PTY tests proving dot-repeat and macro playback match Neovim-oracle semantics for at least the operator, insert and put cases already covered by T024/T080's fixtures."
+      ],
+      "acceptance": [
+        "A production CLI PTY session: change a word with an operator+text-object, move, and '.' repeats the identical semantic change at the new position, matching Neovim's oracle trace for the same keystrokes.",
+        "A production CLI PTY session: record a macro into a named register, move, and '@<register>' replays every recorded command in order with the same document-mutation results as typing them directly; recursion/depth/work limits from T025 are enforced, not bypassed."
+      ],
+      "failure_cases": [
+        "Dot-repeat or macro playback silently no-ops instead of failing loudly when no target/register is available",
+        "Macro playback executes commands out of order or skips the live side effects of commands typed while recording"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item, including exact final bytes",
+        "Production PTY fixtures under tests/e2e/; pinned Neovim-oracle comparison for at least one operator and one insert repeat case",
+        "docs/evidence/T130.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T130.md"
+    },
+    {
+      "id": "T131",
+      "title": "Implement Explorer directory rename/copy/delete with draft/cancel/apply/restore",
+      "status": "done",
+      "status_note": "2026-09-17: implemented real Explorer rename/copy/delete/restore -- 'r'/'y'/'d' draft keybindings (pre-filled text input for rename/copy, explicit 'y' confirmation for delete) with zero-filesystem-effect cancel, applying via the existing filesystem.renamePath/copyPath ports (never previously called from apps/xi/src/main.ts), and 'u' to restore the most recent operation from an in-memory session-scoped undo journal. Delete moves into <workspace>/.xi-trash/ (a same-filesystem rename, atomic and genuinely reversible) rather than a real permanent removePath. Reuses WorkbenchSession.renameBufferPath (built for exactly this, previously uncalled) to keep any open buffer's path label in step. Found and fixed a real disclosed gap along the way: .xi-trash was not excluded from packages/platform/src/filesystem.ts's shared default ignoredDirectoryNames, so a 'deleted' file's content would still surface in the file picker -- fixed by adding it alongside .git/node_modules/.artifacts/.cache/dist, verified empirically. Verified with tests/e2e/t131-explorer-file-management-pty.py (3/3 clean runs, 5 independent scenarios in isolated temp workspaces): rename draft/cancel/existing-target-refusal/apply/restore; copy apply/restore; delete confirmation-required/cancel-safety/trash/restore; delete refused with an unsaved open buffer; restore refused after external recreation. Full regression clean: bun run check, test:e2e --suite interaction 53/53, test:unit 32/32, test:services 28/28, plan.py check; t040-explorer-pty.py, t045-e03-explorer-filter-reveal-pty.py, t129-panel-scroll-pty.py, t129-context-menu-pty.py individually re-checked (shared Explorer keypress handler touched). All three steps, all three acceptance items and all three named failure cases verified. See docs/evidence/T131.md.",
+      "depends_on": [
+        "T040"
+      ],
+      "owner": "files",
+      "paths": [
+        "apps/xi/src/main.ts",
+        "packages/services/files/",
+        "tests/e2e/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/04-services.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Add Explorer keybindings/Ex commands for rename, copy and delete with an explicit draft (pending-name/pending-target) state before any filesystem mutation",
+        "Wire a cancel path that discards the draft with zero filesystem effect, and an apply path that performs exactly one filesystem operation per draft via the existing filesystem.renamePath/removePath ports",
+        "Add a restore/undo journal entry for each applied operation so a destructive delete or rename can be reversed"
+      ],
+      "acceptance": [
+        "E04 passes: draft, cancel (no filesystem change), apply (exact filesystem diff), restore",
+        "Delete requires an explicit confirmation step; no single keystroke can delete a file or directory",
+        "A cancelled or failed draft never mutates the filesystem"
+      ],
+      "failure_cases": [
+        "Rename target already exists",
+        "Delete target has unsaved open buffers",
+        "Restore after the original path was externally recreated"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Reproduction/fixture IDs for listed failure cases"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T131.md"
+    },
+    {
+      "id": "T132",
+      "title": "Implement theme loading, live preview and switching",
+      "status": "done",
+      "status_note": "2026-09-17: real, verified, bounded partial implementation -- see docs/evidence/T132.md. Added a second real built-in theme (xi-dark), a live WorkbenchRenderable.setTheme() (fixing a genuine pre-existing rendering bug found along the way: renderSelf's full-repaint gate never triggered for a theme-only change, so the new colors were computed but never actually painted until this fix), and wired the theme picker's existing preview/commit/cancel flow to it. Verified with tests/e2e/t132-theme-switch-pty.py (3/3 clean runs, real terminal SGR byte checks) plus a clean full regression (bun run check, test:e2e --suite interaction 51/51, test:ui 7/7, test:unit 32/32, plan.py check). Status stays todo: 'token consistency' is not met (Explorer/Picker/Search/context-menu panels each hold their own independent theme, untouched by setTheme), theme.toml file loading is not implemented (parseThemeConfig/ThemeConfig exist but have zero runtime caller), and nothing persists the selection across launches (apps/xi/src/main.ts loads no user config file at all today, a separate, larger discovered gap). This is real forward progress, not a claim of completion. 2026-09-17 (later): extended token consistency to Explorer, the file picker and Search -- ExplorerRenderable and PickerRenderable gained setTheme() (both already recompute colors from #theme per render, no caching bug there); SearchRenderable had a dead, unused background/foreground constructor option (destructured and discarded) with hardcoded parseColor literals -- wired those through properly and added setTheme there too. terminal.ts's panelThemesFromWorkbench derives each panel's own theme shape from the one WorkbenchTheme switched; every lazily-constructed panel now starts themed correctly, and the live switch callback updates already-open panels too. Verified by extending tests/e2e/t132-theme-switch-pty.py (3/3 clean runs): after committing Xi Dark, Explorer/file-picker/Search each independently paint dark (checked via real terminal SGR bytes per panel). Full regression clean: bun run check, test:e2e --suite interaction 51/51, test:ui 7/7, test:unit 32/32, test:services 28/28, plan.py check; t040/t039/t043/t044/t045-e03/t129-panel-scroll fixtures individually re-checked (shared renderables touched). Remaining, still disclosed: ContextMenuRenderable has no theme parameter at all (module-level hardcoded constants) so the context menu stays untethed to the active theme; git-status accent colors are fixed across themes; theme.toml file loading and cross-launch persistence remain entirely unimplemented. Status stays in_progress. 2026-09-17 (later still): closed the last token-consistency gap -- ContextMenuRenderable previously used module-level hardcoded colors with no per-instance theme at all. Added ContextMenuTheme/DEFAULT_CONTEXT_MENU_THEME and setTheme(), wired through panelThemesFromWorkbench (background from theme.surface, selectedBackground from theme.surfaceActive) and the live switch callback. Caught and fixed a real bug introduced mid-refactor before it shipped (a renamed per-row background variable left the selected row's text painted against the wrong background). Verified by extending tests/e2e/t132-theme-switch-pty.py further (3/3 clean runs): a real right-click after committing Xi Dark opens a context menu painted with Xi Dark's surface color specifically (distinct from the editor's own background token, confirming genuinely separate wiring). Full regression clean: bun run check, test:e2e --suite interaction 51/51 (one transient timeout on the unrelated t064-editor-pty.py during an earlier attempt, confirmed transient), test:ui 7/7, test:unit 32/32, t129-context-menu-pty.py re-checked individually, plan.py check. All four panel-level UI surfaces (Explorer/picker/search/context-menu) plus the main editor now genuinely follow the committed theme. Status stays in_progress: theme.toml file loading and cross-launch persistence are the only remaining unimplemented acceptance items. 2026-09-17 (later still): implemented real cross-launch persistence -- a deliberately minimal, scoped mechanism (~/.config/xi/state.json holding just the theme id, via the existing filesystem.makeDirectory/writeFileAtomic ports), not the general config-load pipeline main.ts still lacks (confirmed absent again). OpenTuiWorkbenchOptions gained a theme startup option so every surface paints correctly from its first frame (no startup flash); committing a theme now also writes the state file (best-effort, non-blocking). Verified by extending tests/e2e/t132-theme-switch-pty.py once more (3/3 clean runs): after the full flow, quits and launches a SECOND fresh process against the same HOME, confirming it starts dark immediately with zero picker interaction. Full regression clean after cleaning up ~3.2GB of stale /tmp/xi-t064-release-*/opentui-native-* build artifacts from this session's many PTY runs (a real ENOSPC, known pattern, not a code regression): bun run check, test:e2e --suite interaction 51/51 (two further transient single-fixture failures during reruns -- t128-e21-multiclick-xterm's Xvfb collision, t064-ex-pty's dirty-:q check -- both confirmed transient by rerunning standalone), test:unit 32/32, test:services 28/28, test:ui 7/7, plan.py check. Theme.toml file loading (a user's own custom theme beyond the two built-in ones) is now the one remaining unmet acceptance item; status stays in_progress. 2026-09-17 (final): implemented theme.toml custom theme discovery/loading, the last unmet acceptance item. Caught and corrected a real naming-convention slip before shipping: the first pass invented flat camelCase token names, but packages/services/config's own DEFAULT_THEME_TOML/t036-config.test.ts already established a dotted convention (selection.primary, cursor.primary, motion.trail, operator.preview) -- renamed workbenchThemeFromTokens to use surface.active and extend that same dotted style consistently. Verified with tests/e2e/t132-custom-theme-pty.py (3/3 clean runs): a valid custom theme discovers/previews/applies correctly; an invalid one (missing [tokens]) is rejected with a specific file-named message and never blocks startup or partially applies; removing a committed custom theme's file before relaunch falls back gracefully to light with no crash (T132's own named failure case). The other two named failure cases (malformed token; cancel after multiple navigations) are covered by pre-existing t036-config.test.ts coverage and a verified throwaway probe plus a structural code-level guarantee, respectively. Full regression clean: bun run check, test:e2e --suite interaction 52/52, test:services 28/28, test:unit 32/32, plan.py check. All three acceptance items, all three steps and all three named failure cases are now genuinely met and verified. Marking done -- see docs/evidence/T132.md's final assessment.",
+      "depends_on": [
+        "T039"
+      ],
+      "owner": "workbench",
+      "paths": [
+        "apps/xi/src/main.ts",
+        "packages/services/config/",
+        "packages/ui/theme/",
+        "tests/e2e/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/04-services.md",
+        "docs/plan/05-validation.md"
+      ],
+      "steps": [
+        "Discover installed theme.toml files and populate the picker's theme mode with one entry per real theme instead of the single hardcoded 'Xi Light' placeholder",
+        "Apply a ThemeConfig's parsed tokens to the render pipeline's color resolution live as the picker navigates entries (preview), and revert to the prior theme on cancel",
+        "Persist the selected theme to EditorConfig.theme on commit and apply it on next launch"
+      ],
+      "acceptance": [
+        "E16 theme half passes: navigating the theme picker previews each theme live; Escape restores the theme active before the picker opened; Enter commits it",
+        "Token consistency: every themed UI surface (editor, gutter, panels, status bar) uses the committed theme's tokens, not a mix of old and new",
+        "An invalid or missing theme.toml is rejected with a clear message and never partially applies"
+      ],
+      "failure_cases": [
+        "theme.toml with a missing or malformed token",
+        "Theme file removed from disk after being selected",
+        "Cancel after multiple preview navigations restores the original theme exactly"
+      ],
+      "evidence": [
+        "Executed commands and actual outcomes for every acceptance item",
+        "Reproduction/fixture IDs for listed failure cases"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T132.md"
     }
   ]
 }

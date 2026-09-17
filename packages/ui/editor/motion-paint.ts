@@ -92,7 +92,7 @@ const PAINT_OPERATOR = 8;
 export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOptions): MotionPaintStats {
   const colorMode = options.presentation?.colorMode ?? options.colorMode;
   const rowRange = paintRowRange(options.frame, options.rows);
-  if (canPaintPlainFrame(options.frame, options.presentation)) {
+  if (canPaintPlainFrameCached(options.frame, options.presentation)) {
     return paintPlainFrame(buffer, options, rowRange);
   }
   const masks = buildPaintMasks(options.frame, options.presentation, options.mode, colorMode, rowRange);
@@ -182,6 +182,20 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
  * contiguous ASCII runs avoids one native call per terminal cell. Decorated
  * frames and rows containing a multi-cell grapheme retain the precise path.
  */
+// `paintEditorFrame` is called once per damage-limited paint range within the same
+// render (see workbench.ts's per-range loop); `frame`/`presentation` are identical
+// across those calls, so a full rows*cells scan per range is pure waste. Memoize
+// by frame identity, one entry per rendered frame object.
+const plainFrameCache = new WeakMap<VisibleFrame, { readonly presentation: EditorPresentationRead | undefined; readonly result: boolean }>();
+
+function canPaintPlainFrameCached(frame: VisibleFrame, presentation: EditorPresentationRead | undefined): boolean {
+  const cached = plainFrameCache.get(frame);
+  if (cached !== undefined && cached.presentation === presentation) return cached.result;
+  const result = canPaintPlainFrame(frame, presentation);
+  plainFrameCache.set(frame, { presentation, result });
+  return result;
+}
+
 function canPaintPlainFrame(frame: VisibleFrame, presentation: EditorPresentationRead | undefined): boolean {
   if (presentation?.motionPreview != null || presentation?.operatorPreview != null) return false;
   for (const selection of frame.selections) {

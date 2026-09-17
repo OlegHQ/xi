@@ -537,7 +537,7 @@ function insertPayload(
   if (session.count > 1 && nextTextLength * session.count > MAX_REPEAT_UTF16) return failure('repeat-limit');
   const frame = 'frame' in result ? result.frame as ReplaceFrame : undefined;
   const globalFrame = frame === undefined ? undefined : translateFrame(frame, base);
-  const stack: readonly ReplaceFrame[] = globalFrame === undefined ? session.replaceStack : [...session.replaceStack, globalFrame];
+  const stack: readonly ReplaceFrame[] = globalFrame === undefined ? session.replaceStack : appendReplaceFrame(session.replaceStack, globalFrame);
   const cursorAfter = result.cursorAfter;
   const autoIndentHasContent = session.autoIndentSpan !== null
     && base + cursorAfter > (session.autoIndentSpan.end as number)
@@ -648,7 +648,7 @@ function backspace(snapshot: DocumentSnapshot, source: string, base: number, ses
   if (top !== undefined && session.mode !== 'insert') {
     const start = top.start as number;
     const end = start + top.insertedText.length;
-    const nextStack = session.replaceStack.slice(0, -1);
+    const nextStack = popReplaceFrame(session.replaceStack);
     const next = freezeSession({
       ...session,
       cursorOffset: top.cursorBefore,
@@ -839,10 +839,41 @@ function freezeSession(session: VimInsertSession): VimInsertSession {
   return Object.freeze({
     ...session,
     pending,
-    replaceStack: Object.freeze(session.replaceStack.map((frame) => Object.freeze({ ...frame }))),
+    // Frames are already frozen where they are created (translateFrame,
+    // replacePayload, virtualReplace); re-cloning and re-freezing every
+    // frame here on every keystroke made a long Replace/Virtual-replace
+    // session's per-key cost grow with the stack depth. The array itself is
+    // deliberately left extensible (not frozen) so appendReplaceFrame/
+    // popReplaceFrame below can keep mutating it in place at O(1); nothing
+    // outside this session chain retains an older generation's reference.
+    replaceStack: session.replaceStack,
     options: Object.freeze({ ...session.options, backspace: Object.freeze([...session.options.backspace]) }),
     autoIndentSpan: session.autoIndentSpan === null ? null : Object.freeze({ ...session.autoIndentSpan }),
   });
+}
+
+/**
+ * Append onto the session's privately-owned frame stack in place when it is
+ * still extensible, avoiding an O(n) copy per keystroke in a long Replace/
+ * Virtual-replace session. Falls back to a copy for a stack that arrived
+ * frozen (e.g. remapped through an external edit by another session), since
+ * that array may be shared or the shared frozen singleton.
+ */
+function appendReplaceFrame(stack: readonly ReplaceFrame[], frame: ReplaceFrame): readonly ReplaceFrame[] {
+  if (Object.isExtensible(stack)) {
+    (stack as ReplaceFrame[]).push(frame);
+    return stack;
+  }
+  return [...stack, frame];
+}
+
+/** Symmetric in-place pop for backspace over a Replace/Virtual-replace frame; see appendReplaceFrame. */
+function popReplaceFrame(stack: readonly ReplaceFrame[]): readonly ReplaceFrame[] {
+  if (Object.isExtensible(stack)) {
+    (stack as ReplaceFrame[]).pop();
+    return stack;
+  }
+  return stack.slice(0, -1);
 }
 
 function normalizeOptions(options: VimInsertOptions): NormalizedVimInsertOptions | undefined {
@@ -869,15 +900,21 @@ function normalizeOptions(options: VimInsertOptions): NormalizedVimInsertOptions
 }
 
 function isSessionValid(session: VimInsertSession): boolean {
+  // `repeatText` and `replaceStack` are append-only for the life of a
+  // session: every increment is already validated at the point it is added
+  // (insertPayload checks the incoming payload with isWellFormed/
+  // isUnicodeScalarText before appending; every frame is built from that
+  // same validated payload or from existing, already-well-formed document
+  // text). Re-scanning the whole accumulated string/array here on every
+  // public entry call made a long Replace/Virtual-replace session's
+  // per-keystroke validation cost grow with the session's length, turning
+  // ordinary typing quadratic. Only the cheap, non-accumulating fields are
+  // re-checked on every call.
   return (session.mode === 'insert' || session.mode === 'replace' || session.mode === 'virtual-replace')
     && Number.isSafeInteger(session.count) && session.count >= 1
     && Number.isSafeInteger(session.nextRegisterRequestId) && session.nextRegisterRequestId >= 1
     && Number.isSafeInteger(session.undoEpoch) && session.undoEpoch >= 0
-    && isUnicodeScalarText(session.repeatText)
-    && isPendingValid(session.pending)
-    && session.replaceStack.every((frame) => Number.isSafeInteger(frame.start as number)
-      && Number.isSafeInteger(frame.cursorBefore as number)
-      && isUnicodeScalarText(frame.insertedText) && isUnicodeScalarText(frame.replacedText));
+    && isPendingValid(session.pending);
 }
 
 function isPendingValid(pending: VimInsertPendingInput): boolean {

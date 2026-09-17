@@ -39,6 +39,10 @@ export class DiagnosticStore implements Disposable {
   readonly #entries = new Map<string, readonly LanguageDiagnostic[]>();
   readonly #generations = new Map<string, number>();
   readonly #listeners = new Set<(model: DiagnosticReadModel) => void>();
+  /** Sorted per-URI diagnostics, kept current incrementally: only the touched URI is re-sorted on publish/clear. */
+  readonly #sortedByUri = new Map<string, readonly LanguageDiagnostic[]>();
+  #byUriCache: ReadonlyMap<string, readonly LanguageDiagnostic[]> | undefined;
+  #allCache: readonly LanguageDiagnostic[] | undefined;
   #generation = 0;
   #disposed = false;
 
@@ -73,6 +77,7 @@ export class DiagnosticStore implements Disposable {
     }));
     const key = sourceKey(input.serverId, input.uri);
     this.#entries.set(key, Object.freeze(diagnostics));
+    this.recomputeUri(input.uri);
     this.#generation += 1;
     this.notify();
     return true;
@@ -85,36 +90,65 @@ export class DiagnosticStore implements Disposable {
       if (key.endsWith(`\u0000${uri}`)) { this.#entries.delete(key); changed = true; }
     }
     this.#generations.delete(uri);
-    if (changed) { this.#generation += 1; this.notify(); }
+    if (changed) {
+      this.recomputeUri(uri);
+      this.#generation += 1;
+      this.notify();
+    }
   }
 
   clearServer(serverId: string): void {
     if (this.#disposed) return;
+    const prefix = `${serverId}\u0000`;
+    const affectedUris = new Set<string>();
     let changed = false;
     for (const key of this.#entries.keys()) {
-      if (key.startsWith(`${serverId}\u0000`)) { this.#entries.delete(key); changed = true; }
+      if (key.startsWith(prefix)) {
+        affectedUris.add(key.slice(prefix.length));
+        this.#entries.delete(key);
+        changed = true;
+      }
     }
-    if (changed) { this.#generation += 1; this.notify(); }
+    if (changed) {
+      for (const uri of affectedUris) this.recomputeUri(uri);
+      this.#generation += 1;
+      this.notify();
+    }
   }
 
   diagnosticsFor(uri: string): readonly LanguageDiagnostic[] {
-    const output: LanguageDiagnostic[] = [];
-    for (const [key, values] of this.#entries) if (key.endsWith(`\u0000${uri}`)) output.push(...values);
-    return Object.freeze(output.sort(compareDiagnostics));
+    return this.#sortedByUri.get(uri) ?? Object.freeze([]);
   }
 
   snapshot(): DiagnosticReadModel {
-    const byUri = new Map<string, LanguageDiagnostic[]>();
-    for (const values of this.#entries.values()) for (const value of values) (byUri.get(value.uri) ?? (byUri.set(value.uri, []), byUri.get(value.uri)!)).push(value);
-    const immutable = new Map<string, readonly LanguageDiagnostic[]>();
-    for (const [uri, values] of byUri) immutable.set(uri, Object.freeze(values.slice().sort(compareDiagnostics)));
-    const all = Object.freeze([...immutable.values()].flat());
-    return Object.freeze({ contractVersion: 1, generation: this.#generation, byUri: immutable, all });
+    if (this.#byUriCache === undefined) this.#byUriCache = new Map(this.#sortedByUri);
+    if (this.#allCache === undefined) this.#allCache = Object.freeze([...this.#sortedByUri.values()].flat());
+    return Object.freeze({ contractVersion: 1, generation: this.#generation, byUri: this.#byUriCache, all: this.#allCache });
   }
 
-  dispose(): void { if (this.#disposed) return; this.#disposed = true; this.#entries.clear(); this.#generations.clear(); this.#listeners.clear(); }
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#entries.clear();
+    this.#generations.clear();
+    this.#sortedByUri.clear();
+    this.#byUriCache = undefined;
+    this.#allCache = undefined;
+    this.#listeners.clear();
+  }
 
   private notify(): void { const model = this.snapshot(); for (const listener of [...this.#listeners]) listener(model); }
+
+  /** Re-sort only the URI whose entries changed; invalidates the cached flattened/grouped snapshot views. */
+  private recomputeUri(uri: string): void {
+    const suffix = `\u0000${uri}`;
+    const values: LanguageDiagnostic[] = [];
+    for (const [key, entries] of this.#entries) if (key.endsWith(suffix)) values.push(...entries);
+    if (values.length === 0) this.#sortedByUri.delete(uri);
+    else this.#sortedByUri.set(uri, Object.freeze(values.sort(compareDiagnostics)));
+    this.#byUriCache = undefined;
+    this.#allCache = undefined;
+  }
 }
 
 function sourceKey(serverId: string, uri: string): string { return `${serverId}\u0000${uri}`; }

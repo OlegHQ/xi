@@ -110,4 +110,43 @@ assert.equal(explorer.isDestroyed, true, 'T040-UI-03 explorer renderable dispose
 
 tree.dispose();
 assert.equal(tree.model.nodes.length, 0, 'T040-DISPOSE-01 tree releases nodes and watcher state');
-console.log('T040 Explorer passed E03 insertion/rename identity, lazy expansion, hidden/filter policy, permission/symlink/empty states, overflow recovery and UI rendering');
+
+// T040-COALESCE: a burst of raw 'changed' watch events (no entry) for the same
+// directory must produce one re-enumeration and a bounded number of publishes,
+// not one enumerateDirectory + one publish per raw event.
+{
+  let enumerateCalls = 0;
+  const coalesceDirectories = new Map<string, readonly ExplorerDirectoryEntry[]>([
+    ['/coalesce-root', [{ name: 'a.txt', relativePath: 'a.txt', kind: 'file' }]],
+  ]);
+  let coalesceListener: ((event: ExplorerWatchEvent) => void) | undefined;
+  const coalesceFilesystem: ExplorerFilesystemPort = {
+    async enumerateDirectory(path: string, _cancellation: CancellationToken): Promise<Result<readonly ExplorerDirectoryEntry[], ExplorerFailure>> {
+      enumerateCalls += 1;
+      const entries = coalesceDirectories.get(path);
+      return entries === undefined ? { ok: false, error: { kind: 'filesystem', path, message: 'missing fixture directory' } } : { ok: true, value: entries };
+    },
+    async watchDirectory(_path: string, listener: (event: ExplorerWatchEvent) => void, _cancellation: CancellationToken): Promise<Result<Disposable, ExplorerFailure>> {
+      coalesceListener = listener;
+      return { ok: true, value: Object.freeze({ dispose() { coalesceListener = undefined; } }) };
+    },
+  };
+  const coalesceTree = new ExplorerTree(coalesceFilesystem, {});
+  const coalesceRoot = coalesceTree.addRoot({ id: 'coalesce', label: 'coalesce', path: '/coalesce-root' });
+  if (!coalesceRoot.ok) throw new Error(`coalesce root fixture failed: ${coalesceRoot.error.kind}`);
+  assert.equal((await coalesceTree.watchRoot('coalesce')).ok, true, 'T040-COALESCE-00 installs one directory watcher');
+  assert.ok(coalesceListener !== undefined, 'T040-COALESCE-01 watcher listener is captured');
+  assert.equal((await coalesceTree.expand(coalesceRoot.value)).ok, true, 'T040-COALESCE-02 initial expansion enumerates once');
+  enumerateCalls = 0;
+  let publishCount = 0;
+  const coalesceSubscription = coalesceTree.subscribe(() => { publishCount += 1; });
+  for (let index = 0; index < 10; index += 1) coalesceListener?.({ kind: 'changed', rootId: 'coalesce', relativePath: 'a.txt' });
+  // The coalescing window is ~50ms; wait past it with margin.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(enumerateCalls, 1, 'T040-COALESCE-03 ten rapid raw events for one directory produce exactly one re-enumeration');
+  assert.ok(publishCount <= 2, `T040-COALESCE-04 ten rapid raw events produce a bounded publish count (${publishCount}), not one publish per raw event`);
+  coalesceSubscription.dispose();
+  coalesceTree.dispose();
+}
+
+console.log('T040 Explorer passed E03 insertion/rename identity, lazy expansion, hidden/filter policy, permission/symlink/empty states, overflow recovery, watch-event coalescing and UI rendering');

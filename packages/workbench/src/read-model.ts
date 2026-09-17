@@ -7,6 +7,10 @@ export interface WorkbenchViewSnapshot {
   readonly session: VimSessionSnapshot;
   readonly document: DocumentSnapshot;
   readonly selections: SelectionSetSnapshot;
+  /** Viewport scroll offset, in document line index (0-based). */
+  readonly scrollTop: number;
+  /** Viewport scroll offset, in terminal cell columns (0-based). */
+  readonly scrollLeft: number;
 }
 
 /** Immutable pane geometry and view identities published for multi-pane UI. */

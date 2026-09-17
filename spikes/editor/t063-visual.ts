@@ -29,6 +29,8 @@ const view: WorkbenchViewSnapshot = {
   session: { viewId, documentId, documentVersion: snapshot.version, selections, mode },
   document: snapshot,
   selections,
+  scrollTop: 0,
+  scrollLeft: 0,
 };
 const document: DocumentReadPort = {
   snapshot: () => snapshot,

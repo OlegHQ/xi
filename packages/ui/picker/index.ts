@@ -6,6 +6,7 @@ import {
   parseColor,
 } from '@opentui/core/renderer';
 import type { Disposable, Result } from '../../contracts/src/index';
+import { PanelHitMap, PanelScroll, installPanelPointerHandler, type WorkbenchPanelPointerEvent } from '../src/panel-pointer';
 import {
   FocusGraph,
   type FocusGraphFailure,
@@ -233,17 +234,22 @@ export interface PickerRenderableOptions extends RenderableOptions<PickerRendera
   readonly picker: PickerReadPort;
   readonly theme?: PickerTheme;
   readonly maxRows?: number;
+  readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
 }
 
 /** Bounded picker surface: all selection/query state remains in the read model. */
 export class PickerRenderable extends Renderable {
   readonly #picker: PickerReadPort;
-  readonly #theme: PickerTheme;
+  #theme: PickerTheme;
   readonly #maxRows: number;
   readonly #subscription: Disposable;
+  readonly #hitMap = new PanelHitMap();
+  readonly #onPointer: ((event: WorkbenchPanelPointerEvent) => boolean) | undefined;
+  readonly #scroll = new PanelScroll();
+  #lastSelectedId: string | undefined;
 
   constructor(ctx: RenderContext, options: PickerRenderableOptions) {
-    const { picker: _picker, theme: _theme, maxRows: _maxRows, ...renderableOptions } = options;
+    const { picker: _picker, theme: _theme, maxRows: _maxRows, onPointer: _onPointer, ...renderableOptions } = options;
     super(ctx, {
       ...renderableOptions,
       width: options.width ?? '100%',
@@ -253,16 +259,53 @@ export class PickerRenderable extends Renderable {
     this.#picker = options.picker;
     this.#theme = options.theme ?? DEFAULT_PICKER_THEME;
     this.#maxRows = options.maxRows ?? 10;
+    this.#onPointer = options.onPointer;
     if (!Number.isSafeInteger(this.#maxRows) || this.#maxRows < 3) throw new TypeError('picker-max-rows-must-be-at-least-three');
+    installPanelPointerHandler(this, 'picker', this.#hitMap, () => this.#picker.model.generation, this.#onPointer, {
+      scrollbarColumn: () => (this.#scroll.thumb(this.#picker.model.entries.length, this.#dataViewport()) === undefined ? undefined : this.width - 1),
+      isDragging: () => this.#scroll.dragging,
+      scrollBy: (delta) => {
+        if (this.#scroll.scrollBy(delta, this.#picker.model.entries.length, this.#dataViewport())) this.requestRender();
+      },
+      beginDrag: (row) => this.#scroll.beginDrag(row),
+      dragTo: (row) => {
+        if (this.#scroll.dragTo(row, this.#picker.model.entries.length, this.#dataViewport())) this.requestRender();
+      },
+      endDrag: () => this.#scroll.endDrag(),
+    });
     this.#subscription = this.#picker.subscribe(() => {
       if (!this.isDestroyed) this.requestRender();
     });
     this.requestRender();
   }
 
+  #dataViewport(heightOverride?: number): number {
+    return Math.max(0, (heightOverride ?? this.height) - 2);
+  }
+
   protected override destroySelf(): void {
+    this.#scroll.reset();
     this.#subscription.dispose();
     super.destroySelf();
+  }
+
+  protected override onResize(width: number, height: number): void {
+    this.#scroll.endDrag();
+    this.#scroll.clamp(this.#picker.model.entries.length, this.#dataViewport(height));
+    super.onResize(width, height);
+  }
+
+  override get visible(): boolean { return super.visible; }
+  override set visible(value: boolean) {
+    if (!value) this.#scroll.endDrag();
+    super.visible = value;
+  }
+
+  /** Apply a new theme immediately, live. Colors are recomputed from `#theme` on every
+   * `renderSelf` call (never cached), so reassigning it and requesting one frame is enough. */
+  setTheme(theme: PickerTheme): void {
+    this.#theme = theme;
+    this.requestRender();
   }
 
   protected override renderSelf(buffer: OptimizedBuffer): void {
@@ -275,29 +318,52 @@ export class PickerRenderable extends Renderable {
     const error = parseColor(this.#theme.error);
     buffer.fillRect(0, 0, this.width, this.height, background);
     const model = this.#picker.model;
-    const rows = formatPickerLines(model, this.width, Math.min(this.height, this.#maxRows));
+    const viewport = this.#dataViewport();
+    if (model.selectedId !== this.#lastSelectedId) {
+      this.#lastSelectedId = model.selectedId;
+      const selectedIndex = model.selectedId === undefined ? -1 : model.entries.findIndex((entry) => entry.id === model.selectedId);
+      if (selectedIndex >= 0) {
+        if (selectedIndex < this.#scroll.offset) this.#scroll.scrollBy(selectedIndex - this.#scroll.offset, model.entries.length, viewport);
+        else if (selectedIndex >= this.#scroll.offset + viewport) this.#scroll.scrollBy(selectedIndex - viewport + 1 - this.#scroll.offset, model.entries.length, viewport);
+      }
+    }
+    this.#scroll.clamp(model.entries.length, viewport);
+    const thumb = this.#scroll.thumb(model.entries.length, viewport);
+    const textWidth = thumb === undefined ? this.width : Math.max(1, this.width - 1);
+    const rows = formatPickerLines(model, textWidth, Math.min(this.height, this.#maxRows), this.#scroll.offset);
+    const hitRows: (string | undefined)[] = Array.from({ length: this.height });
     for (let row = 0; row < rows.length && row < this.height; row += 1) {
       const line = rows[row];
       if (line === undefined) continue;
-      const selected = row > 0 && row - 1 < model.entries.length && model.entries[row - 1]?.id === model.selectedId;
+      const entry = model.entries[row - 1 + this.#scroll.offset];
+      const selected = row > 0 && row - 1 + this.#scroll.offset < model.entries.length && entry?.id === model.selectedId;
+      if (row > 0 && row < this.height - 1) hitRows[row] = entry?.id;
       const rowBackground = selected ? active : surface;
       buffer.fillRect(0, row, this.width, 1, rowBackground);
       const color = model.state === 'error' ? error : row === 0 ? accent : selected ? foreground : muted;
-      drawPickerText(buffer, line, 0, row, color, rowBackground, this.width);
+      drawPickerText(buffer, line, 0, row, color, rowBackground, textWidth);
+    }
+    this.#hitMap.publish(model.generation, hitRows);
+    if (thumb !== undefined) {
+      for (let row = 0; row < viewport; row += 1) {
+        const onThumb = row >= thumb.start && row < thumb.start + thumb.size;
+        buffer.fillRect(this.width - 1, 1 + row, 1, 1, onThumb ? accent : surface);
+      }
     }
     this.ctx.setCursorPosition(Math.min(this.width - 1, Math.max(0, model.query.length + 2)), 0, true);
   }
 }
 
-export function formatPickerLines(model: PickerReadModel, width: number, maxRows: number): readonly string[] {
+export function formatPickerLines(model: PickerReadModel, width: number, maxRows: number, scrollOffset = 0): readonly string[] {
   const safeWidth = Math.max(1, Math.trunc(width));
   const safeRows = Math.max(1, Math.trunc(maxRows));
+  const safeOffset = Math.max(0, Math.trunc(scrollOffset));
   if (safeRows === 1) return Object.freeze([clipPicker(`>${model.query}`, safeWidth)]);
   const header = `${modeLabel(model.mode)}  >${model.query}`;
   const lines: string[] = [clipPicker(header, safeWidth)];
   const rowLimit = Math.max(0, safeRows - 2);
   for (let index = 0; index < rowLimit; index += 1) {
-    const entry = model.entries[index];
+    const entry = model.entries[index + safeOffset];
     if (entry === undefined) break;
     const marker = entry.id === model.selectedId ? '▸ ' : '  ';
     const detail = entry.detail.length === 0 ? '' : `  ${entry.detail}`;

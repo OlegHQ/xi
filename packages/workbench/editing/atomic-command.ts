@@ -175,6 +175,7 @@ export class AtomicCommandCoordinator {
   /** Install an external immutable selection/session update, invalidating pending plans. */
   replaceState(input: AtomicWorkbenchStateInput): Result<AtomicWorkbenchState, AtomicCommandFailure> {
     if (this.#publishing) return { ok: false, error: { kind: 'stale-state' } };
+    if (isSameAtomicState(this.#state, input)) return { ok: true, value: this.#state };
     if (this.#state.generation >= Number.MAX_SAFE_INTEGER) return { ok: false, error: { kind: 'generation-overflow' } };
     const checked = createAtomicWorkbenchState(this.document.snapshot(), input, this.#state.generation + 1);
     if (!checked.ok) return checked;
@@ -373,6 +374,28 @@ export class AtomicCommandCoordinator {
       this.#publishing = false;
     }
   }
+}
+
+/**
+ * Cheap reference-equality check: a `replaceState` call whose views already
+ * match the installed state (same selections/mode/repeatTarget objects, in
+ * the same order) is a no-op republish and can skip validation, cloning and
+ * a generation bump entirely. Callers that rebuild every view's wrapper
+ * object per key (e.g. workbench session sync) rely on this to collapse
+ * redundant calls instead of paying full state reconstruction each time.
+ */
+function isSameAtomicState(current: AtomicWorkbenchState, input: AtomicWorkbenchStateInput): boolean {
+  if (current.activeViewId !== input.activeViewId) return false;
+  if (input.registers !== undefined && input.registers !== current.registers) return false;
+  if (input.views.length !== current.views.length) return false;
+  for (let index = 0; index < input.views.length; index += 1) {
+    const before = current.views[index];
+    const after = input.views[index];
+    if (before === undefined || after === undefined) return false;
+    if (before.viewId !== after.viewId || before.selections !== after.selections
+      || before.mode !== after.mode || before.repeatTarget !== after.repeatTarget) return false;
+  }
+  return true;
 }
 
 function applyRegisterWrites(

@@ -129,56 +129,72 @@ export class NodeFilesystemPort implements FilesystemPort {
     path: string,
     root: string,
     cancellation: CancellationToken,
-    options: { readonly ignoredDirectoryNames?: readonly string[] } = {},
+    options: { readonly ignoredDirectoryNames?: readonly string[]; readonly maxEntries?: number } = {},
   ): Promise<Result<readonly WorkspaceDirectoryEntry[], PlatformFailure>> {
     if (cancellation.isCancelled) return cancelled();
-    const ignoredNames = new Set(options.ignoredDirectoryNames ?? ['.git', 'node_modules', '.artifacts', '.cache', 'dist']);
+    const ignoredNames = new Set(options.ignoredDirectoryNames ?? ['.git', 'node_modules', '.artifacts', '.cache', 'dist', '.xi-trash']);
+    // Capped consistent with enumerateFiles's 120k background-index limit, and
+    // batched with bounded concurrency instead of one sequential lstat per child.
+    const maxEntries = options.maxEntries ?? 120_000;
+    const concurrency = 64;
     try {
       const entries = await fs.readdir(path, { withFileTypes: true });
+      const capped = entries.length > maxEntries ? entries.slice(0, maxEntries) : entries;
       const result: WorkspaceDirectoryEntry[] = [];
-      for (const entry of entries) {
+      for (let start = 0; start < capped.length; start += concurrency) {
         if (cancellation.isCancelled) return cancelled();
-        const absolutePath = join(path, entry.name);
-        const relativePath = relative(root, absolutePath).split('\\').join('/');
-        const ignored = ignoredNames.has(entry.name);
-        let kind: WorkspaceDirectoryEntry['kind'] = entry.isDirectory()
-          ? 'directory'
-          : entry.isFile() ? 'file' : entry.isSymbolicLink() ? 'symlink' : 'other';
-        let stableIdentity: string | undefined;
-        let sizeBytes: number | undefined;
-        let modifiedMilliseconds: number | undefined;
-        let symlinkTarget: string | undefined;
-        try {
-          const info = await fs.lstat(absolutePath);
-          stableIdentity = `${String(info.dev)}:${String(info.ino)}`;
-          sizeBytes = info.size;
-          modifiedMilliseconds = info.mtimeMs;
-          if (info.isSymbolicLink()) {
-            kind = 'symlink';
-            try { symlinkTarget = await fs.readlink(absolutePath); } catch { /* preserve a visible broken link */ }
-          }
-        } catch (error: unknown) {
-          // A child can disappear between readdir and lstat. Keep the row
-          // visible with the Dirent kind and let the next watcher refresh fix
-          // its metadata.
-          if (errorCode(error) !== 'ENOENT') throw error;
-        }
-        result.push(Object.freeze({
-          name: entry.name,
-          kind,
-          relativePath,
-          hidden: entry.name.startsWith('.'),
-          ignored,
-          ...(stableIdentity === undefined ? {} : { stableIdentity }),
-          ...(sizeBytes === undefined ? {} : { sizeBytes }),
-          ...(modifiedMilliseconds === undefined ? {} : { modifiedMilliseconds }),
-          ...(symlinkTarget === undefined ? {} : { symlinkTarget }),
-        }));
+        const slice = capped.slice(start, start + concurrency);
+        const rows = await Promise.all(slice.map((entry) => this.statDirectoryEntry(path, root, entry, ignoredNames)));
+        for (const row of rows) result.push(row);
       }
       return cancellation.isCancelled ? cancelled() : { ok: true, value: Object.freeze(result) };
     } catch (error: unknown) {
       return { ok: false, error: platformFailure(error, 'enumerate-directory') };
     }
+  }
+
+  private async statDirectoryEntry(
+    path: string,
+    root: string,
+    entry: import('node:fs').Dirent,
+    ignoredNames: ReadonlySet<string>,
+  ): Promise<WorkspaceDirectoryEntry> {
+    const absolutePath = join(path, entry.name);
+    const relativePath = relative(root, absolutePath).split('\\').join('/');
+    const ignored = ignoredNames.has(entry.name);
+    let kind: WorkspaceDirectoryEntry['kind'] = entry.isDirectory()
+      ? 'directory'
+      : entry.isFile() ? 'file' : entry.isSymbolicLink() ? 'symlink' : 'other';
+    let stableIdentity: string | undefined;
+    let sizeBytes: number | undefined;
+    let modifiedMilliseconds: number | undefined;
+    let symlinkTarget: string | undefined;
+    try {
+      const info = await fs.lstat(absolutePath);
+      stableIdentity = `${String(info.dev)}:${String(info.ino)}`;
+      sizeBytes = info.size;
+      modifiedMilliseconds = info.mtimeMs;
+      if (info.isSymbolicLink()) {
+        kind = 'symlink';
+        try { symlinkTarget = await fs.readlink(absolutePath); } catch { /* preserve a visible broken link */ }
+      }
+    } catch (error: unknown) {
+      // A child can disappear between readdir and lstat. Keep the row
+      // visible with the Dirent kind and let the next watcher refresh fix
+      // its metadata.
+      if (errorCode(error) !== 'ENOENT') throw error;
+    }
+    return Object.freeze({
+      name: entry.name,
+      kind,
+      relativePath,
+      hidden: entry.name.startsWith('.'),
+      ignored,
+      ...(stableIdentity === undefined ? {} : { stableIdentity }),
+      ...(sizeBytes === undefined ? {} : { sizeBytes }),
+      ...(modifiedMilliseconds === undefined ? {} : { modifiedMilliseconds }),
+      ...(symlinkTarget === undefined ? {} : { symlinkTarget }),
+    });
   }
 
   /** Watch a directory for invalidation; the Explorer reconciles by rereading. */
@@ -189,12 +205,22 @@ export class NodeFilesystemPort implements FilesystemPort {
   ): Promise<Result<Disposable, PlatformFailure>> {
     if (cancellation.isCancelled) return cancelled();
     try {
+      let disposed = false;
       const watcher = watchFile(path, { persistent: false }, (_eventType, filename) => {
         if (cancellation.isCancelled) return;
         const child = filename === undefined || filename === null ? path : join(path, filename.toString());
         listener({ kind: 'changed', path: child });
       });
-      let disposed = false;
+      // A removed watched directory, EMFILE or an inotify overflow surfaces as an
+      // 'error' event; left unhandled it is an uncaught exception that crashes the
+      // process. Report it through the existing overflow event instead of the
+      // watcher going silent or the process going down.
+      watcher.on('error', () => {
+        if (disposed) return;
+        disposed = true;
+        watcher.close();
+        if (!cancellation.isCancelled) listener({ kind: 'overflow', path });
+      });
       const cancellationSubscription = cancellation.onCancel(() => {
         if (disposed) return;
         disposed = true;
@@ -226,7 +252,7 @@ export class NodeFilesystemPort implements FilesystemPort {
     if (cancellation.isCancelled) return cancelled();
     const maxEntries = options.maxEntries ?? 120_000;
     if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) return { ok: false, error: { code: 'invalid-limit', message: 'file enumeration limit must be positive', retryable: false } };
-    const ignored = new Set(options.ignoredDirectoryNames ?? ['.git', 'node_modules', '.artifacts', '.cache', 'dist']);
+    const ignored = new Set(options.ignoredDirectoryNames ?? ['.git', 'node_modules', '.artifacts', '.cache', 'dist', '.xi-trash']);
     const queue: Array<{ readonly absolute: string; readonly relative: string }> = [{ absolute: root, relative: '' }];
     const batch: WorkspaceFileEntry[] = [];
     let total = 0;
@@ -363,11 +389,17 @@ export class NodeFilesystemPort implements FilesystemPort {
   async watch(path: string, listener: (event: FileWatchEvent) => void, cancellation: CancellationToken): Promise<Result<Disposable, PlatformFailure>> {
     if (cancellation.isCancelled) return cancelled();
     try {
+      let disposed = false;
       const watcher = watchFile(path, { persistent: false }, (eventType) => {
         if (cancellation.isCancelled) return;
         listener({ kind: eventType === 'rename' ? 'created' : 'changed', path });
       });
-      let disposed = false;
+      watcher.on('error', () => {
+        if (disposed) return;
+        disposed = true;
+        watcher.close();
+        if (!cancellation.isCancelled) listener({ kind: 'overflow', path });
+      });
       const cancellationSubscription = cancellation.onCancel(() => {
         if (disposed) return;
         disposed = true;

@@ -382,6 +382,55 @@ export function parseLanguageConfig(source: string, fileName = 'languages.toml')
   return diagnostics.length === 0 ? { ok: true, value: Object.freeze(values) } : { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
 }
 
+export interface TaskConfig {
+  readonly id: string;
+  readonly argv: readonly [string, ...string[]];
+  readonly cwd?: string;
+  readonly env: Readonly<Record<string, string>>;
+  readonly problemMatcher: 'generic-compiler' | 'none';
+}
+
+/** Configured argv tasks (docs/plan/04-services.md's "basic tasks" contract): explicit argv,
+ * cwd/env, and an optional built-in problem matcher -- never automatic shell evaluation. */
+export function parseTasksConfig(source: string, fileName = 'tasks.toml'): Result<readonly TaskConfig[], ConfigCompileFailure> {
+  const parsed = parseToml(source, fileName);
+  if (!parsed.ok) return parsed;
+  const schemaDiagnostics: ConfigDiagnostic[] = [];
+  for (const entry of parsed.value.entries) {
+    const path = entry.path;
+    const taskField = path[0] === 'task' && path.length >= 2 && /^\d+$/u.test(path[1] ?? '')
+      && (path.length === 2 || ['id', 'argv', 'cwd', 'env', 'problem-matcher'].includes(path.slice(2).join('.')));
+    if (!(path[0] === 'schema-version' || taskField)) {
+      schemaDiagnostics.push({ ...entry.location, path: path.join('.'), code: 'unknown-key', message: `unknown task configuration key ${path.join('.')}` });
+    }
+  }
+  if (schemaDiagnostics.length > 0) return { ok: false, error: { diagnostics: Object.freeze(schemaDiagnostics) } };
+  const root = parsed.value.value;
+  const rawTasks = root.task;
+  if (!Array.isArray(rawTasks)) return { ok: false, error: { diagnostics: [diag(fileName, 1, 1, 'task', 'missing-field', 'tasks.toml requires at least one [[task]] table')] } };
+  const diagnostics: ConfigDiagnostic[] = [];
+  const values: TaskConfig[] = [];
+  const seenIds = new Set<string>();
+  for (let index = 0; index < rawTasks.length; index += 1) {
+    const record = asRecord(rawTasks[index]);
+    const path = `task[${index}]`;
+    if (record === undefined) { diagnostics.push(diag(fileName, 1, 1, path, 'invalid-type', 'task entry must be a table')); continue; }
+    const id = textField(record, 'id');
+    const argv = stringArrayField(record, 'argv');
+    if (id === undefined || argv === undefined || argv.length === 0) { diagnostics.push(diag(fileName, 1, 1, path, 'missing-field', 'task requires id and a non-empty argv')); continue; }
+    if (seenIds.has(id)) { diagnostics.push(diag(fileName, 1, 1, path, 'invalid-value', `duplicate task id ${id}`)); continue; }
+    seenIds.add(id);
+    const cwd = textField(record, 'cwd');
+    const envRecord = asRecord(record.env);
+    const env: Record<string, string> = {};
+    if (envRecord !== undefined) for (const [key, value] of Object.entries(envRecord)) if (typeof value === 'string') env[key] = value;
+    const problemMatcherRaw = textField(record, 'problem-matcher');
+    const problemMatcher: TaskConfig['problemMatcher'] = problemMatcherRaw === 'generic-compiler' ? 'generic-compiler' : 'none';
+    values.push(Object.freeze({ id, argv: [argv[0] as string, ...argv.slice(1)] as [string, ...string[]], ...(cwd === undefined ? {} : { cwd }), env: Object.freeze(env), problemMatcher }));
+  }
+  return diagnostics.length === 0 ? { ok: true, value: Object.freeze(values) } : { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
+}
+
 export interface ThemeConfig { readonly schemaVersion: 1; readonly name: string; readonly tokens: Readonly<Record<string, string>>; }
 
 export function parseThemeConfig(source: string, fileName = 'theme.toml'): Result<ThemeConfig, ConfigCompileFailure> {

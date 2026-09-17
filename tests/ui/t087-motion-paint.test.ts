@@ -45,7 +45,7 @@ function makeFixture(kind: 'normal' | 'visual'): Fixture {
   if (!selections.ok) throw new Error(`T087-selection:${selections.error.kind}`);
   const selectionSet = selections.value.selectionSet;
   const session = { viewId: VIEW_ID, documentId: DOCUMENT_ID, documentVersion: snapshot.version, selections: selectionSet, mode: kind } as const;
-  const view: WorkbenchViewSnapshot = { session, document: snapshot, selections: selectionSet };
+  const view: WorkbenchViewSnapshot = { session, document: snapshot, selections: selectionSet, scrollTop: 0, scrollLeft: 0 };
   const document: DocumentReadPort = {
     snapshot: () => snapshot,
     slice: (start, end, expectedVersion) => expectedVersion === snapshot.version ? snapshot.slice(start, end) : { ok: false, error: { kind: 'stale-version' } },

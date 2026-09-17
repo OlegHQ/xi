@@ -2,8 +2,11 @@ export type { TerminalAdapter, TerminalAdapterFactory, UiComposition, UiMountCon
 
 export {
   ASCII_WORKBENCH_THEME,
+  BUILTIN_WORKBENCH_THEMES,
+  DARK_WORKBENCH_THEME,
   LIGHT_WORKBENCH_THEME,
   WorkbenchRenderable,
+  calculatePaintRanges,
   calculateWorkbenchLayout,
 } from './workbench';
 export type {
@@ -13,6 +16,9 @@ export type {
   WorkbenchTheme,
   WorkbenchPointerEvent,
 } from './workbench';
+export type { WorkbenchPanel, WorkbenchPanelPointerEvent } from './panel-pointer';
+export { ContextMenuStore, ContextMenuRenderable, contextMenuBounds } from './context-menu';
+export type { ContextMenuItem } from './context-menu';
 export { paintEditorFrame } from '../editor/motion-paint';
 export type {
   EditorPresentationRead,

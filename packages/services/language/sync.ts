@@ -57,7 +57,6 @@ export interface LanguageSyncSnapshot {
 interface SyncState {
   readonly uri: string;
   readonly languageId: string;
-  readonly initial: LanguageSyncDocument;
   desiredSnapshot: DocumentSnapshot;
   desiredText: string | undefined;
   sent: SyncSentDocument | undefined;
@@ -67,12 +66,13 @@ interface SyncState {
   openSent: boolean;
   closeRequested: boolean;
   flushQueued: boolean;
+  /** Guards a single automatic resync retry per failure episode; reset when new input arrives. */
+  retryScheduled: boolean;
 }
 
 interface SyncSentDocument {
   readonly version: number;
   readonly snapshot: DocumentSnapshot;
-  readonly text: string | undefined;
 }
 
 interface SyncChange {
@@ -161,11 +161,14 @@ export class LanguageDocumentSync {
     if (this.#documents.has(document.uri)) {
       return Promise.resolve(failure('closed-document', `document ${document.uri} is already open`));
     }
+    // Build the open-time line table once; it is reused as-is for the
+    // acknowledged "sent" baseline below instead of re-scanning the whole
+    // document a second time.
+    const openSnapshot = snapshotLike(document);
     const state: SyncState = {
       uri: document.uri,
       languageId: document.languageId,
-      initial: freezeDocument(document),
-      desiredSnapshot: snapshotLike(document),
+      desiredSnapshot: openSnapshot,
       desiredText: document.text,
       sent: undefined,
       pending: [],
@@ -174,13 +177,14 @@ export class LanguageDocumentSync {
       openSent: false,
       closeRequested: false,
       flushQueued: false,
+      retryScheduled: false,
     };
     this.#documents.set(document.uri, state);
     return this.enqueue(async () => {
       if (this.#documents.get(document.uri) !== state) return failure('closed-document', `document ${document.uri} was closed before didOpen`);
       try {
-        await this.#transport.notify('textDocument/didOpen', { textDocument: { uri: state.uri, languageId: state.languageId, version: state.initial.version, text: state.initial.text } });
-        state.sent = { version: state.initial.version, snapshot: snapshotLike(state.initial), text: state.initial.text };
+        await this.#transport.notify('textDocument/didOpen', { textDocument: { uri: state.uri, languageId: state.languageId, version: document.version, text: document.text } });
+        state.sent = { version: document.version, snapshot: openSnapshot };
         state.openSent = true;
         return ok();
       } catch (error: unknown) {
@@ -207,6 +211,9 @@ export class LanguageDocumentSync {
     const payloadBytes = editPayloadBytes(change.edits);
     state.desiredSnapshot = change.snapshot;
     state.desiredText = undefined;
+    // New input may resolve whatever made the previous flush fail; allow one
+    // more automatic retry to be scheduled for it.
+    state.retryScheduled = false;
     if (!state.resyncNeeded && (state.pending.length >= this.#maxQueuedChanges || state.pendingBytes + payloadBytes > this.#maxQueuedBytes)) {
       // The latest immutable snapshot is enough for an explicit resync. Do not
       // retain every intermediate text version or flatten the committed root.
@@ -310,7 +317,7 @@ export class LanguageDocumentSync {
     state.pendingBytes = 0;
     state.resyncNeeded = false;
     if (!this.#changeSync) {
-      state.sent = { version: state.desiredSnapshot.version as number, snapshot: state.desiredSnapshot, text: undefined };
+      state.sent = { version: state.desiredSnapshot.version as number, snapshot: state.desiredSnapshot };
       return ok();
     }
     const target = state.desiredSnapshot;
@@ -321,6 +328,7 @@ export class LanguageDocumentSync {
         state.pending = pending;
         state.pendingBytes = pendingBytes;
         state.resyncNeeded = true;
+        this.scheduleResyncRetry(state);
         return text;
       }
       if (text.value.length > this.#maxFullSyncUtf16) {
@@ -329,6 +337,7 @@ export class LanguageDocumentSync {
         state.pendingBytes = pendingBytes;
         state.resyncNeeded = needsResync || pending.length !== 0;
         this.#lastFailure = result.error;
+        this.scheduleResyncRetry(state);
         return result;
       }
       contentChanges = [{ text: text.value }];
@@ -347,10 +356,11 @@ export class LanguageDocumentSync {
           state.pending = pending;
           state.pendingBytes = pendingBytes;
           state.resyncNeeded = true;
+          this.scheduleResyncRetry(state);
           return mapped;
         }
         changes.push(...mapped.value);
-        baseline = { version: change.after, snapshot: change.snapshot, text: undefined };
+        baseline = { version: change.after, snapshot: change.snapshot };
       }
       contentChanges = changes;
     }
@@ -359,7 +369,7 @@ export class LanguageDocumentSync {
         textDocument: { uri: state.uri, version: target.version as number },
         contentChanges,
       });
-      state.sent = { version: target.version as number, snapshot: target, text: undefined };
+      state.sent = { version: target.version as number, snapshot: target };
       if ((state.pending.length !== 0 || state.resyncNeeded) && !state.closeRequested && !state.flushQueued) {
         state.flushQueued = true;
         this.enqueue(async () => this.flushState(state));
@@ -391,6 +401,21 @@ export class LanguageDocumentSync {
       });
     }
     return { ok: true, value: Object.freeze(output) };
+  }
+
+  /**
+   * A failed resync/materialize attempt otherwise leaves `resyncNeeded` set
+   * with nothing scheduled to act on it, so the document silently stops
+   * syncing until the next edit. Schedule exactly one automatic retry per
+   * failure episode (bounded by `retryScheduled`, reset on new input) so a
+   * transient failure heals itself without spinning the queue forever on a
+   * persistent one.
+   */
+  private scheduleResyncRetry(state: SyncState): void {
+    if (state.closeRequested || state.flushQueued || state.retryScheduled) return;
+    state.retryScheduled = true;
+    state.flushQueued = true;
+    this.enqueue(async () => this.flushState(state));
   }
 
   private enqueue(operation: () => Promise<Result<void, LanguageSyncFailure>>): Promise<Result<void, LanguageSyncFailure>> {
@@ -530,17 +555,24 @@ function validateDocument(document: LanguageSyncDocument): Result<void, Language
     : failure('invalid-document', 'language document URI, language ID, version or text is invalid');
 }
 
-function isWellFormed(text: string): boolean {
-  try {
-    new TextEncoder().encode(text);
-    return !Array.from(text).some((scalar) => scalar.length === 1 && scalar.charCodeAt(0) >= 0xd800 && scalar.charCodeAt(0) <= 0xdfff);
-  } catch {
-    return false;
-  }
-}
+// Pinned Bun/V8 exposes String.prototype.isWellFormed (no lone surrogates).
+// Fall back to a plain charCode scan; either way this avoids allocating a
+// per-code-point array (Array.from(text)) for the whole document.
+const SUPPORTS_IS_WELL_FORMED = typeof (String.prototype as { isWellFormed?: unknown }).isWellFormed === 'function';
 
-function freezeDocument(document: LanguageSyncDocument): LanguageSyncDocument {
-  return Object.freeze({ uri: document.uri, languageId: document.languageId, version: document.version, text: document.text });
+function isWellFormed(text: string): boolean {
+  if (SUPPORTS_IS_WELL_FORMED) return (text as unknown as { isWellFormed(): boolean }).isWellFormed();
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (Number.isNaN(next) || next < 0xdc00 || next > 0xdfff) return false;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function editPayloadBytes(edits: readonly DocumentEdit[]): number {
