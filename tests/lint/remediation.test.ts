@@ -87,9 +87,11 @@ test('long composing word motion uses linear total window reads and exact next-w
 });
 
 function request(generation: number): SyntaxParseRequest {
+  const opened = openTextDocument('lint-syntax' as DocumentId, new TextEncoder().encode('const x = 1;'));
+  if (opened.kind !== 'editable') throw new Error('fixture did not open');
   return {
     documentId: 'lint-syntax' as DocumentId, documentVersion: generation as DocumentVersion,
-    requestId: `lint-syntax-${generation}` as RequestId, generation, text: 'const x = 1;',
+    requestId: `lint-syntax-${generation}` as RequestId, generation, snapshot: opened.document.snapshot(),
   };
 }
 

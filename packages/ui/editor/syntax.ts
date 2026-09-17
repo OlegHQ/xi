@@ -3,23 +3,10 @@
  * from the syntax service and clips them to visible UTF-16 ranges; it never
  * parses text or keeps a second editable buffer.
  */
+import type { SyntaxSpan, SyntaxTokenKind } from '../../contracts/src/index';
 
-export type EditorSyntaxTokenKind =
-  | 'comment'
-  | 'string'
-  | 'number'
-  | 'keyword'
-  | 'boolean'
-  | 'type'
-  | 'function'
-  | 'operator'
-  | 'punctuation';
-
-export interface EditorSyntaxSpan {
-  readonly start: number;
-  readonly end: number;
-  readonly kind: EditorSyntaxTokenKind;
-}
+export type EditorSyntaxTokenKind = SyntaxTokenKind;
+export type EditorSyntaxSpan = SyntaxSpan;
 
 export interface ClippedSyntaxSpan {
   /** Start/end are relative to the supplied visible range. */

@@ -3,6 +3,8 @@ import type {
   CommandId,
   Disposable,
   DisposableScope,
+  DocumentId,
+  DocumentVersion,
   ProviderId,
   RequestId,
   Result,
@@ -160,9 +162,15 @@ export type FileWatchEvent =
   | { readonly kind: 'created' | 'changed' | 'removed'; readonly path: string }
   | { readonly kind: 'overflow'; readonly path: string };
 
+export interface ReadFileOptions {
+  /** When the file's size (from a stat taken before reading) exceeds this, the read fails with
+   * `{ code: 'file-too-large' }` instead of materializing the whole file. */
+  readonly maxBytes?: number;
+}
+
 /** Asynchronous filesystem access. Platform adapters normalize OS failures. */
 export interface FilesystemPort {
-  readFile(path: string, cancellation: CancellationToken): Promise<Result<Uint8Array, PlatformFailure>>;
+  readFile(path: string, cancellation: CancellationToken, options?: ReadFileOptions): Promise<Result<Uint8Array, PlatformFailure>>;
   /** Optional bounded reader; chunks are ordered and must not be mutated by the consumer. */
   readFileChunks?(path: string, cancellation: CancellationToken): Promise<Result<AsyncIterable<Uint8Array>, PlatformFailure>>;
   writeFileAtomic(path: string, contents: Uint8Array, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
@@ -262,3 +270,37 @@ export type {
   ViewId,
   WorkspaceId,
 } from '../../primitives/src/index.ts';
+
+/** Inert syntax-highlighting token classification, shared by the syntax service and the UI paint path. */
+export type SyntaxTokenKind =
+  | 'comment'
+  | 'string'
+  | 'number'
+  | 'keyword'
+  | 'boolean'
+  | 'type'
+  | 'function'
+  | 'operator'
+  | 'punctuation'
+  | 'variable'
+  | 'property'
+  | 'constant';
+
+/** A classified UTF-16 range. `start`/`end` are zero-based UTF-16 code-unit offsets. */
+export interface SyntaxSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly kind: SyntaxTokenKind;
+}
+
+/** A read-only, versioned view over one document's resolved syntax spans. */
+export interface SyntaxRead {
+  readonly documentVersion: DocumentVersion;
+  /** Non-overlapping spans intersecting [start, end), sorted by start. Never scans the whole document. */
+  spansInRange(start: number, end: number): readonly SyntaxSpan[];
+}
+
+/** Read-only syntax boundary. Never mutates a document; UI never parses text itself. */
+export interface SyntaxReadPort {
+  readSyntax(documentId: DocumentId): SyntaxRead | undefined;
+}

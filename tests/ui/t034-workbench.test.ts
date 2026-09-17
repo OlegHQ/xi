@@ -220,13 +220,35 @@ async function captureFrameMatrix(): Promise<void> {
   await writeFile(resolve(artifactRoot, 't034-frame-matrix.json'), `${JSON.stringify({ sizes: matrix }, null, 2)}\n`, 'utf8');
 }
 
+async function testGitBranchStatus(): Promise<void> {
+  const { workbench } = makeWorkbench();
+  const setup = await createTestRenderer({ width: 120, height: 40, bufferedOutput: 'memory', gatherStats: true });
+  const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, {
+    workbench,
+    fileLabel: 'editor.ts',
+    gitBranch: () => 'feature/status-branch',
+  });
+  setup.renderer.root.add(viewport);
+  await setup.renderOnce();
+  assert.match(setup.captureCharFrame(), /editor\.ts \(feature\/status-branch\)/u, 'T034-GIT-BRANCH-01 status line shows the branch next to the file name');
+  setup.renderer.destroy();
+
+  const withoutBranch = await createTestRenderer({ width: 120, height: 40, bufferedOutput: 'memory', gatherStats: true });
+  const plainViewport = new WorkbenchRenderable(withoutBranch.renderer.root.ctx, { workbench, fileLabel: 'editor.ts' });
+  withoutBranch.renderer.root.add(plainViewport);
+  await withoutBranch.renderOnce();
+  assert.doesNotMatch(withoutBranch.captureCharFrame(), /\(feature/u, 'T034-GIT-BRANCH-02 no branch reader omits the parenthetical');
+  withoutBranch.renderer.destroy();
+}
+
 testLayoutPolicy();
 await testRenderedFrames();
 await testAsciiAndSmallTerminal();
 await testDamageLimitedCursorRepaint();
 await testLowColorAndTerminalFailure();
+await testGitBranchStatus();
 await captureFrameMatrix();
-console.log('T034 workbench frames passed responsive shell, layout projection, primary/secondary cursors, ASCII fallback, small-terminal and cleanup fixtures');
+console.log('T034 workbench frames passed responsive shell, layout projection, primary/secondary cursors, ASCII fallback, small-terminal, git branch status and cleanup fixtures');
 
 function id<T extends string>(value: string): T {
   const result = asIdentifier<T>(value, 'T034-id');

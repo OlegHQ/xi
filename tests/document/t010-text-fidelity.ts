@@ -119,6 +119,69 @@ function checkCoordinateRoundTrips(): void {
   console.log('T010-COORD-ROUNDTRIP-01 passed: UTF-8/16/32 checkpoints round-trip Unicode and reject invalid/stale columns.');
 }
 
+/**
+ * T7 (docs/plan performance audit): `getLineBase` in coordinates.ts used to memoize each
+ * line's UTF-8/UTF-32 base offsets in a `WeakMap<DocumentSnapshot, ...>`, keyed on the
+ * snapshot wrapper itself. That cache is gone -- `utf8OffsetAt`/`utf32OffsetAt` are already
+ * O(log n) tree descents through the rope's precomputed subtree byte-length aggregates, so
+ * the cache bought nothing while silently going stale/unshared across snapshot versions.
+ * This guards the exact scenario that motivated removing it: repeated conversions on the
+ * same line, on the same snapshot AND across an edited (new-version) snapshot, must never
+ * read a stale byte offset left over from a different version.
+ */
+function checkLineBaseAcrossRepeatedAndEditedAccess(): void {
+  const source = 'ab\ncdé😀\nghi\n' + 'z'.repeat(64);
+  const doc = editable(new TextEncoder().encode(source));
+  const before = doc.snapshot();
+  const lineTwoStart = before.lineStartOffset(line(1));
+  assert.equal(lineTwoStart.ok, true, 'T010-LINEBASE-01 line 1 exists before the edit');
+  if (!lineTwoStart.ok) throw new Error('T010-LINEBASE-01');
+
+  // Repeated conversions of different offsets on the same line must agree with each other
+  // and with a direct round trip every time (no memoized value could leak a wrong result).
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (const localOffset of [0, 1, 2, 3]) {
+      const target = offset((lineTwoStart.value as number) + localOffset);
+      const position = offsetToPosition(before, target, 'utf-16');
+      assert.equal(position.ok, true, `T010-LINEBASE-02 attempt ${attempt} offset ${localOffset}`);
+      if (!position.ok) continue;
+      assert.equal(position.value.line, 1, `T010-LINEBASE-02 attempt ${attempt} stays on line 1`);
+      const restored = positionToOffset(before, position.value);
+      assert.deepEqual(restored, { ok: true, value: target }, `T010-LINEBASE-02 attempt ${attempt} round trip`);
+    }
+  }
+
+  // Insert two extra ASCII bytes at the very start of the document, shifting line 1's UTF-16
+  // and UTF-8 base by +2 in the new version. A stale/shared cache entry from `before` would
+  // make the new snapshot's line-1 base wrong by exactly that shift.
+  const insertion = doc.apply({ start: offset(0), end: offset(0), text: 'xy' }, before.version);
+  assert.equal(insertion.ok, true, 'T010-LINEBASE-03 edit applies');
+  const after = doc.snapshot();
+  const beforeBase = offsetToPosition(before, offset(lineTwoStart.value as number), 'utf-8');
+  const afterLineStart = after.lineStartOffset(line(1));
+  assert.equal(afterLineStart.ok, true);
+  if (!afterLineStart.ok) throw new Error('T010-LINEBASE-04');
+  const afterBase = offsetToPosition(after, offset(afterLineStart.value as number), 'utf-8');
+  assert.equal(beforeBase.ok, true);
+  assert.equal(afterBase.ok, true);
+  if (beforeBase.ok && afterBase.ok) {
+    assert.equal(beforeBase.value.character, 0, 'T010-LINEBASE-05 old snapshot: line 1 still starts at column 0');
+    assert.equal(afterBase.value.character, 0, 'T010-LINEBASE-06 new snapshot: line 1 (now shifted) also starts at column 0');
+  }
+  assert.equal((afterLineStart.value as number) - (lineTwoStart.value as number), 2,
+    'T010-LINEBASE-07 line 1 starts 2 UTF-16 units later in the new version');
+  // The absolute UTF-8 offset of line 1's start moved by exactly the 2 inserted (ASCII) bytes.
+  const beforeUtf8Start = before.utf8OffsetAt(lineTwoStart.value);
+  const afterUtf8Start = after.utf8OffsetAt(afterLineStart.value);
+  assert.equal(beforeUtf8Start.ok, true);
+  assert.equal(afterUtf8Start.ok, true);
+  if (beforeUtf8Start.ok && afterUtf8Start.ok) {
+    assert.equal((afterUtf8Start.value as number) - (beforeUtf8Start.value as number), 2,
+      'T010-LINEBASE-08 the new version reflects the inserted bytes, not a stale cached base');
+  }
+  console.log('T010-LINEBASE-01 passed: line-base conversions stay correct across repeated calls and across an edited snapshot version, with no cache to go stale.');
+}
+
 function checkBrandedUnitValidation(): void {
   assert.equal(asUtf16Offset(0).ok, true);
   assert.equal(asUtf16Offset(-1).ok, false);
@@ -350,6 +413,7 @@ function utf16Column(value: number): Utf16Column { return value as Utf16Column; 
 function utf32Column(value: number): Utf32Column { return value as Utf32Column; }
 
 checkCoordinateRoundTrips();
+checkLineBaseAcrossRepeatedAndEditedAccess();
 checkBrandedUnitValidation();
 checkLosslessTextOpenAndSave();
 checkLineEndingEditsAndReadOnlyBytes();

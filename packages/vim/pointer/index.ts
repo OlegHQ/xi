@@ -1,3 +1,6 @@
+import { defaultCellWidthPolicy } from '../../layout/src/index';
+import { asUtf16Offset } from '../../contracts/src/index';
+import type { DocumentSnapshot } from '../../document/src/index';
 import type { Disposable, InputModifiers } from '../../contracts/src/index';
 
 export type PointerGestureKind = 'click' | 'drag' | 'word' | 'line' | 'block' | 'add-caret' | 'wheel';
@@ -9,7 +12,20 @@ export interface PointerTextTarget {
   readonly cellPart: 'glyph' | 'wide-continuation' | 'tab-fill' | 'clipped-glyph' | 'padding';
 }
 export interface PointerCell { readonly row: number; readonly column: number; readonly target?: PointerTextTarget; }
-export interface PointerEvent { readonly phase: 'down' | 'move' | 'up' | 'wheel'; readonly viewId: string; readonly cell: PointerCell; readonly button: number | null; readonly modifiers: InputModifiers; readonly wheelDelta: number; readonly frameId: number; readonly viewportHeight?: number; }
+export interface PointerEvent {
+  readonly phase: 'down' | 'move' | 'up' | 'wheel';
+  readonly viewId: string;
+  readonly cell: PointerCell;
+  readonly button: number | null;
+  readonly modifiers: InputModifiers;
+  readonly wheelDelta: number;
+  readonly frameId: number;
+  readonly viewportHeight?: number;
+  /** Monotonic clock reading (e.g. `performance.now()`) taken by the caller when the
+   * event occurred. `packages/vim` owns no clock of its own -- multi-click detection
+   * (see `handle` below) reads this instead of sampling time itself. */
+  readonly timestampMilliseconds: number;
+}
 export interface PointerSelectionIntent { readonly kind: PointerGestureKind; readonly viewId: string; readonly anchor: PointerCell; readonly head: PointerCell; readonly modifiers: InputModifiers; }
 export interface PointerEnginePort { cancelPendingOperator(): void; place(intent: PointerSelectionIntent): void; scroll(viewId: string, delta: number, viewportHeight: number | undefined): void; }
 
@@ -25,7 +41,7 @@ export class PointerGestureController implements Disposable {
     if (this.#disposed) return false;
     if (event.phase === 'wheel') { this.#engine.scroll(event.viewId, event.wheelDelta, event.viewportHeight); return true; }
     if (event.phase === 'down' && event.button === 0) {
-      const now = performance.now();
+      const now = event.timestampMilliseconds;
       const previous = this.#lastClick;
       const sameCell = previous !== undefined && previous.viewId === event.viewId && previous.button === event.button
         && Math.abs(previous.cell.row - event.cell.row) <= 1 && Math.abs(previous.cell.column - event.cell.column) <= 1
@@ -59,4 +75,19 @@ export class PointerGestureController implements Disposable {
   }
   cancel(reason: 'focus-loss' | 'resize' | 'escape' | 'dispose' = 'escape'): void { if (this.#capture === undefined) return; this.#capture = undefined; if (reason !== 'dispose') this.#engine.cancelPendingOperator(); }
   dispose(): void { if (this.#disposed) return; this.#disposed = true; this.#lastClick = undefined; this.cancel('dispose'); }
+}
+
+/** Cell-column arithmetic delegates to the same owner as on-screen shaping
+ * (`packages/layout/src/shaping.ts`'s tab-expansion formula and `defaultCellWidthPolicy`'s
+ * grapheme-width table) instead of a second, pointer-only implementation. */
+export function pointerDisplayColumn(snapshot: DocumentSnapshot, offsetValue: number, lineStartValue: number, tabSize = 8): number {
+  const start = asUtf16Offset(lineStartValue);
+  const end = asUtf16Offset(Math.max(lineStartValue, offsetValue));
+  if (!start.ok || !end.ok) return 0;
+  const prefix = snapshot.slice(start.value, end.value);
+  if (!prefix.ok) return 0;
+  const widthPolicy = defaultCellWidthPolicy();
+  let column = 0;
+  for (const cluster of prefix.value) column += cluster === '\t' ? tabSize - (column % tabSize) : widthPolicy.widthOfCluster(cluster);
+  return column;
 }

@@ -18,6 +18,9 @@ export async function verifyArchitectureContracts(): Promise<readonly string[]> 
   await verifySubscriptionDisposal(failures);
   verifyUiDocumentOwnershipBoundary(failures);
   verifyScopedLanguageProtocolDependencies(failures);
+  verifyScopedTreeSitterDependency(failures);
+  verifyAppEntrypointOnlyImports(failures);
+  verifyServicesFeatureBoundary(failures);
   verifyUnknownDataValidation(failures);
   verifyCompositionRootOwnership(failures);
   return failures;
@@ -167,6 +170,62 @@ function verifyScopedLanguageProtocolDependencies(failures: string[]): void {
       && forbiddenImports.some((failure) => failure.includes(`only allowed in packages/services/language`)));
   if (!rejectedBothOutsideLanguage) {
     failures.push('ARCH-LSP-OWNER-01: an owner outside services/language was allowed to import an LSP protocol dependency');
+  }
+}
+
+/** `web-tree-sitter` is restricted to packages/services/syntax, mirroring the LSP-owner rule above. */
+function verifyScopedTreeSitterDependency(failures: string[]): void {
+  const allowedSyntaxImport = analyzePackageSources([
+    { path: 'packages/services/syntax/index.ts', text: "import type { Parser } from 'web-tree-sitter';\n" },
+  ]);
+  if (allowedSyntaxImport.length !== 0) {
+    failures.push(`ARCH-TREE-SITTER-OWNER-01: syntax's own tree-sitter dependency was rejected (${allowedSyntaxImport.join('; ')})`);
+  }
+
+  const forbiddenTreeSitterImport = analyzePackageSources([
+    { path: 'packages/services/search/index.ts', text: "import type { Parser } from 'web-tree-sitter';\n" },
+  ]);
+  if (!forbiddenTreeSitterImport.some((failure) => failure.includes('only allowed in packages/services/syntax'))) {
+    failures.push('ARCH-TREE-SITTER-OWNER-01: an owner outside services/syntax was allowed to import web-tree-sitter');
+  }
+}
+
+/** `apps/xi` may only reach another owner through that owner's `src/entrypoints/` path, never its plain `src/index.ts`. */
+function verifyAppEntrypointOnlyImports(failures: string[]): void {
+  const deepIndexImport = analyzePackageSources([
+    { path: 'apps/xi/src/t122-negative-fixture.ts', text: "import type { WorkbenchReadPort } from '../../../packages/workbench/src/index.ts';\n" },
+    { path: 'packages/workbench/src/index.ts', text: 'export interface WorkbenchReadPort {}\n' },
+  ]);
+  if (!deepIndexImport.some((failure) => failure.includes('apps/xi must import workbench via a packages/workbench/src/entrypoints/ path'))) {
+    failures.push('ARCH-APP-ENTRYPOINT-01: graph checker accepted an apps/xi import of a package index.ts instead of its entrypoints/ path');
+  }
+
+  const entrypointImport = analyzePackageSources([
+    { path: 'apps/xi/src/t122-positive-fixture.ts', text: "import type { WorkbenchReadPort } from '../../../packages/workbench/src/entrypoints/launch.ts';\n" },
+    { path: 'packages/workbench/src/entrypoints/launch.ts', text: 'export interface WorkbenchReadPort {}\n' },
+  ]);
+  if (entrypointImport.length !== 0) {
+    failures.push(`ARCH-APP-ENTRYPOINT-01: apps/xi's entrypoints/ import was rejected (${entrypointImport.join('; ')})`);
+  }
+}
+
+/** Within packages/services, one feature reaches another only through that feature's public `index.ts`. */
+function verifyServicesFeatureBoundary(failures: string[]): void {
+  const deepFeatureImport = analyzePackageSources([
+    { path: 'packages/services/language/t122-negative-fixture.ts', text: "import type { ConfigSnapshot } from '../config/somefile.ts';\n" },
+    { path: 'packages/services/config/somefile.ts', text: 'export interface ConfigSnapshot {}\n' },
+    { path: 'packages/services/config/index.ts', text: 'export interface ConfigSnapshot {}\n' },
+  ]);
+  if (!deepFeatureImport.some((failure) => failure.includes('deep cross-feature import into services/config'))) {
+    failures.push('ARCH-SERVICES-FEATURE-01: graph checker accepted a deep cross-feature services import');
+  }
+
+  const indexFeatureImport = analyzePackageSources([
+    { path: 'packages/services/language/t122-positive-fixture.ts', text: "import type { ConfigSnapshot } from '../config/index.ts';\n" },
+    { path: 'packages/services/config/index.ts', text: 'export interface ConfigSnapshot {}\n' },
+  ]);
+  if (indexFeatureImport.length !== 0) {
+    failures.push(`ARCH-SERVICES-FEATURE-01: a services feature's own index.ts import was rejected (${indexFeatureImport.join('; ')})`);
   }
 }
 
@@ -435,7 +494,7 @@ function id(value: string): RequestId {
 export async function runArchitectureContractCheck(): Promise<void> {
   const failures = await verifyArchitectureContracts();
   if (failures.length > 0) throw new Error(failures.join('\n'));
-  console.log('Architecture contracts passed: ARCH-FAKE-COMPOSE-01, ARCH-PARTIAL-START-01, ARCH-TERMINAL-RESTORE-01, ARCH-UI-DOCUMENT-01, ARCH-LSP-OWNER-01, ARCH-UNKNOWN-DISCRIMINANT-01, ARCH-BOUNDARY-JSON-01, ARCH-BOUNDARY-UTF8-01, ARCH-COMPOSITION-ROOT-01.');
+  console.log('Architecture contracts passed: ARCH-FAKE-COMPOSE-01, ARCH-PARTIAL-START-01, ARCH-TERMINAL-RESTORE-01, ARCH-UI-DOCUMENT-01, ARCH-LSP-OWNER-01, ARCH-TREE-SITTER-OWNER-01, ARCH-APP-ENTRYPOINT-01, ARCH-SERVICES-FEATURE-01, ARCH-UNKNOWN-DISCRIMINANT-01, ARCH-BOUNDARY-JSON-01, ARCH-BOUNDARY-UTF8-01, ARCH-COMPOSITION-ROOT-01.');
 }
 
 if (import.meta.main) await runArchitectureContractCheck();

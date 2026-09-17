@@ -230,6 +230,8 @@ export function findAllMatches(program: PatternProgram, snapshot: PatternTextSna
   return progress.result;
 }
 
+// ponytail: test/oracle-only convenience (mirrors findAllMatches above); no production caller
+// materializes the pattern text, so it must never be called from an interactive edit path.
 export function substituteAll(
   program: PatternProgram,
   snapshot: PatternTextSnapshot,

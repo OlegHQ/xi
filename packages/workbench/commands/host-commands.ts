@@ -17,8 +17,8 @@ export type HostNavigationFailure = { readonly kind: string; readonly message: s
 
 /** Narrow port onto the composition root's (lazily constructed) `HostNavigationController`. */
 export interface HostNavigationPort {
-  openFile(path: string, line?: number): Promise<Result<{ readonly location: HostNavigationLocation }, HostNavigationFailure>>;
-  openTag(name: string): Promise<Result<{ readonly location: HostNavigationLocation }, HostNavigationFailure>>;
+  openFile(path: string, line?: number, cancellation?: CancellationToken): Promise<Result<{ readonly location: HostNavigationLocation }, HostNavigationFailure>>;
+  openTag(name: string, cancellation?: CancellationToken): Promise<Result<{ readonly location: HostNavigationLocation }, HostNavigationFailure>>;
   back(): HostNavigationLocation | undefined;
 }
 
@@ -47,6 +47,14 @@ export interface HostCommandsSaveCoordinatorPort {
   formatView(viewId: ViewId): Promise<boolean>;
 }
 
+/** Narrow port onto the composition root's directory-draft (T041/T042) opener. The
+ * composition root resolves the target path (cwd/active-file-parent default, directory
+ * listing, `DirectoryDraft` construction) and opens it as a normal buffer -- this file only
+ * ever dispatches the `:Explore` Ex command name to it. */
+export interface HostCommandsDirectoryDraftPort {
+  open(target: string | undefined, viewId: ViewId): Promise<void>;
+}
+
 export interface HostCommandsOptions {
   readonly host: BufferHost;
   readonly session: WorkbenchSession;
@@ -63,6 +71,7 @@ export interface HostCommandsOptions {
   readonly workspaceEdits: HostCommandsWorkspaceEditsPort;
   readonly problems: HostCommandsProblemsPort;
   readonly saveCoordinator: HostCommandsSaveCoordinatorPort;
+  readonly directoryDrafts: HostCommandsDirectoryDraftPort;
 }
 
 /**
@@ -100,7 +109,13 @@ export class WorkbenchHostCommands {
         onError(`xi: file target not found: ${command.target}\n`);
         return;
       }
-      const opened = await navigation.openFile(targetPath, command.line);
+      const fileCancellation = new CancellationSource();
+      let opened: Awaited<ReturnType<HostNavigationPort['openFile']>>;
+      try {
+        opened = await navigation.openFile(targetPath, command.line, fileCancellation.token);
+      } finally {
+        fileCancellation.dispose();
+      }
       if (!opened.ok) {
         onError(`xi: file navigation ${opened.error.kind}: ${opened.error.message}\n`);
         return;
@@ -109,7 +124,13 @@ export class WorkbenchHostCommands {
       return;
     }
     if (command.kind === 'open-tag') {
-      const opened = await navigation.openTag(command.name);
+      const tagCancellation = new CancellationSource();
+      let opened: Awaited<ReturnType<HostNavigationPort['openTag']>>;
+      try {
+        opened = await navigation.openTag(command.name, tagCancellation.token);
+      } finally {
+        tagCancellation.dispose();
+      }
       if (!opened.ok) {
         onError(`xi: tag navigation ${opened.error.kind}: ${opened.error.message}\n`);
         return;
@@ -130,7 +151,13 @@ export class WorkbenchHostCommands {
         onError(`xi: include target not found: ${command.target}\n`);
         return;
       }
-      const opened = await navigation.openFile(targetPath);
+      const includeCancellation = new CancellationSource();
+      let opened: Awaited<ReturnType<HostNavigationPort['openFile']>>;
+      try {
+        opened = await navigation.openFile(targetPath, undefined, includeCancellation.token);
+      } finally {
+        includeCancellation.dispose();
+      }
       if (!opened.ok) {
         onError(`xi: include navigation ${opened.error.kind}: ${opened.error.message}\n`);
         return;
@@ -238,6 +265,10 @@ export class WorkbenchHostCommands {
     if (command === 'format') return this.formatCurrentDocument(viewId).then(() => 'handled' as const);
     const tag = /^(?:tag|tjump|tj)\s+(\S+)$/iu.exec(normalized);
     if (tag?.[1] !== undefined) return this.handleVimHostCommand({ kind: 'open-tag', name: tag[1], split: false }, viewId).then(() => 'handled' as const);
+    // `Space O`/`Space o` (docs/plan/03-ux.md "Directory as editable text") route through
+    // this same Ex dispatch once a leader binding calls `:Explore [path]`.
+    const explore = /^(?:explore|expl)(?:\s+(\S.*))?$/iu.exec(normalized);
+    if (explore) return this.#options.directoryDrafts.open(explore[1]?.trim(), viewId).then(() => 'handled' as const);
     const task = /^task\s+(\S+)$/iu.exec(normalized);
     if (task?.[1] !== undefined) return problems.runConfiguredTask(task[1]).then(() => 'handled' as const);
     if (command === 'tasks') return problems.listConfiguredTasks().then(() => 'handled' as const);

@@ -85,7 +85,19 @@ export interface VimInsertSession {
   readonly nextRegisterRequestId: number;
   /** Prefix needed when a counted open-below command repeats a line block. */
   readonly countRepeatPrefix: string;
-  readonly repeatText: string;
+  /**
+   * The dot-repeat text, kept as append-only chunks plus a pending-trim count
+   * instead of one flat string. A `<BS>`/`<C-w>`/`<C-u>` after a huge insert
+   * (e.g. a big paste) only needs to record how many trailing UTF-16 units are
+   * now logically gone (`repeatTrim`); it never re-copies the accumulated
+   * text. The flat string is rebuilt (once) only when a later insertion
+   * needs to settle a pending trim, or when the session ends and dot-repeat
+   * actually reads the text — see `materializeRepeatText`.
+   */
+  readonly repeatPieces: readonly string[];
+  readonly repeatTrim: number;
+  /** `sum(repeatPieces lengths) - repeatTrim`, maintained incrementally so reading it never walks `repeatPieces`. */
+  readonly repeatLength: number;
   readonly replaceStack: readonly ReplaceFrame[];
   readonly pending: VimInsertPendingInput;
   readonly options: NormalizedVimInsertOptions;
@@ -177,6 +189,7 @@ export type VimInsertResult<T> = { readonly ok: true; readonly value: T }
 
 const NONE_PENDING: VimInsertPendingInput = Object.freeze({ kind: 'none' });
 const MAX_REPEAT_UTF16 = 1_000_000;
+const EMPTY_REPEAT_PIECES: readonly string[] = Object.freeze([]);
 const DEFAULT_OPTIONS: NormalizedVimInsertOptions = Object.freeze({
   backspace: Object.freeze(['indent', 'eol', 'start'] as const),
   autoindent: false,
@@ -226,7 +239,7 @@ export function beginVimInsert(
       count,
       nextRegisterRequestId: 1,
       countRepeatPrefix: '',
-      repeatText: '',
+      repeatPieces: EMPTY_REPEAT_PIECES, repeatTrim: 0, repeatLength: 0,
       replaceStack: [],
       pending: NONE_PENDING,
       options: normalizedOptions,
@@ -259,7 +272,7 @@ export function beginVimInsert(
     count,
     nextRegisterRequestId: 1,
     countRepeatPrefix: prepared.countRepeatPrefix,
-    repeatText: '',
+    repeatPieces: EMPTY_REPEAT_PIECES, repeatTrim: 0, repeatLength: 0,
     replaceStack: [],
     pending: NONE_PENDING,
     options: normalizedOptions,
@@ -539,7 +552,7 @@ function insertPayload(
     : session.mode === 'replace'
       ? replacePayload(source, current, payload)
       : virtualReplace(source, current, payload, session.options.tabstop);
-  const nextTextLength = session.repeatText.length + payload.length;
+  const nextTextLength = session.repeatLength + payload.length;
   if (session.count > 1 && nextTextLength * session.count > MAX_REPEAT_UTF16) return failure('repeat-limit');
   const frame = 'frame' in result ? result.frame as ReplaceFrame : undefined;
   const globalFrame = frame === undefined ? undefined : translateFrame(frame, base);
@@ -552,7 +565,7 @@ function insertPayload(
   const next = freezeSession({
     ...session,
     cursorOffset: offset(base + cursorAfter),
-    repeatText: session.repeatText + payload,
+    ...appendRepeat(session, payload),
     replaceStack: stack,
     autoIndentLineHasContent: autoIndentHasContent,
   });
@@ -643,7 +656,7 @@ function insertNewline(snapshot: DocumentSnapshot, source: string, base: number,
   const next = freezeSession({
     ...session,
     cursorOffset: offset(nextCursor),
-    repeatText: session.repeatText + value,
+    ...appendRepeat(session, value),
     replaceStack: [],
     autoIndentSpan: indent.length > 0 ? { start: offset(base + cursor + 1), end: offset(nextCursor) } : null,
     autoIndentLineHasContent: false,
@@ -661,7 +674,7 @@ function backspace(snapshot: DocumentSnapshot, source: string, base: number, ses
       ...session,
       cursorOffset: top.cursorBefore,
       replaceStack: nextStack,
-      repeatText: session.repeatText.slice(0, Math.max(0, session.repeatText.length - top.insertedText.length)),
+      ...trimRepeatBy(session, top.insertedText.length),
     });
     return success(continued(snapshot, next, [makeEdit(start, end, top.replacedText, literalControlIntent(top.replacedText))], 'continued'));
   }
@@ -688,7 +701,7 @@ function backspace(snapshot: DocumentSnapshot, source: string, base: number, ses
   const next = freezeSession({
     ...session,
     cursorOffset: offset(previous),
-    repeatText: removeSuffix(session.repeatText, deletedText),
+    ...removeRepeatSuffix(session, deletedText),
     autoIndentSpan: nextIndentSpan,
     autoIndentLineHasContent: session.autoIndentSpan !== null
       && previous > (session.autoIndentSpan.end as number),
@@ -705,7 +718,7 @@ function deleteForward(snapshot: DocumentSnapshot, source: string, base: number,
   const deleted = source.slice(cursor, end);
   const next = freezeSession({
     ...session,
-    repeatText: removeSuffix(session.repeatText, deleted),
+    ...removeRepeatSuffix(session, deleted),
     autoIndentSpan: adjustSpanAfterEdit(session.autoIndentSpan, absoluteCursor, absoluteEnd, ''),
   });
   return success(continued(snapshot, next, [makeEdit(absoluteCursor, absoluteEnd, '')], 'continued'));
@@ -733,7 +746,7 @@ function deletePreviousWord(snapshot: DocumentSnapshot, source: string, base: nu
   const next = freezeSession({
     ...session,
     cursorOffset: offset(absoluteStart),
-    repeatText: removeSuffix(session.repeatText, removed),
+    ...removeRepeatSuffix(session, removed),
     replaceStack: [],
     autoIndentSpan: adjustSpanAfterEdit(session.autoIndentSpan, absoluteStart, absoluteCursor, ''),
     autoIndentLineHasContent: false,
@@ -749,7 +762,7 @@ function deleteToLineStart(snapshot: DocumentSnapshot, source: string, base: num
   const removed = source.slice(removableStart, cursor);
   const absoluteStart = base + removableStart;
   const absoluteCursor = base + cursor;
-  const next = freezeSession({ ...session, cursorOffset: offset(absoluteStart), repeatText: removeSuffix(session.repeatText, removed), replaceStack: [] });
+  const next = freezeSession({ ...session, cursorOffset: offset(absoluteStart), ...removeRepeatSuffix(session, removed), replaceStack: [] });
   return success(continued(snapshot, next, [makeEdit(absoluteStart, absoluteCursor, '')], 'continued'));
 }
 
@@ -773,7 +786,7 @@ function indentByShiftwidth(snapshot: DocumentSnapshot, source: string, base: nu
     ...session,
     cursorOffset: offset(nextCursor),
     replaceStack: [],
-    repeatText: increase ? session.repeatText + value : removeSuffix(session.repeatText, source.slice(removeStart, cursor)),
+    ...(increase ? appendRepeat(session, value) : removeRepeatSuffix(session, source.slice(removeStart, cursor))),
     autoIndentSpan: adjustSpanAfterEdit(session.autoIndentSpan, base + removeStart, base + cursor, replacement),
   });
   return success(continued(snapshot, next, [edit], 'continued'));
@@ -793,7 +806,7 @@ function exitInsert(snapshot: DocumentSnapshot, source: string, base: number, se
       finalCursor = start;
     }
   }
-  const repeatUnit = session.countRepeatPrefix + session.repeatText;
+  const repeatUnit = session.countRepeatPrefix + materializeRepeatText(session.repeatPieces, session.repeatTrim);
   if (session.count > 1 && repeatUnit.length > 0 && session.mode === 'insert') {
     const repeat = repeatUnit.repeat(session.count - 1);
     if (repeat.length + repeatUnit.length > MAX_REPEAT_UTF16) return failure('repeat-limit');
@@ -908,7 +921,7 @@ function normalizeOptions(options: VimInsertOptions): NormalizedVimInsertOptions
 }
 
 function isSessionValid(session: VimInsertSession): boolean {
-  // `repeatText` and `replaceStack` are append-only for the life of a
+  // `repeatPieces` and `replaceStack` are append-only for the life of a
   // session: every increment is already validated at the point it is added
   // (insertPayload checks the incoming payload with isWellFormed/
   // isUnicodeScalarText before appending; every frame is built from that
@@ -1219,7 +1232,90 @@ function digraphValue(first: string, second: string): string | undefined {
 
 function hasOption(options: NormalizedVimInsertOptions, value: VimBackspaceOption): boolean { return options.backspace.includes(value); }
 function isIndentCharacter(value: string): boolean { return value === ' ' || value === '\t'; }
-function removeSuffix(source: string, suffix: string): string { return source.endsWith(suffix) ? source.slice(0, -suffix.length) : source; }
+
+type RepeatFields = Pick<VimInsertSession, 'repeatPieces' | 'repeatTrim' | 'repeatLength'>;
+
+/** Append `text` to the session's dot-repeat record. O(text.length) plus, only when a
+ * trim is pending, the O(trimmed) cost of settling it (never O(the untouched history)).
+ * Mutates `session.repeatPieces` in place when it is still extensible (the same
+ * append-only, single-chain convention `appendReplaceFrame` uses below), so this never
+ * pays an O(piece count) array-copy per keystroke either. */
+function appendRepeat(session: RepeatFields, text: string): RepeatFields {
+  // Return exactly the three RepeatFields keys, never the caller's wider session object --
+  // callers spread this result over an object literal that already set other overrides
+  // (e.g. cursorOffset), and spreading extra keys back in would silently clobber those.
+  const unchanged: RepeatFields = { repeatPieces: session.repeatPieces, repeatTrim: session.repeatTrim, repeatLength: session.repeatLength };
+  if (text.length === 0) return unchanged;
+  const pieces = session.repeatTrim === 0 ? session.repeatPieces : settleRepeatTrim(session.repeatPieces, session.repeatTrim);
+  const nextPieces = Object.isExtensible(pieces) ? (pieces as string[]) : [...pieces];
+  nextPieces.push(text);
+  return { repeatPieces: nextPieces, repeatTrim: 0, repeatLength: session.repeatLength + text.length };
+}
+
+/** Drop exactly `count` trailing UTF-16 units, unconditionally (the caller already knows
+ * they were appended). O(1): only the pending-trim counter moves. */
+function trimRepeatBy(session: RepeatFields, count: number): RepeatFields {
+  const unchanged: RepeatFields = { repeatPieces: session.repeatPieces, repeatTrim: session.repeatTrim, repeatLength: session.repeatLength };
+  const amount = Math.min(Math.max(0, count), session.repeatLength);
+  if (amount === 0) return unchanged;
+  return { repeatPieces: session.repeatPieces, repeatTrim: session.repeatTrim + amount, repeatLength: session.repeatLength - amount };
+}
+
+/** Drop `suffix` from the end only if the logical text actually ends with it (mirrors the
+ * old `String.prototype.endsWith` guard). Reading the tail costs O(suffix.length), never
+ * O(the full accumulated text). */
+function removeRepeatSuffix(session: RepeatFields, suffix: string): RepeatFields {
+  const unchanged: RepeatFields = { repeatPieces: session.repeatPieces, repeatTrim: session.repeatTrim, repeatLength: session.repeatLength };
+  if (suffix.length === 0 || suffix.length > session.repeatLength) return unchanged;
+  const tail = readRepeatTail(session.repeatPieces, session.repeatTrim, suffix.length);
+  return tail === suffix ? trimRepeatBy(session, suffix.length) : unchanged;
+}
+
+/** Fold a pending trim into `pieces` by dropping/shortening trailing pieces. Cost is
+ * bounded by `trim` (how much was actually deleted) plus the pieces it spans, not by the
+ * untouched history before them; mutates in place when `pieces` is still extensible
+ * (see `appendRepeat`), so this never re-copies the whole piece list either. */
+function settleRepeatTrim(pieces: readonly string[], trim: number): readonly string[] {
+  if (trim === 0) return pieces;
+  const result = Object.isExtensible(pieces) ? (pieces as string[]) : [...pieces];
+  let remaining = trim;
+  while (remaining > 0) {
+    const last = result.pop();
+    if (last === undefined) break;
+    if (last.length <= remaining) { remaining -= last.length; continue; }
+    result.push(last.slice(0, last.length - remaining));
+    remaining = 0;
+  }
+  return result;
+}
+
+/** Read up to `count` UTF-16 units from the logical end of `pieces` (after dropping the
+ * pending `trim`). Cost is bounded by `count` plus the number of pieces touched. */
+function readRepeatTail(pieces: readonly string[], trim: number, count: number): string {
+  let skip = trim;
+  let collectedLength = 0;
+  const parts: string[] = [];
+  for (let index = pieces.length - 1; index >= 0 && collectedLength < count; index -= 1) {
+    let piece = pieces[index] as string;
+    if (skip > 0) {
+      if (skip >= piece.length) { skip -= piece.length; continue; }
+      piece = piece.slice(0, piece.length - skip);
+      skip = 0;
+    }
+    const need = count - collectedLength;
+    const taken = piece.length <= need ? piece : piece.slice(piece.length - need);
+    parts.push(taken);
+    collectedLength += taken.length;
+  }
+  parts.reverse();
+  return parts.join('');
+}
+
+/** Materialize the flat dot-repeat text. Only called when the text is actually needed
+ * (repeating on insert-session end), never on the per-keystroke append/trim path. */
+function materializeRepeatText(pieces: readonly string[], trim: number): string {
+  return settleRepeatTrim(pieces, trim).join('');
+}
 function adjustSpanAfterEdit(
   span: VimInsertSession['autoIndentSpan'],
   editStart: number,

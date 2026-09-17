@@ -467,6 +467,7 @@ export class WorkbenchSession implements VimSessionReader {
       this.#root = removeViewFromTree(this.#root, viewId, view?.returnViewId, this.#views);
     }
     buffer.changeSubscription.dispose();
+    buffer.coordinator.dispose();
     this.#buffers.delete(bufferId);
     this.#activeViewId = firstView(this.#views);
     return { ok: true, value: { closed: true, activeViewId: this.#activeViewId } };
@@ -754,6 +755,7 @@ export class WorkbenchSession implements VimSessionReader {
     this.#disposed = true;
     for (const buffer of this.#buffers.values()) {
       buffer.changeSubscription.dispose();
+      buffer.coordinator.dispose();
     }
     this.#buffers.clear();
     this.#views.clear();

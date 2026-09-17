@@ -50,7 +50,8 @@ export type FileOperationFailure =
   | { readonly kind: 'platform'; readonly path: string; readonly failure: PlatformFailure }
   | { readonly kind: 'journal'; readonly path: string; readonly message: string }
   | { readonly kind: 'hook'; readonly phase: 'will' | 'did'; readonly message: string }
-  | { readonly kind: 'partial'; readonly path: string; readonly message: string; readonly journal: FileOperationJournal };
+  | { readonly kind: 'partial'; readonly path: string; readonly message: string; readonly journal: FileOperationJournal }
+  | { readonly kind: 'disposed' };
 
 export interface FileOperationStep {
   readonly id: string;
@@ -104,6 +105,11 @@ interface InternalStep extends FileOperationStep {
  */
 /** Bounds the fingerprint cache so a long-lived service instance cannot retain unbounded per-path memory. */
 const MAX_FINGERPRINT_CACHE_ENTRIES = 256;
+/** Journals are small JSON documents describing a plan's steps, never full file content. */
+const MAX_JOURNAL_BYTES = 16 * 1024 * 1024;
+/** Fingerprinting reads a whole file into memory to hash it; bound it so a pathologically large
+ * file in a move/copy plan cannot be fully materialized just to compute its content hash. */
+const MAX_FINGERPRINT_BYTES = 256 * 1024 * 1024;
 
 export class JournaledFilesystemOperations {
   readonly #filesystem: JournaledFilesystemPort;
@@ -114,6 +120,7 @@ export class JournaledFilesystemOperations {
   // (below) avoids reading and hashing an unchanged file more than once.
   readonly #fingerprintCache = new Map<string, FileFingerprint>();
   #counter = 0;
+  #disposed = false;
 
   constructor(filesystem: JournaledFilesystemPort, options: Pick<JournaledFileOperationOptions, 'hooks' | 'trashRoot'> = {}) {
     this.#filesystem = filesystem;
@@ -121,11 +128,19 @@ export class JournaledFilesystemOperations {
     this.#defaultTrashRoot = options.trashRoot;
   }
 
+  /** Idempotent. Releases the fingerprint cache; later calls fail with `{ kind: 'disposed' }`. */
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#fingerprintCache.clear();
+  }
+
   async apply(
     plan: DirectoryOperationPlan,
     cancellation: CancellationToken,
     options: JournaledFileOperationOptions = {},
   ): Promise<Result<FileOperationResult, FileOperationFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const checked = validatePlan(plan);
     if (!checked.ok) return checked;
     const operationId = options.operationId ?? `xi-file-${Date.now()}-${this.#counter += 1}`;
@@ -210,7 +225,8 @@ export class JournaledFilesystemOperations {
 
   /** Load a persisted operation after a restart without trusting unvalidated JSON. */
   async readJournal(path: string, cancellation: CancellationToken): Promise<Result<FileOperationJournal, FileOperationFailure>> {
-    const bytes = await this.#filesystem.readFile(path, cancellation);
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
+    const bytes = await this.#filesystem.readFile(path, cancellation, { maxBytes: MAX_JOURNAL_BYTES });
     if (!bytes.ok) return journalFailure(path, platformMessage(bytes.error));
     const decoded = decodeFileOperationJournal(bytes.value);
     return decoded.ok ? decoded : journalFailure(path, failureMessage(decoded.error));
@@ -231,6 +247,7 @@ export class JournaledFilesystemOperations {
     cancellation: CancellationToken,
     trashRoot = this.#defaultTrashRoot ?? joinPath(plan.directoryPath, '.xi-trash'),
   ): Promise<Result<ReadonlyMap<string, FileFingerprint>, FileOperationFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const checked = validatePlan(plan);
     if (!checked.ok) return checked;
     if (cancellation.isCancelled) return cancelled();
@@ -277,6 +294,7 @@ export class JournaledFilesystemOperations {
     journal: FileOperationJournal,
     cancellation: CancellationToken,
   ): Promise<Result<FileOperationRecoveryResult, FileOperationFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     if (journal.schemaVersion !== FILE_OPERATION_CONTRACT_VERSION) return journalFailure(journal.journalPath, 'unsupported journal schema');
     if (journal.status === 'applied') return { ok: true, value: recoveryResult(journal, 'retried') };
     let current = journal;
@@ -301,6 +319,7 @@ export class JournaledFilesystemOperations {
     journal: FileOperationJournal,
     cancellation: CancellationToken,
   ): Promise<Result<FileOperationRecoveryResult, FileOperationFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     if (journal.schemaVersion !== FILE_OPERATION_CONTRACT_VERSION) return journalFailure(journal.journalPath, 'unsupported journal schema');
     let current = journal;
     const completed = current.steps.filter((step) => step.completed);
@@ -437,7 +456,7 @@ export class JournaledFilesystemOperations {
   }
 
   private async hash(path: string, cancellation: CancellationToken): Promise<Result<string | undefined, FileOperationFailure>> {
-    const bytes = await this.#filesystem.readFile(path, cancellation);
+    const bytes = await this.#filesystem.readFile(path, cancellation, { maxBytes: MAX_FINGERPRINT_BYTES });
     if (!bytes.ok) return platformFailure(path, bytes.error);
     if (cancellation.isCancelled) return cancelled();
     return { ok: true, value: stableHash(bytes.value) };
@@ -590,7 +609,9 @@ function localFailure(path: string, message: string): Result<never, { readonly p
 }
 
 function failureMessage(failure: FileOperationFailure): string {
-  return failure.kind === 'platform' ? failure.failure.message : failure.message;
+  if (failure.kind === 'platform') return failure.failure.message;
+  if (failure.kind === 'disposed') return 'journaled filesystem operations service is disposed';
+  return failure.message;
 }
 
 function platformMessage(failure: PlatformFailure): string { return `${failure.code}: ${failure.message}`; }

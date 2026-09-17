@@ -261,14 +261,16 @@ class ProcessMessageWriter extends AbstractMessageWriter {
       const serialized = JSON.stringify(message);
       if (serialized === undefined) throw new Error('JSON-RPC message is not serializable');
       const body = new TextEncoder().encode(serialized);
-      if (body.byteLength > this.maxBodyBytes) throw new Error(`outgoing LSP body exceeds ${this.maxBodyBytes} bytes`);
+      if (body.byteLength > this.maxBodyBytes) {
+        throw new LanguageProtocolError('outgoing-body-too-large', `outgoing LSP body exceeds ${this.maxBodyBytes} bytes`);
+      }
       bytes = encodeContentLengthFrame(body);
       this.tracker.outgoing(message);
     } catch (error) {
       this.fireError(error, message);
-      // A bounded pending-request limit rejects only this caller's request; it is not
-      // a transport/protocol failure and must not tear down the whole connection.
-      if (!(error instanceof LanguageProtocolError && error.kind === 'pending-request-limit')) this.onFailure(error);
+      // fail() (below) filters pending-request-limit / outgoing-body-too-large so they
+      // reject only this caller's message instead of tearing down the whole connection.
+      this.onFailure(error);
       throw error;
     }
 
@@ -538,6 +540,12 @@ export class LanguageTransport implements Disposable {
 
   private fail(error: unknown): void {
     if (this.currentState !== 'running') return;
+    // A bounded pending-request limit or an oversized outgoing body is a rejection of that
+    // one caller's message, not a transport/protocol failure; the connection's onError still
+    // fires (vscode-jsonrpc wires it to the writer's error event unconditionally), so this is
+    // the single place that must not tear down the rest of the connection for these kinds.
+    if (error instanceof LanguageProtocolError
+      && (error.kind === 'pending-request-limit' || error.kind === 'outgoing-body-too-large')) return;
     const previous = this.currentState;
     this.failureValue = asErrorMessage(error);
     this.currentState = 'failed';

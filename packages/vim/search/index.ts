@@ -296,7 +296,6 @@ export interface VimSubstitutePlan {
   readonly matchedCount: number;
   readonly skippedCount: number;
   readonly printedLines: readonly LineIndex[];
-  readonly resultText: string;
   readonly undoGroup: string;
   readonly state: VimSearchState;
 }
@@ -409,7 +408,6 @@ export function prepareVimSubstitute(
     printedLines.add(line.value as number);
     if (!flagSet.has('n')) edits.push({ start: rawMatch.start, end: rawMatch.end, text: replacement.value });
   }
-  const resultText = flagSet.has('n') ? snapshotText(snapshot) : applyEdits(snapshot, edits);
   const nextState: VimSearchState = Object.freeze({
     pattern,
     direction: 'forward',
@@ -428,7 +426,6 @@ export function prepareVimSubstitute(
       matchedCount: selected.length + skippedCount,
       skippedCount,
       printedLines: Object.freeze([...printedLines].sort((left, right) => left - right).map((line) => line as LineIndex)),
-      resultText,
       undoGroup: `vim-substitute-${snapshot.version as number}`,
       state: nextState,
     }),
@@ -699,28 +696,11 @@ function expandVimReplacement(
   return { ok: true, value: output.join('') };
 }
 
-function applyEdits(snapshot: DocumentSnapshot, edits: readonly DocumentEdit[]): string {
-  const text = snapshotText(snapshot);
-  const chunks: string[] = [];
-  let previous = 0;
-  for (const edit of edits) {
-    chunks.push(text.slice(previous, edit.start as number), edit.text);
-    previous = edit.end as number;
-  }
-  chunks.push(text.slice(previous));
-  return chunks.join('');
-}
-
 function substitutePatternOptions(options: PatternOptions | undefined, flags: ReadonlySet<string>): PatternOptions {
   const base = options ?? {};
   if (flags.has('i')) return { ...base, ignoreCase: true, smartCase: false };
   if (flags.has('I')) return { ...base, ignoreCase: false, smartCase: false };
   return base;
-}
-
-function snapshotText(snapshot: DocumentSnapshot): string {
-  const result = snapshot.slice(0 as Utf16Offset, snapshot.lengthUtf16 as Utf16Offset);
-  return result.ok ? result.value : '';
 }
 
 function readDelimited(command: string, start: number, delimiter: string): Result<{ readonly value: string; readonly next: number }, VimSearchFailure> {

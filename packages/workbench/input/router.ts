@@ -90,6 +90,13 @@ export class WorkbenchInputRouter implements Disposable {
   #leaderPanelPending = false;
   #macroRegisterPending = false;
   #prefixGeneration = 0;
+  // schedulePrefixHelp fires on every key via onPrefixStateChange. vim-session hands back
+  // the same VimPrefixHelpState object (same pendingKeys/parserContinuations array
+  // references) whenever nothing prefix-related actually changed, so caching those two
+  // references lets the overwhelmingly common no-op key skip the generation bump, the
+  // array copies and any timer churn entirely.
+  #lastPrefixPendingKeys: readonly string[] | undefined;
+  #lastPrefixContinuations: VimPrefixHelpState['parserContinuations'] | undefined;
   #exCommandLineSession: ExCommandLineSession | undefined;
   readonly #commandLineListeners = new Set<(model: ReturnType<ExCommandLineSession['readModel']> | undefined) => void>();
   #disposed = false;
@@ -148,6 +155,13 @@ export class WorkbenchInputRouter implements Disposable {
 
   /** Called from `BufferHostOptions.onPrefixStateChange`. */
   schedulePrefixHelp(viewId: ViewId, pendingKeys: readonly string[], parserContinuations: VimPrefixHelpState['parserContinuations']): void {
+    if (pendingKeys === this.#lastPrefixPendingKeys && parserContinuations === this.#lastPrefixContinuations) return;
+    this.#lastPrefixPendingKeys = pendingKeys;
+    this.#lastPrefixContinuations = parserContinuations;
+    if (pendingKeys.length === 0 && parserContinuations.length === 0) {
+      this.#prefixHelp.cancel();
+      return;
+    }
     this.#prefixGeneration += 1;
     this.#prefixHelp.schedule({
       targetId: String(viewId),
@@ -162,19 +176,27 @@ export class WorkbenchInputRouter implements Disposable {
     this.schedulePrefixHelp(targetViewId, ['<Space>'], [{ kind: 'keys', keys: ['v', 'f', 'b', 's', 'p', 'o', 'k', 'a', 'd', 'e', '/', 'r'], label: 'Leader workbench command' }]);
   }
 
-  /** Reproduces the original `onKeypress` chain exactly. */
-  async handleKeypress(event: OwnedVimKeyEvent): Promise<boolean | 'quit'> {
+  /** Reproduces the original `onKeypress` chain exactly, except that it no longer forces a
+   * microtask hop on every ordinary keystroke: only the two branches below actually await
+   * (loading the explorer/search services on first use), and every other branch returns its
+   * callee's result -- synchronous or not -- directly, so the vim-session fast path
+   * (`canHandleSynchronously`) reaches the caller without an added `await`. */
+  handleKeypress(event: OwnedVimKeyEvent): boolean | 'quit' | Promise<boolean | 'quit'> {
     const { explorer, search, host, session, completion } = this.#options;
     // Preserve focus and queued keys while the first panel's services load.
     if (explorer.isOpen && !this.#options.isExplorerServiceLoaded()) {
-      await this.#options.ensureOptionalServices();
-      await explorer.handleKeypress(event);
-      return true;
+      return (async () => {
+        await this.#options.ensureOptionalServices();
+        await explorer.handleKeypress(event);
+        return true;
+      })();
     }
     if (search.isOpen && !this.#options.isSearchServiceLoaded()) {
-      await this.#options.ensureOptionalServices();
-      await search.handleKeypress(event);
-      return true;
+      return (async () => {
+        await this.#options.ensureOptionalServices();
+        await search.handleKeypress(event);
+        return true;
+      })();
     }
     const activeCommandSession = host.activeSession();
     if (activeCommandSession?.commandLineActive === true) return activeCommandSession.handleKey(event);

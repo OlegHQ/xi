@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t044-replace-") as temporary:
             raise SystemExit(f"replacement bytes mismatch: {target.read_bytes()!r}")
         os.write(master, b"\x1b")
         read_until(master, captured, lambda data: data.count(b"XI_SEARCH_CANCELLED") >= 2, 5)
-        os.write(master, b"\x03")
+        os.write(master, b":q\r")
         child.wait(timeout=5)
     finally:
         if child.poll() is None:

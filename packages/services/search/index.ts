@@ -238,18 +238,25 @@ export class RealtimeSearchService implements Disposable {
       return;
     }
     const filteredDisk = disk.value.filter((match) => !ownedPaths.has(bufferPathKey(match.rootId, match.path)));
-    const merged = [...filteredDisk, ...bufferMatches].sort(compareSearchMatches);
     const limit = query.maxResults ?? this.#defaultLimit;
-    const matches = merged.slice(0, limit);
+    // Bounded top-N insertion (mirrors packages/services/navigation's picker index): keeps a
+    // sorted, capped-at-`limit` array instead of concatenating every disk+buffer match and
+    // sorting/slicing the whole thing, so a query with far more matches than `limit` only ever
+    // maintains a small candidate set.
+    const merged: SearchMatch[] = [];
+    let totalMatches = 0;
+    for (const match of filteredDisk) { totalMatches += 1; insertTopN(merged, match, limit); }
+    for (const match of bufferMatches) { totalMatches += 1; insertTopN(merged, match, limit); }
+    const matches = merged;
     const model: SearchReadModel = Object.freeze({
       contractVersion: 1,
       query,
       generation,
       state: matches.length === 0 ? 'empty' : 'ready',
       matches: Object.freeze(matches),
-      totalMatches: merged.length,
-      truncated: merged.length > limit,
-      message: merged.length === 0 ? 'No matches' : undefined,
+      totalMatches,
+      truncated: totalMatches > matches.length,
+      message: totalMatches === 0 ? 'No matches' : undefined,
     });
     this.#publish(model);
     resolve({ ok: true, value: model });
@@ -351,11 +358,14 @@ export class RipgrepSearchBackend implements SearchBackend {
     const closeInput = handle.stdin?.close();
     if (closeInput !== undefined) await closeInput;
     const stderrPromise = readProcessStderr(handle.stderr);
-    const parsed = await parseRipgrepOutput(handle, query, generation, this.#maxOutputBytes, cancellation, onBatch);
+    const maxResults = bounded(query.maxResults ?? 10_000, 1, 1_000_000);
+    const { result: parsed, capped } = await parseRipgrepOutput(handle, query, generation, this.#maxOutputBytes, maxResults, cancellation, onBatch);
     const stderr = await stderrPromise;
     const exited = await handle.exit;
     if (!parsed.ok) return parsed;
     if (cancellation.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
+    // A capped stop kills rg itself; its exit code/signal reflects that kill, not a failure.
+    if (capped) return parsed;
     if (!exited.ok) return { ok: false, error: { kind: 'backend', message: exited.error.message } };
     if (exited.value.code !== 0 && exited.value.code !== 1) {
       return { ok: false, error: { kind: 'backend', message: stderr.length > 0 ? stderr : `rg exited with code ${String(exited.value.code)}` } };
@@ -370,22 +380,32 @@ class EmptySearchBackend implements SearchBackend {
   }
 }
 
+interface ParsedRipgrepOutput {
+  readonly result: Result<readonly SearchMatch[], SearchFailure>;
+  /** True when parsing stopped early because `maxResults` was reached (rg was terminated by
+   * us, not because it finished or failed on its own); the caller must not treat the resulting
+   * kill signal/exit code as a backend failure in that case. */
+  readonly capped: boolean;
+}
+
 async function parseRipgrepOutput(
   handle: { readonly stdout: AsyncIterable<Uint8Array>; terminate(forceAfterMilliseconds: number): Promise<void> },
   query: SearchQuery,
   generation: number,
   maxOutputBytes: number,
+  maxResults: number,
   cancellation: CancellationToken,
   onBatch?: (matches: readonly SearchMatch[]) => void,
-): Promise<Result<readonly SearchMatch[], SearchFailure>> {
+): Promise<ParsedRipgrepOutput> {
   const decoder = new TextDecoder('utf-8', { fatal: false });
   const matches: SearchMatch[] = [];
   let pending = '';
   let outputBytes = 0;
   let overflow = false;
+  let capped = false;
   let emitted = 0;
   for await (const chunk of handle.stdout) {
-    if (cancellation.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
+    if (cancellation.isCancelled) return { result: { ok: false, error: { kind: 'cancelled' } }, capped: false };
     outputBytes += chunk.byteLength;
     if (outputBytes > maxOutputBytes) {
       overflow = true;
@@ -393,10 +413,14 @@ async function parseRipgrepOutput(
       break;
     }
     pending += decoder.decode(chunk, { stream: true });
-    let newline = pending.indexOf('\n');
+    // Index cursor instead of `pending = pending.slice(newline + 1)` per line: that repeated
+    // slice re-copies the remaining tail on every line in a chunk (O(n^2) over a chunk with
+    // many lines). The tail is sliced off once per chunk instead.
+    let cursor = 0;
+    let newline = pending.indexOf('\n', cursor);
     while (newline >= 0) {
       const before = matches.length;
-      appendRipgrepRecord(pending.slice(0, newline), query, generation, matches);
+      appendRipgrepRecord(pending.slice(cursor, newline), query, generation, matches);
       if (onBatch !== undefined && matches.length > before) {
         const batch = matches.slice(before);
         if (before === 0 || matches.length - emitted >= 32) {
@@ -404,22 +428,33 @@ async function parseRipgrepOutput(
           emitted = matches.length;
         }
       }
-      pending = pending.slice(newline + 1);
-      newline = pending.indexOf('\n');
+      cursor = newline + 1;
+      // Stop reading/parsing once enough matches are retained. `--max-count` would cap matches
+      // per file searched by rg, not the total across the whole tree, so the cutoff is enforced
+      // here instead once the result is already at the display bound.
+      if (matches.length >= maxResults) { capped = true; break; }
+      newline = pending.indexOf('\n', cursor);
+    }
+    pending = pending.slice(cursor);
+    if (capped) {
+      await handle.terminate(50);
+      break;
     }
   }
-  pending += decoder.decode();
-  if (pending.length > 0) {
-    const before = matches.length;
-    appendRipgrepRecord(pending, query, generation, matches);
-    if (onBatch !== undefined && matches.length > before) {
-      onBatch(Object.freeze(matches.slice(before)));
-      emitted = matches.length;
+  if (!capped) {
+    pending += decoder.decode();
+    if (pending.length > 0) {
+      const before = matches.length;
+      appendRipgrepRecord(pending, query, generation, matches);
+      if (onBatch !== undefined && matches.length > before) {
+        onBatch(Object.freeze(matches.slice(before)));
+        emitted = matches.length;
+      }
     }
   }
   if (onBatch !== undefined && emitted < matches.length) onBatch(Object.freeze(matches.slice(emitted)));
-  if (overflow) return { ok: false, error: { kind: 'backend', message: `search output exceeded ${String(maxOutputBytes)} bytes` } };
-  return { ok: true, value: Object.freeze(matches) };
+  if (overflow) return { result: { ok: false, error: { kind: 'backend', message: `search output exceeded ${String(maxOutputBytes)} bytes` } }, capped: false };
+  return { result: { ok: true, value: Object.freeze(matches) }, capped };
 }
 
 async function readProcessStderr(stream: AsyncIterable<Uint8Array>): Promise<string> {
@@ -572,7 +607,32 @@ function computeBufferMatches(query: SearchQuery, buffers: readonly SearchBuffer
 }
 
 function compareSearchMatches(a: SearchMatch, b: SearchMatch): number {
-  return a.path.localeCompare(b.path) || a.line - b.line || a.range.startUtf16 - b.range.startUtf16;
+  // A plain code-unit compare, not localeCompare: this orders a potentially large candidate
+  // set on every insertion, and locale-aware collation is unnecessary overhead here (search
+  // result ordering is not a user-facing sort key requiring locale correctness).
+  if (a.path !== b.path) return a.path < b.path ? -1 : 1;
+  return a.line - b.line || a.range.startUtf16 - b.range.startUtf16;
+}
+
+/**
+ * Inserts `entry` into `list` (kept sorted by `compareSearchMatches`, ties preserving arrival
+ * order), bounded at `cap` entries. See packages/services/navigation's `insertTopN` for the
+ * same pattern applied to fuzzy file-picker results.
+ */
+function insertTopN(list: SearchMatch[], entry: SearchMatch, cap: number): void {
+  if (cap <= 0) return;
+  if (list.length >= cap) {
+    const worst = list[list.length - 1]!;
+    if (compareSearchMatches(entry, worst) >= 0) return;
+  }
+  let low = 0;
+  let high = list.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (compareSearchMatches(list[mid]!, entry) <= 0) low = mid + 1; else high = mid;
+  }
+  list.splice(low, 0, entry);
+  if (list.length > cap) list.pop();
 }
 
 function escapeRegExp(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'); }

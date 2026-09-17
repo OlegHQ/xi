@@ -1,4 +1,4 @@
-import { asCellColumn, asIdentifier, asLineIndex, asUtf16Offset, type UndoGroupId, type ViewId, type Utf16Offset } from '../../contracts/src/index';
+import { asCellColumn, asIdentifier, asLineIndex, asUtf16Offset, type InputModifiers, type UndoGroupId, type ViewId, type Utf16Offset } from '../../contracts/src/index';
 import type { CanonicalInputEvent } from '../../contracts/src/index';
 import type { CommittedDocumentChange, DocumentEdit, DocumentReadPort, DocumentSnapshot, TextFileDocument } from '../../document/src/index';
 import { createDocumentAnchor, DocumentChangeMap } from '../../document/src/index';
@@ -74,7 +74,6 @@ import {
   applyRegisterEffect,
   buildParser,
   coreOperator,
-  encodeKeyBytes,
   id,
   isDirectChangeKey,
   isInsertEntryKey,
@@ -98,6 +97,29 @@ const DIRECT_GROUP = id<UndoGroupId>('xi-workbench-direct');
 const EX_GROUP = id<UndoGroupId>('xi-workbench-ex');
 const OPERATOR_GROUP = id<UndoGroupId>('xi-workbench-operator');
 const EMPTY_PREFIX_KEYS: readonly string[] = Object.freeze([]);
+// normalizeVimInput's `key`-kind output (packages/vim/input/index.ts) never carries
+// rawBytes through -- only `atMilliseconds` and a copied `modifiers` object survive into
+// NormalizedVimInput -- so encoding real terminal bytes into `CanonicalInputEvent.rawBytes`
+// on every keystroke is pure waste on the ordinary key path; the contract still requires a
+// Uint8Array, so a shared empty sentinel satisfies it without allocating.
+const EMPTY_RAW_BYTES: Uint8Array = new Uint8Array(0);
+// One shared monotonic clock object instead of a fresh `{ monotonicMilliseconds: () => ... }`
+// closure allocation per key.
+const MONOTONIC_CLOCK: { readonly monotonicMilliseconds: () => number } = Object.freeze({ monotonicMilliseconds: () => performance.now() });
+// All 16 shift/alt/ctrl/meta combinations, interned once instead of freezing a fresh
+// modifiers object on every keystroke.
+const MODIFIER_COMBOS: readonly InputModifiers[] = Object.freeze(
+  Array.from({ length: 16 }, (_, mask) => Object.freeze({
+    shift: (mask & 1) !== 0,
+    alt: (mask & 2) !== 0,
+    ctrl: (mask & 4) !== 0,
+    meta: (mask & 8) !== 0,
+  })),
+);
+function internModifiers(shift: boolean, alt: boolean, ctrl: boolean, meta: boolean): InputModifiers {
+  const mask = (shift ? 1 : 0) | (alt ? 2 : 0) | (ctrl ? 4 : 0) | (meta ? 8 : 0);
+  return MODIFIER_COMBOS[mask] as InputModifiers;
+}
 
 export function createOwnedVimSession(document: TextFileDocument, options: OwnedVimSessionOptions): OwnedVimSession {
   const documentId = document.id;
@@ -128,6 +150,13 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   // changes. Memoizing on that reference pair turns the common no-pending
   // key into a cache hit instead of reallocating on every keystroke.
   let prefixHelpCache: { readonly keys: readonly string[]; readonly continuations: VimPrefixHelpState['parserContinuations']; readonly value: VimPrefixHelpState } | undefined;
+  // Same memo pattern as prefixHelpCache: commandLine/commandLineCursorOffset are
+  // primitives, so readCommandLine() is memoized on their value pair and
+  // publishAuxiliaryState only notifies listeners when that reference changed,
+  // instead of re-freezing and re-notifying on every keystroke (most of which
+  // don't touch the command line at all).
+  let commandLineStateCache: { readonly source: string | undefined; readonly cursorOffset: number; readonly value: VimCommandLineState | undefined } | undefined;
+  let lastPublishedCommandLine: VimCommandLineState | undefined;
   let selectionHistory: SelectionSetSnapshot[] = [];
   // Dot-repeat (T130): a single most-recent semantic target, matching T024's tested
   // model exactly (operator xor insert xor visual xor put; last completed one wins).
@@ -237,15 +266,24 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       }
       return submitCommandLine('q');
     }
-    if (mode === 'normal' && event.ctrl && (key === 'c' || key === 'C')) return false;
+    // Real Vim's Normal-mode Ctrl-C is an interrupt: it cancels a pending operator/count
+    // prefix, it does not quit. The UI adapter no longer decides quit on unhandled keys
+    // (see packages/ui/src/terminal.ts), so this must resolve the interrupt itself rather
+    // than return false and rely on a caller-side fallback.
+    if (mode === 'normal' && event.ctrl && (key === 'c' || key === 'C')) {
+      parser = makeParser(mode, selections);
+      prefixKeys = EMPTY_PREFIX_KEYS;
+      options.onPrefixStateChange?.(readPrefixHelp());
+      return true;
+    }
       const input: CanonicalInputEvent = {
       kind: 'key',
       key,
       phase: 'press',
-      modifiers: Object.freeze({ shift: event.shift, alt: event.option, ctrl: event.ctrl, meta: event.meta }),
-      rawBytes: encodeKeyBytes(event.raw),
+      modifiers: internModifiers(event.shift, event.option, event.ctrl, event.meta),
+      rawBytes: EMPTY_RAW_BYTES,
       };
-      const normalized = normalizeVimInput(input, { monotonicMilliseconds: () => performance.now() });
+      const normalized = normalizeVimInput(input, MONOTONIC_CLOCK);
       if (!normalized.ok) return true;
     const outcome = parseVimInput(parser, normalized.value);
     parser = outcome.state;
@@ -269,10 +307,10 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       kind: 'key',
       key,
       phase: 'press',
-      modifiers: Object.freeze({ shift: event.shift, alt: event.option, ctrl: event.ctrl, meta: event.meta }),
-      rawBytes: encodeKeyBytes(event.raw),
+      modifiers: internModifiers(event.shift, event.option, event.ctrl, event.meta),
+      rawBytes: EMPTY_RAW_BYTES,
     };
-    const normalized = normalizeVimInput(input, { monotonicMilliseconds: () => performance.now() });
+    const normalized = normalizeVimInput(input, MONOTONIC_CLOCK);
     if (!normalized.ok) return true;
     const outcome = parseVimInput(parser, normalized.value);
     parser = outcome.state;
@@ -297,7 +335,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
    * loop (packages/vim/macros/index.ts's executeVimMacro) is synchronous. */
   function replayMacroKey(key: string): void {
     if (key === ':') return;
-    const normalized = { kind: 'key' as const, key, phase: 'press' as const, modifiers: Object.freeze({ shift: false, alt: false, ctrl: false, meta: false }), atMilliseconds: performance.now() };
+    const normalized = { kind: 'key' as const, key, phase: 'press' as const, modifiers: MODIFIER_COMBOS[0] as InputModifiers, atMilliseconds: MONOTONIC_CLOCK.monotonicMilliseconds() };
     const outcome = parseVimInput(parser, normalized);
     parser = outcome.state;
     if (outcome.kind === 'command') executeCommand(outcome.command);
@@ -547,7 +585,8 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (internalOffset < 0 || internalOffset > internal.length) return false;
       commandLine = internal;
       commandLineCursorOffset = internalOffset + 1;
-      options.onCommandLineChange?.(readCommandLine());
+      lastPublishedCommandLine = readCommandLine();
+      options.onCommandLineChange?.(lastPublishedCommandLine);
       return true;
     },
     submitCommandLine(source): Promise<boolean | 'quit'> {
@@ -600,9 +639,14 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   publishAuxiliaryState();
 
   function readCommandLine(): VimCommandLineState | undefined {
-    return commandLine === undefined
+    if (commandLineStateCache !== undefined && commandLineStateCache.source === commandLine && commandLineStateCache.cursorOffset === commandLineCursorOffset) {
+      return commandLineStateCache.value;
+    }
+    const value = commandLine === undefined
       ? undefined
       : Object.freeze({ source: `:${commandLine}`, cursorOffset: commandLineCursorOffset });
+    commandLineStateCache = { source: commandLine, cursorOffset: commandLineCursorOffset, value };
+    return value;
   }
 
   function readPrefixHelp(): VimPrefixHelpState {
@@ -617,7 +661,11 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
   function publishAuxiliaryState(): void {
     options.onPrefixStateChange?.(readPrefixHelp());
-    options.onCommandLineChange?.(readCommandLine());
+    const commandLineState = readCommandLine();
+    if (commandLineState !== lastPublishedCommandLine) {
+      lastPublishedCommandLine = commandLineState;
+      options.onCommandLineChange?.(commandLineState);
+    }
   }
 
   function updatePrefixKeys(key: string, outcomeKind: string): void {
@@ -628,6 +676,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     const entered = source.startsWith(':') ? source.slice(1) : source;
     commandLine = undefined;
     commandLineCursorOffset = 0;
+    lastPublishedCommandLine = undefined;
     options.onCommandLineChange?.(undefined);
     const hostResult = await options.onExCommand?.(entered);
     if (hostResult === 'handled') return true;

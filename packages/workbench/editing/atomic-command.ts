@@ -62,7 +62,8 @@ export type AtomicCommandFailure =
   | { readonly kind: 'edit-conflict'; readonly conflict: AtomicEditConflict }
   | { readonly kind: 'preparation-failed'; readonly stage: AtomicPreparationStage }
   | { readonly kind: 'document-commit-failed'; readonly cause: DocumentTransactionFailure | 'commit-threw' | 'preview-diverged' }
-  | { readonly kind: 'generation-overflow' };
+  | { readonly kind: 'generation-overflow' }
+  | { readonly kind: 'disposed' };
 
 export type AtomicPreparationStage =
   | 'resolve-member'
@@ -159,6 +160,7 @@ export function createAtomicWorkbenchState(
 export class AtomicCommandCoordinator {
   #state: AtomicWorkbenchState;
   #publishing = false;
+  #disposed = false;
 
   constructor(
     readonly document: TextFileDocument,
@@ -172,8 +174,14 @@ export class AtomicCommandCoordinator {
 
   readState(): AtomicWorkbenchState { return this.#state; }
 
+  /** Idempotent. Later `replaceState`/`execute` calls fail with `{ kind: 'disposed' }`; it does not touch `document`, which this coordinator does not own. */
+  dispose(): void {
+    this.#disposed = true;
+  }
+
   /** Install an external immutable selection/session update, invalidating pending plans. */
   replaceState(input: AtomicWorkbenchStateInput): Result<AtomicWorkbenchState, AtomicCommandFailure> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     if (this.#publishing) return { ok: false, error: { kind: 'stale-state' } };
     if (isSameAtomicState(this.#state, input)) return { ok: true, value: this.#state };
     if (this.#state.generation >= Number.MAX_SAFE_INTEGER) return { ok: false, error: { kind: 'generation-overflow' } };
@@ -184,6 +192,7 @@ export class AtomicCommandCoordinator {
   }
 
   async execute<SharedIntent>(request: AtomicCommandRequest<SharedIntent>): Promise<Result<AtomicCommandOutcome, AtomicCommandFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const beforeState = this.#state;
     const base = this.document.snapshot();
     const active = beforeState.views.find((view) => view.viewId === beforeState.activeViewId);

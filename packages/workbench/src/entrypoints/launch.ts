@@ -1,4 +1,5 @@
 /** Small public workbench surface used by the standalone launcher. */
+export type { WorkbenchReadPort } from '../read-model';
 export { createOwnedVimSession } from '../../vim-session';
 export type {
   OwnedVimKeyEvent,
@@ -26,6 +27,8 @@ export type {
   PrefixHelpSource,
 } from '../../commands/prefix-help';
 export { WorkbenchPointerCapture } from '../../input/pointer-capture';
+export { scrollViewBy } from '../../pointer/scroll';
+export type { ScrollCursorSession, ScrollViewResult } from '../../pointer/scroll';
 export { WorkbenchControlRegistry } from '../../input/controls';
 export { SplitterDragController } from '../../input/controls';
 export type { PointerEnginePort, PointerEvent, PointerSelectionIntent, PointerTextTarget } from '../../../vim/src/entrypoints/launch';
@@ -188,6 +191,7 @@ export type {
 } from '../../input/pointer-router';
 export { WorkbenchHostCommands } from '../../commands/host-commands';
 export type {
+  HostCommandsDirectoryDraftPort,
   HostCommandsFilesystemPort,
   HostCommandsOptions,
   HostCommandsProblemsPort,
@@ -197,6 +201,15 @@ export type {
   HostNavigationLocation,
   HostNavigationPort,
 } from '../../commands/host-commands';
+export { DirectoryDraftController } from '../../directory';
+export type {
+  DirectoryDraftControllerOptions,
+  DirectoryDraftEntryInput,
+  DirectoryDraftFilesystemPort,
+  DirectoryDraftModel,
+  DirectoryDraftPort,
+  DirectoryDraftPortResult,
+} from '../../directory';
 export { SaveCoordinator } from '../../editing/save-coordinator';
 export type {
   FormatterFailure,

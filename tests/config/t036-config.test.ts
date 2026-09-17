@@ -111,4 +111,20 @@ assert.equal(invalidLanguage.ok, false, 'T036-FAIL-LANGUAGE-01 unknown language 
 const invalidTheme = parseThemeConfig('schema-version = 1\nname = "x"\n[tokens]\n"selection.primary" = "red"\n', 'invalid-theme.toml');
 assert.equal(invalidTheme.ok, false, 'T036-FAIL-THEME-01 invalid theme color is rejected');
 
+// A user languages.toml layer (as apps/xi/src/main.ts's loadStartupConfig reads at startup)
+// changes which language-server command a file's languageId resolves to, away from the
+// hardcoded typescript-language-server default.
+const pythonLanguages: ConfigLayer = {
+  name: 'languages', kind: 'language', fileName: 'languages.toml',
+  source: 'schema-version = 1\n\n[language-server.pyright]\ncommand = "pyright-langserver"\nargs = ["--stdio"]\nroot-markers = ["pyproject.toml"]\n\n[[language]]\nname = "python"\nfile-types = ["py"]\nlanguage-servers = ["pyright"]\n',
+};
+const withPython = compileConfig([defaults, pythonLanguages]);
+assert.equal(withPython.ok, true, 'T036-LANGUAGE-04 a user language-server layer compiles');
+if (withPython.ok) {
+  const python = withPython.value.languages.find((entry) => entry.name === 'python');
+  assert.ok(python !== undefined && python.fileTypes.includes('py'), 'T036-LANGUAGE-05 configured file-type maps to the configured language');
+  const server = withPython.value.languageServers.find((entry) => entry.name === python?.languageServers[0]);
+  assert.equal(server?.command, 'pyright-langserver', 'T036-LANGUAGE-06 the configured language server, not typescript-language-server, is chosen');
+}
+
 console.log('T036 config passed TOML diagnostics, schema validation, provenance merge, atomic last-good reload, profile isolation, executable trust, language and theme fixtures');

@@ -111,7 +111,12 @@ function createInput(sink: Bun.FileSink): ProcessInput {
 
 async function* streamChunks(stream: ReadableStream<Uint8Array<ArrayBuffer>> | null): AsyncIterable<Uint8Array> {
   if (stream === null) return;
-  for await (const chunk of stream) yield new Uint8Array(chunk);
+  // ponytail: each pulled chunk is Bun's own freshly allocated buffer for that read, not a
+  // reused/aliased view, so it is yielded as-is instead of copied. Every consumer (language
+  // transport decoding, search/formatting/git/tasks output draining) only reads or copies
+  // bytes out of it and never mutates the chunk in place; this saved a full extra copy of
+  // every byte of process output on top of Bun's own read.
+  for await (const chunk of stream) yield chunk;
 }
 
 function delay(milliseconds: number): Promise<void> {

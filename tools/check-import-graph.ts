@@ -82,6 +82,17 @@ export function analyzePackageSources(units: readonly SourceUnit[]): string[] {
         if (targetPath !== undefined && !isPublicEntryPoint(targetPath, targetOwner)) {
           failures.push(`${imported.location}: deep cross-owner import into ${targetOwner} (${targetPath})`);
         }
+        if (sourceOwner === 'app' && targetPath !== undefined
+          && !normalizeSourcePath(targetPath).startsWith(`packages/${targetOwner}/src/entrypoints/`)) {
+          failures.push(`${imported.location}: apps/xi must import ${targetOwner} via a packages/${targetOwner}/src/entrypoints/ path (${targetPath})`);
+        }
+      } else if (sourceOwner === 'services' && targetPath !== undefined) {
+        const sourceFeature = servicesFeatureOf(unit.path);
+        const targetFeature = servicesFeatureOf(targetPath);
+        if (sourceFeature !== undefined && targetFeature !== undefined && sourceFeature !== targetFeature
+          && normalizeSourcePath(targetPath) !== `packages/services/${targetFeature}/index.ts`) {
+          failures.push(`${imported.location}: deep cross-feature import into services/${targetFeature} (${targetPath}); import via packages/services/${targetFeature}/index.ts`);
+        }
       }
     }
   }
@@ -280,6 +291,15 @@ function ownerOf(path: string): Owner | undefined {
     : undefined;
 }
 
+const SERVICES_FEATURES = new Set(['language', 'syntax', 'search', 'files', 'git', 'formatting', 'persistence', 'tasks', 'navigation', 'config']);
+
+/** The `packages/services/<feature>/` this path lives under, if any (not `packages/services/src/`). */
+function servicesFeatureOf(path: string): string | undefined {
+  const match = /^packages\/services\/([^/]+)\//u.exec(normalizeSourcePath(path));
+  const candidate = match?.[1];
+  return candidate !== undefined && SERVICES_FEATURES.has(candidate) ? candidate : undefined;
+}
+
 function ownerOfSpecifier(specifier: string, importer: string, units: ReadonlyMap<string, SourceUnit>): Owner | undefined {
   const alias = /^@xi\/([^/]+)(?:\/|$)/u.exec(specifier);
   if (alias !== null) {
@@ -328,8 +348,14 @@ function validateExternal(owner: Owner, specifier: string, importer: string): st
     if (packageName.startsWith('vscode-') && !normalizeSourcePath(importer).startsWith('packages/services/language/')) {
       return `${importer}: LSP dependency ${specifier} is only allowed in packages/services/language`;
     }
+    if (packageName === 'web-tree-sitter' && !normalizeSourcePath(importer).startsWith('packages/services/syntax/')) {
+      return `${importer}: tree-sitter dependency ${specifier} is only allowed in packages/services/syntax`;
+    }
     return undefined;
   }
+  // Composition-root asset embedding (`import(x, { with: { type: 'file' } })`) of pinned
+  // grammar/runtime wasm and highlight queries; data files, not code dependencies.
+  if (owner === 'app' && /\.(?:wasm|scm)$/.test(specifier)) return undefined;
   return `${importer}: undeclared external dependency ${specifier} in ${owner}`;
 }
 

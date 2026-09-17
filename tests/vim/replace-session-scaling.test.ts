@@ -49,7 +49,7 @@ function timeReplaceRun(label: string, keystrokes: number): number {
     session = step.value.session;
   }
   assert.equal(session.replaceStack.length, keystrokes, `${label}-STACK-01 one replace frame recorded per keystroke`);
-  assert.equal(session.repeatText.length, keystrokes, `${label}-REPEAT-01 repeat text captures every typed character`);
+  assert.equal(session.repeatLength, keystrokes, `${label}-REPEAT-01 repeat text captures every typed character`);
   return performance.now() - start;
 }
 

@@ -2,7 +2,13 @@ import { asCellColumn, asLineIndex, asUtf16Offset, type SelectionId } from '../.
 import type { DocumentSnapshot } from '../../document/src/index';
 import { updateSelectionSet, type EndpointInput, type SelectionSetSnapshot, type SelectionMemberInput } from '../../selections/src/index';
 import type { PointerCell, VimVisualCursor } from '../../vim/src/entrypoints/launch';
+import { pointerDisplayColumn, tokenBoundsAt } from '../../vim/src/index';
 import { id, makeNormalSelection } from './helpers';
+
+/** Vim's default `tabstop` (packages/vim/config/index.ts); the pointer layer has no
+ * per-view config plumbed in yet -- ponytail: same known gap as before, just now isolated
+ * to one named constant instead of a bare literal buried in the tab-width arithmetic. */
+const DEFAULT_TAB_SIZE = 8;
 
 export function addPointerCaret(
   snapshot: DocumentSnapshot,
@@ -106,18 +112,16 @@ export function pointerWordAt(snapshot: DocumentSnapshot, offsetValue: number): 
   const end = next < snapshot.lineCount && nextLine.ok ? snapshot.lineStartOffset(nextLine.value) : asUtf16Offset(snapshot.lengthUtf16);
   if (!end.ok) return undefined;
   const text = snapshot.slice(start.value, end.value);
-  if (!text.ok) return undefined;
-  const units = [...text.value].map((value, index) => ({ value, start: index, end: index + value.length }));
-  if (units.length === 0) return undefined;
-  let local = Math.max(0, offsetValue - (start.value as number));
-  let selected = units.findIndex((unit) => local >= unit.start && local < unit.end);
-  if (selected < 0) selected = units.length - 1;
-  const kind = pointerWordKind(units[selected]?.value ?? '');
-  let first = selected;
-  while (first > 0 && pointerWordKind(units[first - 1]?.value ?? '') === kind) first -= 1;
-  let last = selected;
-  while (last + 1 < units.length && pointerWordKind(units[last + 1]?.value ?? '') === kind) last += 1;
-  return { start: (start.value as number) + (units[first]?.start ?? 0), end: (start.value as number) + (units[last]?.end ?? 0) };
+  if (!text.ok || text.value.length === 0) return undefined;
+  const local = Math.max(0, Math.min(offsetValue - (start.value as number), text.value.length - 1));
+  const kind = pointerWordKind(text.value[local] ?? '');
+  // ponytail: tokenBoundsAt (Vim's owned boundary scan, packages/vim/motions/token-scan.ts)
+  // indexes by UTF-16 code unit, not Unicode code point, so a click landing exactly on one
+  // half of an astral surrogate pair (rare outside emoji / rare CJK extensions) can be off
+  // by one unit. Accepted: real Vim word motions run on the same code-unit basis.
+  const bounds = tokenBoundsAt(text.value, local, (character) => pointerWordKind(character) === kind);
+  if (bounds === undefined) return undefined;
+  return { start: (start.value as number) + bounds.start, end: (start.value as number) + bounds.end };
 }
 
 export function pointerWordKind(value: string): 'space' | 'keyword' | 'punctuation' {
@@ -125,7 +129,7 @@ export function pointerWordKind(value: string): 'space' | 'keyword' | 'punctuati
   return /^[\p{L}\p{N}_]$/u.test(value) ? 'keyword' : 'punctuation';
 }
 
-export function pointerTargetAt(snapshot: DocumentSnapshot, offsetValue: number): NonNullable<PointerCell['target']> | undefined {
+export function pointerTargetAt(snapshot: DocumentSnapshot, offsetValue: number, tabSize: number = DEFAULT_TAB_SIZE): NonNullable<PointerCell['target']> | undefined {
   const safeOffset = asUtf16Offset(offsetValue);
   if (!safeOffset.ok) return undefined;
   const line = snapshot.lineIndexAt(safeOffset.value);
@@ -135,27 +139,10 @@ export function pointerTargetAt(snapshot: DocumentSnapshot, offsetValue: number)
   return {
     lineIndex: line.value as number,
     offset: offsetValue,
-    displayCellColumn: pointerDisplayColumn(snapshot, offsetValue, start.value as number),
+    displayCellColumn: pointerDisplayColumn(snapshot, offsetValue, start.value as number, tabSize),
     virtualCell: 0,
     cellPart: 'glyph',
   };
-}
-
-export function pointerDisplayColumn(snapshot: DocumentSnapshot, offsetValue: number, lineStartValue: number): number {
-  const start = asUtf16Offset(lineStartValue);
-  const end = asUtf16Offset(Math.max(lineStartValue, offsetValue));
-  if (!start.ok || !end.ok) return 0;
-  const prefix = snapshot.slice(start.value, end.value);
-  if (!prefix.ok) return 0;
-  let column = 0;
-  for (const cluster of prefix.value) column += cluster === '\t' ? 8 - (column % 8) : pointerClusterWidth(cluster);
-  return column;
-}
-
-export function pointerClusterWidth(cluster: string): number {
-  const codePoint = cluster.codePointAt(0) ?? 0;
-  if (/\p{Mark}/u.test(cluster) || codePoint === 0x200d) return 0;
-  return codePoint >= 0x1100 && (codePoint <= 0x115f || codePoint >= 0x2e80) ? 2 : 1;
 }
 
 export function pointerPreviousCharacter(snapshot: DocumentSnapshot, offsetValue: number): number {

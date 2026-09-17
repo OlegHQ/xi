@@ -34,8 +34,6 @@ export { DEFAULT_MOTION_PAINT_TOKENS, resolveMotionPaintTokens, resolvePaintColo
 export type { EditorColorMode, MotionPaintTokens, MotionTrailMode } from '../theme/motion-tokens';
 export { OpenTuiTerminalAdapter, createOpenTuiUiComposition, runOpenTuiWorkbench } from './terminal';
 export type { OpenTuiTerminalAdapterOptions, OpenTuiUiCompositionOptions, OpenTuiWorkbenchOptions } from './terminal';
-export { CanonicalInputAdapter, Utf8InputGuard } from '../input/adapter';
-export type { InputAdapterListener, InputAdapterOptions, InputAdapterRecord } from '../input/adapter';
 export { clipSyntaxSpans, projectSyntaxRow } from '../editor/index';
 export type {
   ClippedSyntaxSpan,

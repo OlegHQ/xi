@@ -140,7 +140,6 @@ export interface VimExPlan {
   readonly command: VimExCommandName;
   readonly range: VimExResolvedRange;
   readonly edits: readonly DocumentEdit[];
-  readonly resultText: string;
   readonly undoGroup: string;
   readonly registerEffect: VimExRegisterEffect | null;
   readonly hostEffects: readonly VimExHostEffect[];
@@ -260,7 +259,6 @@ function prepareCommand(
         command: command.name,
         range,
         edits: Object.freeze([...edits]),
-        resultText: applyEdits(snapshot, edits),
         undoGroup: `vim-ex-${snapshot.version as number}-${command.metadata.commandStart}`,
         registerEffect,
         hostEffects: Object.freeze([...hostEffects]),
@@ -532,8 +530,9 @@ function lineInsertion(snapshot: DocumentSnapshot, destination: number, lines: r
     return { ok: true, value: { start: offset as Utf16Offset, end: offset as Utf16Offset, text: `${block}\n` } };
   }
   offset = snapshot.lengthUtf16;
-  const text = snapshotText(snapshot);
-  return { ok: true, value: { start: offset as Utf16Offset, end: offset as Utf16Offset, text: text.endsWith('\n') ? `${block}\n` : `\n${block}` } };
+  const tail = snapshot.slice((Math.max(0, offset - 1)) as Utf16Offset, offset as Utf16Offset);
+  const endsWithNewline = tail.ok && tail.value === '\n';
+  return { ok: true, value: { start: offset as Utf16Offset, end: offset as Utf16Offset, text: endsWithNewline ? `${block}\n` : `\n${block}` } };
 }
 
 function normalEdits(snapshot: DocumentSnapshot, range: VimExResolvedRange, keys: string): Result<readonly DocumentEdit[], VimExPrepareFailure> {
@@ -788,23 +787,6 @@ function mergeEdits(edits: readonly DocumentEdit[]): DocumentEdit[] {
     } else merged.push(edit);
   }
   return merged;
-}
-
-function applyEdits(snapshot: DocumentSnapshot, edits: readonly DocumentEdit[]): string {
-  const text = snapshotText(snapshot);
-  const chunks: string[] = [];
-  let previous = 0;
-  for (const edit of mergeEdits(edits)) {
-    chunks.push(text.slice(previous, edit.start as number), edit.text);
-    previous = edit.end as number;
-  }
-  chunks.push(text.slice(previous));
-  return chunks.join('');
-}
-
-function snapshotText(snapshot: DocumentSnapshot): string {
-  const result = snapshot.slice(0 as Utf16Offset, snapshot.lengthUtf16 as Utf16Offset);
-  return result.ok ? result.value : '';
 }
 
 function scalarWidth(text: string, offset: number): number {

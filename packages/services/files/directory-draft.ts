@@ -1,4 +1,6 @@
-import type { Result } from '../../contracts/src/index.ts';
+import type { DocumentId, DocumentVersion, Result, Utf16Offset } from '../../contracts/src/index.ts';
+import { asUtf16Offset } from '../../contracts/src/index';
+import { openTextDocument, TextFileDocument, type DocumentEdit } from '../../document/src/index';
 
 /** Public contract for the in-memory editable directory buffer. */
 export const DIRECTORY_DRAFT_CONTRACT_VERSION = 1 as const;
@@ -129,13 +131,6 @@ interface MutableRow {
   metadata: DirectoryDraftMetadata | undefined;
 }
 
-interface HistoryState {
-  readonly text: string;
-  readonly rows: readonly MutableRow[];
-  readonly dirty: boolean;
-  readonly error: DirectoryDraftError | undefined;
-}
-
 /**
  * An editable directory document. It only changes an in-memory draft: disk
  * effects are represented by a reviewed operation plan for T042 to execute.
@@ -147,17 +142,17 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
   readonly #caseSensitive: boolean;
   readonly #base = new Map<string, DirectoryDraftSourceEntry>();
   readonly #listeners = new Set<(model: DirectoryDraftReadModel) => void>();
-  readonly #history: HistoryState[] = [];
-  readonly #redo: HistoryState[] = [];
+  readonly #document: TextFileDocument;
+  #initialVersion: DocumentVersion;
   #rows: MutableRow[];
   #text: string;
   #generation = 0;
   #nextId = 1;
-  #dirty = false;
   #focus: 'edit' | 'review' = 'edit';
   #review: DirectoryOperationPlan | undefined;
   #error: DirectoryDraftError | undefined;
   #disposed = false;
+  #syncing = false;
 
   static create(
     directoryPath: string,
@@ -223,11 +218,29 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     if (ids.size !== this.#base.size) throw new Error('directory-draft-id-invariant');
     this.#rows = rows;
     this.#text = rows.map((row) => row.escapedName).join('\n');
+    const documentId = toDocumentId(options.documentId ?? 'directory-draft');
+    const opened = openTextDocument(documentId, new TextEncoder().encode(this.#text), 41027, { fileFormat: 'unix' });
+    if (opened.kind !== 'editable') throw new Error('directory-draft-document-open-failed');
+    this.#document = opened.document;
+    this.#initialVersion = this.#document.version;
+    // Native Vim edits (dd/yy/p/u/macros) land on `#document` directly through a normal
+    // Vim session opened against it, never through this class's own methods below --
+    // this keeps rows/anchors in sync with whatever committed the edit.
+    this.#document.subscribeChanges((change) => {
+      if (this.#syncing || this.#disposed) return;
+      this.applyHistoryOutcome(change.edits);
+      this.#review = undefined;
+      this.#focus = 'edit';
+      this.publish();
+    });
   }
 
   get model(): DirectoryDraftReadModel { return this.buildModel(); }
   get text(): string { return this.#text; }
-  get isDirty(): boolean { return this.#dirty; }
+  get isDirty(): boolean { return this.#document.version !== this.#initialVersion; }
+  /** The buffer a normal Vim session edits directly; row tracking follows it via
+   * `subscribeChanges` above regardless of which session or method committed the edit. */
+  get document(): TextFileDocument { return this.#document; }
 
   subscribe(listener: (model: DirectoryDraftReadModel) => void): { dispose(): void } {
     if (this.#disposed) throw new Error('directory-draft-disposed');
@@ -242,19 +255,16 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
       return this.failUnknown('', 0, 'edit range is not a valid UTF-16 boundary');
     }
     if (replacement.includes('\r')) return this.failUnknown('', 0, 'directory draft edits must use LF text');
-    this.saveHistory();
-    const oldText = this.#text;
-    const oldRows = this.#rows;
-    this.#text = `${oldText.slice(0, start)}${replacement}${oldText.slice(end)}`;
-    const delta = replacement.length - (end - start);
-    const nextRows: MutableRow[] = [];
-    for (const row of oldRows) {
-      if (row.anchorOffset > start && row.anchorOffset < end) continue;
-      const anchorOffset = row.anchorOffset < start ? row.anchorOffset : row.anchorOffset > end ? row.anchorOffset + delta : start;
-      nextRows.push({ ...row, anchorOffset });
-    }
-    this.#rows = this.bindRowsToText(nextRows);
-    this.#dirty = true;
+    const startOffset = asUtf16Offset(start);
+    const endOffset = asUtf16Offset(end);
+    if (!startOffset.ok || !endOffset.ok) return this.failUnknown('', 0, 'edit range is not a valid UTF-16 boundary');
+    const edit: DocumentEdit = { start: startOffset.value, end: endOffset.value, text: replacement };
+    this.#syncing = true;
+    const committed = this.#document.applyBatch([edit], this.#document.version);
+    this.#syncing = false;
+    if (!committed.ok) return this.failUnknown('', 0, `directory draft edit was rejected: ${committed.error.kind}`);
+    this.#text = this.currentDocumentText();
+    this.#rows = this.remapRows(this.#rows, [edit]);
     this.#review = undefined;
     this.#focus = 'edit';
     this.#error = undefined;
@@ -279,11 +289,11 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     const selected = this.rowsForIds(rowIds);
     if (!selected.ok) return selected;
     if (selected.value.length === 0) return { ok: true, value: undefined };
-    this.saveHistory();
     const deleted = new Set(selected.value.map((row) => row.id));
-    this.#rows = this.#rows.filter((row) => !deleted.has(row.id));
-    this.rebuildTextAndOffsets();
-    this.#dirty = true;
+    const nextRows = this.#rows.filter((row) => !deleted.has(row.id));
+    const committed = this.commitFullText(nextRows.map((row) => row.escapedName).join('\n'));
+    if (!committed.ok) return committed;
+    this.#rows = this.recomputeOffsets(nextRows);
     this.#review = undefined;
     this.#focus = 'edit';
     this.#error = undefined;
@@ -313,7 +323,6 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     if (this.#disposed) return this.failUnknown('', 0, 'directory draft is disposed');
     const afterIndex = options.afterRowId === undefined ? this.#rows.length - 1 : this.#rows.findIndex((row) => row.id === options.afterRowId);
     if (afterIndex < -1) return this.failUnknown(options.afterRowId ?? '', 0, 'paste destination row is not present');
-    this.saveHistory();
     const inserted: MutableRow[] = buffer.rows.map((source) => {
       const preserve = options.preserveIdentity === true;
       const id = preserve ? source.id : this.nextOpaqueId();
@@ -328,9 +337,11 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
         origin: 'copy',
       };
     });
-    this.#rows.splice(afterIndex + 1, 0, ...inserted);
-    this.rebuildTextAndOffsets();
-    this.#dirty = true;
+    const nextRows = [...this.#rows];
+    nextRows.splice(afterIndex + 1, 0, ...inserted);
+    const committed = this.commitFullText(nextRows.map((row) => row.escapedName).join('\n'));
+    if (!committed.ok) return committed;
+    this.#rows = this.recomputeOffsets(nextRows);
     this.#review = undefined;
     this.#focus = 'edit';
     this.#error = undefined;
@@ -339,10 +350,12 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
   }
 
   undo(): Result<void, DirectoryDraftValidationFailure> {
-    const state = this.#history.pop();
-    if (state === undefined) return this.failUnknown('', 0, 'nothing to undo');
-    this.#redo.push(this.captureState());
-    this.restoreState(state);
+    if (this.#disposed) return this.failUnknown('', 0, 'directory draft is disposed');
+    this.#syncing = true;
+    const outcome = this.#document.undo();
+    this.#syncing = false;
+    if (!outcome.ok) return this.failUnknown('', 0, `nothing to undo: ${outcome.error.kind}`);
+    this.applyHistoryOutcome(outcome.value.change.edits);
     this.#review = undefined;
     this.#focus = 'edit';
     this.publish();
@@ -350,10 +363,12 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
   }
 
   redo(): Result<void, DirectoryDraftValidationFailure> {
-    const state = this.#redo.pop();
-    if (state === undefined) return this.failUnknown('', 0, 'nothing to redo');
-    this.#history.push(this.captureState());
-    this.restoreState(state);
+    if (this.#disposed) return this.failUnknown('', 0, 'directory draft is disposed');
+    this.#syncing = true;
+    const outcome = this.#document.redo();
+    this.#syncing = false;
+    if (!outcome.ok) return this.failUnknown('', 0, `nothing to redo: ${outcome.error.kind}`);
+    this.applyHistoryOutcome(outcome.value.change.edits);
     this.#review = undefined;
     this.#focus = 'edit';
     this.publish();
@@ -388,6 +403,56 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     this.#focus = 'edit';
     this.#review = undefined;
     this.#error = undefined;
+    this.publish();
+    return { ok: true, value: undefined };
+  }
+
+  /**
+   * Re-enumerate the on-disk directory into this same buffer/document after a reviewed
+   * plan (T042) has been applied -- entries, rows and anchors are rebuilt from scratch
+   * (paths/identities on disk have just changed), but the `TextFileDocument` instance
+   * itself, and therefore the view/session already open on it, is kept.
+   */
+  refreshFromEntries(entries: readonly DirectoryDraftSourceEntry[]): Result<void, DirectoryDraftValidationFailure> {
+    if (this.#disposed) return this.failUnknown('', 0, 'directory draft is disposed');
+    const seen = new Set<string>();
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (entry === undefined || !isValidRawName(entry.name)) {
+        return this.failName(entry?.id ?? '', index, 'directory entry has an invalid name');
+      }
+      const id = entry.id ?? `row-${index + 1}`;
+      if (!isOpaqueId(id) || seen.has(id)) return this.failUnknown(id, index, 'directory entries must have unique opaque IDs');
+      seen.add(id);
+    }
+    this.#base.clear();
+    const rows: MutableRow[] = [];
+    let offset = 0;
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (entry === undefined) continue;
+      const id = entry.id ?? `row-${index + 1}`;
+      const sourcePath = entry.path ?? joinPath(this.#directoryPath, entry.name);
+      const metadata: DirectoryDraftMetadata = Object.freeze({
+        kind: entry.kind ?? 'file',
+        stableIdentity: entry.stableIdentity,
+        sizeBytes: entry.sizeBytes,
+        modifiedMilliseconds: entry.modifiedMilliseconds,
+        sourcePath,
+      });
+      const escapedName = escapeDirectoryName(entry.name);
+      this.#base.set(id, Object.freeze({ ...entry, id }));
+      rows.push({ id, sourceId: id, anchorId: `anchor-${id}`, anchorOffset: offset, escapedName, rawName: entry.name, origin: 'base', metadata });
+      offset += escapedName.length + 1;
+    }
+    const newText = rows.map((row) => row.escapedName).join('\n');
+    const committed = this.commitFullText(newText);
+    if (!committed.ok) return committed;
+    this.#rows = rows;
+    this.#initialVersion = this.#document.version;
+    this.#review = undefined;
+    this.#error = undefined;
+    this.#focus = 'edit';
     this.publish();
     return { ok: true, value: undefined };
   }
@@ -487,14 +552,52 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     return bound;
   }
 
-  private rebuildTextAndOffsets(): void {
-    this.#text = this.#rows.map((row) => row.escapedName).join('\n');
+  /** Recompute contiguous line offsets after rows are filtered/spliced with `text` already committed. */
+  private recomputeOffsets(rows: readonly MutableRow[]): MutableRow[] {
     let offset = 0;
-    this.#rows = this.#rows.map((row) => {
+    return rows.map((row) => {
       const next = { ...row, anchorOffset: offset };
       offset += row.escapedName.length + 1;
       return next;
     });
+  }
+
+  /** Replace the whole document text with `newText` in a single document commit. */
+  private commitFullText(newText: string): Result<void, DirectoryDraftValidationFailure> {
+    const oldText = this.#text;
+    if (newText === oldText) return { ok: true, value: undefined };
+    const edit: DocumentEdit = { start: utf16(0), end: utf16(oldText.length), text: newText };
+    this.#syncing = true;
+    const committed = this.#document.applyBatch([edit], this.#document.version);
+    this.#syncing = false;
+    if (!committed.ok) return this.failUnknown('', 0, `directory draft edit was rejected: ${committed.error.kind}`);
+    this.#text = newText;
+    return { ok: true, value: undefined };
+  }
+
+  private currentDocumentText(): string {
+    const snapshot = this.#document.snapshot();
+    const sliced = snapshot.slice(utf16(0), utf16(snapshot.lengthUtf16));
+    return sliced.ok ? sliced.value : this.#text;
+  }
+
+  /** Remap existing row anchors through a batch of ordered, non-overlapping document edits. */
+  private remapRows(rows: readonly MutableRow[], edits: readonly DocumentEdit[]): MutableRow[] {
+    const ordered = [...edits].sort((left, right) => (left.start as number) - (right.start as number));
+    const nextRows: MutableRow[] = [];
+    for (const row of rows) {
+      const mapped = mapOffsetThroughEdits(row.anchorOffset, ordered);
+      if (mapped === undefined) continue;
+      nextRows.push({ ...row, anchorOffset: mapped });
+    }
+    return this.bindRowsToText(nextRows);
+  }
+
+  private applyHistoryOutcome(edits: readonly DocumentEdit[]): void {
+    const oldRows = this.#rows;
+    this.#text = this.currentDocumentText();
+    this.#rows = this.remapRows(oldRows, edits);
+    this.#error = undefined;
   }
 
   private nextOpaqueId(): string {
@@ -521,23 +624,6 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     });
   }
 
-  private saveHistory(): void {
-    this.#history.push(this.captureState());
-    if (this.#history.length > 100) this.#history.shift();
-    this.#redo.length = 0;
-  }
-
-  private captureState(): HistoryState {
-    return { text: this.#text, rows: this.#rows.map(cloneRow), dirty: this.#dirty, error: this.#error };
-  }
-
-  private restoreState(state: HistoryState): void {
-    this.#text = state.text;
-    this.#rows = state.rows.map(cloneRow);
-    this.#dirty = state.dirty;
-    this.#error = state.error;
-  }
-
   private buildModel(): DirectoryDraftReadModel {
     return Object.freeze({
       contractVersion: DIRECTORY_DRAFT_CONTRACT_VERSION,
@@ -554,7 +640,7 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
         origin: row.origin,
         metadata: row.metadata,
       }))),
-      dirty: this.#dirty,
+      dirty: this.isDirty,
       focus: this.#focus,
       review: this.#review,
       error: this.#error,
@@ -632,7 +718,22 @@ function toReadError(error: DirectoryDraftValidationFailure): DirectoryDraftErro
   return { rowId: undefined, line: undefined, column: undefined, kind: error.kind, message: error.message };
 }
 
-function cloneRow(row: MutableRow): MutableRow { return { ...row }; }
+/** Map an offset in the pre-edit text through a batch of ordered, non-overlapping edits; `undefined` if the offset fell inside a replaced span. */
+function mapOffsetThroughEdits(offset: number, edits: readonly DocumentEdit[]): number | undefined {
+  let delta = 0;
+  for (const edit of edits) {
+    const start = edit.start as number;
+    const end = edit.end as number;
+    if (offset > start && offset < end) return undefined;
+    if (offset <= start) return offset + delta;
+    delta += edit.text.length - (end - start);
+  }
+  return offset + delta;
+}
+
+function utf16(value: number): Utf16Offset { return value as Utf16Offset; }
+function toDocumentId(value: string): DocumentId { return value as DocumentId; }
+
 function lineStarts(text: string): number[] {
   if (text.length === 0) return [];
   const starts = [0];

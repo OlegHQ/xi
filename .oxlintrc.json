@@ -25,9 +25,12 @@
         "packages/vim/**/*.ts",
         "packages/workbench/editing/**/*.ts",
         "packages/workbench/input/**/*.ts",
-        "packages/workbench/dispatch/**/*.ts",
+        "packages/workbench/vim-session/**/*.ts",
+        "packages/workbench/pointer/**/*.ts",
+        "packages/workbench/host/**/*.ts",
         "packages/ui/editor/**/*.ts",
         "packages/ui/input/**/*.ts",
+        "packages/ui/src/**/*.ts",
         "packages/layout/**/*.ts"
       ],
       "rules": {

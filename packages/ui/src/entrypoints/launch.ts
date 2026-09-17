@@ -10,3 +10,5 @@ export type { ExCommandLineReadPort } from '../../commandline/index';
 export type { PrefixHelpReadPort, PrefixHelpSource } from '../../help/index';
 export type { OutlineReadPort, HierarchyReadPort, HoverReadPort } from '../../navigation/index';
 export type { CompletionReadPort, SignatureReadPort } from '../../completion/index';
+export type { DirectoryDraftReadPort, DirectoryDraftReadModel } from '../../directory/index';
+export type { TerminalAdapter, UiComposition } from '../contracts';

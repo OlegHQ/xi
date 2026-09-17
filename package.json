@@ -33,7 +33,7 @@
     "verify:release": "bun run check && bun run test:unit && bun run test:vim -- --profile xi --suite multi-selection --seed 41027 && bun run test:services && bun run test:ui && bun run test:e2e -- --suite interaction && bun run bench -- --suite interaction --baseline revision",
     "check:lint": "bun run tools/lint/check.ts",
     "test:lint": "bun test --timeout 30000 tests/lint",
-    "test:startup": "bun run package:build && bun test tests/distribution/t122-renderer-entry.test.ts && python3 tests/distribution/t122-startup-input.py"
+    "test:startup": "bun run package:build && bun test tests/distribution/t122-renderer-entry.test.ts && python3 tests/distribution/t122-startup-input.py && python3 tests/distribution/t053-syntax-compiled-pty.py"
   },
   "devDependencies": {
     "@opentui/core": "0.5.11",

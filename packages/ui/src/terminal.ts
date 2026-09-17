@@ -1,6 +1,6 @@
 import { createCliRenderer, type CliRenderer, type CliRendererConfig, type KeyEvent } from '@opentui/core/renderer';
 import type { PasteEvent } from '@opentui/core';
-import type { Disposable, DisposableScope, PlatformFailure, Result } from '../../contracts/src/index.ts';
+import type { Disposable, DisposableScope, PlatformFailure, Result, SyntaxReadPort } from '../../contracts/src/index.ts';
 import type { UiComposition, UiMountContext, TerminalAdapter, TerminalAdapterFactory } from './contracts';
 import { calculateWorkbenchLayout, WorkbenchRenderable, type WorkbenchPointerEvent, type WorkbenchRenderableOptions, type WorkbenchTheme } from './workbench';
 import type { WorkbenchReadPort } from '../../workbench/src/index.ts';
@@ -13,6 +13,7 @@ import type { TaskOutputReadPort, TaskOutputRenderable } from '../output/index';
 import type { OutlineReadPort, OutlineRenderable, HierarchyReadPort, HierarchyRenderable, HoverReadPort, HoverRenderable } from '../navigation/index';
 import type { CompletionReadPort, CompletionRenderable, SignatureReadPort, SignatureRenderable } from '../completion/index';
 import type { ExCommandLineReadPort, ExCommandLineRenderable } from '../commandline/index';
+import type { DirectoryDraftReadPort, DirectoryReviewRenderable } from '../directory/index';
 import type { WorkbenchPanelPointerEvent } from './panel-pointer';
 import type { ContextMenuStore, ContextMenuRenderable, ContextMenuBackdrop, ContextMenuTheme } from './context-menu';
 
@@ -102,9 +103,20 @@ export interface OpenTuiWorkbenchOptions {
    * repaint the whole workbench with a new theme immediately (preview), and revert it just as
    * immediately (cancel) -- no renderer teardown/recreation involved. */
   readonly registerThemeSwitch?: (setTheme: (theme: WorkbenchTheme) => void) => void;
+  /**
+   * Hands the application the renderer-side half of terminal job control (Ctrl-Z/`fg`):
+   * `suspend` releases pointer capture and stops the renderer painting; `resume` starts it
+   * painting again. The platform layer owns the actual `SIGTSTP`/`SIGCONT` handling and the
+   * process's own `SIGSTOP`; this adapter never touches process signals directly.
+   */
+  readonly registerJobControl?: (control: { readonly suspend: () => void; readonly resume: () => void }) => void;
   /** The theme every renderable surface starts painted with, before any picker interaction --
    * e.g. a persisted selection restored at launch. Defaults to the built-in light theme. */
   readonly theme?: WorkbenchTheme;
+  /** Read-only syntax spans for the editor viewport; see `WorkbenchRenderableOptions.syntax`. */
+  readonly syntax?: SyntaxReadPort;
+  /** Current Git branch for the status line; undefined hides it. */
+  readonly gitBranch?: () => string | undefined;
   /** Wake panels whose read ports become available after an asynchronous open. */
   readonly subscribeSurfaceChanges?: (listener: () => void) => Disposable;
   /** Forwarded to the main viewport renderable; see `WorkbenchRenderableOptions.onViewportAnchorChange`. */
@@ -118,6 +130,9 @@ export interface OpenTuiWorkbenchOptions {
   readonly onPointerCancel?: (reason: 'resize' | 'dispose' | 'escape' | 'suspend') => void;
   /** Diagnostic hook invoked after an explicit intermediate frame completes. */
   readonly onFrame?: () => void;
+  /** Optional test/diagnostic marker sink; replaces a direct env-var/stderr write so the
+   * platform layer decides whether and how a marker is emitted. */
+  readonly marker?: (name: string, payload?: unknown) => void;
   /** Optional passive parser/help read model. It never receives keyboard focus. */
   readonly prefixHelp?: PrefixHelpReadPort;
   /** Optional right-click context menu state; the application owns items/activation. */
@@ -175,6 +190,17 @@ export interface OpenTuiWorkbenchOptions {
     readonly read: HoverReadPort;
     readonly isOpen: () => boolean;
     readonly onKeypress: (event: KeyEvent) => boolean | void | Promise<boolean | void>;
+  };
+  /**
+   * Optional directory-draft review surface (a rename/move/copy plan before it is
+   * applied). The UI never applies or closes it -- `onKeypress` returns whether the
+   * composition root consumed the key so an unhandled key can still fall through to
+   * the ordinary key path.
+   */
+  readonly directoryReview?: {
+    readonly read: DirectoryDraftReadPort;
+    readonly isOpen: () => boolean;
+    readonly onKeypress: (event: KeyEvent) => 'handled' | 'unhandled';
   };
   /** Optional insert-mode completion popup and application-owned keyboard routing. */
   readonly completion?: {
@@ -280,35 +306,40 @@ export async function runOpenTuiWorkbench(
     renderer.useMouse = !renderer.useMouse;
     return renderer.useMouse;
   });
+  // Suspending/resuming the terminal for job control (Ctrl-Z) is a platform effect
+  // (sending SIGSTOP to our own process); this adapter only owns what the renderer
+  // itself must do around that -- release pointer capture and stop painting before
+  // the platform layer stops the process, then resume painting after it wakes us.
   let stoppedForJobControl = false;
-  const handleTerminalStop = (): void => {
-    if (renderer.isDestroyed || stoppedForJobControl) return;
-    stoppedForJobControl = true;
-    viewport.cancelPointerCapture();
-    options.onPointerCancel?.('suspend');
-    renderer.suspend();
-    process.kill(process.pid, 'SIGSTOP');
-  };
-  const handleTerminalContinue = (): void => {
-    if (!stoppedForJobControl || renderer.isDestroyed) return;
-    stoppedForJobControl = false;
-    renderer.resume();
-  };
-  process.on('SIGTSTP', handleTerminalStop);
-  process.on('SIGCONT', handleTerminalContinue);
-  renderer.once('destroy', () => {
-    process.off('SIGTSTP', handleTerminalStop);
-    process.off('SIGCONT', handleTerminalContinue);
+  options.registerJobControl?.({
+    suspend: () => {
+      if (renderer.isDestroyed || stoppedForJobControl) return;
+      stoppedForJobControl = true;
+      viewport.cancelPointerCapture();
+      options.onPointerCancel?.('suspend');
+      renderer.suspend();
+    },
+    resume: () => {
+      if (!stoppedForJobControl || renderer.isDestroyed) return;
+      stoppedForJobControl = false;
+      renderer.resume();
+    },
   });
   const viewport = new WorkbenchRenderable(renderer.root.ctx, {
     workbench,
     fileLabel,
     ...(options.theme === undefined ? {} : { theme: options.theme }),
+    ...(options.syntax === undefined ? {} : { syntax: options.syntax }),
+    ...(options.gitBranch === undefined ? {} : { gitBranch: options.gitBranch }),
     ...(options.onPointer === undefined ? {} : { onPointer: (event: WorkbenchPointerEvent): boolean => {
       const handled = options.onPointer?.(event) ?? false;
       if (handled) {
         const install = installOpenOptionalSurfaces();
+        // `WorkbenchRenderable.refresh()`/its own pointer-up handling only mark the
+        // renderable dirty now (see workbench.ts); this is what actually schedules the
+        // one synchronous frame a handled pointer event needs.
         if (install !== undefined) void install.then(requestFrame);
+        else requestFrame();
       }
       return handled;
     } }),
@@ -325,6 +356,9 @@ export async function runOpenTuiWorkbench(
     pickerSurface?.setTheme(panelThemes.picker);
     searchSurface?.setTheme(panelThemes.search);
     contextMenuSurface?.setTheme(panelThemes.contextMenu);
+    // `setTheme()` only marks the renderable dirty now (see workbench.ts); drive the
+    // one synchronous frame the live preview/cancel/commit flow needs here.
+    requestFrame();
   });
   let explorerSurface: ExplorerRenderable | undefined;
   let pickerSurface: PickerRenderable | undefined;
@@ -334,6 +368,7 @@ export async function runOpenTuiWorkbench(
   let outlineSurface: OutlineRenderable | undefined;
   let hierarchySurface: HierarchyRenderable | undefined;
   let hoverSurface: HoverRenderable | undefined;
+  let directoryReviewSurface: DirectoryReviewRenderable | undefined;
   let completionSurface: CompletionRenderable | undefined;
   let signatureSurface: SignatureRenderable | undefined;
   let commandLineSurface: ExCommandLineRenderable | undefined;
@@ -393,6 +428,9 @@ export async function runOpenTuiWorkbench(
   const syncHoverVisibility = (): void => {
     if (hoverSurface !== undefined && options.hover !== undefined) hoverSurface.visible = options.hover.isOpen();
   };
+  const syncDirectoryReviewVisibility = (): void => {
+    if (directoryReviewSurface !== undefined && options.directoryReview !== undefined) directoryReviewSurface.visible = options.directoryReview.isOpen();
+  };
   const syncCompletionVisibility = (): void => {
     if (completionSurface !== undefined && options.completion !== undefined) completionSurface.visible = options.completion.isOpen();
   };
@@ -423,7 +461,7 @@ export async function runOpenTuiWorkbench(
   });
   renderer.keyInput.on('paste', (event: PasteEvent) => {
     options.onPaste?.(event.bytes);
-    flushFrame();
+    requestFrame();
   });
 
   function drainKeys(): void {
@@ -458,7 +496,7 @@ export async function runOpenTuiWorkbench(
       pendingKeys.splice(0, pendingKeyHead);
       pendingKeyHead = 0;
     }
-    flushFrame();
+    scheduleFlush();
     drainingKeys = false;
   }
 
@@ -474,6 +512,7 @@ export async function runOpenTuiWorkbench(
     if (options.outline?.isOpen() === true) return finishFocusedKey(options.outline.onKeypress(event));
     if (options.hierarchy?.isOpen() === true) return finishFocusedKey(options.hierarchy.onKeypress(event));
     if (options.hover?.isOpen() === true) return finishFocusedKey(options.hover.onKeypress(event));
+    if (options.directoryReview?.isOpen() === true && options.directoryReview.onKeypress(event) === 'handled') return refreshAfterKey();
     if (options.signature?.isOpen() === true) return finishFocusedKey(options.signature.onKeypress(event));
     const result = options.onKeypress === undefined ? false : options.onKeypress(event);
     if (isPromiseLike(result)) return result.then((value) => finishApplicationKey(event, value));
@@ -488,10 +527,9 @@ export async function runOpenTuiWorkbench(
     return isPromiseLike(result) ? result.then(finish) : finish(result);
   }
 
-  function finishApplicationKey(event: KeyEvent, result: boolean | 'quit'): void | Promise<void> {
+  function finishApplicationKey(_event: KeyEvent, result: boolean | 'quit'): void | Promise<void> {
     if (result === 'quit') { renderer.destroy(); return; }
     if (result === true) return refreshAfterKey();
-    if ((event.ctrl && (event.name === 'c' || event.name === 'C')) || event.name === 'q') renderer.destroy();
   }
 
   function refreshAfterKey(): void | Promise<void> {
@@ -503,6 +541,7 @@ export async function runOpenTuiWorkbench(
     syncOutlineVisibility();
     syncHierarchyVisibility();
     syncHoverVisibility();
+    syncDirectoryReviewVisibility();
     syncCompletionVisibility();
     syncSignatureVisibility();
     syncCommandLineVisibility();
@@ -516,7 +555,28 @@ export async function runOpenTuiWorkbench(
 
   function requestFrame(): void {
     framePending = true;
-    if (!drainingKeys && !renderer.isDestroyed) flushFrame();
+    if (!drainingKeys && !renderer.isDestroyed) scheduleFlush();
+  }
+
+  /**
+   * OpenTUI parses and emits every key in one stdin chunk synchronously (see
+   * chunk-bun-37s3zwb6.js), and each key's own `drainKeys()` pass used to flush
+   * (render) immediately, so a burst of keys arriving in the same chunk painted one
+   * frame per key instead of one frame for the whole burst. Deferring the actual
+   * flush to a microtask -- queued once per burst, not once per key -- coalesces
+   * every key processed before the current synchronous stack unwinds into a single
+   * render, without delaying (a microtask is not a timer) or reordering key
+   * processing, which still happens synchronously and in order in `drainKeys()`.
+   */
+  let flushScheduled = false;
+  function scheduleFlush(): void {
+    if (flushScheduled || renderer.isDestroyed) return;
+    flushScheduled = true;
+    // @xi-perf-allow microtask INPUT-OUTPUT -- Same-tick frame coalescing across keys parsed from one stdin chunk; no CPU work is deferred, the frame is still painted before the event loop yields.
+    queueMicrotask(() => {
+      flushScheduled = false;
+      flushFrame();
+    });
   }
 
   function forwardPanelPointer(
@@ -531,6 +591,11 @@ export async function runOpenTuiWorkbench(
   function flushFrame(): void {
     if (!framePending || renderer.isDestroyed) return;
     framePending = false;
+    // Resolve (and report back) every visible view's cursor-follow scroll anchor as a
+    // pre-render step, so `WorkbenchRenderable.renderSelf`/`renderSplit` stay a
+    // read-only projection of already-resolved anchors instead of deciding and
+    // writing back scroll state while painting (see `syncAnchors`'s doc comment).
+    viewport.syncAnchors();
     renderer.intermediateRender();
     options.onFrame?.();
   }
@@ -585,6 +650,13 @@ export async function runOpenTuiWorkbench(
         hoverSurface.left = bounds.left;
         hoverSurface.top = bounds.top;
       }
+      if (directoryReviewSurface !== undefined) {
+        const bounds = getDirectoryReviewBounds(renderer.width, renderer.height);
+        directoryReviewSurface.width = bounds.width;
+        directoryReviewSurface.height = bounds.height;
+        directoryReviewSurface.left = bounds.left;
+        directoryReviewSurface.top = bounds.top;
+      }
       if (completionSurface !== undefined) {
         const bounds = getCompletionBounds(renderer.width, renderer.height);
         completionSurface.width = bounds.width;
@@ -628,6 +700,7 @@ export async function runOpenTuiWorkbench(
         contextMenuBackdropSurface.height = renderer.height;
       }
     if (pickerSurface === undefined) {
+      viewport.syncAnchors();
       renderer.intermediateRender();
       return;
     }
@@ -637,13 +710,14 @@ export async function runOpenTuiWorkbench(
     pickerSurface.height = height;
     pickerSurface.left = Math.max(0, Math.floor((renderer.width - width) / 2));
     pickerSurface.top = Math.max(0, Math.floor((renderer.height - height) / 2));
+    viewport.syncAnchors();
     renderer.intermediateRender();
   });
   let ready = false;
   renderer.on('frame', () => {
     if (ready) return;
     ready = true;
-    if (process.env.XI_UI_TEST_MARKERS === '1') process.stderr.write(`XI_WORKBENCH_READY ${JSON.stringify({ width: renderer.width, height: renderer.height })}\r\n`);
+    options.marker?.('XI_WORKBENCH_READY', { width: renderer.width, height: renderer.height });
     if (options.onReady !== undefined) setTimeout(() => {
       if (renderer.isDestroyed) return;
       try { void Promise.resolve(options.onReady?.()).catch(() => renderer.destroy()); } catch { renderer.destroy(); }
@@ -656,10 +730,9 @@ export async function runOpenTuiWorkbench(
   // and `subscribeSurfaceChanges`/prefix-help/context-menu wake subscriptions
   // above) already calls `requestFrame`/`intermediateRender`; a single explicit
   // render here paints the first frame without starting the continuous loop.
+  viewport.syncAnchors();
   renderer.intermediateRender();
   await done;
-  process.off('SIGTSTP', handleTerminalStop);
-  process.off('SIGCONT', handleTerminalContinue);
   prefixHelpWakeSubscription?.dispose();
   contextMenuWakeSubscription?.dispose();
   surfaceWakeSubscription?.dispose();
@@ -680,6 +753,7 @@ export async function runOpenTuiWorkbench(
       || (options.outline?.isOpen() === true && outlineSurface === undefined)
       || (options.hierarchy?.isOpen() === true && hierarchySurface === undefined)
       || (options.hover?.isOpen() === true && hoverSurface === undefined)
+      || (options.directoryReview?.isOpen() === true && directoryReviewSurface === undefined)
       || (options.completion?.isOpen() === true && completionSurface === undefined)
       || (options.signature?.isOpen() === true && signatureSurface === undefined)
       || (options.commandLine?.isOpen() === true && commandLineSurface === undefined)
@@ -837,6 +911,22 @@ export async function runOpenTuiWorkbench(
         hoverSurface.visible = options.hover.isOpen();
         renderer.root.add(hoverSurface);
       }
+      if (options.directoryReview?.isOpen() === true && directoryReviewSurface === undefined) {
+        const bounds = getDirectoryReviewBounds(renderer.width, renderer.height);
+        const module = await import('../directory/index');
+        if (renderer.isDestroyed) return;
+        directoryReviewSurface = new module.DirectoryReviewRenderable(renderer.root.ctx, {
+          draft: options.directoryReview.read,
+          width: bounds.width,
+          height: bounds.height,
+          position: 'absolute',
+          left: bounds.left,
+          top: bounds.top,
+          zIndex: 105,
+        });
+        directoryReviewSurface.visible = options.directoryReview.isOpen();
+        renderer.root.add(directoryReviewSurface);
+      }
       if (options.completion?.isOpen() === true && completionSurface === undefined) {
         const bounds = getCompletionBounds(renderer.width, renderer.height);
         const module = await import('../completion/index');
@@ -933,7 +1023,10 @@ export async function runOpenTuiWorkbench(
         renderer.root.add(contextMenuSurface);
         contextMenuVisibilitySubscription = options.contextMenu.subscribe(syncContextMenuVisibility);
       }
-      if (!renderer.isDestroyed) renderer.intermediateRender();
+      if (!renderer.isDestroyed) {
+        viewport.syncAnchors();
+        renderer.intermediateRender();
+      }
     } catch {
       if (!renderer.isDestroyed) renderer.destroy();
     }
@@ -983,6 +1076,17 @@ function getOutlineBounds(width: number, height: number): { readonly width: numb
     height: panelHeight,
     left: Math.max(0, width - panelWidth - 1),
     top: 1,
+  };
+}
+
+function getDirectoryReviewBounds(width: number, height: number): { readonly width: number; readonly height: number; readonly left: number; readonly top: number } {
+  const panelWidth = Math.max(1, Math.min(110, width - 2));
+  const panelHeight = Math.max(3, Math.min(20, height - 2));
+  return {
+    width: panelWidth,
+    height: panelHeight,
+    left: Math.max(0, Math.floor((width - panelWidth) / 2)),
+    top: Math.max(0, Math.floor((height - panelHeight) / 2)),
   };
 }
 

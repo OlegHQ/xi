@@ -62,18 +62,6 @@ export type {
   FocusTargetKind,
   FocusTargetSnapshot,
 } from '../focus/index';
-export { WorkbenchInputDispatcher } from '../dispatch/index';
-export type {
-  BindingFailure,
-  CommandKeyBinding,
-  InputDispatchResult,
-  KeyInspectionReadModel,
-  KeyInspectionReadModel as WorkbenchKeyInspectionReadModel,
-  PaletteEntry,
-  PaletteReadModel,
-  RawInputDiagnostic,
-  WorkbenchInputEnvelope,
-} from '../dispatch/index';
 export { ContributionRegistry } from '../contributions/index';
 export { createExampleContributionModule } from '../contributions/example';
 export type {
@@ -278,6 +266,7 @@ export type {
 } from '../input/pointer-router';
 export { WorkbenchHostCommands } from '../commands/host-commands';
 export type {
+  HostCommandsDirectoryDraftPort,
   HostCommandsFilesystemPort,
   HostCommandsOptions,
   HostCommandsProblemsPort,
@@ -287,6 +276,15 @@ export type {
   HostNavigationLocation,
   HostNavigationPort,
 } from '../commands/host-commands';
+export { DirectoryDraftController } from '../directory/index';
+export type {
+  DirectoryDraftControllerOptions,
+  DirectoryDraftEntryInput,
+  DirectoryDraftFilesystemPort,
+  DirectoryDraftModel,
+  DirectoryDraftPort,
+  DirectoryDraftPortResult,
+} from '../directory/index';
 export { SaveCoordinator } from '../editing/save-coordinator';
 export type {
   FormatterFailure,

@@ -147,6 +147,12 @@ async function testFullSyncAndQueueBound(): Promise<void> {
   const limited = new LanguageDocumentSync({ transport, capabilities: { positionEncoding: 'utf-16', textDocumentSync: 1 }, maxFullSyncUtf16: 4 });
   const oversized = await limited.openDocument(document(1, '12345'));
   assert(!oversized.ok && oversized.error.kind === 'document-too-large', 'full-sync open enforces the documented size bound');
+
+  // didOpen always sends the whole document, even under incremental (non-full) sync, so the
+  // same admission bound must apply there too, not only when #fullSync governs later edits.
+  const limitedIncremental = new LanguageDocumentSync({ transport, capabilities: { positionEncoding: 'utf-16', textDocumentSync: { change: 2 } }, maxFullSyncUtf16: 4 });
+  const oversizedIncremental = await limitedIncremental.openDocument(document(1, '12345'));
+  assert(!oversizedIncremental.ok && oversizedIncremental.error.kind === 'document-too-large', 'incremental-sync open also enforces the documented size bound');
 }
 
 async function testStaleCloseAndAstralGuards(): Promise<void> {

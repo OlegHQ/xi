@@ -210,6 +210,47 @@ async function streamedBatchesScanBuffersOnceAndMergeCorrectly(): Promise<void> 
   service.dispose();
 }
 
+class HugeMatchProcessPort implements ProcessPort {
+  linesYielded = 0;
+  terminated = false;
+
+  spawn(_spec: ProcessSpec): Promise<Result<ProcessHandle, { readonly code: string; readonly message: string; readonly retryable: boolean }>> {
+    const total = 100_000;
+    const self = this;
+    let resolveExit!: (value: { readonly code: number | null; readonly signal: string | null }) => void;
+    const exit = new Promise<{ readonly code: number | null; readonly signal: string | null }>((resolve) => { resolveExit = resolve; });
+    const output = (async function* (): AsyncIterable<Uint8Array> {
+      for (let index = 0; index < total; index += 1) {
+        if (self.terminated) return;
+        self.linesYielded += 1;
+        yield new TextEncoder().encode(`{"type":"match","data":{"path":{"text":"big.txt"},"lines":{"text":"needle ${index}\\n"},"line_number":${index + 1},"submatches":[{"start":0,"end":6}]}}\n`);
+      }
+    })();
+    const handle: ProcessHandle = {
+      stdin: null,
+      stdout: output,
+      stderr: (async function* (): AsyncIterable<Uint8Array> { })(),
+      exit: exit.then((value) => ({ ok: true, value } as const)),
+      terminate: async () => { self.terminated = true; resolveExit({ code: null, signal: 'SIGTERM' }); },
+      dispose: () => { self.terminated = true; resolveExit({ code: 1, signal: 'SIGTERM' }); },
+    };
+    return Promise.resolve({ ok: true, value: handle });
+  }
+}
+
+async function ripgrepStopsAtMaxResults(): Promise<void> {
+  const processPort = new HugeMatchProcessPort();
+  const backend = new RipgrepSearchBackend({ process: processPort });
+  const cancellation = new CancellationSource();
+  const result = await backend.search(query('needle', { rootPath: '/workspace', maxResults: 50 }), cancellation.token, 1);
+  cancellation.dispose();
+  assert.equal(result.ok, true, 'T-SEARCH-CAP-01 a capped search still succeeds rather than reporting a backend failure');
+  if (!result.ok) return;
+  assert.equal(result.value.length, 50, 'T-SEARCH-CAP-02 exactly maxResults matches are retained');
+  assert.ok(processPort.linesYielded < 100_000, `T-SEARCH-CAP-03 parsing stops well before the full 100k-match stream is read (read ${processPort.linesYielded})`);
+  assert.ok(processPort.terminated, 'T-SEARCH-CAP-04 the backend process is terminated once the cap is reached');
+}
+
 await contentAndBufferSources();
 await staleGenerationIsRejected();
 await invalidRegexKeepsPriorResults();
@@ -217,4 +258,5 @@ await productionRipgrepPath();
 await cancelledDebounceResolves();
 await processExitRaceRejectsLateOutput();
 await streamedBatchesScanBuffersOnceAndMergeCorrectly();
+await ripgrepStopsAtMaxResults();
 console.log('T043 search passed production ripgrep, encoded paths, UTF-16 ranges, output bounds, dirty-buffer replacement, regex flags, process-exit cancellation and streamed-batch merge fixtures');

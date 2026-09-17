@@ -17,8 +17,8 @@ import {
 /** Stable public contract version for navigation read models and picker providers. */
 export const NAVIGATION_CONTRACT_VERSION = 1 as const;
 
-export type PickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config';
-export type PickerEntryKind = 'file' | 'buffer' | 'command' | 'theme' | 'config';
+export type PickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git';
+export type PickerEntryKind = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git';
 
 export interface PickerEntry {
   /** Stable identity. Selection is retained by this value, never by row index. */
@@ -221,34 +221,6 @@ export class FilePathIndex implements Disposable {
     this.#generation += 1;
   }
 
-  query(query: string, options: FilePickerQueryOptions = {}): FilePickerQueryResult | PickerFailure {
-    if (this.#disposed) return { kind: 'provider', message: 'filename index is disposed' };
-    if (!this.#ready) return { kind: 'not-ready', mode: 'file', message: 'filename index is still warming' };
-    const limit = boundedLimit(options.limit);
-    const includeHidden = options.includeHidden ?? true;
-    const includeIgnored = options.includeIgnored ?? this.#includeIgnored;
-    const matches: PickerEntry[] = [];
-    const normalizedQuery = normalizeForSearch(query);
-    const anchor = normalizedQuery.length >= 3 && !normalizedQuery.includes(' ')
-      ? normalizedQuery
-      : longestLiteralAnchor(normalizedQuery);
-    for (const [identity, path] of this.#entries) {
-      if (!includeHidden && path.hidden === true) continue;
-      if (!includeIgnored && path.ignored === true) continue;
-      const root = this.#roots.get(path.rootId);
-      if (root === undefined) continue;
-      const normalizedPath = this.#normalizedEntries.get(identity) ?? '';
-      if (anchor.length >= 3 && !normalizedPath.includes(anchor)) continue;
-      const score = scoreFuzzyNormalized(normalizedQuery, normalizedPath);
-      if (score === undefined) continue;
-      matches.push(makeFileEntry(root, path, score));
-    }
-    matches.sort(compareEntries);
-    const totalMatches = matches.length;
-    const entries = Object.freeze(matches.slice(0, limit));
-    return Object.freeze({ entries, generation: this.#generation, totalMatches, truncated: totalMatches > entries.length });
-  }
-
   /**
    * Time-sliced counterpart to `query()`: scores entries in bounded chunks and
    * yields to the event loop between them so a query over a large index (up to
@@ -269,7 +241,14 @@ export class FilePathIndex implements Disposable {
     const anchor = normalizedQuery.length >= 3 && !normalizedQuery.includes(' ')
       ? normalizedQuery
       : longestLiteralAnchor(normalizedQuery);
+    // Bounded top-N: kept sorted (best first) and capped at `candidateCap`
+    // rather than pushing every match into an unbounded array and sorting it
+    // all at the end. A query that matches most of a 250k-entry index only
+    // ever pays a full-array sort/shift cost for the (small, capped) surviving
+    // set, not for every match.
+    const candidateCap = Math.max(limit, 500);
     const matches: PickerEntry[] = [];
+    let totalMatches = 0;
     // A fixed-size chunk (tuned to land near a 4ms slice for typical fuzzy-score
     // costs) yields unconditionally rather than gating on elapsed time, so the
     // pause cadence -- and therefore cancellation/generation responsiveness --
@@ -294,12 +273,12 @@ export class FilePathIndex implements Disposable {
       const normalizedPath = this.#normalizedEntries.get(identity) ?? '';
       if (anchor.length >= 3 && !normalizedPath.includes(anchor)) continue;
       const score = scoreFuzzyNormalized(normalizedQuery, normalizedPath);
-      if (score !== undefined) matches.push(makeFileEntry(root, path, score));
+      if (score === undefined) continue;
+      totalMatches += 1;
+      insertTopN(matches, makeFileEntry(root, path, score), candidateCap);
     }
     if (cancellation?.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
     if (this.#generation !== generation) return { ok: false, error: { kind: 'stale', generation } };
-    matches.sort(compareEntries);
-    const totalMatches = matches.length;
     const entries = Object.freeze(matches.slice(0, limit));
     return { ok: true, value: Object.freeze({ entries, generation: this.#generation, totalMatches, truncated: totalMatches > entries.length }) };
   }
@@ -728,6 +707,29 @@ function longestLiteralAnchor(query: string): string {
 
 function compareEntries(left: PickerEntry, right: PickerEntry): number {
   return right.score - left.score || left.label.localeCompare(right.label, 'en-US') || left.id.localeCompare(right.id, 'en-US');
+}
+
+/**
+ * Inserts `entry` into `list` (kept sorted best-first by `compareEntries`),
+ * bounded at `cap` entries. Once `list` is full, an entry no better than the
+ * current worst-kept is rejected in O(1) rather than appended and sorted
+ * away later, so scoring a query that matches most of a 250k-entry index
+ * only ever maintains a small, capped candidate set instead of an unbounded
+ * one.
+ */
+function insertTopN(list: PickerEntry[], entry: PickerEntry, cap: number): void {
+  if (list.length >= cap) {
+    const worst = list[list.length - 1]!;
+    if (compareEntries(entry, worst) >= 0) return;
+  }
+  let low = 0;
+  let high = list.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (compareEntries(list[mid]!, entry) <= 0) low = mid + 1; else high = mid;
+  }
+  list.splice(low, 0, entry);
+  if (list.length > cap) list.pop();
 }
 function failureMessage(failure: PickerFailure): string {
   switch (failure.kind) {

@@ -7,6 +7,7 @@ import {
   exportVimRegisterToClipboard,
   importVimRegisterFromClipboard,
   prepareVimPut,
+  REGISTER_RETENTION_POLICY,
   type VimRegisterValue,
 } from '../../../packages/vim/registers/index';
 import { runOracleFixture, verifyOracleBundle } from '../../oracle/oracle-runner';
@@ -61,6 +62,31 @@ const blackHoleDelete = small.value.delete(character(['discard']), { destination
 assert.equal(blackHoleDelete.ok, true);
 if (!blackHoleDelete.ok) throw new Error('T023-REGISTER-BLACK-HOLE');
 assert.equal(blackHoleDelete.value.generation, small.value.generation, 'black-hole delete does not mutate the bank');
+
+// Nine 10 MiB deletes rotate through every numbered register (1..9); without a retention
+// budget that retains 90 MiB forever. REGISTER_RETENTION_POLICY.maxRetainedUtf16 must keep
+// the bank's total well under that, while never dropping the most recent numbered register.
+const BIG_CHUNK = 'x'.repeat(10 * 1024 * 1024);
+let big = createVimRegisterBank();
+for (let index = 1; index <= 9; index += 1) {
+  const result = big.delete(character([BIG_CHUNK]));
+  assert.equal(result.ok, true, `T023-REGISTER-BUDGET-DELETE-${index}`);
+  if (!result.ok) throw new Error(`T023-REGISTER-BUDGET-DELETE-${index}`);
+  big = result.value;
+}
+assert.equal(big.truncated, true, 'T023-REGISTER-BUDGET-01 the bank reports truncation once the budget is exceeded');
+assert.deepEqual(big.read('1'), { ok: true, value: character([BIG_CHUNK]) },
+  'T023-REGISTER-BUDGET-02 the most recent numbered register is always fully retained');
+let bigRetained = 0;
+for (const name of ['1', '2', '3', '4', '5', '6', '7', '8', '9'] as const) {
+  const value = big.read(name);
+  assert.equal(value.ok, true, `T023-REGISTER-BUDGET-READ-${name}`);
+  if (value.ok) bigRetained += value.value.lines.reduce((sum, line) => sum + line.length, 0);
+}
+assert.ok(bigRetained < 9 * BIG_CHUNK.length,
+  `T023-REGISTER-BUDGET-03 numbered registers retain less than all nine 10 MiB deletes (retained ${bigRetained})`);
+assert.ok(bigRetained <= REGISTER_RETENTION_POLICY.maxRetainedUtf16 + BIG_CHUNK.length,
+  `T023-REGISTER-BUDGET-04 numbered retention stays close to the configured budget (retained ${bigRetained}, budget ${REGISTER_RETENTION_POLICY.maxRetainedUtf16})`);
 
 const opened = openTextDocument('t023-put' as DocumentId, new TextEncoder().encode('abc\ndef'));
 assert.equal(opened.kind, 'editable');

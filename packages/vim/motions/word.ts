@@ -453,6 +453,7 @@ function readGraphemeAt(
   line: LineBounds,
   offset: number,
 ): Result<GraphemeAt, VimWordMotionFailure> {
+  // @xi-perf H1 DOC-COORDINATES -- Bounded geometric-window grapheme scan; window text/segment allocation is bounded, not per-scalar.
   const graphemes = GRAPHEME_SEGMENTER_INSTANCE;
   if (graphemes === undefined) return wordFailure('invalid-width-policy');
   if (offset >= line.end) return wordFailure('document-read-failed');
@@ -498,6 +499,7 @@ function readGraphemeBefore(
   line: LineBounds,
   end: number,
 ): Result<GraphemeAt, VimWordMotionFailure> {
+  // @xi-perf H1 DOC-COORDINATES -- Backward grapheme scan; cached-window hits are scalar, cold refill allocation is bounded geometric growth.
   const cached = context.graphemeWindowCache.get(line.index);
   if (cached !== undefined && end > cached.windowStart && end <= cached.windowEnd) {
     for (let index = cached.clusters.length - 1; index >= 0; index -= 1) {

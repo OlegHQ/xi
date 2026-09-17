@@ -70,7 +70,14 @@ export class BufferHost {
   readonly #session: WorkbenchSession;
   readonly #options: BufferHostOptions;
   readonly #panels = new Map<string, BufferHostPanel>();
+  // Guards overlapping `openBufferAtPath` calls for the same path (e.g. two rapid picker
+  // selections, or a navigation racing a picker open): without this, both calls miss the
+  // "already open" check, each opens its own document, and the buffer ends up with two
+  // independent histories. Keyed by workspace-relative path; the second caller awaits the
+  // first's in-flight open and then re-checks "already open" itself.
+  readonly #openingByPath = new Map<string, Promise<OpenBufferAtPathResult | undefined>>();
   readonly #surfaceChangeListeners = new Set<() => void>();
+  readonly #bufferClosedListeners = new Set<(bufferId: DocumentId) => void>();
   #surfaceChangePending = false;
   #documentSequence = 0;
 
@@ -120,9 +127,13 @@ export class BufferHost {
       ...(options.onCommandLineChange === undefined ? {} : { onCommandLineChange: options.onCommandLineChange }),
       onStateChange: (state) => {
         this.#session.syncViewSession(viewId, state.selections, state.mode);
-        const bufferId = this.#session.readView(viewId)?.document.id;
-        if (bufferId !== undefined && this.#session.buffer(bufferId)?.dirty === true) {
-          this.#session.promoteBuffer(bufferId);
+      },
+      // Preview-buffer promotion only needs to run when an edit actually lands, not on
+      // every key (most keys are cursor/mode moves that can never change `dirty`).
+      // `onDocumentChange` fires exactly when this session commits a document edit.
+      onDocumentChange: () => {
+        if (this.#session.buffer(document.id)?.dirty === true) {
+          this.#session.promoteBuffer(document.id);
           if (this.previewViewId === viewId) this.previewViewId = undefined;
         }
       },
@@ -137,6 +148,19 @@ export class BufferHost {
    * `buffer.path` (an unsaved "[No Name]" buffer) never spuriously matches. */
   async openBufferAtPath(path: string, options: OpenBufferAtPathOptions = {}): Promise<OpenBufferAtPathResult | undefined> {
     const relativePath = this.#options.workspaceRelativePath(path);
+    const inFlight = relativePath === undefined ? undefined : this.#openingByPath.get(relativePath);
+    if (inFlight !== undefined) return inFlight;
+    const attempt = this.#openBufferAtPathAttempt(path, options, relativePath);
+    if (relativePath !== undefined) {
+      this.#openingByPath.set(relativePath, attempt);
+      void attempt.finally(() => {
+        if (this.#openingByPath.get(relativePath) === attempt) this.#openingByPath.delete(relativePath);
+      });
+    }
+    return attempt;
+  }
+
+  async #openBufferAtPathAttempt(path: string, options: OpenBufferAtPathOptions, relativePath: string | undefined): Promise<OpenBufferAtPathResult | undefined> {
     const existing = this.#session.buffers().find((buffer) => buffer.path !== undefined && relativePath !== undefined && this.#options.workspaceRelativePath(buffer.path) === relativePath);
     if (existing !== undefined) {
       const viewId = existing.viewIds[0];
@@ -183,8 +207,18 @@ export class BufferHost {
     if (closed.ok) {
       this.documents.delete(bufferId);
       this.#options.onBufferClosed?.({ documentId: bufferId, path });
+      for (const listener of this.#bufferClosedListeners) listener(bufferId);
     }
     return { ok: closed.ok, activeViewId: closed.ok ? closed.value.activeViewId : undefined };
+  }
+
+  /** Internal buffer-closed event (distinct from the composition-root-facing
+   * `BufferHostOptions.onBufferClosed`): lets in-process owners of a per-buffer cache --
+   * e.g. the search controller's dirty-buffer text cache -- evict their entry instead of
+   * only clearing on their own dispose(). */
+  onBufferClosed(listener: (bufferId: DocumentId) => void): Disposable {
+    this.#bufferClosedListeners.add(listener);
+    return Object.freeze({ dispose: () => { this.#bufferClosedListeners.delete(listener); } });
   }
 
   /** Resolves a picker "buffer" entry (keyed by `String(bufferId)`) to its first view and
@@ -228,6 +262,7 @@ export class BufferHost {
   notifySurfaceChange(): void {
     if (this.#surfaceChangePending) return;
     this.#surfaceChangePending = true;
+    // @xi-perf-allow microtask OUTPUT -- Coalesces many surface-change notifications into one listener pass in the same tick; listeners only request a frame, no CPU work is deferred here.
     queueMicrotask(() => {
       this.#surfaceChangePending = false;
       for (const listener of this.#surfaceChangeListeners) listener();

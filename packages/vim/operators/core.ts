@@ -7,6 +7,9 @@ import {
   type VimOperatorRangeInput,
 } from '../ranges/normalize';
 
+/** One reusable instance instead of constructing a new `Intl.Segmenter` on every call. */
+const GRAPHEME_SEGMENTER = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : undefined;
+
 export type VimCoreOperator = 'delete' | 'change' | 'yank';
 
 export interface VimRepeatTarget {
@@ -394,24 +397,39 @@ function offsetAtDisplayColumn(
     const finalNewline = snapshot.slice(((end - 1) as number) as Utf16Offset, end as Utf16Offset);
     if (finalNewline.ok && finalNewline.value === '\n') end -= 1;
   }
-  const text = snapshot.slice(start.value, end as Utf16Offset);
-  if (!text.ok || text.value.length === 0) return start.value;
-  let cell = 0;
-  let lastOffset = 0;
-  if (typeof Intl.Segmenter === 'function') {
-    for (const part of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text.value)) {
-      let width: number;
-      try {
-        width = part.segment === '\t' ? tabSize - (cell % tabSize) : Math.max(1, widthPolicy.widthOfCluster(part.segment));
-      } catch {
-        return null;
-      }
-      if (requestedCell < cell + width) return ((start.value as number) + part.index) as Utf16Offset;
-      lastOffset = part.index;
-      cell += width;
+  const lineStart = start.value as number;
+  const lineEnd = end as number;
+  if (lineEnd <= lineStart) return start.value;
+  const segmenter = GRAPHEME_SEGMENTER;
+  if (segmenter === undefined) return null;
+  let windowSize = 64;
+  // Geometric windows bound the read/segment work by the requested column
+  // instead of the full (possibly huge) logical line.
+  while (true) {
+    let windowEnd = Math.min(lineEnd, lineStart + windowSize);
+    let text = snapshot.slice(lineStart as Utf16Offset, windowEnd as Utf16Offset);
+    if (!text.ok && text.error.kind === 'surrogate-split' && windowEnd < lineEnd) {
+      windowEnd -= 1;
+      text = snapshot.slice(lineStart as Utf16Offset, windowEnd as Utf16Offset);
     }
-  } else {
-    return null;
+    if (!text.ok || text.value.length === 0) return start.value;
+    const atLineEnd = windowEnd === lineEnd;
+    let cell = 0;
+    let lastOffset = 0;
+    let truncated = false;
+    try {
+      for (const part of segmenter.segment(text.value)) {
+        const clusterEnd = part.index + part.segment.length;
+        if (!atLineEnd && clusterEnd === text.value.length) { truncated = true; break; }
+        const width = part.segment === '\t' ? tabSize - (cell % tabSize) : Math.max(1, widthPolicy.widthOfCluster(part.segment));
+        if (requestedCell < cell + width) return (lineStart + part.index) as Utf16Offset;
+        lastOffset = part.index;
+        cell += width;
+      }
+    } catch {
+      return null;
+    }
+    if (!truncated && atLineEnd) return (lineStart + lastOffset) as Utf16Offset;
+    windowSize *= 2;
   }
-  return ((start.value as number) + lastOffset) as Utf16Offset;
 }

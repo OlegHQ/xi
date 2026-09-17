@@ -43,6 +43,7 @@ const noopProblems: HostCommandsProblemsPort = { runConfiguredTask: async () => 
     workspaceEdits: noopWorkspaceEdits,
     problems: noopProblems,
     saveCoordinator,
+    directoryDrafts: { open: async () => {} },
   });
 
   const result = await commands.handleWorkbenchCommand('wa', 'view-1' as never);

@@ -41,6 +41,7 @@ export interface FileIdentity {
 
 export type PersistenceFailure =
   | { readonly kind: 'cancelled' }
+  | { readonly kind: 'disposed' }
   | { readonly kind: 'platform'; readonly failure: PlatformFailure }
   | { readonly kind: 'not-found'; readonly path: string }
   | { readonly kind: 'invalid-open'; readonly reason: string }
@@ -148,9 +149,18 @@ export class PersistenceService {
   readonly #filesystem: FilesystemPort;
   readonly #opened = new Map<string, FileIdentity>();
   readonly #journalCache = new Map<string, JournalCacheEntry>();
+  #disposed = false;
 
   constructor(filesystem: FilesystemPort) {
     this.#filesystem = filesystem;
+  }
+
+  /** Idempotent. Releases the opened-file and journal caches; later calls fail with `{ kind: 'disposed' }`. */
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#opened.clear();
+    this.#journalCache.clear();
   }
 
   async openFile(
@@ -159,6 +169,7 @@ export class PersistenceService {
     cancellation: CancellationToken,
     options: OpenFileOptions = {},
   ): Promise<Result<OpenedFile, PersistenceFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const initial = await this.#stat(path, cancellation);
     if (!initial.ok) return initial;
     if (initial.value === undefined) return { ok: false, error: { kind: 'not-found', path } };
@@ -222,6 +233,7 @@ export class PersistenceService {
     cancellation: CancellationToken,
     options: SaveFileOptions = {},
   ): Promise<Result<SaveFileResult, PersistenceFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const snapshot = document.snapshot();
     if (options.expectedVersion !== undefined && options.expectedVersion !== snapshot.version) {
       return { ok: false, error: { kind: 'stale-document-version', expected: options.expectedVersion, actual: snapshot.version } };
@@ -293,6 +305,7 @@ export class PersistenceService {
     cancellation: CancellationToken,
     options: RecoveryOptions = {},
   ): Promise<Result<RecoveryCheckpoint, PersistenceFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const snapshot = document.snapshot();
     const journalPath = options.journalPath ?? recoveryJournalPath(path);
     const maxBytes = boundedPositive(options.maxBytes, DEFAULT_MAX_RECOVERY_BYTES);
@@ -324,8 +337,23 @@ export class PersistenceService {
     // keystroke-triggered checkpoint.
     const existing = await this.#readJournalCache(journalPath, cancellation);
     if (!existing.ok) return existing;
-    const entries = [...existing.value.entries, checkpoint];
-    const encodedEntries = [...existing.value.encoded, journalEntryEncoding(checkpoint)];
+    // A checkpoint for a document already tracked in this journal replaces that document's
+    // prior entry in place, instead of appending a new one and letting superseded versions of
+    // the SAME document accumulate. `recover()` only ever reads the latest entry per
+    // (path, documentId) (see the `.reverse().find(...)` below), so keeping old versions of
+    // the same open document serves no recovery purpose and only inflates every subsequent
+    // write. This keeps the journal (and so each write's cost) at O(distinct open documents
+    // for this path) -- ordinarily one -- rather than O(DEFAULT_MAX_RECOVERY_ENTRIES).
+    const entries = [...existing.value.entries];
+    const encodedEntries = [...existing.value.encoded];
+    const replaceAt = entries.findIndex((entry) => entry.documentId === checkpoint.documentId);
+    if (replaceAt === -1) {
+      entries.push(checkpoint);
+      encodedEntries.push(journalEntryEncoding(checkpoint));
+    } else {
+      entries[replaceAt] = checkpoint;
+      encodedEntries[replaceAt] = journalEntryEncoding(checkpoint);
+    }
     const maxEntries = Math.min(DEFAULT_MAX_RECOVERY_ENTRIES, boundedPositive(options.maxEntries, DEFAULT_MAX_RECOVERY_ENTRIES));
     while (entries.length > maxEntries) { entries.shift(); encodedEntries.shift(); }
     // Only the new entry is ever JSON.stringify'd here; older, unchanged
@@ -358,6 +386,7 @@ export class PersistenceService {
     cancellation: CancellationToken,
     options: RecoveryOptions = {},
   ): Promise<Result<RecoveryResult, PersistenceFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const journalPath = options.journalPath ?? recoveryJournalPath(path);
     const journal = await this.#readJournal(journalPath, cancellation);
     if (!journal.ok) return journal;
@@ -383,6 +412,7 @@ export class PersistenceService {
 
   /** Remove a checkpoint journal only after its owning save/session operation succeeds. */
   async clearRecovery(path: string, cancellation: CancellationToken, journalPath = recoveryJournalPath(path)): Promise<Result<void, PersistenceFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const present = await this.#stat(journalPath, cancellation);
     if (!present.ok) return present;
     if (present.value === undefined) {
@@ -401,6 +431,7 @@ export class PersistenceService {
   }
 
   async saveSession(path: string, session: SessionSnapshot, cancellation: CancellationToken): Promise<Result<void, PersistenceFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const encoded = encodeSession(session);
     if (!encoded.ok) return encoded;
     const result = await this.#filesystem.writeFileAtomic(path, encoded.value, cancellation);
@@ -408,6 +439,7 @@ export class PersistenceService {
   }
 
   async loadSession(path: string, cancellation: CancellationToken): Promise<Result<SessionSnapshot, PersistenceFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const read = await this.#filesystem.readFile(path, cancellation);
     if (!read.ok) {
       if (isNotFound(read.error)) return { ok: false, error: { kind: 'not-found', path } };

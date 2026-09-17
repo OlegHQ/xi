@@ -132,4 +132,29 @@ function makeRouter(explorer: FakeExplorer, search: FakeSearch, host: FakeHost, 
   router.dispose();
 }
 
-console.log('T116 WorkbenchInputRouter passed leader-open-explorer and command-line-active fixtures');
+// T116-ROUTER-03: an ordinary Normal-mode 'j' and an Insert-mode character reach the active
+// vim session synchronously (its own handleKey fast path is sync); the router must return that
+// result directly, not wrap it in a promise, or every ordinary keystroke pays a microtask hop.
+{
+  const explorer = new FakeExplorer();
+  const search = new FakeSearch();
+  const host = new FakeHost();
+  const session = new FakeSession();
+  const router = makeRouter(explorer, search, host, session);
+  const vim = new FakeVimSession();
+  host.sessions.set(session.activeViewId as string, vim);
+
+  const normalResult = router.handleKeypress(key('j', 'j'));
+  assert.equal(normalResult instanceof Promise, false, 'T116-ROUTER-03 Normal-mode j returns a non-promise result');
+  assert.equal(normalResult, true);
+
+  const insertResult = router.handleKeypress(key('x', 'x'));
+  assert.equal(insertResult instanceof Promise, false, 'T116-ROUTER-03 an ordinary character returns a non-promise result');
+  assert.equal(insertResult, true);
+
+  assert.equal(vim.handledKeys.length, 2, 'both keys reached the active session');
+
+  router.dispose();
+}
+
+console.log('T116 WorkbenchInputRouter passed leader-open-explorer, command-line-active and synchronous-fast-path fixtures');

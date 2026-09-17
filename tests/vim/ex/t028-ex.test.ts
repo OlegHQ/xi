@@ -55,6 +55,11 @@ function text(snapshot: ReturnType<ReturnType<typeof open>['snapshot']>): string
   return value.value;
 }
 
+function applyEdits(source: string, edits: readonly DocumentEdit[]): string {
+  return [...edits].sort((left, right) => (right.start as number) - (left.start as number))
+    .reduce((value, edit) => `${value.slice(0, edit.start as number)}${edit.text}${value.slice(edit.end as number)}`, source);
+}
+
 const resolvedS = resolveVimExCommandName('s');
 assert.equal(resolvedS.ok, true);
 if (!resolvedS.ok) throw new Error('T028-COMMAND-ABBREV-01');
@@ -119,7 +124,7 @@ const deletePlan = prepareVimEx(deleteDocument.snapshot(), deleteCommand, contex
 assert.equal(deletePlan.ok, true, 'T028-DELETE-01 prepares a linewise delete');
 if (!deletePlan.ok) throw new Error('T028-DELETE-01');
 assert.deepEqual(deletePlan.value.registerEffect, { operation: 'delete', destination: 'a', lines: ['two', 'three'], type: 'V' });
-assert.equal(deletePlan.value.resultText, 'one\ntwo');
+assert.equal(applyEdits('one\ntwo\nthree\ntwo', deletePlan.value.edits), 'one\ntwo');
 const deleteSnapshot = applyPlan(deleteDocument, deleteCommand, deletePlan.value.edits, deletePlan.value.undoGroup);
 assert.equal(text(deleteSnapshot), 'one\ntwo', 'T028-TRANSACTION-01 Ex delete uses the shared document transaction');
 const undone = deleteDocument.undo();
@@ -138,14 +143,14 @@ const copyCommand = parse(':1,2copy4');
 const copyPlan = prepareVimEx(copyDocument.snapshot(), copyCommand, context(0));
 assert.equal(copyPlan.ok, true, 'T028-COPY-01 prepares a linewise copy');
 if (!copyPlan.ok) throw new Error('T028-COPY-01');
-assert.equal(copyPlan.value.resultText, 'one\ntwo\nthree\nfour\none\ntwo');
+assert.equal(applyEdits('one\ntwo\nthree\nfour', copyPlan.value.edits), 'one\ntwo\nthree\nfour\none\ntwo');
 
 const moveDocument = open('t028-move', 'one\ntwo\nthree\nfour');
 const moveCommand = parse(':1,2move4');
 const movePlan = prepareVimEx(moveDocument.snapshot(), moveCommand, context(0));
 assert.equal(movePlan.ok, true, 'T028-MOVE-01 prepares a linewise move');
 if (!movePlan.ok) throw new Error('T028-MOVE-01');
-assert.equal(movePlan.value.resultText, 'three\nfour\none\ntwo');
+assert.equal(applyEdits('one\ntwo\nthree\nfour', movePlan.value.edits), 'three\nfour\none\ntwo');
 assert.equal(prepareVimEx(moveDocument.snapshot(), parse(':1,2move1'), context(0)).ok, false, 'T028-MOVE-FAIL-01 rejects destinations inside the source range');
 
 const globalDocument = open('t028-global', 'one\ntwo\nthree\ntwo');
@@ -153,17 +158,17 @@ const globalCommand = parse(':g/two/s/two/TWO/g');
 const globalPlan = prepareVimEx(globalDocument.snapshot(), globalCommand, context(0));
 assert.equal(globalPlan.ok, true, 'T028-GLOBAL-01 prepares a global substitute from one marked-line pass');
 if (!globalPlan.ok) throw new Error('T028-GLOBAL-01');
-assert.equal(globalPlan.value.resultText, 'one\nTWO\nthree\nTWO');
+assert.equal(applyEdits('one\ntwo\nthree\ntwo', globalPlan.value.edits), 'one\nTWO\nthree\nTWO');
 assert.equal(globalPlan.value.nestedPlans.length, 2);
 const vglobalDocument = open('t028-vglobal', 'one\ntwo\nthree\ntwo');
 const vglobalPlan = prepareVimEx(vglobalDocument.snapshot(), parse(':v/two/d'), context(0));
 assert.equal(vglobalPlan.ok, true, 'T028-VGLOBAL-01 prepares the inverse marked-line operation');
 if (!vglobalPlan.ok) throw new Error('T028-VGLOBAL-01');
-assert.equal(vglobalPlan.value.resultText, 'two\ntwo');
+assert.equal(applyEdits('one\ntwo\nthree\ntwo', vglobalPlan.value.edits), 'two\ntwo');
 const normalGlobal = prepareVimEx(globalDocument.snapshot(), parse(':g/two/normal x'), context(0));
 assert.equal(normalGlobal.ok, true, 'T028-NORMAL-01 composes a supported normal command through global');
 if (!normalGlobal.ok) throw new Error('T028-NORMAL-01');
-assert.equal(normalGlobal.value.resultText, 'one\nwo\nthree\nwo');
+assert.equal(applyEdits('one\ntwo\nthree\ntwo', normalGlobal.value.edits), 'one\nwo\nthree\nwo');
 const nestedGlobal = parseVimExCommand(':g/two/g/bar/d');
 assert.equal(nestedGlobal.ok, false, 'T028-GLOBAL-FAIL-02 nested global has no partial plan');
 
@@ -176,7 +181,7 @@ assert.deepEqual(substitutePlan.value.substituteState, { pattern: 'two', replace
 const repeated = prepareVimEx(substituteDocument.snapshot(), parse(':&'), context(0, { lastSubstitute: substitutePlan.value.substituteState ?? undefined }));
 assert.equal(repeated.ok, true, 'T028-SUBSTITUTE-02 repeats the previous substitute');
 if (!repeated.ok) throw new Error('T028-SUBSTITUTE-02');
-assert.equal(repeated.value.resultText, 'T\ntwo');
+assert.equal(applyEdits('two\ntwo', repeated.value.edits), 'T\ntwo');
 const unsupportedScript = prepareVimEx(substituteDocument.snapshot(), parse(':s/two/\\=system("touch")/'), context(0));
 assert.equal(unsupportedScript.ok, false, 'T028-SCRIPT-FAIL-01 rejects expression replacement without an unintended edit');
 if (unsupportedScript.ok) throw new Error('T028-SCRIPT-FAIL-01');

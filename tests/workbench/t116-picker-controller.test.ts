@@ -81,6 +81,7 @@ theme.bindSetTheme((value) => { appliedTheme = value; });
 
 const model = new FakePickerModel<FixtureEntry>();
 const markers: Array<{ readonly name: string; readonly payload: unknown }> = [];
+const secondaryActions: Array<{ readonly entryId: string; readonly key: string }> = [];
 
 const picker = new PickerController<FixtureEntry, string>({
   host,
@@ -90,6 +91,7 @@ const picker = new PickerController<FixtureEntry, string>({
   startFileIndexPopulation: async () => {},
   toggleMouseMode: () => true,
   openFile: (path, preview) => host.openBufferAtPath(path, { preview }),
+  onSecondaryAction: (entry, key) => { secondaryActions.push({ entryId: entry.id, key }); },
 });
 
 // T116-PICKER-01: opening the theme picker begins a preview session; navigating to a
@@ -124,4 +126,35 @@ assert.ok(opened !== undefined, 'T116-PICKER-03b the file buffer was opened');
 assert.equal(opened?.preview, false, 'T116-PICKER-03c committing a file entry never leaves it as a preview buffer');
 assert.equal(host.previewViewId, undefined, 'T116-PICKER-03d no preview view is left tracked after a commit');
 
-console.log('T116 PickerController/ThemeController passed theme-preview-revert and file-commit fixtures');
+// T116-PICKER-04: enter on a 'git' entry opens it the same way a 'file' entry does.
+disk.set('/workspace/b.txt', 'b-content\n');
+model.entries = [{ id: 'b.txt', mode: 'git', value: '/workspace/b.txt' }];
+picker.open('git');
+await flush();
+model.selectedId = 'b.txt';
+await picker.handleKeypress({ name: 'enter', raw: '\r', shift: false, option: false, ctrl: false, meta: false });
+await flush();
+assert.equal(picker.isOpen, false, 'T116-PICKER-04a enter on a git entry closes the picker');
+const openedGit = session.buffers().find((buffer) => buffer.path === '/workspace/b.txt');
+assert.ok(openedGit !== undefined, 'T116-PICKER-04b the git entry opened its file through the same openBufferAtPath route');
+
+// T116-PICKER-05: 's'/'u' in git mode dispatch onSecondaryAction instead of typing into the
+// filter query, and are ignored outside git mode.
+model.entries = [{ id: 'c.txt', mode: 'git', value: '/workspace/c.txt' }];
+picker.open('git');
+await flush();
+model.selectedId = 'c.txt';
+await picker.handleKeypress({ name: 's', raw: 's', shift: false, option: false, ctrl: false, meta: false });
+await picker.handleKeypress({ name: 'u', raw: 'u', shift: false, option: false, ctrl: false, meta: false });
+assert.deepEqual(secondaryActions, [{ entryId: 'c.txt', key: 's' }, { entryId: 'c.txt', key: 'u' }], 'T116-PICKER-05a stage/unstage keys reach onSecondaryAction with the selected entry');
+await picker.close(true);
+
+model.entries = [{ id: 'd', mode: 'file', value: '/workspace/a.txt' }];
+picker.open('file');
+await flush();
+secondaryActions.length = 0;
+await picker.handleKeypress({ name: 's', raw: 's', shift: false, option: false, ctrl: false, meta: false });
+assert.equal(secondaryActions.length, 0, 'T116-PICKER-05b s/u outside git mode falls through to the ordinary filter-query path');
+await picker.close(true);
+
+console.log('T116 PickerController/ThemeController passed theme-preview-revert, file-commit, git-entry-open and git secondary-action fixtures');

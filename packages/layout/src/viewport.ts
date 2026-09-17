@@ -35,6 +35,7 @@ import { PackedPositionIndex } from './packed-index';
 import { DEFAULT_WIDTH_POLICY, splitGraphemes } from './graphemes';
 import {
   MAX_LAYOUT_ID_UTF16,
+  MAX_SOURCE_PREFIX_UTF16,
   buildDiffFillerRow,
   buildFoldRow,
   buildGutterCells,
@@ -117,7 +118,23 @@ const MAX_GUTTER_CACHE_ENTRIES = 4_096;
  * keystroke with continuous evictions; post-fix, only the 1 actually-edited row misses).
  */
 const MAX_MATERIALIZED_CELL_COST = 200_000;
-const MAX_CACHED_LINE_UTF16 = 8_192;
+/**
+ * Cache lines up to what `readVisibleLineText`/`shapeLine` actually read
+ * (`MAX_SOURCE_PREFIX_UTF16`), not an arbitrary smaller cap: lines between the old
+ * 8,192-unit cap and the 65,536-unit read cap were shaped every frame and never
+ * cached. Retained bytes are bounded separately by `MAX_LINE_CACHE_UTF16_UNITS`
+ * below, since 512 entries at 65,536 units each would be ~64 MiB.
+ */
+const MAX_CACHED_LINE_UTF16 = MAX_SOURCE_PREFIX_UTF16;
+/**
+ * Byte budget for `#lineLayouts`' retained `text` (the cache key is a hash, not the
+ * text -- see `CachedLineLayout`). 1,048,576 UTF-16 units * 2 bytes/unit = 2 MiB,
+ * a modest slice of the 8 MiB workspace-wide layout-cache budget (docs/plan/12-
+ * performance.md) alongside the materialized-row, gutter and frame caches. At the
+ * 65,536-unit-per-line worst case this still retains 16 such lines before evicting;
+ * ordinary short lines fill far more entries within the same byte budget.
+ */
+const MAX_LINE_CACHE_UTF16_UNITS = 1_048_576;
 
 /**
  * Project an immutable document/selection snapshot into bounded terminal rows.
@@ -136,6 +153,7 @@ export class ViewportLayout {
   /** Gutter label cells keyed by (line, wrapIndex, gutterWidth); see `withGutter`. */
   readonly #gutterCells = new Map<string, GutterCells>();
   #materializedCellCost = 0;
+  #lineCacheUtf16Units = 0;
   #lineCacheHits = 0;
   #lineCacheMisses = 0;
   #lineCacheEvictions = 0;
@@ -147,6 +165,10 @@ export class ViewportLayout {
   #materializedLineEvictions = 0;
   #lastProjection: CachedViewportProjection | undefined;
   #lastRows: CachedRowsProjection | undefined;
+  /** The exact frame object handed back for the most recent `projectionKey`, so an
+   * immediate repeat call (see the fast-path check in `project()`) returns the same
+   * reference instead of a fresh allocation with a bumped `frameId`. */
+  #lastReturnedFrame: { readonly key: string; readonly frame: VisibleFrame } | undefined;
 
   get cacheStats(): LayoutCacheStats {
     return Object.freeze({
@@ -268,6 +290,20 @@ export class ViewportLayout {
       this.#layoutGeneration += 1;
       this.#lastGeometryKey = geometryKey;
     }
+    // Plain string concatenation, not JSON.stringify: geometryKey is already a
+    // string and selectionGeneration a number, so a delimited template is a cheap
+    // equivalent key without allocating through the JSON machinery on every call.
+    const projectionKey = `${geometryKey} ${selection.selectionGeneration}`;
+    // A repeat call with input identical to the immediately preceding one (e.g. the
+    // second render pass of a double-flush key, or a redundant re-render) changes
+    // nothing an already-returned frame doesn't already represent. Returning that
+    // same object -- same frameId, same identity -- instead of allocating a new one
+    // lets identity-keyed caches downstream (e.g. `canPaintPlainFrameCached`'s
+    // WeakMap) keep hitting instead of missing on every such repeat.
+    if (this.#lastReturnedFrame?.key === projectionKey) {
+      this.#frameCacheHits += 1;
+      return { ok: true, value: this.#lastReturnedFrame.frame };
+    }
     const frameId = this.#nextFrameId as LayoutFrameId;
     this.#nextFrameId += 1;
     const identity: FrameIdentity = Object.freeze({
@@ -279,10 +315,6 @@ export class ViewportLayout {
       layoutGeneration: this.#layoutGeneration as LayoutGeneration,
     });
 
-    // Plain string concatenation, not JSON.stringify: geometryKey is already a
-    // string and selectionGeneration a number, so a delimited template is a cheap
-    // equivalent key without allocating through the JSON machinery on every call.
-    const projectionKey = `${geometryKey} ${selection.selectionGeneration}`;
     if (this.#lastProjection?.key === projectionKey) {
       this.#frameCacheHits += 1;
       const cached = this.#lastProjection;
@@ -303,6 +335,7 @@ export class ViewportLayout {
         positions: cached.positions,
       });
       this.#trimFrames();
+      this.#lastReturnedFrame = { key: projectionKey, frame };
       return { ok: true, value: frame };
     }
 
@@ -337,6 +370,7 @@ export class ViewportLayout {
       this.#documentVersions.set(documentKey, snapshot.version);
       this.#frames.set(frameId as number, { frame, positions: cachedRows.positions });
       this.#trimFrames();
+      this.#lastReturnedFrame = { key: projectionKey, frame };
       return { ok: true, value: frame };
     }
 
@@ -505,6 +539,7 @@ export class ViewportLayout {
     this.#documentVersions.set(documentKey, snapshot.version);
     this.#frames.set(frameId as number, { frame, positions });
     this.#trimFrames();
+    this.#lastReturnedFrame = { key: projectionKey, frame };
     return { ok: true, value: frame };
   }
 
@@ -597,10 +632,12 @@ export class ViewportLayout {
     this.#materializedLines.clear();
     this.#gutterCells.clear();
     this.#materializedCellCost = 0;
+    this.#lineCacheUtf16Units = 0;
     this.#currentFrameId = null;
     this.#lastGeometryKey = '';
     this.#lastProjection = undefined;
     this.#lastRows = undefined;
+    this.#lastReturnedFrame = undefined;
   }
 
   #trimFrames(): void {
@@ -623,10 +660,13 @@ export class ViewportLayout {
 
   #cacheLine(key: string, text: string, value: RelativeLineLayout): void {
     this.#lineLayouts.set(key, { text, value });
-    while (this.#lineLayouts.size > MAX_LINE_CACHE_ENTRIES) {
+    this.#lineCacheUtf16Units += text.length;
+    while (this.#lineLayouts.size > MAX_LINE_CACHE_ENTRIES || this.#lineCacheUtf16Units > MAX_LINE_CACHE_UTF16_UNITS) {
       const oldest = this.#lineLayouts.keys().next().value as string | undefined;
       if (oldest === undefined) break;
+      const evicted = this.#lineLayouts.get(oldest);
       this.#lineLayouts.delete(oldest);
+      if (evicted !== undefined) this.#lineCacheUtf16Units -= evicted.text.length;
       this.#lineCacheEvictions += 1;
     }
   }

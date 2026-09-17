@@ -198,8 +198,20 @@ export class RopeDocument {
     this.#root = buildBalancedRoot(chunkText(initialText));
   }
 
-  static create(id: DocumentSnapshot['id'], initialText: string, seed = 41027): Result<RopeDocument, { readonly kind: 'invalid-text' | 'invalid-seed' }> {
-    if (!isNormalizedText(initialText)) return { ok: false, error: { kind: 'invalid-text' } };
+  /**
+   * `trustedNormalizedText` lets a caller that already verified the text has
+   * no CR and is well-formed UTF-16 (e.g. `openTextDocument`'s combined scan)
+   * skip this constructor's own re-scan. Passing `true` for text that does
+   * not actually meet those conditions is a caller bug: the rope will accept
+   * malformed content.
+   */
+  static create(
+    id: DocumentSnapshot['id'],
+    initialText: string,
+    seed = 41027,
+    trustedNormalizedText = false,
+  ): Result<RopeDocument, { readonly kind: 'invalid-text' | 'invalid-seed' }> {
+    if (!trustedNormalizedText && !isNormalizedText(initialText)) return { ok: false, error: { kind: 'invalid-text' } };
     if (!Number.isSafeInteger(seed)) return { ok: false, error: { kind: 'invalid-seed' } };
     return { ok: true, value: new RopeDocument(id, initialText, seed) };
   }

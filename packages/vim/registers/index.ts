@@ -52,6 +52,8 @@ export interface VimRegisterSnapshot {
   readonly generation: number;
   readonly values: ReadonlyMap<VimRegisterName, VimRegisterValue>;
   readonly vectors: ReadonlyMap<VimRegisterName, VimRegisterVector>;
+  /** True once the retention budget has evicted at least one numbered register. */
+  readonly truncated: boolean;
 }
 
 const registerNames: readonly VimRegisterName[] = [
@@ -62,6 +64,22 @@ const registerNames: readonly VimRegisterName[] = [
 const emptyValue: VimRegisterValue = Object.freeze({ lines: Object.freeze([]), type: 'characterwise' });
 
 /**
+ * Byte (UTF-16 unit) budget for everything registers retain. Undo has an
+ * analogous `UNDO_HISTORY_POLICY`; registers had no such accounting, so nine
+ * numbered rotations of large yanks/deletes could retain unbounded memory
+ * forever. Only the numbered registers ("2".."9", oldest first) are ever
+ * evicted to come back under budget -- named/unnamed/"0"/"-" registers and
+ * the most recent numbered register ("1") are never truncated, even if
+ * retaining them alone stays over budget.
+ */
+export const REGISTER_RETENTION_POLICY = Object.freeze({
+  maxRetainedUtf16: 16 * 1024 * 1024,
+});
+
+/** Oldest first: "9" is the most-rotated (oldest) numbered register, "1" is always kept. */
+const EVICTABLE_NUMBERED_REGISTERS: readonly VimRegisterName[] = ['9', '8', '7', '6', '5', '4', '3', '2'];
+
+/**
  * Immutable Vim register state. Register writes return a new bank, which lets
  * command preparation fail without losing a prior yank or delete.
  */
@@ -69,20 +87,29 @@ export class VimRegisterBank {
   readonly #values: ReadonlyMap<VimRegisterName, VimRegisterValue>;
   readonly #vectors: ReadonlyMap<VimRegisterName, VimRegisterVector>;
   readonly generation: number;
+  readonly truncated: boolean;
 
   constructor(
     values?: ReadonlyMap<VimRegisterName, VimRegisterValue>,
     generation = 0,
     vectors?: ReadonlyMap<VimRegisterName, VimRegisterVector>,
+    truncated = false,
   ) {
     this.#values = cloneValues(values ?? new Map());
     this.#vectors = cloneVectors(vectors ?? new Map());
     this.generation = generation;
+    this.truncated = truncated;
     Object.freeze(this);
   }
 
+  /** Build the next bank from mutated `values`/`vectors`, enforcing the retention budget first. */
+  #next(values: Map<VimRegisterName, VimRegisterValue>, vectors: Map<VimRegisterName, VimRegisterVector>): VimRegisterBank {
+    const evictedNow = enforceRegisterBudget(values, vectors);
+    return new VimRegisterBank(values, this.generation + 1, vectors, this.truncated || evictedNow);
+  }
+
   snapshot(): VimRegisterSnapshot {
-    return Object.freeze({ generation: this.generation, values: this.#values, vectors: this.#vectors });
+    return Object.freeze({ generation: this.generation, values: this.#values, vectors: this.#vectors, truncated: this.truncated });
   }
 
   read(name: VimRegisterName): Result<VimRegisterValue, VimRegisterFailure> {
@@ -125,7 +152,7 @@ export class VimRegisterBank {
       values.set('"', values.get(destination) ?? checked.value);
       clearVectors(vectors, '"');
     }
-    return { ok: true, value: new VimRegisterBank(values, this.generation + 1, vectors) };
+    return { ok: true, value: this.#next(values, vectors) };
   }
 
   /** Yank writes unnamed and register 0, with an optional explicit destination. */
@@ -150,7 +177,7 @@ export class VimRegisterBank {
       clearVectors(vectors, named);
       clearVectors(vectors, '"');
     }
-    return { ok: true, value: new VimRegisterBank(values, this.generation + 1, vectors) };
+    return { ok: true, value: this.#next(values, vectors) };
   }
 
   /** Capture ordered fragments once for a multi-cursor yank command. */
@@ -203,7 +230,7 @@ export class VimRegisterBank {
       clearVectors(vectors, named);
       clearVectors(vectors, '"');
     }
-    return { ok: true, value: new VimRegisterBank(values, this.generation + 1, vectors) };
+    return { ok: true, value: this.#next(values, vectors) };
   }
 
   /** Capture ordered fragments once for a multi-cursor delete command. */
@@ -236,7 +263,7 @@ export class VimRegisterBank {
     vectors.set('1', vector.value);
     values.set('1', vector.value.fragments[vector.value.primaryIndex] ?? emptyValue);
     setVector(values, vectors, '"', vector.value);
-    return { ok: true, value: new VimRegisterBank(values, this.generation + 1, vectors) };
+    return { ok: true, value: this.#next(values, vectors) };
   }
 
   /** Write vector metadata and mirror its primary fragment in the native scalar register. */
@@ -255,7 +282,7 @@ export class VimRegisterBank {
     const vectors = new Map(this.#vectors);
     setVector(values, vectors, destination, next.value);
     if (destination !== '"') setVector(values, vectors, '"', next.value);
-    return { ok: true, value: new VimRegisterBank(values, this.generation + 1, vectors) };
+    return { ok: true, value: this.#next(values, vectors) };
   }
 
   /** Replace a bank's clipboard-facing register without touching internal yanks. */
@@ -281,6 +308,58 @@ export function isRegisterName(value: string): value is VimRegisterName {
 
 export function isUppercaseNamedRegister(name: VimRegisterName): boolean {
   return name.length === 1 && name >= 'A' && name <= 'Z';
+}
+
+function registerValueSize(value: VimRegisterValue | undefined): number {
+  if (value === undefined) return 0;
+  let total = 0;
+  for (const line of value.lines) total += line.length;
+  return total;
+}
+
+function registerVectorSize(vector: VimRegisterVector | undefined): number {
+  if (vector === undefined) return 0;
+  let total = 0;
+  for (const fragment of vector.fragments) total += registerValueSize(fragment);
+  return total;
+}
+
+function totalRetainedUtf16(
+  values: ReadonlyMap<VimRegisterName, VimRegisterValue>,
+  vectors: ReadonlyMap<VimRegisterName, VimRegisterVector>,
+): number {
+  let total = 0;
+  for (const value of values.values()) total += registerValueSize(value);
+  for (const vector of vectors.values()) total += registerVectorSize(vector);
+  return total;
+}
+
+/**
+ * Evict the oldest numbered registers (see `EVICTABLE_NUMBERED_REGISTERS`) until the total
+ * retained size is back within `REGISTER_RETENTION_POLICY`, or until none remain. Named,
+ * unnamed, "0", "-" and the most recent numbered register ("1") are never touched, so this
+ * can leave the bank over budget when only those hold the excess -- that is deliberate.
+ * Returns whether anything was evicted.
+ */
+function enforceRegisterBudget(
+  values: Map<VimRegisterName, VimRegisterValue>,
+  vectors: Map<VimRegisterName, VimRegisterVector>,
+): boolean {
+  let total = totalRetainedUtf16(values, vectors);
+  if (total <= REGISTER_RETENTION_POLICY.maxRetainedUtf16) return false;
+  let evicted = false;
+  for (const name of EVICTABLE_NUMBERED_REGISTERS) {
+    if (total <= REGISTER_RETENTION_POLICY.maxRetainedUtf16) break;
+    const value = values.get(name);
+    const vector = vectors.get(name);
+    const size = registerValueSize(value) + registerVectorSize(vector);
+    if (size === 0) continue;
+    values.set(name, emptyValue);
+    vectors.delete(name);
+    total -= size;
+    evicted = true;
+  }
+  return evicted;
 }
 
 function normalizeValue(value: VimRegisterValue): Result<VimRegisterValue, VimRegisterFailure> {

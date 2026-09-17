@@ -253,6 +253,7 @@ export function mapSelectionSet(
   changeMap: DocumentChangeMap,
   destination: DocumentSnapshot,
 ): { readonly ok: true; readonly value: CanonicalizedSelectionSet } | { readonly ok: false; readonly error: SelectionFailure } {
+  // @xi-perf H1 SELECTION-MAP -- Sorted-endpoint/edit sweep publishing the escaping mapped selection set (selection publication is H1).
   if (set.documentId !== changeMap.documentId || set.documentId !== destination.id) return failure('wrong-document');
   if (set.documentVersion !== changeMap.beforeVersion) return failure('stale-version');
   if (destination.version !== changeMap.afterVersion) return failure('invalid-change-map');
@@ -496,6 +497,23 @@ function canonicalize(
   }
   if (!primaryExists) return failure('invalid-primary');
 
+  // Singleton fast path: sorting, grouping and the duplicate-caret map exist to merge
+  // and order multiple members, which is a no-op with exactly one already-validated
+  // member. `primaryExists` above already proved that member's id equals `primaryId`,
+  // matching the general path's `finalPrimary` result for a single-member group.
+  if (inputMembers.length === 1) {
+    const only = inputMembers[0] as SelectionMember;
+    const selectionSet: SelectionSet = Object.freeze({
+      documentId: snapshot.id,
+      documentVersion: snapshot.version,
+      selectionGeneration,
+      primaryId,
+      members: Object.freeze([only] as [SelectionMember]),
+    });
+    const idMap = Object.freeze([Object.freeze({ from: only.id, to: only.id })]);
+    return success(Object.freeze({ selectionSet, idMap }));
+  }
+
   const ordered = [...inputMembers].sort(compareMembers);
   const groups: SelectionGroup[] = [];
   const duplicateCarets = new Map<string, SelectionGroup>();
@@ -721,7 +739,12 @@ function visualEndpointDesiredColumn(
 function chooseRetained(group: readonly SelectionMember[], primaryId: SelectionId): SelectionMember {
   const primary = group.find((member) => member.id === primaryId);
   if (primary !== undefined) return primary;
-  return [...group].sort((left, right) => (left.creationOrdinal as number) - (right.creationOrdinal as number))[0] as SelectionMember;
+  let oldest = group[0] as SelectionMember;
+  for (let index = 1; index < group.length; index += 1) {
+    const candidate = group[index] as SelectionMember;
+    if ((candidate.creationOrdinal as number) < (oldest.creationOrdinal as number)) oldest = candidate;
+  }
+  return oldest;
 }
 
 function exactCaret(left: SelectionMember, right: SelectionMember): boolean {

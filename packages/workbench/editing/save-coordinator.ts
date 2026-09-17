@@ -40,6 +40,9 @@ export interface SaveCoordinatorOptions {
   /** PTY-visible stderr sink; never writes to `process.stderr` itself. */
   readonly onError: (message: string) => void;
   readonly formatOnSave: boolean;
+  /** Fired after a file is actually written to disk (not on a directory-draft review or a
+   * failed save); the composition root uses this to refresh Git status without polling. */
+  readonly onSaved?: (path: string) => void;
   /** Lazily constructs (memoized here) the environment-configured formatter pipeline;
    * `process.env` reads and the services-owned `FormatterPipeline`/`createExternalFormatter`
    * dynamic import stay composition-root work in `apps/xi/src/main.ts`. */
@@ -165,6 +168,7 @@ export class SaveCoordinator implements Disposable {
       // prompt, never this save's own success.
       const cleared = await this.#options.persistence.clearRecovery(path, cancellation.token);
       if (!cleared.ok) this.#options.onError(`xi: could not clear the recovery journal for ${path}: ${cleared.error.kind}\n`);
+      this.#options.onSaved?.(path);
       return true;
     } finally {
       cancellation.dispose();

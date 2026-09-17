@@ -25,8 +25,9 @@ import {
   type LanguageTransportState,
   type LanguageTransportStateChange,
 } from './transport';
-import { LanguageDocumentSync } from './sync';
+import { chunkedSnapshotToString, DEFAULT_MAX_FULL_SYNC_UTF16, LanguageDocumentSync } from './sync';
 import type { DiagnosticStore, LanguageDiagnostic } from './diagnostics';
+import { DIAGNOSTICS_PER_URI_LIMIT } from './diagnostics';
 import { PullDiagnosticStore } from './pull-diagnostics';
 import type { PullDiagnosticFailure, PullDiagnosticProviderFailure, PullDiagnosticReport, PullDiagnosticSnapshot, PullDiagnosticWorkspaceReport } from './pull-diagnostics';
 
@@ -250,6 +251,10 @@ export interface LanguageServerSessionOptions {
   readonly retry?: LanguageRetryPolicy;
   /** Optional owner store for validated `textDocument/publishDiagnostics`. */
   readonly diagnostics?: DiagnosticStore;
+  /** Documents at or under this UTF-16 length are admitted; larger ones are rejected at
+   * `openDocument` instead of being sent to the transport, which enforces its own
+   * (byte) outgoing-body budget. Defaults to the sync layer's full-sync UTF-16 bound. */
+  readonly maxDocumentUtf16?: number;
 }
 
 export type LanguageServerSessionState = 'stopped' | 'starting' | 'initializing' | 'ready' | 'stopping' | 'failed' | 'disabled';
@@ -278,7 +283,8 @@ export type LanguageSessionFailure =
   | { readonly kind: 'invalid-options'; readonly message: string }
   | { readonly kind: 'unavailable'; readonly message: string; readonly failure?: PlatformFailure }
   | { readonly kind: 'restart-limit'; readonly message: string }
-  | { readonly kind: 'protocol'; readonly message: string };
+  | { readonly kind: 'protocol'; readonly message: string }
+  | { readonly kind: 'document-too-large'; readonly message: string };
 
 const DEFAULT_RETRY: Required<LanguageRetryPolicy> = Object.freeze({
   maxRetries: 3,
@@ -308,6 +314,7 @@ export class LanguageServerSession implements Disposable {
   readonly #lifecycleCancellation = new CancellationSource();
   readonly #failureWaiters = new Set<(change: LanguageTransportStateChange) => void>();
   readonly #pullDiagnostics: PullDiagnosticStore<PullDiagnosticItem>;
+  readonly #maxDocumentUtf16: number;
   #state: LanguageServerSessionState = 'stopped';
   #transport: LanguageTransport | undefined;
   #sync: LanguageDocumentSync | undefined;
@@ -339,6 +346,7 @@ export class LanguageServerSession implements Disposable {
     });
     this.#configuration = options.configuration;
     this.#configurationSet = options.configuration !== undefined;
+    this.#maxDocumentUtf16 = options.maxDocumentUtf16 ?? DEFAULT_MAX_FULL_SYNC_UTF16;
     this.#pullDiagnostics = new PullDiagnosticStore({
       request: (uri, previousResultId, generation, cancellation) => this.requestPullDiagnostics(uri, previousResultId, generation, cancellation),
       requestWorkspace: (items, generation, cancellation) => this.requestWorkspacePullDiagnostics(items, generation, cancellation),
@@ -462,6 +470,11 @@ export class LanguageServerSession implements Disposable {
   openDocument(document: LanguageDocumentSnapshot): Result<void, LanguageSessionFailure> {
     const valid = validateDocument(document);
     if (!valid.ok) return valid;
+    if (document.text.length > this.#maxDocumentUtf16) {
+      // Reject at admission so an oversized document never reaches the transport's
+      // outgoing-body check and is never stored for replay on restart.
+      return { ok: false, error: { kind: 'document-too-large', message: `document ${document.uri} exceeds ${this.#maxDocumentUtf16} UTF-16 units and was not opened` } };
+    }
     this.#documents.set(document.uri, Object.freeze({ ...document, snapshot: undefined }));
     this.#options.diagnostics?.markDocumentGeneration(document.uri, document.version);
     if (document.documentId !== undefined) this.#documentUrisById.set(document.documentId, document.uri);
@@ -1085,23 +1098,12 @@ function materializeStoredDocument(stored: StoredLanguageDocument): Result<Langu
   }
   const snapshot = stored.snapshot;
   if (snapshot === undefined) return { ok: false, error: { kind: 'invalid-options', message: `language document ${stored.uri} has no replay snapshot` } };
-  const chunks: string[] = [];
-  let start = 0;
-  while (start < snapshot.lengthUtf16) {
-    let end = Math.min(snapshot.lengthUtf16, start + 64 * 1024);
-    let read = false;
-    while (end > start) {
-      const result = snapshot.slice(start as never, end as never);
-      if (result.ok) {
-        chunks.push(result.value);
-        start = end;
-        read = true;
-        break;
-      }
-      if (result.error.kind !== 'surrogate-split') return { ok: false, error: { kind: 'invalid-options', message: `language replay snapshot is unreadable: ${result.error.kind}` } };
-      end -= 1;
-    }
-    if (!read) return { ok: false, error: { kind: 'invalid-options', message: 'language replay snapshot has no safe UTF-16 chunk' } };
+  const materialized = chunkedSnapshotToString(snapshot);
+  if (!materialized.ok) {
+    const message = materialized.kind === 'unreadable'
+      ? `language replay snapshot is unreadable: ${materialized.detail}`
+      : `language replay snapshot ${materialized.detail}`;
+    return { ok: false, error: { kind: 'invalid-options', message } };
   }
   return {
     ok: true,
@@ -1110,7 +1112,7 @@ function materializeStoredDocument(stored: StoredLanguageDocument): Result<Langu
       ...(stored.documentId === undefined ? {} : { documentId: stored.documentId }),
       languageId: stored.languageId,
       version: stored.version,
-      text: chunks.join(''),
+      text: materialized.value,
     }),
   };
 }
@@ -1134,13 +1136,16 @@ function decodeDiagnostics(
   documents: ReadonlyMap<string, StoredLanguageDocument>,
 ): { readonly uri: string; readonly generation: number; readonly documentVersion?: number; readonly diagnostics: readonly Omit<import('./diagnostics').LanguageDiagnostic, 'id' | 'uri' | 'serverId' | 'documentVersion' | 'generation'>[] } | undefined {
   const record = asRecord(value);
-  if (typeof record?.uri !== 'string' || !Array.isArray(record.diagnostics) || record.diagnostics.length > 10_000) return undefined;
+  if (typeof record?.uri !== 'string' || !Array.isArray(record.diagnostics)) return undefined;
   const document = documents.get(record.uri);
   if (document === undefined) return undefined;
   const publishedVersion = record.version === undefined ? undefined : integer(record.version);
   if (record.version !== undefined && publishedVersion === undefined) return undefined;
   const diagnostics: Omit<import('./diagnostics').LanguageDiagnostic, 'id' | 'uri' | 'serverId' | 'documentVersion' | 'generation'>[] = [];
-  for (const candidate of record.diagnostics) {
+  // Decode at most the per-URI display limit: the store flags the URI as truncated when the
+  // payload is longer, and the decode loop stays O(limit) for any server payload size.
+  const candidates = record.diagnostics.length > DIAGNOSTICS_PER_URI_LIMIT ? record.diagnostics.slice(0, DIAGNOSTICS_PER_URI_LIMIT + 1) : record.diagnostics;
+  for (const candidate of candidates) {
     const item = asRecord(candidate);
     const range = asRecord(item?.range);
     const start = asRecord(range?.start);

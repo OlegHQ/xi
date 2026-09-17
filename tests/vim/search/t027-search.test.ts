@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { strict as assert } from 'node:assert';
 import { openTextDocument } from '../../../packages/document/src/index';
-import type { DocumentId, LineIndex, Utf16Offset } from '../../../packages/document/src/index';
+import type { DocumentEdit, DocumentId, LineIndex, Utf16Offset } from '../../../packages/document/src/index';
 import {
   beginVimSearch,
   EMPTY_VIM_SEARCH_STATE,
@@ -21,6 +21,11 @@ if (opened.kind !== 'editable') throw new Error('T027-DOCUMENT');
 const document = opened.document;
 const snapshot = document.snapshot();
 const view: VimSearchView = { cursor: 0 as Utf16Offset, desiredDisplayColumn: 0, scrollTop: 0, scrollLeft: 0 };
+
+function applyEdits(source: string, edits: readonly DocumentEdit[]): string {
+  return [...edits].sort((left, right) => (right.start as number) - (left.start as number))
+    .reduce((value, edit) => `${value.slice(0, edit.start as number)}${edit.text}${value.slice(edit.end as number)}`, source);
+}
 
 const first = searchVimBuffer(snapshot, view, EMPTY_VIM_SEARCH_STATE, {
   command: 'search', pattern: 'foo', direction: 'forward', wrapscan: false,
@@ -161,7 +166,7 @@ const substitute = prepareVimSubstitute(snapshot, substitutionState, {
 assert.equal(substitute.ok, true, 'T027-SUBSTITUTE-GLOBAL-01 prepares one atomic edit per match');
 if (!substitute.ok) throw new Error('T027-SUBSTITUTE-GLOBAL-01');
 assert.equal(substitute.value.replacedCount, 4);
-assert.equal(substitute.value.resultText, 'bar x bar\nx bar\nbar\n');
+assert.equal(applyEdits('foo x foo\nx foo\nfoo\n', substitute.value.edits), 'bar x bar\nx bar\nbar\n');
 assert.equal(substitute.value.edits.length, 4);
 assert.equal(substitute.value.undoGroup, `vim-substitute-${snapshot.version as number}`);
 
@@ -169,18 +174,18 @@ const firstOnly = prepareVimSubstitute(snapshot, substitutionState, { pattern: '
 assert.equal(firstOnly.ok, true);
 if (!firstOnly.ok) throw new Error('T027-SUBSTITUTE-FIRST');
 assert.equal(firstOnly.value.replacedCount, 1, 'T027-SUBSTITUTE-FIRST-01 defaults to the current line');
-assert.equal(firstOnly.value.resultText, 'X x foo\nx foo\nfoo\n');
+assert.equal(applyEdits('foo x foo\nx foo\nfoo\n', firstOnly.value.edits), 'X x foo\nx foo\nfoo\n');
 
 const captures = prepareVimSubstitute(snapshot, substitutionState, { pattern: '\\(foo\\) x', replacement: '\\1-&' });
 assert.equal(captures.ok, true, 'T027-SUBSTITUTE-CAPTURE-01 expands captures and whole-match references');
 if (!captures.ok) throw new Error('T027-SUBSTITUTE-CAPTURE-01');
-assert.equal(captures.value.resultText, 'foo-foo x foo\nx foo\nfoo\n');
+assert.equal(applyEdits('foo x foo\nx foo\nfoo\n', captures.value.edits), 'foo-foo x foo\nx foo\nfoo\n');
 
 const allLines = { firstLine: 0 as LineIndex, lastLine: 3 as LineIndex };
 const caseConverted = prepareVimSubstitute(snapshot, substitutionState, { pattern: 'foo', replacement: '\\U&\\E', flags: 'g', range: allLines });
 assert.equal(caseConverted.ok, true);
 if (!caseConverted.ok) throw new Error('T027-SUBSTITUTE-CASE');
-assert.equal(caseConverted.value.resultText, 'FOO x FOO\nx FOO\nFOO\n');
+assert.equal(applyEdits('foo x foo\nx foo\nfoo\n', caseConverted.value.edits), 'FOO x FOO\nx FOO\nFOO\n');
 const insensitive = prepareVimSubstitute(snapshot, substitutionState, { pattern: 'FOO', replacement: 'z', flags: 'gi', range: allLines });
 assert.equal(insensitive.ok, true, 'T027-SUBSTITUTE-CASE-01 i flag enables case-insensitive matching');
 if (!insensitive.ok) throw new Error('T027-SUBSTITUTE-CASE-01');
@@ -193,7 +198,7 @@ assert.equal(sensitive.value.replacedCount, 0);
 const previous = prepareVimSubstitute(snapshot, { ...substitutionState, previousReplacement: 'Q' }, { pattern: 'foo', replacement: '~', flags: 'g', range: allLines });
 assert.equal(previous.ok, true);
 if (!previous.ok) throw new Error('T027-SUBSTITUTE-PREVIOUS');
-assert.equal(previous.value.resultText, 'Q x Q\nx Q\nQ\n');
+assert.equal(applyEdits('foo x foo\nx foo\nfoo\n', previous.value.edits), 'Q x Q\nx Q\nQ\n');
 
 const zero = openTextDocument('t027-zero' as DocumentId, new TextEncoder().encode('a\nb'));
 assert.equal(zero.kind, 'editable');
@@ -203,7 +208,7 @@ const zeroResult = prepareVimSubstitute(zeroSnapshot, substitutionState, { patte
 assert.equal(zeroResult.ok, true, 'T027-SUBSTITUTE-ZERO-01 terminates line-start matches');
 if (!zeroResult.ok) throw new Error('T027-SUBSTITUTE-ZERO-01');
 assert.equal(zeroResult.value.replacedCount, 2);
-assert.equal(zeroResult.value.resultText, '>a\n>b');
+assert.equal(applyEdits('a\nb', zeroResult.value.edits), '>a\n>b');
 const noWord = searchVimBuffer(snapshot, { ...view, cursor: 3 as Utf16Offset }, EMPTY_VIM_SEARCH_STATE, { command: 'star', wrapscan: false });
 assert.equal(noWord.ok, false, 'T027-SEARCH-STAR-FAIL-01 rejects a star search outside a keyword');
 if (noWord.ok) throw new Error('T027-SEARCH-STAR-FAIL-01');
@@ -215,17 +220,13 @@ if (multiline.kind !== 'editable') throw new Error('T027-MULTILINE-DOCUMENT');
 const multilineResult = prepareVimSubstitute(multiline.document.snapshot(), substitutionState, { pattern: 'b\\n', replacement: 'X', flags: 'g' });
 assert.equal(multilineResult.ok, true, 'T027-SUBSTITUTE-MULTILINE-01 handles a newline-spanning match');
 if (!multilineResult.ok) throw new Error('T027-SUBSTITUTE-MULTILINE-01');
-assert.equal(multilineResult.value.resultText, 'aXcd');
+assert.equal(applyEdits('ab\ncd', multilineResult.value.edits), 'aXcd');
 
 const countOnly = prepareVimSubstitute(snapshot, substitutionState, { pattern: 'foo', replacement: 'bar', flags: 'gn', range: allLines });
 assert.equal(countOnly.ok, true);
 if (!countOnly.ok) throw new Error('T027-SUBSTITUTE-COUNT');
-assert.equal(countOnly.value.matchedCount, 4);
-assert.equal(countOnly.value.edits.length, 0);
-const originalTextResult = snapshot.slice(0 as Utf16Offset, snapshot.lengthUtf16 as Utf16Offset);
-assert.equal(originalTextResult.ok, true);
-if (!originalTextResult.ok) throw new Error('T027-SUBSTITUTE-COUNT-TEXT');
-assert.equal(countOnly.value.resultText, originalTextResult.value);
+assert.equal(countOnly.value.matchedCount, 4, 'T027-SUBSTITUTE-COUNT-01 n flag counts without materializing an edit');
+assert.equal(countOnly.value.edits.length, 0, 'T027-SUBSTITUTE-COUNT-02 n flag does not edit the document');
 
 const confirmations: string[] = [];
 const confirmed = prepareVimSubstitute(snapshot, substitutionState, {
@@ -236,7 +237,7 @@ assert.equal(confirmed.ok, true);
 if (!confirmed.ok) throw new Error('T027-SUBSTITUTE-CONFIRM');
 assert.equal(confirmed.value.replacedCount, 1);
 assert.equal(confirmed.value.skippedCount, 3);
-assert.equal(confirmed.value.resultText, 'C x foo\nx foo\nfoo\n');
+assert.equal(applyEdits('foo x foo\nx foo\nfoo\n', confirmed.value.edits), 'C x foo\nx foo\nfoo\n');
 assert.equal(prepareVimSubstitute(snapshot, substitutionState, { pattern: 'foo', replacement: 'x', flags: 'c', range: allLines }).ok, false, 'T027-SUBSTITUTE-CONFIRM-FAIL requires a confirmation callback');
 
 const oracle = await verifyOracleBundle();

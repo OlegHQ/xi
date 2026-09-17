@@ -94,8 +94,10 @@ async function testInsertOnFirstLineRepaintsFewRows(): Promise<void> {
   generation += 1;
   view = makeCursorView(snapshot, primary, 1, generation);
 
+  // `refresh()` only marks the renderable dirty now; drive the actual frame directly
+  // instead of waiting on the renderer's own (now-unused) scheduled-render path.
   viewport.refresh();
-  await setup.flush();
+  await setup.renderOnce();
 
   const after = viewport.lastFrame;
   assert.ok(after?.frame !== undefined && after.view !== undefined, 'T123-PK-02 a frame is projected after the edit');

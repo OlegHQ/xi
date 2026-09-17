@@ -4,6 +4,8 @@ import type { PlatformPorts } from '../../contracts/src/index.ts';
 export { NodeFilesystemPort } from './filesystem';
 export type { WorkspaceDirectoryEntry, WorkspaceDirectoryWatchEvent, WorkspaceFileEntry, WorkspaceFileEnumerationOptions } from './filesystem';
 export { NodeProcessPort } from './process';
+export { createNodeClock } from './clock';
+export { installJobControl } from './job-control';
 
 /** OS adapters are constructed only at the composition root. */
 export interface PlatformAdapterFactory {

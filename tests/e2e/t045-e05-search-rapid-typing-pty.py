@@ -114,7 +114,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e05-") as temporary:
         # Cancel while a search may still be in flight; confirm clean cancellation and quit.
         os.write(master, b"\x1b")
         read_until(master, captured, lambda data: b"XI_SEARCH_CANCELLED" in data, 5)
-        os.write(master, b"\x03")
+        os.write(master, b":q\r")
         try:
             child.wait(timeout=5)
         except subprocess.TimeoutExpired:

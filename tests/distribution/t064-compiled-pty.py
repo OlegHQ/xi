@@ -91,17 +91,19 @@ def main() -> None:
                 "XI_UI_TEST_MARKERS": "1",
             }
         )
+        # Normal-mode Ctrl-C is an interrupt in Vim semantics, not quit (the workbench, not
+        # the UI adapter, decides quit); exercise the Ex `:q` quit path instead of `\x03`.
         quit_capture = launch(binary, source, environment, b"q")
-        interrupt_capture = launch(binary, source, environment, b"\x03")
+        ex_quit_capture = launch(binary, source, environment, b":q\r")
         resized_capture = launch(binary, source, environment, b"q", resizes=((60, 18), (120, 40)))
-        for label, captured in (("q", quit_capture), ("Ctrl-C", interrupt_capture), ("resize", resized_capture)):
+        for label, captured in (("q", quit_capture), (":q", ex_quit_capture), ("resize", resized_capture)):
             # The line:2 cursor paints over the first glyph, so the raw PTY
             # transcript may contain `econd` instead of the full word.
             if source.name.encode("utf-8") not in captured or not (b"second" in captured or b"econd" in captured):
                 raise SystemExit(f"T064 compiled PTY {label} run did not render file:line content")
             if b"\x1b[?1049l" not in captured or b"\x1b[?25h" not in captured:
                 raise SystemExit(f"T064 compiled PTY {label} run did not restore alternate screen/cursor")
-        print(f"T064 compiled PTY passed isolated no-Neovim launch, q/Ctrl-C shutdown, resize and terminal restoration; q_bytes={len(quit_capture)} ctrl_c_bytes={len(interrupt_capture)} resize_bytes={len(resized_capture)}")
+        print(f"T064 compiled PTY passed isolated no-Neovim launch, q/:q shutdown, resize and terminal restoration; q_bytes={len(quit_capture)} ex_quit_bytes={len(ex_quit_capture)} resize_bytes={len(resized_capture)}")
 
 
 def launch(binary: Path, source: Path, environment: dict[str, str], key: bytes, resizes: tuple[tuple[int, int], ...] = ()) -> bytearray:

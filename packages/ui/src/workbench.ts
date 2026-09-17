@@ -14,11 +14,13 @@ import type {
   WorkbenchViewSnapshot,
 } from '../../workbench/src/index.ts';
 import { resolveScrollAnchor, ViewportLayout, type CellHitTarget, type ProjectedSelection, type ViewportAnchor, type VisibleFrame } from '../../layout/src/index';
+import type { SyntaxRead, SyntaxReadPort, SyntaxSpan } from '../../contracts/src/index';
 import {
   paintEditorFrame,
   type EditorPresentationRead,
   type EditorPresentationReadPort,
   type MotionPaintStats,
+  type SyntaxFallbackRow,
 } from '../editor/motion-paint';
 import {
   resolveMotionPaintTokens,
@@ -70,6 +72,9 @@ export interface WorkbenchPointerEvent {
   readonly wheelDelta: number;
   readonly frameId: number;
   readonly viewportHeight: number;
+  /** Monotonic capture time (`performance.now()`), taken here at the platform-facing edge --
+   * mirrors `packages/vim/pointer`'s `PointerEvent.timestampMilliseconds`. */
+  readonly timestampMilliseconds: number;
 }
 
 export interface WorkbenchRenderableOptions extends RenderableOptions<WorkbenchRenderable> {
@@ -77,9 +82,15 @@ export interface WorkbenchRenderableOptions extends RenderableOptions<WorkbenchR
   readonly theme?: WorkbenchTheme;
   readonly ascii?: boolean;
   readonly fileLabel?: string;
+  /** Read port for the current Git branch, polled once per render (like the rest of the
+   * status text); returns `undefined` outside a Git workspace or before the first status
+   * refresh. */
+  readonly gitBranch?: () => string | undefined;
   readonly showBottomPanel?: boolean;
   /** Optional immutable presentation read model supplied by the workbench. */
   readonly presentation?: EditorPresentationReadPort;
+  /** Optional read-only syntax boundary; painted only when its version matches the frame's. */
+  readonly syntax?: SyntaxReadPort;
   readonly motionTrail?: MotionTrailMode;
   readonly reducedMotion?: boolean;
   readonly colorMode?: EditorColorMode;
@@ -100,6 +111,23 @@ export interface WorkbenchFrameRead {
   readonly frame: VisibleFrame | undefined;
   readonly view: WorkbenchViewSnapshot | undefined;
   readonly paint?: MotionPaintStats;
+}
+
+/** A syntax read plus the row snapshot it colored the last time it was current for a
+ * frame; see `WorkbenchRenderable#lastCurrentSyntax`/`SyntaxFallbackRow`. */
+interface CurrentSyntaxSnapshot {
+  readonly read: SyntaxRead;
+  readonly rows: readonly SyntaxFallbackRow[];
+}
+
+/** `syntax` is current for `frame` iff its `documentVersion` matches. */
+function syntaxFallbackRowsFor(current: CurrentSyntaxSnapshot | undefined, syntaxRead: SyntaxRead | undefined): readonly SyntaxFallbackRow[] | undefined {
+  return current !== undefined && syntaxRead !== undefined && current.read === syntaxRead ? current.rows : undefined;
+}
+
+function snapshotSyntaxRowsIfCurrent(frame: VisibleFrame, syntaxRead: SyntaxRead | undefined): CurrentSyntaxSnapshot | undefined {
+  if (syntaxRead === undefined || (syntaxRead.documentVersion as unknown as number) !== (frame.identity.documentVersion as unknown as number)) return undefined;
+  return { read: syntaxRead, rows: frame.rows.map((row) => ({ startOffset: row.startOffset as number | null, endOffset: row.endOffset as number | null, text: row.text })) };
 }
 
 interface PaneRect {
@@ -149,14 +177,21 @@ export class WorkbenchRenderable extends Renderable {
   #theme: WorkbenchTheme;
   readonly #ascii: boolean;
   readonly #fileLabel: string;
+  readonly #gitBranch: (() => string | undefined) | undefined;
   readonly #showBottomPanel: boolean;
   readonly #presentation: EditorPresentationReadPort | undefined;
+  readonly #syntax: SyntaxReadPort | undefined;
   readonly #motionTrail: MotionTrailMode;
   readonly #reducedMotion: boolean;
   readonly #colorMode: EditorColorMode;
   readonly #onPointer: ((event: WorkbenchPointerEvent) => boolean) | undefined;
   readonly #onPointerCancel: ((reason: 'resize' | 'dispose' | 'escape' | 'suspend') => void) | undefined;
   readonly #onViewportAnchorChange: ((viewId: string, scrollTop: number, scrollLeft: number) => void) | undefined;
+  /** Anchors resolved by `syncAnchors()` ahead of the frame; `renderSelf`/`renderSplit`
+   * only read this, never resolve or report an anchor themselves. Keyed by viewId. */
+  readonly #resolvedAnchors = new Map<string, { readonly anchor: ViewportAnchor; readonly scrollLeft: number }>();
+  /** Last resolver inputs per view so `refresh()` + the pre-render sync do not re-resolve unchanged state. */
+  readonly #anchorMemo = new Map<string, { readonly document: unknown; readonly selections: unknown; readonly top: number; readonly left: number; readonly width: number; readonly height: number; readonly result: { readonly anchor: ViewportAnchor; readonly scrollLeft: number } }>();
   readonly #layout = new ViewportLayout();
   readonly #paneLayouts = new Map<string, ViewportLayout>();
   readonly #paneRects = new Map<string, PaneRect>();
@@ -167,6 +202,9 @@ export class WorkbenchRenderable extends Renderable {
    * `#lastFrame`/`#lastPresentation`). */
   readonly #paneLastFrames = new Map<string, WorkbenchFrameRead>();
   readonly #paneLastPresentations = new Map<string, EditorPresentationRead | undefined>();
+  readonly #paneLastSyntaxReads = new Map<string, SyntaxRead | undefined>();
+  /** Per-pane last-known-current syntax snapshot; see `#lastCurrentSyntax`. */
+  readonly #paneLastCurrentSyntax = new Map<string, CurrentSyntaxSnapshot>();
   /** `resolveMotionPaintTokens` only depends on the theme; recomputed in `setTheme`
    * instead of once per paint range per frame. */
   #motionPaintTokens: ReturnType<typeof resolveMotionPaintTokens>;
@@ -184,6 +222,12 @@ export class WorkbenchRenderable extends Renderable {
   #lastShellSize: { readonly width: number; readonly height: number } | undefined;
   #lastFrame: WorkbenchFrameRead | undefined;
   #lastPresentation: EditorPresentationRead | undefined;
+  #lastSyntaxRead: SyntaxRead | undefined;
+  /** The active view's rows the last time `#lastSyntaxRead` (or its predecessor) was
+   * confirmed current, so a still-stale read can keep coloring unaffected rows
+   * instead of painting the whole viewport plain for one frame; see
+   * `SyntaxFallbackRow` and `rowSyntaxCursor` in editor/motion-paint.ts. */
+  #lastCurrentSyntax: CurrentSyntaxSnapshot | undefined;
   #lastPaintStats: MotionPaintStats | undefined;
   #lastHeaderText: string | undefined;
   #lastStatusText: string | undefined;
@@ -202,8 +246,10 @@ export class WorkbenchRenderable extends Renderable {
     this.#ascii = options.ascii ?? false;
     this.#theme = options.theme ?? (this.#ascii ? ASCII_WORKBENCH_THEME : LIGHT_WORKBENCH_THEME);
     this.#fileLabel = options.fileLabel ?? '[No Name]';
+    this.#gitBranch = options.gitBranch;
     this.#showBottomPanel = options.showBottomPanel ?? false;
     this.#presentation = options.presentation;
+    this.#syntax = options.syntax;
     this.#motionTrail = options.motionTrail ?? 'off';
     this.#reducedMotion = options.reducedMotion ?? true;
     this.#colorMode = options.colorMode ?? 'truecolor';
@@ -255,6 +301,7 @@ export class WorkbenchRenderable extends Renderable {
         wheelDelta: event.scroll === undefined ? 0 : (event.scroll.direction === 'up' || event.scroll.direction === 'left' ? -event.scroll.delta : event.scroll.delta),
         frameId: dispatchFrameId,
         viewportHeight: pane?.height ?? geometry.editorHeight,
+        timestampMilliseconds: performance.now(),
       });
       if (handled) {
         event.preventDefault();
@@ -275,7 +322,18 @@ export class WorkbenchRenderable extends Renderable {
   }
   get lastFrame(): WorkbenchFrameRead | undefined { return this.#lastFrame; }
   get lastPaintStats(): MotionPaintStats | undefined { return this.#lastPaintStats; }
-  refresh(): void { this.requestRender(); }
+  /**
+   * Mark the renderable dirty without also asking the OpenTUI renderer to schedule
+   * its own frame (`requestRender()`'s renderer half runs a `process.nextTick`/timer
+   * callback later, outside this call). Every production caller (terminal.ts's
+   * `refreshAfterKey`/pointer/theme/resize paths) already performs one explicit
+   * synchronous `renderer.intermediateRender()` after calling this; letting `refresh()`
+   * also schedule the renderer's own frame produced a second, redundant render pass
+   * per key. Callers that render through a generic OpenTUI harness (tests) must drive
+   * that explicit render themselves too (see tests/ui/t111-render-scheduling.test.ts).
+   */
+  /** State changed: resolve cursor-follow anchors (memoized per view state) and mark for paint. */
+  refresh(): void { this.syncAnchors(); this.markDirty(); }
   get theme(): WorkbenchTheme { return this.#theme; }
   /** Apply a new theme immediately, live -- used for the theme picker's preview/cancel/commit
    * flow. Every color the renderer paints with is cached from `#theme` at construction time
@@ -297,7 +355,9 @@ export class WorkbenchRenderable extends Renderable {
     this.#lastHeaderText = undefined;
     this.#lastStatusText = undefined;
     this.#lastBottomPanelKey = undefined;
-    this.requestRender();
+    // See `refresh()`'s comment: the caller (terminal.ts's `registerThemeSwitch`) drives
+    // the actual synchronous frame, so this only needs to mark the renderable dirty.
+    this.markDirty();
   }
   cancelPointerCapture(): void {
     this.#pointerFrameId = undefined;
@@ -313,11 +373,18 @@ export class WorkbenchRenderable extends Renderable {
     this.#paneLayouts.clear();
     this.#paneLastFrames.clear();
     this.#paneLastPresentations.clear();
+    this.#paneLastSyntaxReads.clear();
+    this.#paneLastCurrentSyntax.clear();
     this.#paneRects.clear();
     this.#paneFrames.clear();
     this.#splitters.clear();
     this.#splitterCapture = undefined;
-    this.requestRender();
+    this.#lastSyntaxRead = undefined;
+    this.#lastCurrentSyntax = undefined;
+    this.#resolvedAnchors.clear();
+    // See `refresh()`'s comment: terminal.ts's resize handler always performs one
+    // explicit synchronous render right after a resize, so this only marks dirty.
+    this.markDirty();
   }
 
   protected override destroySelf(): void {
@@ -328,6 +395,8 @@ export class WorkbenchRenderable extends Renderable {
     this.#paneLayouts.clear();
     this.#paneLastFrames.clear();
     this.#paneLastPresentations.clear();
+    this.#paneLastSyntaxReads.clear();
+    this.#paneLastCurrentSyntax.clear();
     this.#paneRects.clear();
     this.#paneFrames.clear();
     this.#splitters.clear();
@@ -335,6 +404,9 @@ export class WorkbenchRenderable extends Renderable {
     this.#lastShellSize = undefined;
     this.#lastFrame = undefined;
     this.#lastPresentation = undefined;
+    this.#lastSyntaxRead = undefined;
+    this.#lastCurrentSyntax = undefined;
+    this.#resolvedAnchors.clear();
     this.#lastPaintStats = undefined;
     this.#lastHeaderText = undefined;
     this.#lastStatusText = undefined;
@@ -351,23 +423,92 @@ export class WorkbenchRenderable extends Renderable {
    * below the fold still pulls the viewport down instead of `project()` silently
    * falling back to line 0. Only reports back when the resolved anchor differs
    * from the read model's value, to avoid a report/read feedback loop.
+   *
+   * This is the one place that writes back through `onViewportAnchorChange`; it is
+   * called only from `syncAnchors()`, never from `renderSelf`/`renderSplit`, so
+   * painting stays a read-only projection of already-resolved anchors (see
+   * `syncAnchors`'s doc comment).
    */
-  private resolveAnchor(
+  #resolveAndReportAnchor(
     viewId: string, view: WorkbenchViewSnapshot, widthCells: number, heightCells: number,
   ): { readonly anchor: ViewportAnchor; readonly scrollLeft: number } | undefined {
     const previousTop = view.scrollTop;
     const previousLeft = view.scrollLeft;
+    const memo = this.#anchorMemo.get(viewId);
+    if (memo !== undefined && memo.document === view.document && memo.selections === view.selections && memo.top === previousTop
+      && memo.left === previousLeft && memo.width === widthCells && memo.height === heightCells) return memo.result;
     const resolved = resolveScrollAnchor(view.document, view.selections, previousTop, heightCells, widthCells, previousLeft);
     if (!resolved.ok) return undefined;
+    this.#anchorMemo.set(viewId, { document: view.document, selections: view.selections, top: previousTop, left: previousLeft, width: widthCells, height: heightCells,
+      result: { anchor: resolved.value.anchor, scrollLeft: resolved.value.scrollLeft } });
     if (resolved.value.scrollTop !== previousTop || resolved.value.scrollLeft !== previousLeft) {
       this.#onViewportAnchorChange?.(viewId, resolved.value.scrollTop, resolved.value.scrollLeft);
     }
     return { anchor: resolved.value.anchor, scrollLeft: resolved.value.scrollLeft };
   }
 
+  /**
+   * Resolve (and report, via `onViewportAnchorChange`) the cursor-follow scroll
+   * anchor for every currently-visible view -- the active single view, or every
+   * split pane -- ahead of the frame that will read it. The composition root calls
+   * this once before each explicit render (`refreshAfterKey`/pointer/resize in
+   * terminal.ts), keeping the scroll-follow *decision* a pre-render step and
+   * `renderSelf`/`renderSplit` themselves read-only: they only look up what this
+   * already resolved, in `#resolvedAnchors`, instead of computing and writing back
+   * scroll state while painting.
+   */
+  syncAnchors(): void {
+    const geometry = this.layout;
+    if (geometry.compact) {
+      this.#resolvedAnchors.clear();
+      return;
+    }
+    const layoutRead = this.#workbench.readLayout?.();
+    if (layoutRead?.split.root?.kind === 'split' && this.width >= 80) {
+      const { panes } = this.#collectPanes(geometry, layoutRead);
+      const liveViewIds = new Set<string>();
+      for (const pane of panes) {
+        const view = this.#workbench.readView(pane.viewId as import('../../contracts/src/index').ViewId);
+        if (view === undefined) continue;
+        liveViewIds.add(pane.viewId);
+        const anchor = this.#resolveAndReportAnchor(pane.viewId, view, pane.width - 6, pane.height);
+        if (anchor !== undefined) this.#resolvedAnchors.set(pane.viewId, anchor);
+      }
+      for (const viewId of this.#resolvedAnchors.keys()) {
+        if (!liveViewIds.has(viewId)) this.#resolvedAnchors.delete(viewId);
+      }
+      return;
+    }
+    this.#resolvedAnchors.clear();
+    const activeViewId = this.#workbench.activeViewId;
+    const view = activeViewId === undefined ? undefined : this.#workbench.readView(activeViewId);
+    if (activeViewId === undefined || view === undefined) return;
+    const anchor = this.#resolveAndReportAnchor(String(activeViewId), view, geometry.editorWidth - 6, geometry.editorHeight);
+    if (anchor !== undefined) this.#resolvedAnchors.set(String(activeViewId), anchor);
+  }
+
+  /** Shared pane/splitter geometry for one split frame; used by both `syncAnchors`
+   * (read-only anchor resolution) and `renderSplit` (painting) so the two never
+   * disagree about where each pane sits. */
+  #collectPanes(geometry: WorkbenchLayout, layoutRead: WorkbenchLayoutRead): { readonly panes: readonly PaneRect[]; readonly splitters: readonly SplitterRect[] } {
+    const panes: PaneRect[] = [];
+    const splitters: SplitterRect[] = [];
+    collectSplitGeometry(layoutRead.split.root, {
+      x: geometry.editorX,
+      y: geometry.editorTop,
+      width: geometry.editorWidth,
+      height: geometry.editorHeight,
+    }, panes, splitters, layoutRead.split.minimumPaneSize, String(this.#workbench.activeViewId ?? ''));
+    return { panes, splitters };
+  }
+
   protected override renderSelf(buffer: OptimizedBuffer): void {
     const geometry = this.layout;
     const fullRepaint = this.#lastShellSize?.width !== this.width || this.#lastShellSize?.height !== this.height;
+    // The renderable only learns its size from the first layout pass (and resizes), so the
+    // pre-render `syncAnchors()` an embedder ran before that pass saw a 0x0 shell. Re-resolve
+    // once per geometry change here; ordinary frames keep anchors read-only in paint.
+    if (fullRepaint) this.syncAnchors();
     if (fullRepaint) {
       buffer.fillRect(0, 0, this.width, this.height, this.#background);
       this.#lastShellSize = Object.freeze({ width: this.width, height: this.height });
@@ -375,9 +516,9 @@ export class WorkbenchRenderable extends Renderable {
 
     const activeViewId = this.#workbench.activeViewId;
     const view = activeViewId === undefined ? undefined : this.#workbench.readView(activeViewId);
-    const anchor = activeViewId === undefined || view === undefined
-      ? undefined
-      : this.resolveAnchor(String(activeViewId), view, geometry.editorWidth - 6, geometry.editorHeight);
+    // Read-only: the anchor itself is resolved (and reported back through
+    // `onViewportAnchorChange`) by `syncAnchors()` before this render, not here.
+    const anchor = activeViewId === undefined ? undefined : this.#resolvedAnchors.get(String(activeViewId));
     const projected = activeViewId === undefined || view === undefined || geometry.compact
       ? undefined
       : this.#layout.project({
@@ -393,6 +534,7 @@ export class WorkbenchRenderable extends Renderable {
     const presentation = this.#presentation === undefined || activeViewId === undefined
       ? undefined
       : this.#presentation.readPresentation(activeViewId);
+    const syntaxRead = this.#syntax === undefined || view === undefined ? undefined : this.#syntax.readSyntax(view.document.id);
     const previous = this.#lastFrame;
     this.#lastFrame = Object.freeze({ layout: geometry, frame, view });
 
@@ -400,9 +542,11 @@ export class WorkbenchRenderable extends Renderable {
       this.#lastPaintStats = undefined;
       buffer.fillRect(0, 0, this.width, this.height, this.#surface);
       drawText(buffer, 'Xi: terminal too small', 1, Math.max(0, Math.floor(this.height / 2)), this.#foreground, this.#surface, this.width - 2);
-      drawText(buffer, 'Resize to continue  ·  Ctrl-C quit', 1, Math.min(this.height - 1, Math.floor(this.height / 2) + 1), this.#muted, this.#surface, this.width - 2);
+      drawText(buffer, 'Resize to continue  ·  :q quit', 1, Math.min(this.height - 1, Math.floor(this.height / 2) + 1), this.#muted, this.#surface, this.width - 2);
       this.ctx.setCursorPosition(0, 0, false);
       this.#lastPresentation = undefined;
+      this.#lastSyntaxRead = undefined;
+      this.#lastCurrentSyntax = undefined;
       return;
     }
 
@@ -428,7 +572,8 @@ export class WorkbenchRenderable extends Renderable {
       this.#lastHeaderText = headerText;
     }
     if (frame !== undefined && view !== undefined) {
-      const paintRanges = calculatePaintRanges(previous, frame, view, presentation, this.#lastPresentation, fullRepaint);
+      const syntaxFallbackRows = syntaxFallbackRowsFor(this.#lastCurrentSyntax, syntaxRead);
+      const paintRanges = calculatePaintRanges(previous, frame, view, presentation, this.#lastPresentation, fullRepaint, syntaxRead, this.#lastSyntaxRead);
       let paintStats: MotionPaintStats | undefined;
       for (const rows of paintRanges) {
         paintStats = drawFrame(buffer, frame, geometry.editorX, geometry.editorTop, this.#foreground, this.#muted, this.#background, this.#accent, this.#ascii, {
@@ -438,10 +583,14 @@ export class WorkbenchRenderable extends Renderable {
           colorMode: this.#colorMode,
           mode: view.session.mode,
           theme: this.#motionPaintTokens,
+          ...(syntaxRead === undefined ? {} : { syntax: syntaxRead }),
+          ...(this.#theme.syntax === undefined ? {} : { syntaxColors: this.#theme.syntax }),
+          ...(syntaxFallbackRows === undefined ? {} : { syntaxFallbackRows }),
           rows,
         });
       }
       this.#lastPaintStats = paintStats ?? this.#lastPaintStats;
+      this.#lastCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead) ?? this.#lastCurrentSyntax;
       const primary = frame.selections.find((selection) => selection.primary);
       const point = primary?.head.position;
       if (point !== null && point !== undefined) {
@@ -455,6 +604,7 @@ export class WorkbenchRenderable extends Renderable {
       this.ctx.setCursorPosition(0, 0, false);
     }
     this.#lastPresentation = presentation;
+    this.#lastSyntaxRead = syntaxRead;
 
     if (geometry.bottomHeight > 0) {
       const bottomPanelKey = `${geometry.editorX},${geometry.bottomTop},${geometry.editorWidth},${geometry.bottomHeight}`;
@@ -469,7 +619,8 @@ export class WorkbenchRenderable extends Renderable {
     }
     const count = view?.selections.members.length ?? 0;
     const mode = view?.session.mode.toUpperCase() ?? 'NORMAL';
-    const statusText = ` ${mode}   ${this.#fileLabel}   ${count} cursor${count === 1 ? '' : 's'}`;
+    const branch = this.#gitBranch?.();
+    const statusText = ` ${mode}   ${this.#fileLabel}${branch === undefined ? '' : ` (${branch})`}   ${count} cursor${count === 1 ? '' : 's'}`;
     if (fullRepaint || this.#lastStatusText !== statusText) {
       buffer.fillRect(0, geometry.statusRow, this.width, 1, this.#surface);
       drawText(buffer, statusText, 1, geometry.statusRow, this.#foreground, this.#surface, Math.max(0, this.width - 2));
@@ -478,14 +629,7 @@ export class WorkbenchRenderable extends Renderable {
   }
 
   private renderSplit(buffer: OptimizedBuffer, geometry: WorkbenchLayout, layoutRead: WorkbenchLayoutRead, fullRepaint: boolean): void {
-    const panes: PaneRect[] = [];
-    const splitters: SplitterRect[] = [];
-    collectSplitGeometry(layoutRead.split.root, {
-      x: geometry.editorX,
-      y: geometry.editorTop,
-      width: geometry.editorWidth,
-      height: geometry.editorHeight,
-    }, panes, splitters, layoutRead.split.minimumPaneSize, String(this.#workbench.activeViewId ?? ''));
+    const { panes, splitters } = this.#collectPanes(geometry, layoutRead);
     this.#paneRects.clear();
     this.#paneFrames.clear();
     this.#splitters.clear();
@@ -518,7 +662,8 @@ export class WorkbenchRenderable extends Renderable {
         paneLayout = new ViewportLayout();
         this.#paneLayouts.set(pane.viewId, paneLayout);
       }
-      const paneAnchor = this.resolveAnchor(pane.viewId, view, pane.width - 6, pane.height);
+      // Read-only: resolved (and reported) by `syncAnchors()` before this render.
+      const paneAnchor = this.#resolvedAnchors.get(pane.viewId);
       const projected = paneLayout.project({
         viewId: pane.viewId as import('../../contracts/src/index').ViewId,
         snapshot: view.document,
@@ -532,14 +677,19 @@ export class WorkbenchRenderable extends Renderable {
         drawText(buffer, 'No editable buffer', pane.x + 1, pane.y, this.#muted, this.#background, pane.width - 2);
         this.#paneLastFrames.delete(pane.viewId);
         this.#paneLastPresentations.delete(pane.viewId);
+        this.#paneLastSyntaxReads.delete(pane.viewId);
+        this.#paneLastCurrentSyntax.delete(pane.viewId);
         continue;
       }
       const frame = projected.value;
       this.#paneFrames.set(pane.viewId, frame);
       const presentation = this.#presentation?.readPresentation(pane.viewId as import('../../contracts/src/index').ViewId);
+      const syntaxRead = this.#syntax?.readSyntax(view.document.id);
       const previousPaneFrame = this.#paneLastFrames.get(pane.viewId);
       const previousPanePresentation = this.#paneLastPresentations.get(pane.viewId);
-      const paneRanges = calculatePaintRanges(previousPaneFrame, frame, view, presentation, previousPanePresentation, fullRepaint);
+      const previousPaneSyntaxRead = this.#paneLastSyntaxReads.get(pane.viewId);
+      const paneSyntaxFallbackRows = syntaxFallbackRowsFor(this.#paneLastCurrentSyntax.get(pane.viewId), syntaxRead);
+      const paneRanges = calculatePaintRanges(previousPaneFrame, frame, view, presentation, previousPanePresentation, fullRepaint, syntaxRead, previousPaneSyntaxRead);
       let paint: MotionPaintStats | undefined;
       for (const rows of paneRanges) {
         paint = drawFrame(buffer, frame, pane.x, pane.y, this.#foreground, this.#muted, this.#background, this.#accent, this.#ascii, {
@@ -549,11 +699,17 @@ export class WorkbenchRenderable extends Renderable {
           colorMode: this.#colorMode,
           mode: view.session.mode,
           theme: this.#motionPaintTokens,
+          ...(syntaxRead === undefined ? {} : { syntax: syntaxRead }),
+          ...(this.#theme.syntax === undefined ? {} : { syntaxColors: this.#theme.syntax }),
+          ...(paneSyntaxFallbackRows === undefined ? {} : { syntaxFallbackRows: paneSyntaxFallbackRows }),
           rows,
         });
       }
       this.#paneLastFrames.set(pane.viewId, Object.freeze({ layout: geometry, frame, view }));
       this.#paneLastPresentations.set(pane.viewId, presentation);
+      this.#paneLastSyntaxReads.set(pane.viewId, syntaxRead);
+      const paneCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead);
+      if (paneCurrentSyntax !== undefined) this.#paneLastCurrentSyntax.set(pane.viewId, paneCurrentSyntax);
       if (String(this.#workbench.activeViewId) === pane.viewId) {
         activeFrame = frame;
         activeView = view;
@@ -580,10 +736,13 @@ export class WorkbenchRenderable extends Renderable {
     }
     const count = activeView?.selections.members.length ?? 0;
     const mode = activeView?.session.mode.toUpperCase() ?? 'NORMAL';
-    const statusText = ` ${mode}   ${this.#fileLabel}   ${count} cursor${count === 1 ? '' : 's'}`;
-    buffer.fillRect(0, geometry.statusRow, this.width, 1, this.#surface);
-    drawText(buffer, statusText, 1, geometry.statusRow, this.#foreground, this.#surface, Math.max(0, this.width - 2));
-    this.#lastStatusText = statusText;
+    const branch = this.#gitBranch?.();
+    const statusText = ` ${mode}   ${this.#fileLabel}${branch === undefined ? '' : ` (${branch})`}   ${count} cursor${count === 1 ? '' : 's'}`;
+    if (fullRepaint || this.#lastStatusText !== statusText) {
+      buffer.fillRect(0, geometry.statusRow, this.width, 1, this.#surface);
+      drawText(buffer, statusText, 1, geometry.statusRow, this.#foreground, this.#surface, Math.max(0, this.width - 2));
+      this.#lastStatusText = statusText;
+    }
     this.#lastFrame = Object.freeze({ layout: geometry, frame: activeFrame, view: activeView });
     this.#lastPresentation = activePresentation;
     this.#lastPaintStats = activePaint ?? (fullRepaint ? undefined : this.#lastPaintStats);
@@ -727,6 +886,9 @@ interface EditorPaintSettings {
   readonly colorMode: EditorColorMode;
   readonly mode: string;
   readonly theme: import('../theme/motion-tokens').MotionPaintTokens;
+  readonly syntax?: SyntaxRead;
+  readonly syntaxColors?: WorkbenchTheme['syntax'];
+  readonly syntaxFallbackRows?: readonly (SyntaxFallbackRow | undefined)[];
   readonly rows?: { readonly start: number; readonly end: number };
 }
 
@@ -739,6 +901,9 @@ function drawFrame(buffer: OptimizedBuffer, frame: VisibleFrame, x: number, y: n
       reducedMotion: settings.presentation?.reducedMotion ?? settings.reducedMotion,
       colorMode: settings.presentation?.colorMode ?? settings.colorMode,
     },
+    ...(settings.syntax === undefined ? {} : { syntax: settings.syntax }),
+    ...(settings.syntaxColors === undefined ? {} : { syntaxColors: settings.syntaxColors }),
+    ...(settings.syntaxFallbackRows === undefined ? {} : { syntaxFallbackRows: settings.syntaxFallbackRows }),
     mode: settings.mode,
     theme: settings.theme,
     foreground,
@@ -761,6 +926,8 @@ export function calculatePaintRanges(
   presentation: EditorPresentationRead | undefined,
   previousPresentation: EditorPresentationRead | undefined,
   fullRepaint: boolean,
+  syntaxRead?: SyntaxRead,
+  previousSyntaxRead?: SyntaxRead,
 ): readonly { readonly start: number; readonly end: number }[] {
   if (fullRepaint || previous?.frame === undefined || previous.view === undefined) return [{ start: 0, end: current.rows.length }];
   if (previous.frame.widthCells !== current.widthCells || previous.frame.heightCells !== current.heightCells
@@ -783,6 +950,47 @@ export function calculatePaintRanges(
     if (!same) dirty.add(row);
   }
 
+  if (syntaxRead !== previousSyntaxRead) {
+    const currentIsCurrent = syntaxRead !== undefined
+      && (syntaxRead.documentVersion as unknown as number) === (current.identity.documentVersion as unknown as number);
+    const previousWasCurrent = previousSyntaxRead !== undefined
+      && (previousSyntaxRead.documentVersion as unknown as number) === (previous.frame.identity.documentVersion as unknown as number);
+    if (currentIsCurrent && previousWasCurrent) {
+      // Both frames had a syntax read that was current for themselves (e.g. a cold
+      // scan's empty result, then the drained result, for a document version that
+      // never advanced in between -- see t053-syntax-paint's "first paint is plain,
+      // second is colored" fixture). Dirty exactly the rows whose resolved spans
+      // differ; a typical reparse leaves most visible rows' spans unchanged.
+      for (let row = 0; row < current.rows.length; row += 1) {
+        if (dirty.has(row)) continue;
+        const currentRow = current.rows[row];
+        const start = currentRow?.startOffset as number | null | undefined;
+        const end = currentRow?.endOffset as number | null | undefined;
+        if (currentRow === undefined || start === null || start === undefined || end === null || end === undefined || end <= start) continue;
+        if (!sameSpans(previousSyntaxRead.spansInRange(start, end), syntaxRead.spansInRange(start, end))) dirty.add(row);
+      }
+    } else if (currentIsCurrent && !previousWasCurrent) {
+      // The common "a fresh parse just landed after a stale keystroke frame"
+      // transition. `rowSyntaxCursor`'s stale-fallback rule (editor/motion-paint.ts)
+      // already reused the *same* read's spans, by the *same* offsets, for every row
+      // whose offset didn't shift -- so those rows already show the exact colors a
+      // fully current read would produce and never needed this frame's repaint. Only
+      // a row whose offset shifted (fallback couldn't apply to it, so it painted
+      // plain) actually changes appearance now that its own offsets are current.
+      for (let row = 0; row < current.rows.length; row += 1) {
+        if (dirty.has(row)) continue;
+        const previousRow = previous.frame.rows[row];
+        const currentRow = current.rows[row];
+        if (previousRow?.startOffset !== currentRow?.startOffset || previousRow?.endOffset !== currentRow?.endOffset) dirty.add(row);
+      }
+    } else {
+      // The read just went stale (or neither side is current) -- the painted colors
+      // can't be cheaply predicted from spans alone, so fall back to a full repaint,
+      // same as before this row-level diff existed.
+      return [{ start: 0, end: current.rows.length }];
+    }
+  }
+
   const previousSelections = previous.view.selections;
   const currentSelections = view.selections;
   if (previousSelections.selectionGeneration !== currentSelections.selectionGeneration) {
@@ -798,6 +1006,18 @@ export function calculatePaintRanges(
     return [{ start: 0, end: current.rows.length }];
   }
   return mergePaintRanges(dirty, current.rows.length);
+}
+
+/** Structural equality of two spans-in-range results; both are sorted by start (the
+ * `SyntaxRead.spansInRange` contract), so a positional comparison suffices. */
+function sameSpans(a: readonly SyntaxSpan[], b: readonly SyntaxSpan[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    const left = a[index];
+    const right = b[index];
+    if (left === undefined || right === undefined || left.start !== right.start || left.end !== right.end || left.kind !== right.kind) return false;
+  }
+  return true;
 }
 
 function cursorOnly(members: readonly { readonly kind: string }[]): boolean {

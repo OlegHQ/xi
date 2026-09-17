@@ -9,8 +9,8 @@ export {
   createNavigationContributionModule,
 } from '../../navigation';
 export type { BufferPickerEntry } from '../../navigation';
-export { lookupCtags, parseCtags } from '../../navigation/ctags';
-export type { CtagsRecord } from '../../navigation/ctags';
+export { lookupCtags, parseCtags, createCtagsNavigationHost } from '../../navigation/ctags';
+export type { CtagsRecord, CtagsFilesystemPort, CtagsNavigationHostOptions } from '../../navigation/ctags';
 export { InMemorySearchBackend, RealtimeSearchService, RipgrepSearchBackend } from '../../search';
 export type {
   RipgrepSearchBackendOptions,

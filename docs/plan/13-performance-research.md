@@ -211,3 +211,107 @@ group (`tests/workbench/t-panel-registration`, `tests/lsp/t-restart-resolves`,
 `project()` p95 5.05 → 0.05 ms; typing-under-load key→stdout p95 8.6 → 2.8 ms with the
 corrected probe boundary. The remaining `t019`/`t024` oracle failures are the T121
 host-clipboard class and are independent of these changes.
+
+## Third-pass audit and remediation, 2026-09-17
+
+Fresh ownership/hot-path audit of the worktree at `e2da01b` (after the second pass),
+performed with four independent read-only reviewers (ownership, keystroke path, document
+core, background services) and verified by hand. The foundations audited in the second
+pass (rope, undo, anchor sweep, layout caches, damage painting, generation guards,
+argv-only subprocesses) were confirmed clean. The defects below were features that
+existed in packages but were never composed into the running editor, ownership leaks the
+import graph cannot see, and a few unbounded integration paths. All were fixed the same
+day; each row names its test. No release gate is certified by this pass.
+
+| # | Owner / path | Defect | Fix and evidence |
+|---|---|---|---|
+| S1 | `services/syntax`, `apps/xi` | Syntax highlighting was test-only: never constructed by the composition root, and the "Tree-sitter" service was a hand-rolled per-line lexer scanning the whole submitted string; `tree-sitter.ts` was decorative | Real web-tree-sitter 0.25.10: snapshot-fed `ParseCallback` (no whole-document string), `tree.edit` + resumed `parser.parse` in ≈1.5 ms slices via `progressCallback`, `#lua-match?` translated to `#match?`, `SyntaxDocumentTracker` implements the new contracts `SyntaxReadPort`; UI paints version-gated per-cell colours in runs; grammar/runtime wasm embedded with `type: "file"` imports and proven inside the compiled binary. `tests/syntax/*`, `tests/ui/t053-syntax-paint.test.ts`, `tests/distribution/t053-syntax-compiled-pty.py` (in `test:startup`), `docs/evidence/T053.md` |
+| S2 | `services/syntax` | Highlight captures for the whole document were re-run after every edit in ~300 timer ticks; a cold `Query.captures` window blocked paint for 4–60 ms because predicate text lookups replayed the parse callback (one 4 KiB rope slice per capture) | Captures are lazy per 512-unit window, computed off the paint path one window per tick with a cached-chunk text callback (1 rope read per window instead of ≈700); `spansInRange` never blocks and a finished window requests a repaint. Worst tick ≈2 ms, median ≈1 ms on a 300k-unit fixture |
+| O1 | `services/files/directory-draft.ts` | Second writable text store with private undo/redo stacks and string-splice mutation (and the surface was not composed) | Text and history re-homed onto a `TextFileDocument`; edits via the document transaction API, undo/redo via the document undo tree. `tests/files/t041`, `t042` unchanged |
+| O2 | `ui/src/terminal.ts:494`, `workbench/vim-session` | UI adapter destroyed the renderer on any unhandled `q`/Ctrl-C; Normal-mode Ctrl-C relied on it | UI quits only on a workbench `'quit'`; Ctrl-C is a Vim interrupt; placeholder text and four PTY tests use `:q`/`:qa` |
+| O3 | `apps/xi/src/main.ts` | Wheel-scroll cursor clamping, ctags lookup orchestration, the only `ClockPort` and theme-file discovery lived in the composition root | `workbench/pointer/scroll.ts`, `services/navigation/ctags.ts` `createCtagsNavigationHost`, `platform/src/clock.ts`, `services/config` `discoverCustomThemeConfigs` |
+| O4 | `workbench/vim-session/host-commands.ts` | Hand-rolled word-boundary scan in workbench | `vim/motions/token-scan.ts` `tokenBoundsAt` |
+| O5 | `workbench/dispatch` | Dead `WorkbenchInputDispatcher` beside the live router | Deleted with its tests; prefix-help assertions ported |
+| O6 | persistence, config, journaled files, atomic coordinator, session | Long-lived owners without `dispose()`; session never disposed buffer coordinators | Idempotent `dispose()` with use-after-dispose rejection; session close/dispose release coordinators. `tests/services/dispose-lifecycle.test.ts` |
+| K1 | `workbench/input/router.ts:166` | `async handleKeypress` forced a promise hop and deferred key draining/paint on every ordinary key | Synchronous return; only the panel-loading branches are async. `T116-ROUTER-03` |
+| B1 | `services/language/diagnostics.ts`, `lifecycle.ts` | Publish rebuilt the flattened `all` view across every URI, scanned all entry keys per URI, sorted up to 10,000 items with `localeCompare`; cost grew with populated URIs (4 → 20 ms) | Per-URI index, numeric comparator, admission cut to 2,000 per URI at the protocol decode and at `publish` with `truncatedUris` flagged, immutable per-generation snapshot with lazily memoized `all`. `T049-PERF`: ≈1 ms flat |
+| B2 | `services/navigation/index.ts` | Unsliced synchronous `query()`; `queryAsync` sorted every match | Sync variant deleted; bounded top-N insertion. `T039-LARGE-INDEX` |
+| B3 | `platform/src/filesystem.ts` | Watcher forwarded raw events 1:1 | Per-path coalescing on a 20 ms timer, cleared on dispose/cancel; overflow immediate |
+| B4 | `services/files/index.ts` | Explorer focus/blur rebuilt every node | Focus-only republish reusing frozen arrays |
+| D1 | `document/src/text-fidelity.ts`, `rope.ts` | About seven full passes over small-file text on open | Native `includes`/`indexOf`/`isWellFormed` once, trusted metrics passed to `RopeDocument.create`; 1 MiB open ≈5 ms, 10 MiB ≈50–80 ms (diagnostic) |
+| D2 | `layout/src/viewport.ts` | Lines of 8,192–65,536 units were re-shaped every frame | Cache cap matches the shaping read cap with a 1 Mi-unit byte budget inside the 8 MiB layout envelope |
+| D3 | `selections/src/index.ts` | Singleton sets paid sort/grouping allocations per commit | Singleton fast path with identical output. `t075b` |
+
+Known limits after this pass: `q` in Normal mode still quits through the documented T038
+workbench shortcut rather than starting macro recording (a product decision outside this
+audit); the syntax theme has no `[syntax]` table in `theme.toml` yet; `truncatedUris` is not
+yet surfaced in the Problems panel; Vim oracle tests need `bun run oracle:fetch` on this host.
+
+## Fourth-pass audit and remediation, 2026-09-17
+
+Parallel-group remediation of the render, workbench, composition, vim/document and
+services paths found in the third pass but not yet closed. Each row is a defect other
+groups fixed the same day; this group (tooling/lint/import-graph) did not touch product
+code and reports these secondhand from `git status`/`tests/` for the record.
+
+| # | Owner / path | Defect | Fix and evidence |
+|---|---|---|---|
+| R1 | `ui/src/terminal.ts` | Every key produced a `refresh()` plus a duplicate `intermediateRender()`, double-rendering the frame | Single render per acknowledged frame. `tests/ui/t111-render-scheduling.test.ts` |
+| R2 | `ui/editor` | A stale syntax read forced a full-frame repaint instead of the touched rows | Per-row fallback reuse via `SyntaxFallbackRow`. `tests/ui/t053-syntax-paint.test.ts` |
+| R3 | `ui/editor/motion-paint.ts` | Insert mode always took the masked/colored paint path even with nothing to mask | Dedicated plain paint path (`paintPlainFrame`) with a cache-checked precondition. `tests/ui/t124-insert-plain-paint.test.ts` |
+| R4 | `ui/src/terminal.ts` | Rapid key bursts were not coalesced before paint | Burst coalescing on the input path. `tests/ui/t111-render-scheduling.test.ts` |
+| R5 | `layout/src/viewport.ts` | A cache hit in `project()` still allocated a fresh result on every call | Cache-hit path returns the retained value without reallocating. `tests/layout/t014-viewport.test.ts` |
+| R6 | `workbench`/`ui` | Status-line text was recomputed and republished every frame even when unchanged | Memoized status text, republished only on change |
+| R7 | `ui/src/workbench.ts` | `renderSelf` resolved cursor-follow scroll and wrote it back into the session through `onViewportAnchorChange` during paint | Anchors resolve in `syncAnchors()` (called by `refresh()`, before explicit renders and once per geometry change), memoized per view state; paint only reads them. `tests/ui/t111-render-scheduling.test.ts` |
+| R8 | `ui/src/terminal.ts` | SIGTSTP/SIGCONT handlers and `process.kill(SIGSTOP)` lived in the OpenTUI adapter | UI exposes `registerJobControl({suspend, resume})`; `platform/src/job-control.ts` `installJobControl` owns the signals and is wired by `main.ts` |
+| R9 | `ui/src/terminal.ts` | Adapter read `process.env.XI_UI_TEST_MARKERS` and wrote to stderr itself | `marker` option on `OpenTuiWorkbenchOptions`, supplied by `main.ts` |
+| W1 | `workbench/vim-session` | Command-line text was republished on every keystroke regardless of change | Publish memoized on content |
+| W2 | `workbench/vim-session` | Prefix-help lookup did the full resolution before checking whether help even applied | Early return before resolution. `tests/workbench/t123-vim-session-dispose.test.ts` |
+| W3 | `workbench` | Per-key handling allocated read-model objects even on no-op keys | Allocation removed from the no-op path |
+| W4 | `workbench` | Document-change dirty tracking recomputed instead of using the change signal | Dirty check driven off the document-change event |
+| W5 | `workbench` | `openBufferAtPath` could race two concurrent opens of the same path | Single-flight guard. `tests/workbench/t116-buffer-host.test.ts` |
+| W6 | `workbench/vim-session/pointer.ts`, `workbench/session/index.ts` | Hand-rolled word classes, hardcoded 8-column tab stops, CJK width heuristic and surrogate stepping duplicated Vim/layout semantics | Word bounds via `tokenBoundsAt`; display columns via `pointerDisplayColumn` in `vim/pointer` (which uses layout's `defaultCellWidthPolicy` and a `tabSize` parameter). `tests/workbench/t-pointer-cell.test.ts` |
+| W7 | `vim/pointer/index.ts` | Multi-click detection called `performance.now()` inside the Vim package (only clock use in the engine) | `PointerEvent.timestampMilliseconds` supplied by the UI adapter; `grep performance.now packages/vim` is empty. `tests/vim/multi/t086-pointer.test.ts` |
+| W8 | `workbench/search/index.ts` | Every dirty buffer was fully materialized per search run with an unbounded per-buffer text cache | 8 Mi-unit cap (`XI_SEARCH_BUFFER_TOO_LARGE` marker) and eviction on buffer close via `BufferHost.onBufferClosed` |
+| C1 | `apps/xi/src/main.ts`, `services/language` | LSP never received already-open buffers opened before the server attached | Backfill of open buffers into `didOpen` on server attach |
+| C2 | `services/tasks` | `TaskController` had no `dispose()`, leaking process/watcher state | Idempotent dispose wired into session teardown. `tests/tasks/t060-tasks.test.ts` |
+| C3 | `apps/xi/src/main.ts` | `XI_SYNTAX_STATE` marker payload (including `spansInRange`) was built even with markers disabled | Guarded by `XI_UI_TEST_MARKERS_ENABLED` |
+| C4 | `services/config`, `apps/xi` | `ConfigStore`/`compileConfig`/`parseLanguageConfig` never reached production; server command, file-type map and formatter came from hardcoded values and env vars | `loadStartupConfig()` reads `config.toml`/`languages.toml`; language server, languageId-by-extension, `autoFormat` and per-language formatter come from config with env vars as override. `tests/config/t036-config.test.ts`, `tests/formatting/t075-language-formatter.test.ts` |
+| C5 | `ui/theme` | Theme tokens were not validated at the config boundary | Token validation moved to the config/theme boundary |
+| C6 | `services/git`, `apps/xi`, `ui/explorer`, `ui/picker` | Git owner was a parser plus interfaces, never composed; `sidebar.git` opened Problems | `GitStatusService` (argv `git status --porcelain=v2 -z --branch` over the process port, coalesced refresh, generations), `createProcessGitMutationExecutor`, refresh after save and on watch events (≥500 ms), explorer decorations via `ExplorerTree.redecorate()` (decoration-only, no re-expand), branch in the status line, `sidebar.git` changed-files picker with `s`/`u` stage/unstage. `tests/git/t073-status-service.test.ts`, `t074-mutation-executor.test.ts`, `tests/ui/t034-workbench.test.ts` |
+| C7 | `services/files/directory-draft.ts`, `ui/directory`, `workbench/directory` | Directory-as-text (T041/T042) existed but nothing composed it | `DirectoryDraftController` (structural ports, no services import) opens a directory as a draft buffer, `:w` opens review, Enter applies through `JournaledFilesystemOperations` and re-lists, Esc cancels; `directoryReview` surface option in the UI adapter; draft tracks direct document edits. `tests/files/t041-directory-external-sync.test.ts`, `t042-directory-review-apply.test.ts`, `tests/workbench/directory/panel.test.ts` |
+| C8 | `ui/input/adapter.ts` | Dead duplicate input adapter beside the live UI input path | Deleted |
+| C9 | `apps/xi` | Composition root imported other owners by deep file path instead of entrypoints; directory-draft orchestration and handler-shaped functions lived in `main()` | All `apps/xi` imports go through `entrypoints/` (new `primitives`/`selections` entrypoints, `services/src/entrypoints/{config,files,git}.ts`); orchestration moved to `DirectoryDraftController`. `ARCH-APP-ENTRYPOINT-01`, `ARCH-COMPOSITION-ROOT-01` |
+| V1 | `vim/ex/index.ts`, `vim/search/index.ts` | Every Ex plan and `:s` outcome materialized the whole document into an unused `resultText` (two full copies for `:w`/`:q`) | `resultText`/`applyEdits`/`snapshotText` removed; tests derive expected text from `edits`. `tests/vim/ex/t028-ex.test.ts`, `tests/vim/search/t027-search.test.ts` |
+| V2 | `vim/ex` | `:m`/`:t` read more than the one line/unit they needed | Bounded to a 1-unit read. `tests/vim/ex/t028-ex.test.ts` |
+| V3 | `vim/operators/core.ts` | Unbounded segmenter windows in operator text scans | Bounded segmenter windows. `tests/vim/bounded-line-reads.test.ts` |
+| V4 | `vim/insert` | Insert repeat replayed accumulated text instead of discrete pieces | Repeat stores/replays pieces. `tests/vim/insert-repeat-pieces.test.ts`, `tests/vim/multi/t080-repeat.test.ts` |
+| V5 | `vim/registers` | Register retention had no byte budget | Budget added. `tests/vim/registers/t023-registers.test.ts` |
+| V6 | `selections/src/index.ts` | `chooseRetained` spread and sorted a group to take its minimum | Linear-scan minimum |
+| V7 | `document/src/coordinates.ts` | Per-version `lineBaseCache` was rebuilt for every snapshot wrapper | Deleted after measuring `utf8OffsetAt` at 3.4/5.1/5.2 µs for 100 KiB/1 MiB/10 MiB (rope aggregates are already O(log n)). `tests/document/t010-text-fidelity.ts` |
+| L1 | `services/language` | Oversized documents were admitted into LSP sync without a size gate | Admission check added before sync |
+| L2 | `services/language/sync.ts` | Size check happened after materializing the document text | Size check moved before materialization |
+| L3 | `services/language` | Duplicate chunked-snapshot-to-string logic across call sites | Shared `chunkedSnapshotToString` helper |
+| L4 | `services/search` | ripgrep results had no cap, no top-N ordering, and used locale compare | Capped, top-N insertion, code-unit compare. `tests/search/t043-search.test.ts` |
+| L5 | `services/navigation/ctags.ts`, `navigation/host.ts` | Every `:tag` re-read and re-parsed the tags file with `split`, uncancellable | Parsed records cached by (size, mtime), `indexOf` cursors, cancellation threaded through `HostNavigationProvider`. `tests/services/t-ctags-host.test.ts` |
+| L6 | `services/persistence/index.ts` | Each checkpoint appended a new entry and rewrote the whole journal | Same-document entries replaced in place so a checkpoint costs O(that document). `tests/persistence/checkpoint-caching.test.ts` |
+| L7 | `platform/src/filesystem.ts` | `readFile` had no byte cap | `maxBytes` enforced |
+| L8 | `platform/src/process.ts` | `streamChunks` copied every subprocess chunk | Chunks yielded as-is (all consumers read-only) |
+| L9 | `services/files/index.ts` | `applyWatchEvent` was fire-and-forget; overlapping events for one parent interleaved reconcile/publish | Per-parent in-flight guard with one queued rerun. `tests/files/watch-event-serialization.test.ts` |
+| T1 | `tools/check-import-graph.ts` | `web-tree-sitter` was allowed anywhere in `services`, not just `syntax`; `apps/xi` had no rule forcing owner imports through `entrypoints/`; `packages/services` feature directories had no import-boundary rule between each other | Three new rules plus positive/negative sentinels in `tests/architecture/contracts.ts` (`ARCH-TREE-SITTER-OWNER-01`, `ARCH-APP-ENTRYPOINT-01`, `ARCH-SERVICES-FEATURE-01`) |
+| T2 | `tools/lint`, `.oxlintrc.json` | H0 perf-lint coverage existed only in `document/src/rope.ts`; `packages/workbench/dispatch` no longer existed as a glob target; the key-path directories `workbench/vim-session`, `workbench/pointer`, `workbench/host`, `ui/src` had no H1 default | H0 annotations extended to genuine scalar/escaping-read-model kernels in layout, selections, vim motions, document transactions and UI paint (documented in `tools/lint/README.md`); dead `dispatch` glob removed and the four key-path globs added at H1, surfacing two `microtask` sites (`packages/workbench/host/index.ts` `notifySurfaceChange`, `packages/ui/src/terminal.ts` `scheduleFlush`) that coalesce same-tick work rather than defer CPU; both carry a reviewed `@xi-perf-allow` |
+| X1 | `workbench/vim-session/host-commands.ts` | A parallel agent restored the file to HEAD, erasing the third-pass O4 `tokenBoundsAt` fix | Re-applied by hand; briefs now forbid restoring any file to HEAD |
+
+There is still no worker pool: all background work in this pass remains main-thread and
+sliced rather than isolated on a worker. No release gate is certified by this pass; the
+rows above are same-day defect fixes with named tests, not a certified performance gate.
+
+Gates run after the pass on this host: `bun run check`, `test:unit`, `test:services`, `test:ui`,
+`test:startup`, every assert script under `tests/`, `bun test tests/lint`, and `test:e2e -- --suite
+interaction`. Remaining failures: `t019`/`t024` Vim oracle traces (the T121 host-clipboard `*`
+register class, unchanged by this pass) and one Xvfb `xterm` display flake in `t128-e22` that
+passes when rerun alone. Single-run diagnostics on this host after the pass (not gates, no paired Neovim run):
+`bench/performance/t116-key-output.py` key→stdout p50 1.51 / p95 3.82 / p99 10.06 / max 10.06 ms;
+`t045-typing-under-load.py` p95 1.94 / p99 4.90 / max 4.90 ms (`.artifacts/perf/fourth-pass-*.json`).
+The render-path changes (R1–R4) still need the paired `bench -- --suite interaction` comparison
+before any keystroke gate is claimed.

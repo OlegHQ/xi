@@ -83,7 +83,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t043-search-") as temporary:
         )
         os.write(master, b"\x1b")
         read_until(master, captured, lambda data: data.count(b"XI_SEARCH_CANCELLED") >= 2, 5)
-        os.write(master, b"\x03")
+        # The earlier Enter opened src/target.txt in its own split (real single-window `:q`
+        # would only close that split); `:qa` closes every window and quits.
+        os.write(master, b":qa\r")
         try:
             child.wait(timeout=5)
         except subprocess.TimeoutExpired:

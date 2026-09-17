@@ -28,10 +28,6 @@ interface LineBaseOffsets {
   readonly utf32: number;
 }
 
-// A snapshot is immutable, so cached line bases remain valid for its lifetime.
-const lineBaseCache = new WeakMap<DocumentSnapshot, Map<number, LineBaseOffsets>>();
-const MAX_LINE_BASE_CACHE_ENTRIES = 256;
-
 /** Convert a safe UTF-16 boundary to a line/character position for the snapshot's version. */
 export function offsetToPosition(
   snapshot: DocumentSnapshot,
@@ -116,32 +112,30 @@ export function positionToOffset(
     : { ok: false, error: { kind: 'invalid-column' } };
 }
 
+// Not cached: the rope keeps precomputed per-subtree UTF-8/UTF-32 byte-length aggregates
+// (rope.ts's `rootUtf8Bytes`/`rootScalars`, consumed by `countUtf8Before`/`countScalarsBefore`),
+// so `utf8OffsetAt`/`utf32OffsetAt` are already O(log n) tree descents, not O(n) scans. A
+// per-snapshot line-base cache used to sit here, but it was keyed on the snapshot wrapper
+// itself, so LSP re-sync (a fresh wrapper per version) recomputed it on every version even
+// when the underlying rope was unchanged -- while buying nothing the rope's own aggregates
+// didn't already provide in the same O(log n) budget. Measured: a 100x file-size increase
+// (100 KiB -> 10 MiB) changed the average `utf8OffsetAt` call from ~3.4us to ~5.2us, not
+// ~100x -- see the T7 benchmark referenced in docs/evidence.
 function getLineBase(snapshot: DocumentSnapshot, line: LineIndex): Result<LineBaseOffsets, DocumentReadFailure> {
-  let lines = lineBaseCache.get(snapshot);
-  if (lines === undefined) {
-    lines = new Map();
-    lineBaseCache.set(snapshot, lines);
-  }
-  const lineNumber = line as number;
-  const cached = lines.get(lineNumber);
-  if (cached !== undefined) return { ok: true, value: cached };
   const utf16Start = snapshot.lineStartOffset(line);
   if (!utf16Start.ok) return utf16Start;
   const utf8Start = snapshot.utf8OffsetAt(utf16Start.value);
   if (!utf8Start.ok) return utf8Start;
   const utf32Start = snapshot.utf32OffsetAt(utf16Start.value);
   if (!utf32Start.ok) return utf32Start;
-  const base: LineBaseOffsets = Object.freeze({
-    utf16: utf16Start.value as number,
-    utf8: utf8Start.value as number,
-    utf32: utf32Start.value as number,
-  });
-  if (lines.size >= MAX_LINE_BASE_CACHE_ENTRIES) {
-    const oldest = lines.keys().next().value;
-    if (typeof oldest === 'number') lines.delete(oldest);
-  }
-  lines.set(lineNumber, base);
-  return { ok: true, value: base };
+  return {
+    ok: true,
+    value: Object.freeze({
+      utf16: utf16Start.value as number,
+      utf8: utf8Start.value as number,
+      utf32: utf32Start.value as number,
+    }),
+  };
 }
 
 function utf16Offset(value: number): Utf16Offset { return value as Utf16Offset; }

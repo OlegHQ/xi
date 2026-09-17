@@ -1,4 +1,4 @@
-import type { CommandId, Result } from '../../contracts/src/index.ts';
+import type { CancellationToken, CommandId, PlatformFailure, Result } from '../../contracts/src/index.ts';
 
 /** Configuration files are parsed as untrusted text before this owner validates them. */
 export interface ConfigDiagnostic {
@@ -18,7 +18,8 @@ export interface ConfigDiagnostic {
     | 'binding-prefix-conflict'
     | 'native-alias-collision'
     | 'untrusted-executable-change'
-    | 'unsupported-schema';
+    | 'unsupported-schema'
+    | 'disposed';
   readonly message: string;
 }
 
@@ -173,6 +174,7 @@ export interface CapturedConfigGeneration {
 
 export class ConfigStore {
   #snapshot: CompiledConfig;
+  #disposed = false;
 
   constructor(initial: CompiledConfig) {
     this.#snapshot = initial;
@@ -190,6 +192,7 @@ export class ConfigStore {
 
   /** Compile first, then publish one immutable generation. Failed reloads are invisible. */
   reload(layers: readonly ConfigLayer[], options: ConfigCompilerOptions = {}): ConfigCompileResult {
+    if (this.#disposed) return { ok: false, error: { diagnostics: Object.freeze([disposedDiagnostic()]) } };
     const result = compileConfig(layers, {
       ...options,
       initialGeneration: this.#snapshot.generation,
@@ -198,6 +201,15 @@ export class ConfigStore {
     if (result.ok) this.#snapshot = result.value;
     return result;
   }
+
+  /** Idempotent. Later reloads fail with a `disposed` diagnostic; `snapshot` keeps returning the last compiled config. */
+  dispose(): void {
+    this.#disposed = true;
+  }
+}
+
+function disposedDiagnostic(): ConfigDiagnostic {
+  return { fileName: '<config-store>', line: 1, column: 1, path: '$', code: 'disposed', message: 'config store is disposed' };
 }
 
 const defaultEditor: EditorConfig = Object.freeze({
@@ -433,6 +445,16 @@ export function parseTasksConfig(source: string, fileName = 'tasks.toml'): Resul
 
 export interface ThemeConfig { readonly schemaVersion: 1; readonly name: string; readonly tokens: Readonly<Record<string, string>>; }
 
+/** The base surface tokens every `WorkbenchTheme` (packages/ui/theme) requires -- kept here,
+ * next to the theme.toml parser, so token-schema validation lives with the schema it validates
+ * rather than in the composition root. Only main.ts maps a validated token table into the UI's
+ * `WorkbenchTheme` launch shape, since only it knows that type. */
+export const REQUIRED_WORKBENCH_THEME_TOKENS = Object.freeze(['background', 'surface', 'surface.active', 'foreground', 'muted', 'border', 'accent', 'error'] as const);
+
+export function hasRequiredWorkbenchThemeTokens(tokens: Readonly<Record<string, string>>): boolean {
+  return REQUIRED_WORKBENCH_THEME_TOKENS.every((key) => tokens[key] !== undefined);
+}
+
 export function parseThemeConfig(source: string, fileName = 'theme.toml'): Result<ThemeConfig, ConfigCompileFailure> {
   const parsed = parseToml(source, fileName);
   if (!parsed.ok) return parsed;
@@ -450,6 +472,45 @@ export function parseThemeConfig(source: string, fileName = 'theme.toml'): Resul
     else output[key] = value;
   }
   return diagnostics.length === 0 ? { ok: true, value: Object.freeze({ schemaVersion: 1, name: name as string, tokens: Object.freeze(output) }) } : { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
+}
+
+/** Filesystem operations custom-theme discovery needs: reading one theme file and listing the
+ * themes directory. A narrow slice of the platform filesystem adapter, not the adapter itself,
+ * so this module never depends on `packages/platform`. */
+export interface ThemeDiscoveryFilesystemPort {
+  readFile(path: string, cancellation: CancellationToken): Promise<Result<Uint8Array, PlatformFailure>>;
+  enumerateDirectory(path: string, root: string, cancellation: CancellationToken): Promise<Result<readonly { readonly kind: string; readonly name: string }[], PlatformFailure>>;
+}
+
+export interface DiscoveredCustomTheme { readonly id: string; readonly name: string; readonly tokens: Readonly<Record<string, string>>; }
+export interface ThemeDiscoveryDiagnostic { readonly fileName: string; readonly message: string; }
+
+/** Discover and parse every `*.toml` file directly under `directory` as a theme config. A
+ * missing directory is the common case (no custom themes) and produces an empty list, not an
+ * error. An individual unreadable or invalid file is reported as a diagnostic and skipped --
+ * it never partially applies and never blocks the other files or the caller's startup. */
+export async function discoverCustomThemeConfigs(
+  filesystem: ThemeDiscoveryFilesystemPort,
+  directory: string,
+  cancellation: CancellationToken,
+): Promise<{ readonly themes: ReadonlyMap<string, DiscoveredCustomTheme>; readonly diagnostics: readonly ThemeDiscoveryDiagnostic[] }> {
+  const listed = await filesystem.enumerateDirectory(directory, directory, cancellation);
+  const themes = new Map<string, DiscoveredCustomTheme>();
+  const diagnostics: ThemeDiscoveryDiagnostic[] = [];
+  if (!listed.ok) return { themes, diagnostics };
+  for (const entry of listed.value) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.toml')) continue;
+    const path = `${directory}/${entry.name}`;
+    const read = await filesystem.readFile(path, cancellation);
+    if (!read.ok) { diagnostics.push({ fileName: entry.name, message: `could not read theme file ${entry.name}: ${read.error.message}` }); continue; }
+    const parsed = parseThemeConfig(new TextDecoder('utf-8').decode(read.value), entry.name);
+    if (!parsed.ok) {
+      diagnostics.push({ fileName: entry.name, message: `theme file ${entry.name} is invalid: ${parsed.error.diagnostics.map((d) => d.message).join('; ')}` });
+      continue;
+    }
+    themes.set(entry.name.replace(/\.toml$/u, ''), { id: entry.name.replace(/\.toml$/u, ''), name: parsed.value.name, tokens: parsed.value.tokens });
+  }
+  return { themes, diagnostics };
 }
 
 export const DEFAULT_CONFIG_TOML = `schema-version = 1

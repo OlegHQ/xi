@@ -109,6 +109,7 @@ export type {
   VimStructuralMotionOutcome,
 } from '../motions/structural';
 export { resolveVimWordMotion } from '../motions/word';
+export { tokenBoundsAt } from '../motions/token-scan';
 export type {
   VimWordMotionCursor,
   VimWordMotionFailure,
@@ -578,5 +579,5 @@ export type {
   PositionPredicate,
   PositionRelation,
 } from '../pattern/index';
-export { PointerGestureController } from '../pointer/index';
+export { PointerGestureController, pointerDisplayColumn } from '../pointer/index';
 export type { PointerGestureKind, PointerCell, PointerTextTarget, PointerEvent, PointerSelectionIntent, PointerEnginePort } from '../pointer/index';

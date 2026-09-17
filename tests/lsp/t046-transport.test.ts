@@ -311,6 +311,20 @@ test('LSP-T046-OVERSIZED-FRAME-01', 'rejects a declared frame over the configure
   await transport.dispose();
 });
 
+test('LSP-T046-OVERSIZED-OUTGOING-BODY-01', 'rejects only an oversized outgoing notification; the transport stays alive for other messages', async () => {
+  const peer = new FakeLspPeer();
+  const received: unknown[] = [];
+  peer.onMessage((message) => {
+    received.push(message);
+  });
+  const transport = await start(peer, { maxBodyBytes: 100 });
+  await expectRejected(transport.notify('textDocument/didOpen', { text: 'x'.repeat(200) }), 'exceeds 100 bytes');
+  equal(transport.state, 'running', 'oversized outgoing body does not fail the transport');
+  await transport.notify('textDocument/didOpen', { text: 'small' });
+  await waitFor(() => received.length === 1, 'transport still delivers a normal-size message after the rejection');
+  await transport.dispose();
+});
+
 test('LSP-T046-EOF-MID-BODY-01', 'fails a truncated body on stdout EOF', async () => {
   const peer = new FakeLspPeer();
   const transport = await start(peer);

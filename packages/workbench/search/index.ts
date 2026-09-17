@@ -5,6 +5,13 @@ import type { BufferHost } from '../host';
 
 export type { OwnedVimKeyEvent as SearchKeyEvent };
 
+// Mirrors the shape of the `maxResults: 10_000` cap on the query itself (see #runQuery
+// below): an in-memory search has no business fully materializing an arbitrarily large
+// dirty buffer on every keystroke either. 8 MiB of UTF-16 code units comfortably covers any
+// file someone is actively editing; larger dirty buffers are skipped (with a marker) rather
+// than searched, exactly like a disk file search's own size limits.
+const MAX_DIRTY_BUFFER_SEARCH_UTF16 = 8 * 1024 * 1024;
+
 /** Mirrors `packages/services/search`'s `SearchQuery` structurally -- workbench cannot import
  * `packages/services`, not even types, so only the fields this controller actually reads or
  * constructs are declared here. */
@@ -212,9 +219,14 @@ export class SearchController {
   // every query would repeat work an unchanged buffer already paid for on the prior keystroke.
   readonly #bufferTextCache = new Map<DocumentId, { readonly version: number; readonly text: string }>();
   readonly #options: SearchControllerOptions;
+  readonly #bufferClosedSubscription: Disposable;
 
   constructor(options: SearchControllerOptions) {
     this.#options = options;
+    // Without this, a closed buffer's cached text (and the memory it holds) would only ever
+    // be released by this controller's own dispose(), i.e. never for the lifetime of a long
+    // session that opens and closes many files.
+    this.#bufferClosedSubscription = options.host.onBufferClosed((bufferId) => { this.#bufferTextCache.delete(bufferId); });
   }
 
   get isOpen(): boolean { return this.#open; }
@@ -253,12 +265,18 @@ export class SearchController {
       if (!buffer.dirty) continue;
       const documentForBuffer = this.#options.host.documents.get(buffer.bufferId);
       if (documentForBuffer === undefined) continue;
+      const snapshot = documentForBuffer.snapshot();
+      if (snapshot.lengthUtf16 > MAX_DIRTY_BUFFER_SEARCH_UTF16) {
+        this.#bufferTextCache.delete(buffer.bufferId);
+        this.#options.marker('XI_SEARCH_BUFFER_TOO_LARGE', { path: buffer.path, lengthUtf16: snapshot.lengthUtf16 });
+        continue;
+      }
       const cached = this.#bufferTextCache.get(buffer.bufferId);
       let text: string;
       if (cached !== undefined && cached.version === buffer.documentVersion) {
         text = cached.text;
       } else {
-        const content = fullDocumentText(documentForBuffer.snapshot());
+        const content = fullDocumentText(snapshot);
         if (!content.ok) continue;
         text = content.value;
         this.#bufferTextCache.set(buffer.bufferId, { version: buffer.documentVersion, text });
@@ -498,6 +516,7 @@ export class SearchController {
   dispose(): void {
     this.#subscription?.dispose();
     this.#subscription = undefined;
+    this.#bufferClosedSubscription.dispose();
     this.#bufferTextCache.clear();
   }
 

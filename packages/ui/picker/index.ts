@@ -13,8 +13,8 @@ import {
   type FocusTarget,
 } from '../../workbench/src/index';
 
-export type PickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config';
-export type PickerEntryKind = 'file' | 'buffer' | 'command' | 'theme' | 'config';
+export type PickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git';
+export type PickerEntryKind = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git';
 
 /** Structural copy of the navigation service DTO; UI never imports services. */
 export interface PickerEntry {
@@ -396,5 +396,6 @@ function modeLabel(mode: PickerMode): string {
     case 'command': return 'Commands';
     case 'theme': return 'Themes';
     case 'config': return 'Config';
+    case 'git': return 'Git';
   }
 }

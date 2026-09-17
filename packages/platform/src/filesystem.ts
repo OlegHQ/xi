@@ -7,6 +7,7 @@ import type {
   FileWatchEvent,
   FilesystemPort,
   PlatformFailure,
+  ReadFileOptions,
   Result,
 } from '../../contracts/src/index.ts';
 
@@ -39,6 +40,9 @@ export interface WorkspaceDirectoryWatchEvent {
   readonly path: string;
 }
 
+/** Coalescing window for `watchDirectory`'s 'changed' events; bounded below the 8ms/25ms latency budgets. */
+const COALESCE_MILLISECONDS = 20;
+
 /**
  * Native asynchronous filesystem adapter. Persistence owns the write policy;
  * this adapter only supplies the platform port and the atomic primitive.
@@ -50,9 +54,18 @@ export class NodeFilesystemPort implements FilesystemPort {
   resolvePath(base: string, path: string): string { return resolve(base, path); }
   directoryPath(path: string): string { return dirname(path); }
 
-  async readFile(path: string, cancellation: CancellationToken): Promise<Result<Uint8Array, PlatformFailure>> {
+  async readFile(path: string, cancellation: CancellationToken, options?: ReadFileOptions): Promise<Result<Uint8Array, PlatformFailure>> {
     if (cancellation.isCancelled) return cancelled();
     try {
+      if (options?.maxBytes !== undefined) {
+        // Stat first so an oversized file is rejected before any of it is read into memory,
+        // instead of materializing the whole file only to discover it is too large.
+        const info = await fs.stat(path);
+        if (cancellation.isCancelled) return cancelled();
+        if (info.size > options.maxBytes) {
+          return { ok: false, error: { code: 'file-too-large', message: `${path} is ${String(info.size)} bytes, exceeds the ${String(options.maxBytes)}-byte read bound`, retryable: false } };
+        }
+      }
       const bytes = await fs.readFile(path);
       if (cancellation.isCancelled) return cancelled();
       return { ok: true, value: new Uint8Array(bytes) };
@@ -206,10 +219,24 @@ export class NodeFilesystemPort implements FilesystemPort {
     if (cancellation.isCancelled) return cancelled();
     try {
       let disposed = false;
+      // Raw fs.watch can fire many events for one logical change (e.g. a single
+      // write touching a file's mtime and size separately). Coalesce per path in
+      // a short window instead of forwarding 1:1, so a write burst to one file
+      // reaches the listener as one 'changed' event rather than a flood.
+      const pending = new Map<string, WorkspaceDirectoryWatchEvent>();
+      let flushTimer: ReturnType<typeof setTimeout> | undefined;
+      const flush = (): void => {
+        flushTimer = undefined;
+        if (disposed || pending.size === 0) return;
+        const events = [...pending.values()];
+        pending.clear();
+        for (const event of events) listener(event);
+      };
       const onWatchEvent = (_eventType: string, filename: string | Buffer | null): void => {
         if (cancellation.isCancelled) return;
         const child = filename === undefined || filename === null ? path : join(path, filename.toString());
-        listener({ kind: 'changed', path: child });
+        pending.set(child, { kind: 'changed', path: child });
+        if (flushTimer === undefined) flushTimer = setTimeout(flush, COALESCE_MILLISECONDS);
       };
       // Recursive watching keeps expanded subdirectories live without a watcher per
       // directory; not every platform/Node build supports it (Linux support is recent),
@@ -224,16 +251,20 @@ export class NodeFilesystemPort implements FilesystemPort {
       // A removed watched directory, EMFILE or an inotify overflow surfaces as an
       // 'error' event; left unhandled it is an uncaught exception that crashes the
       // process. Report it through the existing overflow event instead of the
-      // watcher going silent or the process going down.
+      // watcher going silent or the process going down. Overflow is reported
+      // immediately, bypassing coalescing, and any pending coalesced flush is
+      // dropped since the watcher is closing anyway.
       watcher.on('error', () => {
         if (disposed) return;
         disposed = true;
+        if (flushTimer !== undefined) { clearTimeout(flushTimer); flushTimer = undefined; }
         watcher.close();
         if (!cancellation.isCancelled) listener({ kind: 'overflow', path });
       });
       const cancellationSubscription = cancellation.onCancel(() => {
         if (disposed) return;
         disposed = true;
+        if (flushTimer !== undefined) { clearTimeout(flushTimer); flushTimer = undefined; }
         watcher.close();
       });
       return {
@@ -242,6 +273,7 @@ export class NodeFilesystemPort implements FilesystemPort {
           dispose() {
             if (disposed) return;
             disposed = true;
+            if (flushTimer !== undefined) { clearTimeout(flushTimer); flushTimer = undefined; }
             cancellationSubscription.dispose();
             watcher.close();
           },

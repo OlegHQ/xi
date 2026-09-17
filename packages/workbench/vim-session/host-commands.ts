@@ -2,6 +2,7 @@ import { asLineIndex, asUtf16Offset } from '../../contracts/src/index';
 import type { DocumentSnapshot } from '../../document/src/index';
 import type { SelectionSetSnapshot } from '../../selections/src/index';
 import type { VimHostCommand } from '../../vim/src/index';
+import { tokenBoundsAt } from '../../vim/src/index';
 
 export interface HostTarget {
   readonly target: string;
@@ -24,12 +25,9 @@ export function hostTarget(snapshot: DocumentSnapshot, member: SelectionSetSnaps
   const text = snapshot.slice(start.value, end.value);
   if (!text.ok) return undefined;
   const cursor = Math.min(Math.max(0, (member.anchor.at.offset as number) - (start.value as number)), text.value.length);
-  if (cursor >= text.value.length || !isHostTokenCharacter(text.value[cursor] ?? '')) return undefined;
-  let tokenStart = cursor;
-  while (tokenStart > 0 && isHostTokenCharacter(text.value[tokenStart - 1] ?? '')) tokenStart -= 1;
-  let tokenEnd = cursor + 1;
-  while (tokenEnd < text.value.length && isHostTokenCharacter(text.value[tokenEnd] ?? '')) tokenEnd += 1;
-  const raw = text.value.slice(tokenStart, tokenEnd);
+  const bounds = tokenBoundsAt(text.value, cursor, isHostTokenCharacter);
+  if (bounds === undefined) return undefined;
+  const raw = text.value.slice(bounds.start, bounds.end);
   if (raw.length === 0 || raw.length > 4096) return undefined;
   const numbered = /^(.*):([1-9][0-9]*)$/u.exec(raw);
   if (numbered?.[1] === undefined || numbered[1].length === 0) return { target: raw };

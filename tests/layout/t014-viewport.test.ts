@@ -436,6 +436,71 @@ function checkHorizontalScrollFollowsCursorOffScreen(): void {
   console.log('T014-HSCROLL-01 passed: resolveScrollAnchor scrolls horizontally to keep an off-screen cursor column visible and unclipped.');
 }
 
+/**
+ * Regression for the shaping/line-cache mismatch: `readVisibleLineText` reads up to
+ * `MAX_SOURCE_PREFIX_UTF16` (65,536) UTF-16 units, but the line cache used to cap
+ * cacheable lines at 8,192 units, so any line between those two bounds was
+ * re-shaped every single frame and never cached. A 20,000-unit line is within the
+ * fixed range that regressed.
+ */
+function checkLongLineHitsLineCacheOnSecondProjection(): void {
+  const longLine = Array.from({ length: 20_000 }, (_value, index) => String.fromCharCode(97 + (index % 26))).join('');
+  const document = editable(longLine);
+  const layout = new ViewportLayout();
+  const selection = selectionAt(document, 0);
+  const widthCells = 100;
+  const heightCells = 50;
+  // width * height * 4 = 20,000, exactly covering the line so readVisibleLineText's
+  // prefix is complete and the line origin/no-annotation conditions make it cacheable.
+  const baseInput = {
+    snapshot: document.snapshot(),
+    selection,
+    widthCells,
+    heightCells,
+    options: { wrap: true },
+  } satisfies Omit<ViewportProjectionInput, 'viewId'>;
+
+  const first = layout.project({ viewId: identifier<ViewId>('T014-longline-view-a'), ...baseInput });
+  if (!first.ok) throw new Error(`T014-LONG-LINE-CACHE-01 first projection failed: ${first.error.kind}`);
+  const warm = layout.cacheStats;
+  assert.ok(warm.lineCacheMisses >= 1, 'T014-LONG-LINE-CACHE-01 the first projection shapes the long line at least once');
+
+  // A different viewId changes the geometry/frame cache key so this projection re-runs
+  // the per-line shaping loop instead of short-circuiting on the whole-frame cache,
+  // while every input that feeds the line-cache key (text, width, wrap, tabSize,
+  // start column, horizontal scroll, width policy) stays identical.
+  const second = layout.project({ viewId: identifier<ViewId>('T014-longline-view-b'), ...baseInput });
+  if (!second.ok) throw new Error(`T014-LONG-LINE-CACHE-01 second projection failed: ${second.error.kind}`);
+  const after = layout.cacheStats;
+
+  assert.equal(after.lineCacheHits - warm.lineCacheHits, 1, 'T014-LONG-LINE-CACHE-01 the second projection of the same 20,000-unit line hits the line cache');
+  assert.equal(after.lineCacheMisses - warm.lineCacheMisses, 0, 'T014-LONG-LINE-CACHE-01 the second projection does not re-shape the long line');
+  assert.ok(after.retainedLineLayouts >= 1, 'T014-LONG-LINE-CACHE-01 the long line layout stays retained');
+  console.log('T014-LONG-LINE-CACHE-01 passed: a 20,000-unit line (between the old 8,192 cache cap and the 65,536 shaping read cap) is cached and reused on the second projection.');
+}
+
+/**
+ * Regression: a repeat `project()` call with input identical to the immediately
+ * preceding one (e.g. the second render pass of a double-flush key, or a redundant
+ * re-render) used to always allocate a brand-new `VisibleFrame` object with a bumped
+ * `frameId`, even on a full cache hit. That broke identity-keyed downstream caches
+ * (e.g. `canPaintPlainFrameCached`'s `WeakMap` in packages/ui/editor/motion-paint.ts)
+ * on every such repeat. The fix returns the exact same frame object for a repeat call.
+ */
+function checkRepeatProjectionReturnsSameFrameObject(): void {
+  const document = editable('alpha\nbeta\ngamma\n');
+  const layout = new ViewportLayout();
+  const selection = selectionAt(document, 0);
+  const first = project(layout, document, 40, 10, selection);
+  const warm = layout.cacheStats;
+  const second = project(layout, document, 40, 10, selection);
+  const after = layout.cacheStats;
+  assert.equal(second, first, 'T014-REPEAT-01 an immediate repeat projection with identical input returns the same frame object');
+  assert.equal(second.identity.frameId, first.identity.frameId, 'T014-REPEAT-02 the repeat frame keeps the same frameId instead of bumping it');
+  assert.equal(after.frameCacheHits - warm.frameCacheHits, 1, 'T014-REPEAT-03 the repeat call is recorded as a frame cache hit');
+  console.log('T014-REPEAT-01 passed: an immediate repeat project() call reuses the same frame object and frameId.');
+}
+
 function identifier<T extends string>(value: string): T {
   const result = asIdentifier<T>(value, 'fixture-id');
   if (!result.ok) throw new Error(result.error.message);
@@ -454,3 +519,5 @@ checkCustomWidthAndEmptyLinePolicies();
 checkRaggedRowsAndWideGlyphClippedAtViewportEdge();
 checkTypingOnFirstLineKeepsLowerRowContentIdentityAndShiftsOffsetsCorrectly();
 checkHorizontalScrollFollowsCursorOffScreen();
+checkLongLineHitsLineCacheOnSecondProjection();
+checkRepeatProjectionReturnsSameFrameObject();

@@ -164,6 +164,7 @@ export class DocumentChangeMap {
    * Endpoints at the same offset may differ by affinity and retain their input order.
    */
   mapSortedAnchors(anchors: readonly DocumentAnchor[]): Result<readonly VersionedAnchor[], ChangeMapFailure> {
+    // @xi-perf H1 DOC-COORDINATES -- Sorted anchor/edit sweep producing the escaping mapped-anchor read model, bounded by O(endpoint+edit count).
     const mapped: VersionedAnchor[] = [];
     let editIndex = 0;
     let delta = 0;

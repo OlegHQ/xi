@@ -1,3 +1,12 @@
+// `String.prototype.isWellFormed` (ES2024) exists on the pinned Bun/JavaScriptCore runtime
+// this project targets, but the repo's `lib` compiler option is ES2022. Declare it locally
+// rather than widening `lib` repo-wide.
+declare global {
+  interface String {
+    isWellFormed(): boolean;
+  }
+}
+
 import {
   asDocumentVersion,
   asRevisionId,
@@ -139,11 +148,20 @@ export function openTextDocument(
   if (decoded.includes('\0')) {
     return { kind: 'read-only', document: new ReadOnlyByteDocument(id, bytes, 'binary-content') };
   }
+  // Scan once and reuse: `hasCarriageReturn` feeds normalizeLineEndings (skipping its own
+  // includes('\r')) and `wellFormed` feeds RopeDocument.create's trusted-metrics fast path
+  // (skipping its isNormalizedText re-scan). Native String methods here (measured) beat a
+  // hand-rolled combined per-char loop -- see tests/document/t010-text-fidelity.ts open-scan bench.
+  const hasCarriageReturn = decoded.includes('\r');
+  const wellFormed = decoded.isWellFormed();
 
-  const normalized = normalizeLineEndings(decoded, fileFormat);
+  const normalized = normalizeLineEndings(decoded, fileFormat, hasCarriageReturn);
   if (normalized === undefined) {
     return { kind: 'read-only', document: new ReadOnlyByteDocument(id, bytes, 'ambiguous-line-endings') };
   }
+  // normalizeLineEndings only returns text still containing '\r' when hasCarriageReturn was
+  // true (see its 'unix'/'dos'-without-crlf branches); skip the recheck otherwise.
+  const normalizedHasCarriageReturn = hasCarriageReturn && normalized.text.includes('\r');
   const opened = TextFileDocument.create(
     id,
     normalized.text,
@@ -151,7 +169,10 @@ export function openTextDocument(
     normalized.defaultLineEnding,
     hasUtf8Bom,
     seed,
-    normalized.text.includes('\r') ? 'literal-control' : undefined,
+    normalizedHasCarriageReturn ? 'literal-control' : undefined,
+    // Safe whenever the non-literal-control branch above is taken: CR replacement is an
+    // ASCII-only rewrite that cannot change UTF-16 well-formedness.
+    wellFormed,
   );
   if (!opened.ok) throw new Error(`normalized-utf8-document-rejected:${opened.error.kind}`);
   return {
@@ -378,6 +399,8 @@ export class TextFileDocument {
     hasUtf8Bom = false,
     seed = 41027,
     initialTextIntent?: DocumentTextIntent,
+    /** Caller already proved `normalizedText` has no CR and is well-formed UTF-16 (see `RopeDocument.create`). */
+    trustedNormalizedText = false,
   ): Result<TextFileDocument, TextDocumentCreateFailure> {
     if ((!Array.isArray(lineEndings) && !(lineEndings instanceof LineEndingSequence))
       || !isLineEnding(defaultLineEnding)
@@ -390,7 +413,7 @@ export class TextFileDocument {
     }
     const textDocument = initialTextIntent === 'literal-control'
       ? RopeDocument.createWithLiteralCRContent(id, normalizedText, seed)
-      : RopeDocument.create(id, normalizedText, seed);
+      : RopeDocument.create(id, normalizedText, seed, trustedNormalizedText);
     if (!textDocument.ok) return { ok: false, error: textDocument.error };
     const lineEndingSequence = lineEndings instanceof LineEndingSequence
       ? lineEndings
@@ -1293,9 +1316,10 @@ function transformLineEndings(
 function normalizeLineEndings(
   text: string,
   fileFormat: TextFileFormat,
+  hasCarriageReturn: boolean,
 ): { readonly text: string; readonly lineEndingSequence: LineEndingSequence; readonly defaultLineEnding: LineEnding } | undefined {
-  if (fileFormat === 'auto' && hasLoneCarriageReturn(text)) return undefined;
-  const hasCarriageReturn = text.includes('\r');
+  // hasLoneCarriageReturn cannot be true when the caller's scan already found no CR at all.
+  if (fileFormat === 'auto' && hasCarriageReturn && hasLoneCarriageReturn(text)) return undefined;
   if (!hasCarriageReturn) {
     return { text, lineEndingSequence: LineEndingSequence.fromUniform(countLineFeeds(text), 'lf'), defaultLineEnding: 'lf' };
   }
@@ -1382,8 +1406,10 @@ function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
 }
 
 function countLineFeeds(text: string): number {
+  // indexOf is a native vectorized scan; measured ~3x faster than a per-char charCodeAt loop
+  // for multi-MiB buffers (see tests/document/t010-text-fidelity.ts open-scan bench).
   let count = 0;
-  for (let index = 0; index < text.length; index += 1) if (text.charCodeAt(index) === 10) count += 1;
+  for (let offset = text.indexOf('\n'); offset >= 0; offset = text.indexOf('\n', offset + 1)) count += 1;
   return count;
 }
 

@@ -1,4 +1,5 @@
-import type { Disposable, Result } from '../../contracts/src/index';
+import { CancellationSource } from '../../contracts/src/index';
+import type { Disposable, PlatformFailure, ProcessPort, Result } from '../../contracts/src/index';
 
 export type GitEntryState = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'ignored' | 'conflicted';
 export interface GitStatusEntry { readonly path: string; readonly originalPath?: string; readonly state: GitEntryState; readonly indexCode: string; readonly worktreeCode: string; readonly staged: boolean; readonly unstaged: boolean; readonly conflict: boolean; }
@@ -51,4 +52,175 @@ export class GitHistoryController implements Disposable {
   conflict(path: string): GitConflictState | undefined { return this.#conflicts.get(path); }
   markResolved(path: string, gitUnmerged: boolean): Result<void, GitFailure> { const state = this.#conflicts.get(path); if (state === undefined) return { ok: false, error: { kind: 'unavailable', message: 'conflict path not tracked' } }; if (gitUnmerged) return { ok: false, error: { kind: 'stale', message: 'Git still reports unmerged entries' } }; this.#conflicts.set(path, Object.freeze({ ...state, unresolved: false })); return { ok: true, value: undefined }; }
   dispose(): void { this.#disposed = true; this.#history = Object.freeze([]); this.#conflicts.clear(); }
+}
+
+const DEFAULT_STATUS_TIMEOUT_MILLISECONDS = 5_000;
+const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+export interface GitStatusServiceOptions {
+  readonly process: ProcessPort;
+  readonly root: string;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly timeoutMilliseconds?: number;
+}
+
+/**
+ * Runs `git status --porcelain=v2 -z --branch` through the platform process port,
+ * publishes into a GitStatusCache with an increasing generation and coalesces
+ * concurrent refresh requests into at most one process in flight plus one rerun.
+ */
+export class GitStatusService implements Disposable {
+  readonly #process: ProcessPort;
+  readonly #root: string;
+  readonly #env: Readonly<Record<string, string>>;
+  readonly #timeoutMilliseconds: number;
+  readonly #cache = new GitStatusCache();
+  readonly #listeners = new Set<(snapshot: GitStatusSnapshot) => void>();
+  #generation = 0;
+  #running = false;
+  #rerunRequested = false;
+  #notRepo = false;
+  #disposed = false;
+
+  constructor(options: GitStatusServiceOptions) {
+    this.#process = options.process;
+    this.#root = options.root;
+    this.#env = options.env ?? {};
+    this.#timeoutMilliseconds = options.timeoutMilliseconds ?? DEFAULT_STATUS_TIMEOUT_MILLISECONDS;
+  }
+
+  get snapshot(): GitStatusSnapshot | undefined { return this.#cache.snapshot; }
+
+  subscribe(listener: (snapshot: GitStatusSnapshot) => void): Disposable {
+    if (this.#disposed) return { dispose: () => {} };
+    this.#listeners.add(listener);
+    return { dispose: () => { this.#listeners.delete(listener); } };
+  }
+
+  async refresh(): Promise<void> {
+    if (this.#disposed || this.#notRepo) return;
+    if (this.#running) { this.#rerunRequested = true; return; }
+    this.#running = true;
+    try {
+      do {
+        this.#rerunRequested = false;
+        await this.#runOnce();
+      } while (this.#rerunRequested && !this.#disposed && !this.#notRepo);
+    } finally {
+      this.#running = false;
+    }
+  }
+
+  async #runOnce(): Promise<void> {
+    const generation = ++this.#generation;
+    const cancellation = new CancellationSource();
+    const spawned = await this.#process.spawn({
+      argv: ['git', 'status', '--porcelain=v2', '-z', '--branch'],
+      cwd: this.#root,
+      env: this.#env,
+      stdin: 'ignore',
+      timeoutMilliseconds: this.#timeoutMilliseconds,
+      cancellation: cancellation.token,
+    });
+    if (!spawned.ok) { this.#notRepo = true; this.#publishEmpty(generation); return; }
+    const handle = spawned.value;
+    try {
+      const [stdout, , exit] = await Promise.all([
+        drain(handle.stdout, DEFAULT_MAX_OUTPUT_BYTES),
+        drain(handle.stderr, DEFAULT_MAX_OUTPUT_BYTES),
+        handle.exit,
+      ]);
+      if (!exit.ok || exit.value.code !== 0 || !stdout.ok) { this.#notRepo = true; this.#publishEmpty(generation); return; }
+      const branch = parseBranch(stdout.value);
+      const parsed = parsePorcelainV2Z(this.#root, stdout.value, generation, branch);
+      if (!parsed.ok) return;
+      this.#cache.publish(parsed.value);
+      for (const listener of this.#listeners) listener(parsed.value);
+    } finally {
+      try { handle.dispose(); } catch { /* process exit owns final cleanup */ }
+    }
+  }
+
+  #publishEmpty(generation: number): void {
+    const empty: GitStatusSnapshot = Object.freeze({ root: this.#root, generation, entries: Object.freeze([]), branch: undefined });
+    this.#cache.publish(empty);
+    for (const listener of this.#listeners) listener(empty);
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    this.#listeners.clear();
+    this.#cache.dispose();
+  }
+}
+
+function parseBranch(bytes: Uint8Array): string | undefined {
+  let text: string;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { return undefined; }
+  const match = /# branch\.head (\S+)/u.exec(text);
+  return match?.[1] === undefined || match[1] === '(detached)' ? undefined : match[1];
+}
+
+async function drain(stream: AsyncIterable<Uint8Array>, limit: number): Promise<Result<Uint8Array, PlatformFailure>> {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for await (const chunk of stream) {
+      size += chunk.byteLength;
+      if (size > limit) return { ok: false, error: { code: 'output-limit', message: 'git output exceeded limit', retryable: false } };
+      chunks.push(chunk);
+    }
+  } catch (error: unknown) {
+    return { ok: false, error: { code: 'read-failed', message: error instanceof Error ? error.message : 'git output could not be read', retryable: false } };
+  }
+  const output = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength; }
+  return { ok: true, value: output };
+}
+
+/** GitMutationExecutor implementation over the platform process port; stdin carries commit messages. */
+export function createProcessGitMutationExecutor(process: ProcessPort, root: string, env: Readonly<Record<string, string>> = {}): GitMutationExecutor {
+  return {
+    async run(argv: readonly string[], input?: string) {
+      if (argv.length === 0) return { ok: false, error: { kind: 'apply', message: 'git mutation has no argv' } };
+      const cancellation = new CancellationSource();
+      const spawned = await process.spawn({
+        argv: argv as [string, ...string[]],
+        cwd: root,
+        env,
+        stdin: input === undefined ? 'ignore' : 'pipe',
+        timeoutMilliseconds: DEFAULT_STATUS_TIMEOUT_MILLISECONDS,
+        cancellation: cancellation.token,
+      });
+      if (!spawned.ok) return { ok: false, error: { kind: 'unavailable', message: spawned.error.message } };
+      const handle = spawned.value;
+      try {
+        if (input !== undefined) {
+          if (handle.stdin === null) return { ok: false, error: { kind: 'unavailable', message: 'git process has no stdin pipe' } };
+          const written = await handle.stdin.write(new TextEncoder().encode(input));
+          if (!written.ok) return { ok: false, error: { kind: 'unavailable', message: written.error.message } };
+          const closed = await handle.stdin.close();
+          if (!closed.ok) return { ok: false, error: { kind: 'unavailable', message: closed.error.message } };
+        }
+        const [stdout, stderr, exit] = await Promise.all([
+          drain(handle.stdout, DEFAULT_MAX_OUTPUT_BYTES),
+          drain(handle.stderr, DEFAULT_MAX_OUTPUT_BYTES),
+          handle.exit,
+        ]);
+        if (!exit.ok) return { ok: false, error: { kind: 'unavailable', message: exit.error.message } };
+        const decoder = new TextDecoder('utf-8');
+        return {
+          ok: true,
+          value: {
+            stdout: stdout.ok ? decoder.decode(stdout.value) : '',
+            stderr: stderr.ok ? decoder.decode(stderr.value) : '',
+            code: exit.value.code ?? -1,
+          },
+        };
+      } finally {
+        try { handle.dispose(); } catch { /* process exit owns final cleanup */ }
+      }
+    },
+  };
 }

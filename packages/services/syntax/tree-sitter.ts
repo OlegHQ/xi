@@ -4,7 +4,7 @@
  * service never performs this work from its request path.
  */
 
-import type { Language, Parser } from 'web-tree-sitter';
+import type { Language, Parser, Query } from 'web-tree-sitter';
 import type { Result } from '../../contracts/src/index';
 
 export const TREE_SITTER_RUNTIME_VERSION = '0.25.10' as const;
@@ -17,6 +17,7 @@ export interface TreeSitterRuntime {
   readonly version: typeof TREE_SITTER_RUNTIME_VERSION;
   readonly Parser: typeof Parser;
   readonly Language: typeof Language;
+  readonly Query: typeof Query;
 }
 
 export interface LoadedTreeSitterGrammar {
@@ -26,19 +27,32 @@ export interface LoadedTreeSitterGrammar {
   readonly abiVersion: number;
 }
 
+export interface TreeSitterRuntimeOptions {
+  /** Embedded runtime wasm bytes, required inside a `bun build --compile` binary. */
+  readonly wasmBinary?: Uint8Array;
+  /** Emscripten module file locator, used when the wasm is not passed inline. */
+  readonly locateFile?: (name: string) => string;
+}
+
 let runtimePromise: Promise<Result<TreeSitterRuntime, TreeSitterFailure>> | undefined;
 
 /** Initialize the pinned binding. This function is never called by submit(). */
-export function initializeTreeSitterRuntime(): Promise<Result<TreeSitterRuntime, TreeSitterFailure>> {
+export function initializeTreeSitterRuntime(
+  options?: TreeSitterRuntimeOptions,
+): Promise<Result<TreeSitterRuntime, TreeSitterFailure>> {
   runtimePromise ??= import('web-tree-sitter').then(async (module) => {
     try {
-      await module.Parser.init();
+      await module.Parser.init(options === undefined ? undefined : {
+        ...(options.wasmBinary === undefined ? {} : { wasmBinary: options.wasmBinary }),
+        ...(options.locateFile === undefined ? {} : { locateFile: options.locateFile }),
+      });
       return {
         ok: true,
         value: {
           version: TREE_SITTER_RUNTIME_VERSION,
           Parser: module.Parser,
           Language: module.Language,
+          Query: module.Query,
         },
       } as const;
     } catch {

@@ -4,7 +4,8 @@ import { asIdentifier, asUtf16Offset, type DocumentId, type SelectionId, type Vi
 import { openTextDocument, type DocumentReadPort, type DocumentSnapshot } from '../../packages/document/src/index';
 import { createSelectionSet } from '../../packages/selections/src/index';
 import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../../packages/workbench/src/index';
-import { WorkbenchRenderable } from '../../packages/ui/src/index';
+import { WorkbenchRenderable, runOpenTuiWorkbench } from '../../packages/ui/src/index';
+import type { CliRenderer } from '@opentui/core/renderer';
 
 const VIEW_ID = id<ViewId>('T111-view');
 const DOCUMENT_ID = id<DocumentId>('T111-document');
@@ -104,9 +105,13 @@ async function testNoIdleLoop(): Promise<void> {
   await new Promise((resolveWait) => setTimeout(resolveWait, 200));
   assert.equal(renderCount, 0, 'T111-IDLE-02 an idle renderer performs no renderSelf calls over 200ms');
 
+  // `refresh()` only marks the renderable dirty now (see workbench.ts and
+  // packages/ui/src/terminal.ts's `scheduleFlush`); production drives the actual
+  // frame with one explicit synchronous render after every key, which `renderOnce()`
+  // mirrors here.
   viewport.refresh();
-  await setup.flush();
-  assert.equal(renderCount, 1, 'T111-IDLE-03 a state change (refresh/requestRender) triggers exactly one renderSelf');
+  await setup.renderOnce();
+  assert.equal(renderCount, 1, 'T111-IDLE-03 a state change (refresh + one driven render) triggers exactly one renderSelf');
 
   setup.renderer.destroy();
 }
@@ -179,7 +184,54 @@ async function testSessionScrollRenders(): Promise<void> {
   setup.renderer.destroy();
 }
 
+/**
+ * T111-KEY-01/02: the real production entrypoint (`runOpenTuiWorkbench`) used to
+ * render twice per key -- once from its own explicit synchronous `flushFrame`
+ * (`renderer.intermediateRender()`), and once more when the OpenTUI renderer's own
+ * scheduled frame (from `WorkbenchRenderable.refresh()`'s old `requestRender()` call)
+ * fired later via `process.nextTick`. It also flushed once per key even when several
+ * keys arrived in the same synchronous stdin chunk. Both are fixed: `refresh()` only
+ * marks the renderable dirty (see workbench.ts), and `terminal.ts` coalesces every
+ * key processed before the current synchronous stack unwinds into one microtask-
+ * scheduled flush. This drives keys through the real `renderer.stdin` -> key-parser
+ * -> `keypress` pipeline, not a direct method call, so it exercises the same path a
+ * real keystroke does.
+ */
+async function testKeyBurstRendersOnce(): Promise<void> {
+  const { workbench, moveCursor } = makeMutableWorkbench('alpha\nbeta\ngamma\n');
+  const setup = await createTestRenderer({ width: 80, height: 24, bufferedOutput: 'memory', gatherStats: true });
+  let frames = 0;
+  let nextOffset = 0;
+  const run = runOpenTuiWorkbench(workbench, 'editor.ts', {
+    renderer: Promise.resolve(setup.renderer as unknown as CliRenderer),
+    onFrame: () => { frames += 1; },
+    onKeypress: () => {
+      nextOffset += 1;
+      moveCursor(nextOffset);
+      return true;
+    },
+  });
+  // Let `runOpenTuiWorkbench`'s synchronous setup (including its own initial
+  // `renderer.intermediateRender()`) finish before measuring key-driven frames.
+  await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+  frames = 0;
+
+  setup.mockInput.pressKey('a');
+  await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(frames, 1, 'T111-KEY-01 a single keystroke renders exactly once, not twice');
+
+  frames = 0;
+  await setup.mockInput.pressKeys(['a', 'b', 'c'], 0);
+  await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(frames, 1, 'T111-KEY-02 three keys parsed from one synchronous burst share exactly one render');
+  assert.equal(nextOffset, 4, 'T111-KEY-03 every key in the burst is still applied, in order (1 + 3 keys)');
+
+  setup.renderer.destroy();
+  await run;
+}
+
 await testNoIdleLoop();
 await testCursorFollowScroll();
 await testSessionScrollRenders();
-console.log('T111 render scheduling passed on-demand rendering, cursor-follow scroll and session-scroll fixtures');
+await testKeyBurstRendersOnce();
+console.log('T111 render scheduling passed on-demand rendering, cursor-follow scroll, session-scroll and key-burst/double-render fixtures');

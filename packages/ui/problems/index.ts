@@ -8,7 +8,7 @@ export interface Problem {
   readonly severity: 1 | 2 | 3 | 4 | undefined; readonly source: string | undefined; readonly code: string | number | undefined;
   readonly serverId: string; readonly documentVersion: number | undefined; readonly generation: number;
 }
-export interface ProblemsReadModel { readonly contractVersion: 1; readonly generation: number; readonly all: readonly Problem[]; }
+export interface ProblemsReadModel { readonly contractVersion: 1; readonly generation: number; readonly all: readonly Problem[]; /** URIs whose diagnostics were cut at the service's per-URI admission limit. */ readonly truncatedUris?: ReadonlySet<string>; }
 export interface ProblemsReadPort { readonly model: ProblemsReadModel; subscribe(listener: (model: ProblemsReadModel) => void): Disposable; }
 export interface ProblemsRenderableOptions extends RenderableOptions<ProblemsRenderable> { readonly problems: ProblemsReadPort; readonly maxRows?: number; readonly selectedId?: () => string | undefined; readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean; }
 
@@ -92,7 +92,8 @@ export class ProblemsRenderable extends Renderable {
 
 export function formatProblemsLines(model: ProblemsReadModel, width: number, maxRows = 10, scrollOffset = 0): readonly string[] {
   const rowLimit = Math.max(1, Math.trunc(maxRows));
-  const rows: string[] = [`Problems ${model.all.length}`];
+  const truncated = model.truncatedUris?.size ?? 0;
+  const rows: string[] = [`Problems ${model.all.length}${truncated === 0 ? '' : ` (${truncated} file${truncated === 1 ? '' : 's'} truncated)`}`];
   const problemLimit = Math.max(0, rowLimit - 1);
   const safeOffset = Math.max(0, Math.trunc(scrollOffset));
   const slice = model.all.slice(safeOffset, safeOffset + problemLimit);

@@ -139,9 +139,11 @@ export type {
 } from '../language/index';
 export {
   IncrementalSyntaxHighlighter,
+  SyntaxDocumentTracker,
   highlightOnce,
   initializeTreeSitterRuntime,
   loadTreeSitterGrammar,
+  preprocessHighlightsQuerySource,
   TREE_SITTER_RUNTIME_VERSION,
 } from '../syntax/index';
 export { WorkspaceReplaceService, applyReplacementEdits } from '../search/replace';
@@ -340,14 +342,20 @@ export type {
 } from '../config/index';
 export type {
   SyntaxDelta,
+  SyntaxDocumentTrackerOptions,
   SyntaxFailure,
   SyntaxFallback,
+  SyntaxGrammarFailure,
+  SyntaxGrammarProvider,
+  SyntaxGrammarSource,
   SyntaxHighlightResult,
   SyntaxHighlightSpan,
   SyntaxHighlighterOptions,
+  SyntaxOpenDocumentRequest,
   SyntaxParseRequest,
   SyntaxParseStats,
   SyntaxServiceDiagnostics,
   SyntaxSubmitResult,
   SyntaxTokenKind,
+  TreeSitterRuntimeOptions,
 } from '../syntax/index';

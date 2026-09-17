@@ -5,7 +5,7 @@ import type { BufferHost } from '../host';
 /** Mirrors `packages/services/navigation`'s `PickerMode`/`PickerEntry` shape structurally --
  * workbench cannot import `packages/services`, not even types, so only the literal union and
  * the fields this controller actually reads are declared here. */
-export type WorkbenchPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config';
+export type WorkbenchPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git';
 
 export interface WorkbenchPickerEntry {
   readonly id: string;
@@ -35,6 +35,10 @@ export interface PickerControllerOptions<TEntry extends WorkbenchPickerEntry, TT
   /** Opens a promoted buffer's file (commit) or a preview (no commit); returns the same
    * result shape as `BufferHost.openBufferAtPath` so preview/promote bookkeeping stays here. */
   readonly openFile: (path: string, preview: boolean) => ReturnType<BufferHost['openBufferAtPath']>;
+  /** Optional per-entry keys other than Enter/Escape/Up/Down/Backspace (e.g. the git picker's
+   * `s`/`u` stage/unstage). When present for the current mode, these keys are consumed instead
+   * of appended to the filter query. */
+  readonly onSecondaryAction?: (entry: TEntry, key: string) => void;
 }
 
 /**
@@ -108,6 +112,11 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
     }
     if (event.ctrl || event.meta || event.option) return;
     const raw = event.raw;
+    if (this.#mode === 'git' && this.#options.onSecondaryAction !== undefined && (raw === 's' || raw === 'u')) {
+      const selected = model.model.entries.find((entry) => entry.id === model.model.selectedId);
+      if (selected !== undefined) this.#options.onSecondaryAction(selected, raw);
+      return;
+    }
     if (raw.length === 1 && raw >= ' ' && raw !== '\u007f') {
       this.#query += raw;
       this.#runQuery();
@@ -126,7 +135,7 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
       if (mode === 'file' || mode === 'buffer' || mode === 'command' || mode === 'theme' || mode === 'config') this.open(mode);
       return;
     }
-    if (entry.mode === 'file') {
+    if (entry.mode === 'file' || entry.mode === 'git') {
       await this.#openFileEntry(entry, true);
       return;
     }

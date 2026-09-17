@@ -11,7 +11,7 @@ import { TextFileDocument } from '../../packages/document/src/index';
 import { asIdentifier, asUtf16Offset, type DocumentId, type SelectionId } from '../../packages/primitives/src/index';
 import { beginVimInsert, planVimInsertInput, type VimInsertSession } from '../../packages/vim/insert/index';
 import { prepareVimDirectChange } from '../../packages/vim/operators/direct-changes';
-import type { VimOperatorSessionState } from '../../packages/vim/operators/core';
+import { prepareVimOperator, type VimOperatorSessionState } from '../../packages/vim/operators/core';
 import { normalizeVimOperatorRange, type VimOperatorRangeInput } from '../../packages/vim/ranges/normalize';
 import { beginVimVisualSelection, type VimVisualCursor } from '../../packages/vim/visual/index';
 import { resolveVimWordMotion, type VimWordMotionCursor } from '../../packages/vim/motions/word';
@@ -40,9 +40,19 @@ const WORD_BLOCK = 'word ';
 const REPEAT_COUNT = 200_000; // 5 * 200_000 = 1_000_000 UTF-16 units
 const LONG_LINE = WORD_BLOCK.repeat(REPEAT_COUNT);
 const TEXT = `${LONG_LINE}\nshort`;
+// A short first line followed by the huge line, so a linewise `dd` on line 0
+// must resolve the post-delete cursor's display column against line 1
+// without reading that line's full length.
+const SHORT_THEN_LONG_TEXT = `abc\n${LONG_LINE}`;
 
 function document(id: string): TextFileDocument {
   const result = TextFileDocument.create(identifier<DocumentId>(id), TEXT, ['lf'], 'lf');
+  if (!result.ok) throw new Error(result.error.kind);
+  return result.value;
+}
+
+function shortThenLongDocument(id: string): TextFileDocument {
+  const result = TextFileDocument.create(identifier<DocumentId>(id), SHORT_THEN_LONG_TEXT, ['lf'], 'lf');
   if (!result.ok) throw new Error(result.error.kind);
   return result.value;
 }
@@ -62,6 +72,7 @@ checkWordMotionBackward(true);
 checkChangeWord(true);
 checkVisualEnter(true);
 checkViewportScroll(true);
+checkLinewiseDeleteDisplayColumn(true);
 
 checkDirectChangeX(false);
 checkInsertBackspace(false);
@@ -69,8 +80,37 @@ checkWordMotionBackward(false);
 checkChangeWord(false);
 checkVisualEnter(false);
 checkViewportScroll(false);
+checkLinewiseDeleteDisplayColumn(false);
 
-console.log('T-BOUNDED-LINE-READS passed: x, <BS>, b, cw, v, <C-E> on a 1 MiB line complete within budget with unchanged results');
+console.log('T-BOUNDED-LINE-READS passed: x, <BS>, b, cw, v, <C-E>, dd-display-column on a 1 MiB line complete within budget with unchanged results');
+
+// `dd` on a short line directly above the huge line: the post-delete cursor
+// must land on the huge line at the same display column as the origin, and
+// `offsetAtDisplayColumn` (operators/core.ts) must resolve that column with
+// a bounded window instead of reading/segmenting the whole huge line.
+function checkLinewiseDeleteDisplayColumn(warmup: boolean): void {
+  const snapshot = shortThenLongDocument('BOUNDED-DD').snapshot();
+  const originOffset = offset(1); // 'b' in "abc", display column 1
+  const input: VimOperatorRangeInput = {
+    origin: { documentVersion: snapshot.version, offset: originOffset, displayCellColumn: 1 as never },
+    target: { documentVersion: snapshot.version, offset: originOffset, displayCellColumn: 1 as never },
+    direction: 'forward',
+    motionKind: 'linewise',
+    inclusive: false,
+    motionKey: 'dd',
+    operator: 'delete',
+  };
+  const state: VimOperatorSessionState = Object.freeze({ mode: 'normal', repeatTarget: null });
+  let prepared: ReturnType<typeof prepareVimOperator> | undefined;
+  const elapsed = timeIt(() => {
+    prepared = prepareVimOperator(snapshot, { operator: 'delete', motion: { ok: true, value: input }, state });
+  });
+  assert.ok(prepared?.ok, 'BOUNDED-DD-01 dd succeeds above the long line');
+  if (!prepared?.ok || prepared.value.kind !== 'prepared') throw new Error('unreachable');
+  // Line 1 starts at offset 4 ("abc\n"); column 1 lands 1 cell into "word ".
+  assert.equal(prepared.value.cursorOffset, 5, 'BOUNDED-DD-02 dd lands at the same display column on the huge next line');
+  if (!warmup) assert.ok(elapsed < BUDGET_MS, `BOUNDED-DD-03 dd completes within budget (${elapsed.toFixed(3)}ms)`);
+}
 
 function checkDirectChangeX(warmup: boolean): void {
   const snapshot = document('BOUNDED-X').snapshot();

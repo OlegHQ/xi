@@ -16,15 +16,15 @@ assert(!index.addRoot({ id: 'root-a', label: 'duplicate', path: '/other' }).ok, 
 assert(index.addPaths('root-a', [{ rootId: 'root-a', relativePath: 'src/index.ts', absolutePath: '/workspace/a/src/index.ts' }]).ok, 'root-a path should index');
 assert(index.addPaths('root-b', [{ rootId: 'root-b', relativePath: 'src/index.ts', absolutePath: '/workspace/b/src/index.ts' }]).ok, 'root-b path should index');
 index.markReady();
-const files = index.query('src/index.ts', { limit: 10 });
-assert(!('kind' in files), 'multi-root query should be ready');
-assert(files.entries.length === 2, 'same relative path must produce two entries');
-assert(new Set(files.entries.map((entry) => entry.id)).size === 2, 'root identity must be part of entry identity');
-assert(new Set(files.entries.map((entry) => entry.rootId)).size === 2, 'query must retain root IDs');
-assert(files.entries.every((entry) => entry.relativePath === 'src/index.ts'), 'relative path should remain stable');
+const files = await index.queryAsync('src/index.ts', { limit: 10 });
+assert(files.ok, 'multi-root query should be ready');
+assert(files.ok && files.value.entries.length === 2, 'same relative path must produce two entries');
+assert(files.ok && new Set(files.value.entries.map((entry) => entry.id)).size === 2, 'root identity must be part of entry identity');
+assert(files.ok && new Set(files.value.entries.map((entry) => entry.rootId)).size === 2, 'query must retain root IDs');
+assert(files.ok && files.value.entries.every((entry) => entry.relativePath === 'src/index.ts'), 'relative path should remain stable');
 index.removeRoot('root-a');
-const remaining = index.query('src/index.ts', { limit: 10 });
-assert(!('kind' in remaining) && remaining.entries.length === 1 && remaining.entries[0]?.rootId === 'root-b', 'removing one root must not remove its sibling');
+const remaining = await index.queryAsync('src/index.ts', { limit: 10 });
+assert(remaining.ok && remaining.value.entries.length === 1 && remaining.value.entries[0]?.rootId === 'root-b', 'removing one root must not remove its sibling');
 index.dispose();
 
 const search = new RealtimeSearchService({

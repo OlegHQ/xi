@@ -27,7 +27,7 @@ import type {
 import type { PackedPositionIndex } from './packed-index';
 import { type GraphemeCluster, splitGraphemes } from './graphemes';
 
-const MAX_SOURCE_PREFIX_UTF16 = 65_536;
+export const MAX_SOURCE_PREFIX_UTF16 = 65_536;
 const MAX_LAYOUT_ANNOTATIONS = 4_096;
 export const MAX_LAYOUT_ID_UTF16 = 256;
 const MAX_LAYOUT_ANNOTATION_UTF16 = 256;
@@ -478,6 +478,7 @@ export function shapeLine(
  * elsewhere in the document produces for this line.
  */
 export function buildRelativeMaterializedRows(layout: RelativeLineLayout, width: number): RelativeMaterializedRows {
+  // @xi-perf H1 RENDER-120 -- Per-cell template materialization escapes as the read-model row cache, not scratch.
   const rows: RelativeMaterializedRow[] = [];
   let cellCost = 0;
   for (let index = 0; index < layout.rows.length; index += 1) {
@@ -548,6 +549,7 @@ export function rebaseMaterializedRows(
   columnBase: number,
   needsDisplayIndex: boolean,
 ): readonly ScreenRow[] {
+  // @xi-perf H1 RENDER-120 -- Absolute per-cell rebase produces the escaping visible-frame read model, not scratch.
   const output: ScreenRow[] = [];
   for (let index = 0; index < template.rows.length; index += 1) {
     const source = template.rows[index];

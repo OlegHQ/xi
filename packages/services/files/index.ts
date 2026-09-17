@@ -173,6 +173,11 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
   readonly #watchers = new Map<string, Disposable>();
   readonly #listeners = new Set<(model: ExplorerReadModel) => void>();
   #decorationPublishTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Per-parent-directory in-flight guard for `applyWatchEvent`: at most one run per key is
+   * ever active. An event for a key already running is coalesced (only the latest is kept) and
+   * runs once the active one finishes, instead of two overlapping reconcile/publish sequences
+   * racing for the same parent. */
+  readonly #inFlightWatch = new Map<string, { promise: Promise<void>; queued: ExplorerWatchEvent | undefined }>();
   #model: ExplorerReadModel;
   #generation = 0;
   #selectedId: string | undefined;
@@ -264,7 +269,7 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
       const events = [...pendingRefresh.values()];
       pendingRefresh.clear();
       if (this.#disposed) return;
-      for (const event of events) void this.applyWatchEvent(event);
+      for (const event of events) this.dispatchWatchEvent(event);
     };
     const watched = await this.#filesystem.watchDirectory(root.path, (event) => {
       if (this.#disposed) return;
@@ -273,7 +278,7 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
         flushTimer ??= setTimeout(flush, 50);
         return;
       }
-      void this.applyWatchEvent(event);
+      this.dispatchWatchEvent(event);
     }, cancellation ?? neverCancelledToken);
     if (!watched.ok) return watched;
     this.#watchers.set(rootId, Object.freeze({
@@ -344,8 +349,21 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     return true;
   }
 
-  focus(): void { this.#focused = true; this.publish('ready'); }
-  blur(): void { this.#focused = false; this.publish('ready'); }
+  focus(): void { this.#focused = true; this.publishFocusOnly(); }
+  blur(): void { this.#focused = false; this.publishFocusOnly(); }
+
+  /**
+   * Focus/blur change no node data, selection or visibility -- only the
+   * `focused` flag -- so this republishes the existing frozen `nodes` and
+   * `visibleRows` instead of `publish()`'s full `buildModel()`, which
+   * rebuilds and re-freezes every node in the tree (an unbounded, O(node
+   * count) rebuild for what is otherwise a no-op event).
+   */
+  private publishFocusOnly(): void {
+    this.#generation += 1;
+    this.#model = Object.freeze({ ...this.#model, generation: this.#generation, focused: this.#focused });
+    for (const listener of [...this.#listeners]) listener(this.#model);
+  }
 
   setFilter(filter: string): void {
     this.#filter = filter.normalize('NFKC');
@@ -397,6 +415,38 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     this.#selectedId = parent.id;
     this.publish('ready');
     return { ok: true, value: parent.id };
+  }
+
+  /**
+   * Queues a watcher event for `applyWatchEvent`, serialized per affected parent directory.
+   * The watcher callback is fire-and-forget by nature (it cannot await), so without this guard
+   * two 'changed'/'created'/'removed' events for the same parent arriving close together could
+   * each start their own `reconcile`/`publish` concurrently and interleave. At most one run per
+   * parent key is active; an event arriving while one is active replaces any already-queued
+   * event for that key (only the latest matters) and runs once the active one finishes.
+   */
+  private dispatchWatchEvent(event: ExplorerWatchEvent): void {
+    if (this.#disposed) return;
+    const key = watchEventKey(event);
+    const existing = this.#inFlightWatch.get(key);
+    if (existing !== undefined) {
+      existing.queued = event;
+      return;
+    }
+    const entry: { promise: Promise<void>; queued: ExplorerWatchEvent | undefined } = { promise: Promise.resolve(), queued: undefined };
+    entry.promise = this.runWatchEventChain(key, entry, event);
+    this.#inFlightWatch.set(key, entry);
+  }
+
+  private async runWatchEventChain(key: string, entry: { promise: Promise<void>; queued: ExplorerWatchEvent | undefined }, event: ExplorerWatchEvent): Promise<void> {
+    await this.applyWatchEvent(event);
+    const queued = entry.queued;
+    if (queued === undefined) {
+      if (this.#inFlightWatch.get(key) === entry) this.#inFlightWatch.delete(key);
+      return;
+    }
+    entry.queued = undefined;
+    await this.runWatchEventChain(key, entry, queued);
   }
 
   /** Apply a normalized watcher event; public for deterministic E03 fixtures. */
@@ -473,6 +523,7 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     this.#decorationPublishTimer = undefined;
     for (const watcher of this.#watchers.values()) watcher.dispose();
     this.#watchers.clear();
+    this.#inFlightWatch.clear();
     this.#listeners.clear();
     this.#nodes.clear();
     this.#roots.length = 0;
@@ -540,6 +591,22 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     parent.children = unique(nextIds).filter((id) => this.#nodes.has(id));
     parent.children.sort((leftId, rightId) => compareNodes(this.#nodes.get(leftId), this.#nodes.get(rightId)));
     return { ok: true, value: undefined };
+  }
+
+  /** Re-read Git decorations for every loaded node without touching load state or
+   * re-enumerating directories (a forced `expand` would supersede in-flight loads and
+   * break `reveal`). Publishes once, coalesced, when the reads settle. */
+  redecorate(): void {
+    if (this.#disposed || this.#git === undefined) return;
+    for (const node of this.#nodes.values()) {
+      if (node.kind !== 'root' && node.kind !== 'state') void this.refreshGitDecoration(node);
+    }
+  }
+
+  private async refreshGitDecoration(node: MutableNode): Promise<void> {
+    const result = await (this.#git as ExplorerGitDecorationPort).read(node.path, neverCancelledToken);
+    if (result.ok && this.#nodes.has(node.id)) node.git = result.value;
+    this.scheduleDecorationPublish();
   }
 
   private async refreshDecoration(node: MutableNode): Promise<void> {
@@ -744,6 +811,18 @@ function normalizeRelativePath(path: string): Result<string, ExplorerFailure> {
 function nodeIdentity(rootId: string, relativePath: string, stableIdentity?: string): string { return `explorer:${rootId}\u0000${stableIdentity ?? relativePath}`; }
 function stableKey(rootId: string, relativePath: string): string { return `${rootId}\u0000${relativePath}`; }
 function basename(path: string): string { const parts = path.split('/'); return parts[parts.length - 1] ?? ''; }
+
+function parentDirectory(relativePath: string): string {
+  const index = relativePath.lastIndexOf('/');
+  return index === -1 ? '' : relativePath.slice(0, index);
+}
+
+/** Groups a watcher event by the parent directory it will reconcile, so overlapping events for
+ * the same directory serialize through the in-flight guard above. */
+function watchEventKey(event: ExplorerWatchEvent): string {
+  const relativePath = event.kind === 'renamed' ? event.previousRelativePath : event.relativePath;
+  return `${event.rootId}\0${parentDirectory(relativePath)}`;
+}
 function dirname(path: string): string { const index = path.lastIndexOf('/'); return index < 0 ? '' : path.slice(0, index); }
 function unique(values: readonly string[]): string[] { return [...new Set(values)]; }
 function normalizeSearch(value: string): string { return value.normalize('NFKC').toLocaleLowerCase('en-US'); }

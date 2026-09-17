@@ -1,8 +1,7 @@
-import type { PlatformAdapterFactory } from '../../../packages/platform/src/index';
-import type { PlatformFailure, PlatformPorts, ServiceFactoryContext } from '../../../packages/contracts/src/index';
-import { DisposableScope, type Disposable } from '../../../packages/primitives/src/index';
-import type { WorkbenchReadPort } from '../../../packages/workbench/src/index';
-import type { TerminalAdapter, UiComposition } from '../../../packages/ui/src/index';
+import type { PlatformAdapterFactory, PlatformFailure, PlatformPorts, ServiceFactoryContext } from '../../../packages/platform/src/entrypoints/launch';
+import { DisposableScope, type Disposable } from '../../../packages/primitives/src/entrypoints/launch';
+import type { WorkbenchReadPort } from '../../../packages/workbench/src/entrypoints/launch';
+import type { TerminalAdapter, UiComposition } from '../../../packages/ui/src/entrypoints/launch';
 
 export interface ApplicationDependencies<Services, Workbench extends WorkbenchReadPort> {
   readonly requestId: ServiceFactoryContext['requestId'];

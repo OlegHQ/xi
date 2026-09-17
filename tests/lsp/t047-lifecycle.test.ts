@@ -376,8 +376,31 @@ async function testNegotiatedCapabilitiesAndDynamicChanges(): Promise<void> {
   await invalidEncoding.dispose();
 }
 
+async function testOversizedDocumentAdmission(): Promise<void> {
+  const process = new FakeLanguageProcessPort('ready');
+  const session = new LanguageServerSession({
+    process,
+    clock: new FakeClock(),
+    config,
+    root: '/workspace/root-a',
+    workspaceId: 'workspace-oversized',
+    maxDocumentUtf16: 8,
+  });
+  const oversized = { ...document, text: 'x'.repeat(9) };
+  const rejected = session.openDocument(oversized);
+  assert(!rejected.ok && rejected.error.kind === 'document-too-large', 'oversized document is rejected at admission, not sent to the transport');
+  equal(session.health.openDocumentCount, 0, 'rejected document is never stored for replay');
+
+  const small = { ...document, text: 'ok' };
+  const admitted = session.openDocument(small);
+  assert(admitted.ok, 'a document within the bound is still admitted normally');
+  equal(session.health.openDocumentCount, 1, 'admitted document is retained');
+  await session.dispose();
+}
+
 await testRootResolution();
 await testAsyncLifecycleAndReplay();
 await testIsolationAndFailures();
 await testNegotiatedCapabilitiesAndDynamicChanges();
+await testOversizedDocumentAdmission();
 console.log('T047 lifecycle passed root resolution, asynchronous startup, initialize/configuration/progress, crash replay, identity isolation and failure health fixtures');

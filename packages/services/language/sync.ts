@@ -94,6 +94,8 @@ interface TextDocumentContentChangeEvent {
 const DEFAULT_MAX_QUEUED_CHANGES = 64;
 const DEFAULT_MAX_QUEUED_BYTES = 1 * 1024 * 1024;
 const DEFAULT_MAX_FULL_SYNC_UTF16 = 8 * 1024 * 1024;
+/** Shared with lifecycle document admission so oversized documents are rejected before send. */
+export { DEFAULT_MAX_FULL_SYNC_UTF16 };
 const SERIALIZE_CHUNK_UTF16 = 64 * 1024;
 /**
  * Owns the versioned LSP text-document stream for one transport. It is fed only
@@ -156,7 +158,9 @@ export class LanguageDocumentSync {
   openDocument(document: LanguageSyncDocument): Promise<Result<void, LanguageSyncFailure>> {
     const valid = validateDocument(document);
     if (!valid.ok) return Promise.resolve(valid);
-    if (this.#fullSync && document.text.length > this.#maxFullSyncUtf16) {
+    // didOpen always sends the full document text regardless of change-sync mode, so this
+    // bound applies unconditionally, not only when #fullSync is used for subsequent edits.
+    if (document.text.length > this.#maxFullSyncUtf16) {
       const result: Result<void, LanguageSyncFailure> = { ok: false, error: { kind: 'document-too-large', message: `full-sync document ${document.uri} exceeds ${this.#maxFullSyncUtf16} UTF-16 units` } };
       this.#lastFailure = result.error;
       return Promise.resolve(result);
@@ -338,6 +342,17 @@ export class LanguageDocumentSync {
     const target = state.desiredSnapshot;
     let contentChanges: readonly TextDocumentContentChangeEvent[];
     if (needsResync || this.#fullSync) {
+      if (target.lengthUtf16 > this.#maxFullSyncUtf16) {
+        // Check the snapshot's known length before materializing the whole document into
+        // a string; avoids an unbounded copy just to discover it is already too large.
+        const result: Result<void, LanguageSyncFailure> = { ok: false, error: { kind: 'document-too-large', message: `full-sync document ${state.uri} exceeds ${this.#maxFullSyncUtf16} UTF-16 units` } };
+        state.pending = pending;
+        state.pendingBytes = pendingBytes;
+        state.resyncNeeded = needsResync || pending.length !== 0;
+        this.#lastFailure = result.error;
+        this.scheduleResyncRetry(state);
+        return result;
+      }
       const text = materializeSnapshot(target);
       if (!text.ok) {
         state.pending = pending;
@@ -597,11 +612,20 @@ function editPayloadBytes(edits: readonly DocumentEdit[]): number {
   return bytes;
 }
 
-function materializeSnapshot(snapshot: DocumentSnapshot): Result<string, LanguageSyncFailure> {
+/**
+ * Shared chunked snapshot-to-string routine, used by both the sync transport (full-sync
+ * fallback) and lifecycle replay (stored-snapshot materialization). Slices in bounded
+ * UTF-16 chunks, backing off one unit at a time on a surrogate split, instead of
+ * materializing the whole document in one allocation.
+ */
+export function chunkedSnapshotToString(
+  snapshot: DocumentSnapshot,
+  chunkUtf16: number = SERIALIZE_CHUNK_UTF16,
+): { readonly ok: true; readonly value: string } | { readonly ok: false; readonly kind: 'unreadable' | 'no-safe-chunk'; readonly detail: string } {
   const chunks: string[] = [];
   let start = 0;
   while (start < snapshot.lengthUtf16) {
-    let end = Math.min(snapshot.lengthUtf16, start + SERIALIZE_CHUNK_UTF16);
+    let end = Math.min(snapshot.lengthUtf16, start + chunkUtf16);
     let read = false;
     while (end > start) {
       const result = snapshot.slice(start as never, end as never);
@@ -611,12 +635,23 @@ function materializeSnapshot(snapshot: DocumentSnapshot): Result<string, Languag
         read = true;
         break;
       }
-      if (result.error.kind !== 'surrogate-split') return failure('invalid-document', `snapshot serialization failed: ${result.error.kind}`);
+      if (result.error.kind !== 'surrogate-split') return { ok: false, kind: 'unreadable', detail: result.error.kind };
       end -= 1;
     }
-    if (!read) return failure('invalid-document', 'snapshot serialization could not find a safe UTF-16 chunk');
+    if (!read) return { ok: false, kind: 'no-safe-chunk', detail: 'no safe UTF-16 chunk boundary found' };
   }
   return { ok: true, value: chunks.join('') };
+}
+
+function materializeSnapshot(snapshot: DocumentSnapshot): Result<string, LanguageSyncFailure> {
+  const result = chunkedSnapshotToString(snapshot);
+  if (!result.ok) {
+    return failure(
+      'invalid-document',
+      result.kind === 'unreadable' ? `snapshot serialization failed: ${result.detail}` : `snapshot serialization ${result.detail}`,
+    );
+  }
+  return { ok: true, value: result.value };
 }
 
 function snapshotLike(document: LanguageSyncDocument): DocumentSnapshot {

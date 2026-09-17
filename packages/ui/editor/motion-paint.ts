@@ -2,6 +2,7 @@ import { TextAttributes, type OptimizedBuffer, type RGBA } from '@opentui/core/r
 import type { CellPoint, ProjectedSelection, ScreenRow, VisibleFrame } from '../../layout/src/index';
 import type { MotionPaintTokens, EditorColorMode } from '../theme/motion-tokens';
 import { resolvePaintColor } from '../theme/motion-tokens';
+import type { SyntaxRead, SyntaxSpan, SyntaxTokenKind } from '../../contracts/src/index';
 
 /** Structural read of Vim's immutable presentation output. The UI never imports Vim. */
 export interface MotionPreviewRead {
@@ -65,6 +66,13 @@ export interface MotionPaintOptions {
   readonly ascii: boolean;
   readonly x: number;
   readonly y: number;
+  /** Painted when `syntax.documentVersion` matches `frame.identity.documentVersion`, or --
+   * for a row whose `syntaxFallbackRows` entry proves its text hasn't changed -- reused
+   * from a still-stale read (see `SyntaxFallbackRow`). */
+  readonly syntax?: SyntaxRead;
+  readonly syntaxColors?: Partial<Record<SyntaxTokenKind, string>>;
+  /** Per-row (indexed like `frame.rows`) last-known-current syntax snapshot; see `SyntaxFallbackRow`. */
+  readonly syntaxFallbackRows?: readonly (SyntaxFallbackRow | undefined)[];
   /** Optional half-open visible row range for damage-limited repainting. */
   readonly rows?: { readonly start: number; readonly end: number };
 }
@@ -80,6 +88,72 @@ export interface MotionPaintStats {
   readonly rejectedStalePreview: boolean;
 }
 
+function resolveSyntaxColors(colors: Partial<Record<SyntaxTokenKind, string>> | undefined, colorMode: EditorColorMode): Map<SyntaxTokenKind, RGBA> {
+  const resolved = new Map<SyntaxTokenKind, RGBA>();
+  if (colors === undefined) return resolved;
+  for (const [kind, value] of Object.entries(colors)) {
+    if (value !== undefined) resolved.set(kind as SyntaxTokenKind, resolvePaintColor(value, colorMode));
+  }
+  return resolved;
+}
+
+/** True when the active syntax read's version matches the painted frame's document version. */
+function syntaxIsCurrent(frame: VisibleFrame, syntax: SyntaxRead | undefined): boolean {
+  return syntax !== undefined && (frame.identity.documentVersion as unknown as number) === (syntax.documentVersion as unknown as number);
+}
+
+/** Bounded, run-based per-row cursor over one row's sorted syntax spans (no per-cell allocation). */
+class RowSyntaxCursor {
+  readonly #spans: readonly SyntaxSpan[];
+  #index = 0;
+  constructor(spans: readonly SyntaxSpan[]) { this.#spans = spans; }
+  kindAt(offset: number): SyntaxTokenKind | undefined {
+    while (this.#index < this.#spans.length && (this.#spans[this.#index] as SyntaxSpan).end <= offset) this.#index += 1;
+    const span = this.#spans[this.#index];
+    return span !== undefined && span.start <= offset && offset < span.end ? span.kind : undefined;
+  }
+}
+
+/**
+ * A row's own offsets/text as they were the last time syntax was confirmed current
+ * for it, kept by the caller (see `WorkbenchRenderable`'s `#lastCurrentSyntaxRows`)
+ * so a still-stale read can keep coloring rows an edit elsewhere didn't touch.
+ */
+export interface SyntaxFallbackRow {
+  readonly startOffset: number | null;
+  readonly endOffset: number | null;
+  readonly text: string;
+}
+
+function rowSyntaxCursor(frame: VisibleFrame, row: ScreenRow, syntax: SyntaxRead | undefined, fallback?: SyntaxFallbackRow): RowSyntaxCursor | undefined {
+  if (syntax === undefined) return undefined;
+  const start = row.startOffset as number | null;
+  const end = row.endOffset as number | null;
+  if (start === null || end === null || end <= start) return undefined;
+  if (syntaxIsCurrent(frame, syntax)) return new RowSyntaxCursor(syntax.spansInRange(start, end));
+  // The read is behind this frame's edit (e.g. the keystroke frame painted before the
+  // background parse catches up). Rather than dropping color from every row, reuse the
+  // stale read's spans for exactly the rows an edit elsewhere didn't touch: `fallback`
+  // is this same read's own view of this row the last time it was current, so an exact
+  // offset+text match proves the row's underlying text -- and therefore its spans --
+  // has not changed since. A row whose offset shifted (later lines, after an edit) or
+  // whose text changed (the edited row itself) fails the match and stays uncolored for
+  // this one frame, exactly like today, until the next parse lands.
+  if (fallback !== undefined && fallback.startOffset === start && fallback.endOffset === end && fallback.text === row.text) {
+    return new RowSyntaxCursor(syntax.spansInRange(start, end));
+  }
+  return undefined;
+}
+
+function syntaxForeground(cell: ScreenRow['cells'][number], cursor: RowSyntaxCursor | undefined, colors: Map<SyntaxTokenKind, RGBA> | undefined, base: RGBA): RGBA {
+  if (cursor === undefined || colors === undefined || cell.role === 'padding' || cell.role === 'gutter') return base;
+  const target = cell.target;
+  if (target === null || target.kind !== 'text') return base;
+  const kind = cursor.kindAt(target.offset as unknown as number);
+  if (kind === undefined) return base;
+  return colors.get(kind) ?? base;
+}
+
 const PAINT_PRIMARY_SELECTION = 1;
 const PAINT_SECONDARY_SELECTION = 2;
 const PAINT_TRAIL = 4;
@@ -90,12 +164,14 @@ const PAINT_OPERATOR = 8;
  * frame.rows/cells, so a long document or off-screen selection is never scanned.
  */
 export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOptions): MotionPaintStats {
+  // @xi-perf H1 RENDER-120 -- Per-cell damage paint issuing native buffer writes; mask lookups are scalar, no retained per-cell object.
   const colorMode = options.presentation?.colorMode ?? options.colorMode;
   const rowRange = paintRowRange(options.frame, options.rows);
   if (canPaintPlainFrameCached(options.frame, options.presentation)) {
     return paintPlainFrame(buffer, options, rowRange);
   }
   const masks = buildPaintMasks(options.frame, options.presentation, options.mode, colorMode, rowRange);
+  const syntaxColors = colorMode === 'no-color' ? undefined : resolveSyntaxColors(options.syntaxColors, colorMode);
   const colors = {
     trail: resolvePaintColor(options.theme.motionTrail, colorMode),
     operator: resolvePaintColor(options.theme.operatorPreview, colorMode),
@@ -112,6 +188,7 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
     const row = options.frame.rows[rowIndex];
     if (row === undefined) continue;
     const rowY = options.y + rowIndex;
+    const syntaxCursor = syntaxColors === undefined ? undefined : rowSyntaxCursor(options.frame, row, options.syntax, options.syntaxFallbackRows?.[rowIndex]);
     for (let column = 0; column < row.cells.length; column += 1) {
       const cell = row.cells[column];
       if (cell === undefined) continue;
@@ -138,7 +215,7 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
         if (secondarySelection) attributes |= TextAttributes.UNDERLINE;
         if (primarySelection) attributes |= TextAttributes.INVERSE;
       }
-      const foreground = cell.role === 'gutter' ? options.muted : options.foreground;
+      const foreground = cell.role === 'gutter' ? options.muted : syntaxForeground(cell, syntaxCursor, syntaxColors, options.foreground);
       buffer.fillRect(options.x + column, rowY, 1, 1, background);
       if (cell.text.length > 0) {
         buffer.setCell(options.x + column, rowY, cell.text, foreground, background, attributes);
@@ -196,10 +273,15 @@ function canPaintPlainFrameCached(frame: VisibleFrame, presentation: EditorPrese
   return result;
 }
 
-function canPaintPlainFrame(frame: VisibleFrame, presentation: EditorPresentationRead | undefined): boolean {
+/** Exported for direct unit testing of the plain-paint fast path (see tests/ui). */
+export function canPaintPlainFrame(frame: VisibleFrame, presentation: EditorPresentationRead | undefined): boolean {
   if (presentation?.motionPreview != null || presentation?.operatorPreview != null) return false;
   for (const selection of frame.selections) {
-    if (selection.kind !== 'normal-cursor') return false;
+    // Only a visual-* selection ever populates `buildPaintMasks`' cell map (see
+    // `markSelectionCells`); a plain cursor -- normal mode's block or insert mode's
+    // caret, drawn afterward by `paintPlainFrame` itself -- never does, so both are
+    // safe to run through the plain per-row path with an empty mask set.
+    if (selection.kind !== 'normal-cursor' && selection.kind !== 'insert-caret') return false;
   }
   for (const row of frame.rows) {
     for (const cell of row.cells) {
@@ -210,13 +292,16 @@ function canPaintPlainFrame(frame: VisibleFrame, presentation: EditorPresentatio
 }
 
 function paintPlainFrame(buffer: OptimizedBuffer, options: MotionPaintOptions, rowRange: PaintRowRange): MotionPaintStats {
+  // @xi-perf H1 RENDER-120 -- Per-cell run-coalesced plain paint; run buffers are bounded per row, not per cell.
   const colors = {
     cursorPrimary: resolvePaintColor(options.theme.cursorPrimary, options.colorMode),
     cursorSecondary: resolvePaintColor(options.theme.cursorSecondary, options.colorMode),
   };
+  const syntaxColors = options.colorMode === 'no-color' ? undefined : resolveSyntaxColors(options.syntaxColors, options.colorMode);
   for (let rowIndex = rowRange.start; rowIndex < rowRange.end; rowIndex += 1) {
     const row = options.frame.rows[rowIndex];
     if (row === undefined || row.cells.length === 0) continue;
+    const syntaxCursor = syntaxColors === undefined ? undefined : rowSyntaxCursor(options.frame, row, options.syntax, options.syntaxFallbackRows?.[rowIndex]);
     let runStart = 0;
     let runForeground = options.foreground;
     const runText: string[] = [];
@@ -228,7 +313,7 @@ function paintPlainFrame(buffer: OptimizedBuffer, options: MotionPaintOptions, r
     for (let column = 0; column < row.cells.length; column += 1) {
       const cell = row.cells[column];
       if (cell === undefined) continue;
-      const foreground = cell.role === 'gutter' ? options.muted : options.foreground;
+      const foreground = cell.role === 'gutter' ? options.muted : syntaxForeground(cell, syntaxCursor, syntaxColors, options.foreground);
       if (foreground !== runForeground) {
         flush(column);
         runForeground = foreground;
