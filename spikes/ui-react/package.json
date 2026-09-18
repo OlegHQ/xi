@@ -1,0 +1,19 @@
+{
+  "name": "xi-ui-react-evaluation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run demo.tsx",
+    "check": "../../node_modules/.bin/tsc --noEmit -p tsconfig.json",
+    "test": "bun run check.test.tsx"
+  },
+  "dependencies": {
+    "@opentui/core": "0.5.11",
+    "@opentui/react": "0.5.11",
+    "react": "19.2.0"
+  },
+  "devDependencies": { "@types/react": "19.2.0" },
+  "patchedDependencies": {
+    "@opentui/core@0.5.11": "../../vendor/opentui/patches/opentui-core-0.5.11.patch"
+  }
+}

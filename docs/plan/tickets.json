@@ -6083,6 +6083,355 @@
       ],
       "gate": null,
       "report": "docs/evidence/T132.md"
+    },
+    {
+      "id": "T133",
+      "title": "Replace Xi private frame scheduling with public OpenTUI scheduling",
+      "status": "in_progress",
+      "status_note": "2026-09-19: public Core scheduler replaces private loop/monkeypatch/coalescer/retry timer; targeted behavioral, source/compiled input and CLI checks pass. Three existing PTY/diagnostic failures reproduced with pre-change scheduler. Paired diagnostic latency is noisy/mixed and does not prove non-regression; full budget qualification remains unproven.",
+      "depends_on": [
+        "T034",
+        "T122"
+      ],
+      "owner": "ui",
+      "paths": [
+        "packages/ui/",
+        "tests/ui/",
+        "tests/e2e/",
+        "bench/performance/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Delegate frame coalescing and backpressure to Core without changing input ordering",
+        "Preserve pre-paint anchor/cursor preparation and report actual frame completion"
+      ],
+      "acceptance": [
+        "Input bursts, asynchronous dispatch, in-flight invalidation, idle and disposal regressions pass",
+        "Production PTY editing, scrolling, overlays and resize preserve behavior",
+        "Record baseline/candidate diagnostics; mandatory INPUT-OUTPUT/INPUT-LOADED/RENDER/OUTPUT qualification remains required and cannot be inferred from component tests"
+      ],
+      "failure_cases": [
+        "Lost final frame under backpressure",
+        "Duplicate idle renders",
+        "Premature frame completion",
+        "Reordered asynchronous commands"
+      ],
+      "evidence": [
+        "docs/evidence/T133.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T133.md"
+    },
+    {
+      "id": "T134",
+      "title": "Evaluate reusable declarative React shell and panels against the existing UI",
+      "status": "done",
+      "status_note": "2026-09-19: bounded isolated evaluation complete: runnable 80-line React shell with shared panels/rows, real Xi controller read models, strict types, behavioral and real-xterm inspection, import-cost and scheduler diagnostics. Production dependencies unchanged; production migration/parity/startup/latency gates explicitly remain unproven.",
+      "depends_on": [
+        "T034"
+      ],
+      "owner": "ui",
+      "paths": [
+        "spikes/ui-react/",
+        "tests/ui/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Prototype a declarative shell with reusable panels and existing Xi read models",
+        "Compare behavior, code ownership, startup and render cost before production adoption"
+      ],
+      "acceptance": [
+        "Run an isolated real React prototype with shared panel components and cleanup/theme/resize checks",
+        "Document concrete deletions possible in production and integration gaps",
+        "Keep production dependency adoption gated on measured startup and latency compatibility"
+      ],
+      "failure_cases": [
+        "Duplicate writable editor state",
+        "Subscription leak after unmount",
+        "Global rerender per key",
+        "Broad Core import regresses startup"
+      ],
+      "evidence": [
+        "docs/evidence/T134.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T134.md"
+    },
+    {
+      "id": "T135",
+      "title": "Prove compiled declarative UI integration and specify full replacement",
+      "status": "in_progress",
+      "depends_on": [
+        "T134"
+      ],
+      "owner": "ui",
+      "paths": [
+        "spikes/ui-react/",
+        "bench/performance/",
+        "tests/performance/",
+        "docs/plan/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Build comparable real CLI binaries for captured private scheduling, public Core scheduling and a real React surface replacement",
+        "Measure parsed-correct-screen output with open-loop input and exact saved bytes; retain failures and timing provenance",
+        "Specify the reusable component hierarchy and independently reviewable deletion/migration stages"
+      ],
+      "acceptance": [
+        "The React variant runs the real CLI, owns a real replacement surface and shares one Core renderer with existing editor semantics",
+        "A runnable parsed-screen producer distinguishes scheduled input, actual write and correct terminal state; validates exact files and fails on missing output",
+        "Report per-session correctness, startup, tails, maxima, task-load conditions and limitations without claiming physical or unmeasured matrix qualification",
+        "Document full imperative-shell retirement with preserved keyboard/pointer/layout and ownership contracts"
+      ],
+      "failure_cases": [
+        "A marker or unrelated ANSI satisfies an output measurement",
+        "React clears the existing editor tree",
+        "React and legacy code both paint the same surface",
+        "Typed input is consumed by a load panel rather than the editor",
+        "A slower baseline is used to excuse an absolute budget failure"
+      ],
+      "evidence": [
+        "docs/evidence/T135.md with source/binary hashes, reproducible commands, raw artifact paths and explicit limits"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T135.md",
+      "status_note": "2026-09-19: compiled real React status replacement passes 24 small idle/task PTY journeys across three variants; full burst correctness and performance qualification remain unproven. See T135 evidence and plan 16."
+    },
+    {
+      "id": "T136",
+      "title": "Resolve declarative adoption measurement and burst correctness blockers",
+      "status": "in_progress",
+      "depends_on": [
+        "T134"
+      ],
+      "owner": "ui",
+      "paths": [
+        "packages/ui/",
+        "apps/xi/",
+        "spikes/ui-react/",
+        "bench/performance/",
+        "tests/",
+        "docs/evidence/",
+        "tools/package-release.ts",
+        "package.json"
+      ],
+      "specs": [
+        "docs/plan/16-declarative-ui.md",
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Resolve the burst completion failure shared by private/Core/React; validate independent input injection and parsed output against exact state before paired qualification",
+        "Measure production React and minified compiled startup/resource cost; keep editor viewport separate and retain only measured improvements"
+      ],
+      "acceptance": [
+        "Reproduce and minimize the 50-of-80 visible-motion failure without removing burst cases",
+        "Validate parser and input producer independently; retain scheduled/write/correct-state timestamps and injection slippage",
+        "Run compiled baseline/Core/React and pinned clean Neovim with required startup, action/load/size, latency and resource evidence; keep physical gate separate"
+      ],
+      "failure_cases": [
+        "Observer overhead mistaken for Xi latency",
+        "Lost or unpainted burst input",
+        "Unrelated output accepted as completion"
+      ],
+      "evidence": [
+        "docs/evidence/T136.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T136.md",
+      "status_note": "Terminal-key adapter fixed and verified against pinned Neovim; corrected compiled comparison and production/minified startup optimization in progress. Full performance qualification remains unproven."
+    },
+    {
+      "id": "T137",
+      "title": "Replace imperative shell with one React root and custom editor viewport",
+      "status": "todo",
+      "depends_on": [
+        "T133",
+        "T136"
+      ],
+      "owner": "ui",
+      "paths": [
+        "packages/ui/",
+        "apps/xi/",
+        "spikes/ui-react/",
+        "bench/performance/",
+        "tests/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/16-declarative-ui.md",
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Extract viewport-only rendering and compose shell, tabs, sidebar sections and status through React"
+      ],
+      "acceptance": [
+        "Share one pinned patched Core renderer and preserve prepaint anchors and ordered input",
+        "Delete migrated shell paint, damage caches and status synchronization in the same change",
+        "Pass real resize/theme/split/tab/pointer/keyboard/shutdown journeys and applicable startup/latency/resource checks"
+      ],
+      "failure_cases": [
+        "React clears custom children",
+        "Whole shell reconciles on every cursor movement",
+        "Duplicate text state"
+      ],
+      "evidence": [
+        "docs/evidence/T137.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T138",
+      "title": "Replace imperative sidebar and bottom panels with reusable React components",
+      "status": "todo",
+      "depends_on": [
+        "T137"
+      ],
+      "owner": "ui",
+      "paths": [
+        "packages/ui/",
+        "apps/xi/",
+        "spikes/ui-react/",
+        "bench/performance/",
+        "tests/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/16-declarative-ui.md",
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Migrate explorer, search/replace, Git, outline, problems, task output and hierarchy with bounded visible rows"
+      ],
+      "acceptance": [
+        "Delete migrated Renderable classes and terminal installer branches",
+        "Preserve semantic controllers, exact keyboard and generation-aware pointer behavior",
+        "Pass huge-result, stale/error/cancel, scroll-follow, drag/wheel and focus restoration cases with applicable performance and visual evidence"
+      ],
+      "failure_cases": [
+        "Offscreen row nodes grow with result count",
+        "Selection or focus changes during reconciliation",
+        "Subscription leaks"
+      ],
+      "evidence": [
+        "docs/evidence/T138.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T139",
+      "title": "Replace overlays and retire imperative UI composition",
+      "status": "todo",
+      "depends_on": [
+        "T138"
+      ],
+      "owner": "ui",
+      "paths": [
+        "packages/ui/",
+        "apps/xi/",
+        "spikes/ui-react/",
+        "bench/performance/",
+        "tests/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/16-declarative-ui.md",
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Migrate command line, picker, completion, signature, hover, prefix help, context menu, directory review and diff; delete obsolete surface plumbing"
+      ],
+      "acceptance": [
+        "Delete remaining per-surface imperative installers, visibility/theme synchronization and disposal chains",
+        "Preserve popup anchors, narrow bounds, Escape/IME/paste, command ordering, focus and pointer capture behavior",
+        "Pass complete relevant UI/PTY/visual, compiled packaging, startup, latency and resource gates before production adoption is complete"
+      ],
+      "failure_cases": [
+        "Stale cursor-relative bounds",
+        "Multiple keyboard focus owners",
+        "Unmeasured budget presented as pass"
+      ],
+      "evidence": [
+        "docs/evidence/T139.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": null
+    },
+    {
+      "id": "T140",
+      "title": "Benchmark compiled Solid against optimized React and Core",
+      "status": "done",
+      "depends_on": [
+        "T134"
+      ],
+      "owner": "ui",
+      "paths": [
+        "spikes/ui-solid/",
+        "spikes/ui-react/",
+        "bench/performance/",
+        "tests/performance/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md",
+        "docs/plan/16-declarative-ui.md"
+      ],
+      "steps": [
+        "Replace the same real status surface with compiled Solid JSX and reuse one patched Core renderer",
+        "Compare fresh-process usable startup, first key, idle/task editing, exact bytes and memory against identically optimized React/Core binaries",
+        "Retain source/binary identities, failures and comparison limits"
+      ],
+      "acceptance": [
+        "Solid reuses real document, engine, controllers and input ordering with no duplicate editable buffer",
+        "JSX transformation happens at build time; client Solid runtime is used and subscriptions dispose",
+        "Compiled CLI journeys verify the real replacement surface and exact final bytes idle and under task load",
+        "Report startup and per-action latency distributions with matched Core/React baselines; no full migration or reference-host qualification claim"
+      ],
+      "failure_cases": [
+        "Server Solid runtime yields a falsely cheap inert UI",
+        "Runtime Babel initialization distorts shipping startup",
+        "Different features or Core copies invalidate the comparison",
+        "Unrelated output satisfies a timing boundary"
+      ],
+      "evidence": [
+        "docs/evidence/T140.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T140.md"
     }
   ]
 }
