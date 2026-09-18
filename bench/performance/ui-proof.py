@@ -233,6 +233,16 @@ for line in sys.stdin:
             startup_ms = (time.perf_counter() - started) * 1000
             # Check the first key without an arbitrary post-startup warm-up pause.
             first = run_events([dict(due=0, family='first-key', key='j', expected=[1, '', 'normal'])])
+            if scenario == 'startup':
+                process_status = Path(f'/proc/{child.pid}/status').read_text()
+                os.write(master, b':q\r')
+                deadline = time.perf_counter() + 10
+                while child.poll() is None and time.perf_counter() < deadline: pump()
+                assert child.wait(timeout=1) == 0
+                assert target.read_bytes() == source.encode(), 'startup journey changed file bytes'
+                return dict(startup_ms=startup_ms, correct=True, events=first,
+                    groups={'first-key': {key: percentiles([event[key] for event in first]) for key in ['schedule_to_correct_ms', 'write_to_correct_ms', 'injection_slippage_ms']}},
+                    process_memory={key: re.search(rf'^{key}:\s+(\d+) kB', process_status, re.M)[1] for key in ['VmRSS', 'VmHWM']})
             os.write(master, b'gg'); until(lambda: screen.editor_state() == (0, '', 'normal'))
             if load:
                 os.write(master, b':task flood\r')
@@ -302,12 +312,13 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--neovim', type=Path, help='optional pinned clean oracle; idle comparison only')
     parser.add_argument('--binary', action='append', required=True, help='name=/absolute/binary')
-    parser.add_argument('--scenario', choices=['full', 'surface'], default='full', help='surface is a limited integration check, not burst/performance qualification')
+    parser.add_argument('--scenario', choices=['full', 'surface', 'startup'], default='full', help='surface is a limited integration check; startup checks usable cells, first key and clean exit only')
     parser.add_argument('--sessions', type=int, default=12)
     parser.add_argument('--width', type=int, default=120)
     parser.add_argument('--load', choices=['idle', 'task', 'both'], default='both')
     args = parser.parse_args()
     assert args.sessions > 0 and args.width >= 120
+    assert args.scenario != 'startup' or args.load == 'idle', 'startup-only comparisons require --load idle'
     assert not args.output.exists(), 'retain old results; choose a new output directory'
     args.output.mkdir(parents=True)
     binaries = {name: Path(path).resolve() for name, path in (value.split('=', 1) for value in args.binary)}
