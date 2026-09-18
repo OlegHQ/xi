@@ -3,7 +3,7 @@ import { ThemeController } from '../../../../packages/workbench/src/entrypoints/
 import type { WorkbenchTheme } from '../../../../packages/ui/src/entrypoints/launch';
 import { BUILTIN_WORKBENCH_THEMES } from '../../../../packages/ui/src/entrypoints/theme';
 import type { NodeFilesystemPort } from '../../../../packages/platform/src/entrypoints/launch';
-import { decodeRequiredWorkbenchThemeTokens } from '../../../../packages/services/src/entrypoints/config';
+import { decodeWorkbenchThemeTokens } from '../../../../packages/services/src/entrypoints/config';
 
 /** The standard XDG-style `~/.config/xi/` convention every config file (theme state,
  * config.toml, languages.toml) lives under; never throws, since a missing/unreadable/corrupt
@@ -15,28 +15,13 @@ export function themeStatePath(): string {
   return `${themeStateDirectory()}/state.json`;
 }
 
-/** Build a full WorkbenchTheme from a parsed theme.toml's free-form token table, requiring
- * every core field explicitly (never partially applies) -- returns undefined, not a
- * partially-filled theme, if any required token is missing.
- * Token names use the dotted, lowercase convention packages/services/config/index.ts's own
- * DEFAULT_THEME_TOML and tests/config/t036-config.test.ts already established for the optional
- * editor-layer tokens (selection.primary, cursor.primary, motion.trail, operator.preview) --
- * extended with the same style for the required base surface tokens, which that example never
- * covered. A flat/camelCase-named theme.toml is deliberately rejected, not silently accepted
- * under two incompatible naming schemes. */
+/** Build a full WorkbenchTheme from a parsed theme.toml's free-form token table. The
+ * validation/decoding (required base surface tokens plus whichever optional editor-layer
+ * tokens are present) lives in `packages/services/config`'s `decodeWorkbenchThemeTokens`; this
+ * app-side wrapper only assigns the structurally-identical result into the UI's launch type,
+ * since only the app knows that type. */
 function workbenchThemeFromTokens(tokens: Readonly<Record<string, string>>): WorkbenchTheme | undefined {
-  const required = decodeRequiredWorkbenchThemeTokens(tokens);
-  if (!required.ok) return undefined;
-  const { background, surface, foreground, muted, border, accent, error } = required.value;
-  return Object.freeze({
-    background, surface, surfaceActive: required.value['surface.active'], foreground, muted, border, accent, error,
-    ...(tokens['selection.primary'] === undefined ? {} : { selectionPrimary: tokens['selection.primary'] }),
-    ...(tokens['selection.secondary'] === undefined ? {} : { selectionSecondary: tokens['selection.secondary'] }),
-    ...(tokens['cursor.primary'] === undefined ? {} : { cursorPrimary: tokens['cursor.primary'] }),
-    ...(tokens['cursor.secondary'] === undefined ? {} : { cursorSecondary: tokens['cursor.secondary'] }),
-    ...(tokens['motion.trail'] === undefined ? {} : { motionTrail: tokens['motion.trail'] }),
-    ...(tokens['operator.preview'] === undefined ? {} : { operatorPreview: tokens['operator.preview'] }),
-  });
+  return decodeWorkbenchThemeTokens(tokens);
 }
 
 interface LoadedCustomTheme { readonly label: string; readonly theme: WorkbenchTheme; }

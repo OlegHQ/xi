@@ -132,6 +132,10 @@ export class TaskController implements Disposable {
     this.notify();
     this.#out = [this.#process.onStdout((bytes) => this.append('stdout', bytes)), this.#process.onStderr((bytes) => this.append('stderr', bytes))];
     void this.#process.exit.then((exit) => {
+      // The process has already exited; clear it so a later cancel() (called either directly,
+      // or from the next start()) sees nothing to terminate and does not overwrite this run's
+      // real final state below.
+      this.#process = undefined;
       if (!exit.ok) { this.#snapshot = Object.freeze({ ...this.#snapshot, state: 'failed' }); this.notify(); return; }
       this.#snapshot = Object.freeze({ ...this.#snapshot, state: exit.value.code === null ? 'cancelled' : 'exited', exitCode: exit.value.code });
       this.notify();
@@ -145,8 +149,13 @@ export class TaskController implements Disposable {
     for (const subscription of this.#out) subscription.dispose();
     this.#out = [];
     await process.terminate();
-    this.#snapshot = Object.freeze({ ...this.#snapshot, state: 'cancelled' });
-    this.notify();
+    // Only a run still in flight becomes 'cancelled'; a run that had already reached a
+    // terminal state (e.g. 'exited') by the time this resolves must keep reporting that real
+    // outcome, not have it overwritten by the cancel that raced it.
+    if (this.#snapshot.state === 'running') {
+      this.#snapshot = Object.freeze({ ...this.#snapshot, state: 'cancelled' });
+      this.notify();
+    }
     process.dispose();
   }
   private append(kind: 'stdout' | 'stderr', bytes: Uint8Array): void {
@@ -155,7 +164,7 @@ export class TaskController implements Disposable {
     const accepted = bytes.slice(0, Math.max(0, remaining));
     const decoder = kind === 'stdout' ? this.#stdoutDecoder : this.#stderrDecoder;
     const text = stripAnsiEscapes(decoder.decode(accepted, { stream: true }));
-    this.#snapshot = Object.freeze({ ...this.#snapshot, [kind]: `${this.#snapshot[kind]}${text}`, bytes: this.#snapshot.bytes + accepted.byteLength, truncated: accepted.byteLength !== bytes.byteLength });
+    this.#snapshot = Object.freeze({ ...this.#snapshot, [kind]: `${this.#snapshot[kind]}${text}`, bytes: this.#snapshot.bytes + accepted.byteLength, truncated: this.#snapshot.truncated || accepted.byteLength !== bytes.byteLength });
     this.notify();
   }
   dispose(): void { if (this.#disposed) return; this.#disposed = true; this.#listeners.clear(); void this.cancel(); }

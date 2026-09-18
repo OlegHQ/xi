@@ -85,6 +85,7 @@ export class GitStatusService implements Disposable {
   #rerunRequested = false;
   #notRepo = false;
   #disposed = false;
+  #activeCancellation: CancellationSource | undefined;
 
   constructor(options: GitStatusServiceOptions) {
     this.#process = options.process;
@@ -118,6 +119,7 @@ export class GitStatusService implements Disposable {
   async #runOnce(): Promise<void> {
     const generation = ++this.#generation;
     const cancellation = new CancellationSource();
+    this.#activeCancellation = cancellation;
     const spawned = await this.#process.spawn({
       argv: ['git', 'status', '--porcelain=v2', '-z', '--branch'],
       cwd: this.#root,
@@ -134,6 +136,7 @@ export class GitStatusService implements Disposable {
         drain(handle.stderr, DEFAULT_MAX_OUTPUT_BYTES),
         handle.exit,
       ]);
+      if (this.#disposed) return;
       if (!exit.ok || !stdout.ok) { this.#publishEmpty(generation); return; }
       if (exit.value.code !== 0) {
         const stderrText = stderr.ok ? new TextDecoder('utf-8').decode(stderr.value) : '';
@@ -148,10 +151,13 @@ export class GitStatusService implements Disposable {
       for (const listener of this.#listeners) listener(parsed.value);
     } finally {
       try { handle.dispose(); } catch { /* process exit owns final cleanup */ }
+      if (this.#activeCancellation === cancellation) this.#activeCancellation = undefined;
+      cancellation.dispose();
     }
   }
 
   #publishEmpty(generation: number): void {
+    if (this.#disposed) return;
     const empty: GitStatusSnapshot = Object.freeze({ root: this.#root, generation, entries: Object.freeze([]), branch: undefined });
     this.#cache.publish(empty);
     for (const listener of this.#listeners) listener(empty);
@@ -161,6 +167,8 @@ export class GitStatusService implements Disposable {
     this.#disposed = true;
     this.#listeners.clear();
     this.#cache.dispose();
+    this.#activeCancellation?.cancel();
+    this.#activeCancellation = undefined;
   }
 }
 

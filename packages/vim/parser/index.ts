@@ -28,6 +28,8 @@ export interface VimOperatorPrefix {
 }
 
 export type VimGrammarPrefix = 'g' | 'z' | 'ctrl-w' | 'ctrl-w-g' | 'ctrl-backslash' | 'left-bracket' | 'right-bracket' | 'text-object-inner' | 'text-object-around' | 'Z';
+/** o_v/o_V/o_CTRL-V: forces an otherwise linewise/characterwise motion to the given wise-ness (`dvj`, `dVj`, `d<C-v>j`). */
+export type VimOperatorForce = 'v' | 'V' | '<C-v>';
 export type VimLiteralCommand = 'find-forward' | 'find-backward' | 'till-forward' | 'till-backward' | 'replace-character' | 'virtual-replace' | 'set-mark' | 'jump-mark' | 'jump-mark-line' | 'record-macro' | 'play-macro';
 
 export interface VimParserSession {
@@ -47,8 +49,8 @@ export type VimPendingInput =
   | { readonly kind: 'none' }
   | { readonly kind: 'count'; readonly count: VimCount }
   | { readonly kind: 'register-name'; readonly count: VimCount | undefined }
-  | { readonly kind: 'register-command'; readonly register: string; readonly count: VimCount | undefined }
-  | { readonly kind: 'operator-motion'; readonly operator: VimOperatorPrefix; readonly operatorCount: VimCount; readonly motionCount: VimCount | undefined; readonly register: string | undefined }
+  | { readonly kind: 'register-command'; readonly register: string; readonly precount: VimCount | undefined; readonly postCount: VimCount | undefined }
+  | { readonly kind: 'operator-motion'; readonly operator: VimOperatorPrefix; readonly operatorCount: VimCount; readonly motionCount: VimCount | undefined; readonly register: string | undefined; readonly force: VimOperatorForce | undefined }
   | { readonly kind: 'command-prefix'; readonly prefix: VimGrammarPrefix; readonly count: VimCount | undefined; readonly register: string | undefined; readonly operator: VimOperatorPrefix | undefined; readonly operatorCount: VimCount | undefined; readonly motionCount: VimCount | undefined }
   | { readonly kind: 'literal-argument'; readonly command: VimLiteralCommand; readonly count: VimCount | undefined; readonly register: string | undefined; readonly operator: VimOperatorPrefix | undefined; readonly operatorCount: VimCount | undefined; readonly motionCount: VimCount | undefined };
 
@@ -70,7 +72,7 @@ export interface VimCommandContext {
 
 export type VimCommandIntent =
   | (VimCommandContext & { readonly kind: 'single-key'; readonly key: string; readonly count: VimCount; readonly register?: string })
-  | (VimCommandContext & { readonly kind: 'operator-motion'; readonly operator: VimOperatorPrefix; readonly motion: string; readonly operatorCount: VimCount; readonly motionCount: VimCount; readonly register?: string })
+  | (VimCommandContext & { readonly kind: 'operator-motion'; readonly operator: VimOperatorPrefix; readonly motion: string; readonly operatorCount: VimCount; readonly motionCount: VimCount; readonly register?: string; readonly force?: VimOperatorForce })
   | (VimCommandContext & { readonly kind: 'operator-line'; readonly operator: VimOperatorPrefix; readonly count: VimCount; readonly register?: string })
   | (VimCommandContext & { readonly kind: 'operator-text-object'; readonly operator: VimOperatorPrefix; readonly textObject: string; readonly operatorCount: VimCount; readonly motionCount: VimCount; readonly register?: string })
   | (VimCommandContext & { readonly kind: 'prefixed-key'; readonly prefix: VimGrammarPrefix; readonly key: string; readonly count: VimCount; readonly register?: string })
@@ -101,7 +103,7 @@ const MAX_SAFE_COUNT = Number.MAX_SAFE_INTEGER;
 const NONE: VimPendingInput = Object.freeze({ kind: 'none' });
 const REGISTER_NAMES = Object.freeze(Array.from('"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-+*/_%#:.='));
 const DIGITS = Object.freeze(Array.from('0123456789'));
-const MOTION_KEYS = Object.freeze(Array.from('hl0^$|+_-jkwWbBeEgE%(){}[];,:nN*#fFtT`\'/?HMLG').concat(['<Left>', '<Right>', '<Up>', '<Down>', '<Home>', '<End>', '<PageUp>', '<PageDown>', '<C-b>', '<C-f>', '<C-d>', '<C-u>']));
+const MOTION_KEYS = Object.freeze(Array.from('hl0^$|+_-jkwWbBeEgE%(){}[];,:nN*#fFtT`\'/?HMLG').concat(['<Left>', '<Right>', '<Up>', '<Down>', '<Home>', '<End>', '<PageUp>', '<PageDown>', '<C-b>', '<C-f>', '<C-d>', '<C-u>', '<CR>', '<Space>']));
 const G_KEYS = Object.freeze(['g', 'j', 'k', '0', '^', '$', '_', 'm', 'M', ';', ',', '*', '#', '?', 'e', 'E', 'J', 'I', 'R', 'U', 'u', '~', 'q', 'w', 'r', 'v', 'V', 'x', 'X', '<', '>', '%', 'd', 'f', 'F', 'h', 'l', 'n', 'N', 'p', 'P', 't', 'T', 'a', 'A', 'o', 'O', 's', 'S', 'c', 'C', 'D', 'K', ']', '<C-]>', '<', '>', '<C-a>', '<C-x>']);
 const Z_KEYS = Object.freeze(['z', 't', 'b', '<CR>', '<Space>', '=', 'f', 'F', 'o', 'O', 'H', 'L', 'M', 'w', 'W', 'h', 'l', 'z']);
 const CTRL_W_KEYS = Object.freeze(['h', 'j', 'k', 'l', 't', 'w', 'W', 'b', 'B', 'p', 'P', 'n', 'o', 'O', 'c', 'q', 'v', 'T', 'g', 'f', 'F', ']', '}', '=', '+', '-', '<', '>', '_', '|', 's', 'S', 'x', 'X', 'r', 'R']);
@@ -262,13 +264,16 @@ function parseCommandKey(
     case 'count': return parseCountKey(state, input.atMilliseconds, key, state.pending.count);
     case 'register-name': {
       if (!isRegisterName(key)) return fail(state, { kind: 'invalid-register', key });
-      return pending(state, { kind: 'register-command', register: key, count: state.pending.count });
+      return pending(state, { kind: 'register-command', register: key, precount: state.pending.count, postCount: undefined });
     }
     case 'register-command': {
-      if (isDigit(key) && (key !== '0' || state.pending.count !== undefined)) {
-        return pending(state, { kind: 'register-command', register: state.pending.register, count: appendCount(state.pending.count, key) });
+      // Vim: [count1]"x[count2]command multiplies count1 and count2; a leading
+      // 0 after the register is the '0' motion (line start), not a digit,
+      // unless count2 digits have already started (e.g. `"a10`).
+      if (isDigit(key) && (key !== '0' || state.pending.postCount !== undefined)) {
+        return pending(state, { kind: 'register-command', register: state.pending.register, precount: state.pending.precount, postCount: appendCount(state.pending.postCount, key) });
       }
-      return parseRootWithContext(state, input.atMilliseconds, key, context(state.pending.count, state.pending.register));
+      return parseRootWithContext(state, input.atMilliseconds, key, context(mergeRegisterCounts(state.pending.precount, state.pending.postCount), state.pending.register));
     }
     case 'operator-motion': return parseOperatorKey(state, input.atMilliseconds, key, state.pending);
     case 'command-prefix': return parsePrefixKey(state, input.atMilliseconds, key, state.pending);
@@ -307,7 +312,7 @@ function parseRootWithContext(state: VimParserState, atMilliseconds: number, key
     return pending(state, {
       kind: 'operator-motion', operator,
       operatorCount: ctx.count ?? oneCount(), motionCount: undefined,
-      register: ctx.register,
+      register: ctx.register, force: undefined,
     });
   }
   const literal = literalCommand(key);
@@ -357,6 +362,11 @@ function parseOperatorKey(
     }
     return pending(state, { ...pendingInput, motionCount: appendCount(pendingInput.motionCount, key) });
   }
+  // nvim (dvj/dVj/d<C-v>j): v/V/<C-v> right after the operator forces the
+  // following motion's wise-ness instead of starting Visual mode.
+  if (pendingInput.force === undefined && (key === 'v' || key === 'V' || key === '<C-v>')) {
+    return pending(state, { ...pendingInput, force: key });
+  }
   if (key === pendingInput.operator.repeatKey) return command(state, NONE, {
     kind: 'operator-line', operator: pendingInput.operator, count: multiplyCounts(pendingInput.operatorCount, pendingInput.motionCount ?? oneCount()),
     ...(pendingInput.register === undefined ? {} : { register: pendingInput.register }),
@@ -375,7 +385,7 @@ function parseOperatorKey(
   });
   const literal = literalCommand(key);
   if (literal !== undefined) {
-    if (!isFindLiteral(literal)) return fail(state, { kind: 'invalid-continuation', key, pendingKind: pendingInput.kind });
+    if (!isOperatorMotionLiteral(literal)) return fail(state, { kind: 'invalid-continuation', key, pendingKind: pendingInput.kind });
     return pending(state, {
       kind: 'literal-argument', command: literal, count: undefined, register: pendingInput.register,
       operator: pendingInput.operator, operatorCount: pendingInput.operatorCount, motionCount: pendingInput.motionCount,
@@ -421,6 +431,13 @@ function parsePrefixKey(
     }
     const gOperator = gOperatorPrefix(key);
     if (gOperator !== undefined) {
+      // nvim (visual, 'gu' etc.): a g-operator typed while a selection is
+      // active acts immediately on the selection, like plain d/c/y do.
+      if (prefix.operator === undefined && state.session.mode.startsWith('visual-')) return command(state, NONE, {
+        kind: 'single-key', key: `g${key}`, count: prefix.count ?? oneCount(),
+        ...(prefix.register === undefined ? {} : { register: prefix.register }),
+        selections: state.session.selections, atMilliseconds,
+      });
       if (prefix.operator !== undefined) {
         if (key === prefix.operator.repeatKey) return command(state, NONE, {
           kind: 'operator-line', operator: prefix.operator,
@@ -432,7 +449,7 @@ function parsePrefixKey(
       }
       return pending(state, {
         kind: 'operator-motion', operator: gOperator, operatorCount: prefix.count ?? oneCount(),
-        motionCount: undefined, register: prefix.register,
+        motionCount: undefined, register: prefix.register, force: undefined,
       });
     }
     if (!G_KEYS.includes(key)) return fail(state, { kind: 'invalid-continuation', key, pendingKind: prefix.kind });
@@ -487,9 +504,11 @@ function parseLiteralKey(
   key: string,
   pendingInput: Extract<VimPendingInput, { readonly kind: 'literal-argument' }>,
 ): VimParseOutcome {
-  const argument = key === '<Space>' ? ' ' : key;
+  // nvim (r<CR>, f<Tab>): named single-character keys are literal arguments too,
+  // not just the printable characters isSingleLiteral otherwise accepts.
+  const argument = key === '<Space>' ? ' ' : key === '<CR>' ? '\n' : key === '<Tab>' ? '\t' : key;
   if (!isSingleLiteral(argument)) return fail(state, { kind: 'invalid-literal-argument', key });
-  if (pendingInput.operator !== undefined && isFindLiteral(pendingInput.command)) {
+  if (pendingInput.operator !== undefined && isOperatorMotionLiteral(pendingInput.command)) {
     return command(state, NONE, {
       kind: 'operator-motion', operator: pendingInput.operator, motion: `${literalKey(pendingInput.command)}${argument}`,
       operatorCount: pendingInput.operatorCount ?? oneCount(), motionCount: pendingInput.motionCount ?? pendingInput.count ?? oneCount(),
@@ -719,6 +738,7 @@ function operatorMotion(
     kind: 'operator-motion', operator: pendingInput.operator, motion,
     operatorCount: pendingInput.operatorCount, motionCount: pendingInput.motionCount ?? oneCount(),
     ...(pendingInput.register === undefined ? {} : { register: pendingInput.register }),
+    ...(pendingInput.force === undefined ? {} : { force: pendingInput.force }),
     selections: state.session.selections, atMilliseconds,
   });
 }
@@ -767,26 +787,49 @@ function makeState(session: VimParserSession, pendingInput: VimPendingInput): Vi
   });
 }
 
+const ESCAPE_CONTINUATION: VimContinuation = Object.freeze({ kind: 'escape', label: 'Cancel pending input' });
+
+// continuationsFor runs on every pending keystroke (T013-PERF budget). Its
+// output only depends on a handful of discrete pendingInput shapes, so each
+// shape's continuation list is built once and cached rather than re-cloning
+// already-frozen constant key arrays on every call.
+const COUNT_CONTINUATIONS = freezeContinuations([
+  { kind: 'count-digits', keys: DIGITS, label: 'Continue count' },
+  { kind: 'keys', keys: ['command keys', 'operators', 'g', 'z'], label: 'Continue command' },
+  ESCAPE_CONTINUATION,
+]);
+const REGISTER_NAME_CONTINUATIONS = freezeContinuations([
+  { kind: 'register-name', characters: REGISTER_NAMES, label: 'Choose register' }, ESCAPE_CONTINUATION,
+]);
+const LITERAL_ARGUMENT_CONTINUATIONS = freezeContinuations([
+  { kind: 'literal-character', label: 'Type one literal character' }, ESCAPE_CONTINUATION,
+]);
+const operatorMotionContinuationCache = new Map<string, readonly VimContinuation[]>();
+const commandPrefixContinuationCache = new Map<string, readonly VimContinuation[]>();
+
 function continuationsFor(pendingInput: VimPendingInput): readonly VimContinuation[] {
-  const escape: VimContinuation = Object.freeze({ kind: 'escape', label: 'Cancel pending input' });
   switch (pendingInput.kind) {
     case 'none': return noContinuations;
     case 'count':
-    case 'register-command': return freezeContinuations([
-      { kind: 'count-digits', keys: DIGITS, label: 'Continue count' },
-      { kind: 'keys', keys: ['command keys', 'operators', 'g', 'z'], label: 'Continue command' },
-      escape,
-    ]);
-    case 'register-name': return freezeContinuations([
-      { kind: 'register-name', characters: REGISTER_NAMES, label: 'Choose register' }, escape,
-    ]);
-    case 'operator-motion': return freezeContinuations([
-      { kind: 'count-digits', keys: DIGITS, label: 'Set motion count' },
-      { kind: 'motions', keys: MOTION_KEYS, label: 'Choose motion' },
-      { kind: 'keys', keys: [pendingInput.operator.repeatKey, 'g', 'z', 'i', 'a'], label: 'Linewise, prefixed, or text-object form' },
-      escape,
-    ]);
+    case 'register-command': return COUNT_CONTINUATIONS;
+    case 'register-name': return REGISTER_NAME_CONTINUATIONS;
+    case 'operator-motion': {
+      const cacheKey = `${pendingInput.operator.repeatKey}:${pendingInput.force ?? ''}`;
+      const cached = operatorMotionContinuationCache.get(cacheKey);
+      if (cached !== undefined) return cached;
+      const built = freezeContinuations([
+        { kind: 'count-digits', keys: DIGITS, label: 'Set motion count' },
+        { kind: 'motions', keys: MOTION_KEYS, label: 'Choose motion' },
+        { kind: 'keys', keys: pendingInput.force === undefined ? [pendingInput.operator.repeatKey, 'g', 'z', 'i', 'a', 'v', 'V', '<C-v>'] : [pendingInput.operator.repeatKey, 'g', 'z'], label: pendingInput.force === undefined ? 'Linewise, prefixed, text-object, or forced-wise form' : 'Forced-wise motion' },
+        ESCAPE_CONTINUATION,
+      ]);
+      operatorMotionContinuationCache.set(cacheKey, built);
+      return built;
+    }
     case 'command-prefix': {
+      const cacheKey = `${pendingInput.prefix}:${pendingInput.operator === undefined ? '0' : '1'}`;
+      const cached = commandPrefixContinuationCache.get(cacheKey);
+      if (cached !== undefined) return cached;
       const keys = pendingInput.prefix === 'g' ? G_KEYS
         : pendingInput.prefix === 'z' ? Z_KEYS
           : pendingInput.prefix === 'ctrl-w' ? CTRL_W_KEYS
@@ -795,14 +838,14 @@ function continuationsFor(pendingInput: VimPendingInput): readonly VimContinuati
               : pendingInput.prefix === 'Z' ? ['Z', 'Q']
               : pendingInput.prefix === 'left-bracket' || pendingInput.prefix === 'right-bracket' ? BRACKET_HOST_KEYS
                 : TEXT_OBJECT_KEYS;
-      return freezeContinuations([
+      const built = freezeContinuations([
         { kind: 'keys', keys, label: pendingInput.operator === undefined ? `Continue ${pendingInput.prefix} command` : 'Continue operator motion' },
-        escape,
+        ESCAPE_CONTINUATION,
       ]);
+      commandPrefixContinuationCache.set(cacheKey, built);
+      return built;
     }
-    case 'literal-argument': return freezeContinuations([
-      { kind: 'literal-character', label: 'Type one literal character' }, escape,
-    ]);
+    case 'literal-argument': return LITERAL_ARGUMENT_CONTINUATIONS;
   }
 }
 
@@ -825,12 +868,13 @@ function freezePending(value: VimPendingInput): VimPendingInput {
     case 'count': return Object.freeze({ kind: 'count', count: freezeCount(value.count) });
     case 'register-name': return Object.freeze({ kind: 'register-name', count: freezeOptionalCount(value.count) });
     case 'register-command': return Object.freeze({
-      kind: 'register-command', register: value.register, count: freezeOptionalCount(value.count),
+      kind: 'register-command', register: value.register,
+      precount: freezeOptionalCount(value.precount), postCount: freezeOptionalCount(value.postCount),
     });
     case 'operator-motion': return Object.freeze({
       kind: 'operator-motion', operator: freezeOperatorPrefix(value.operator),
       operatorCount: freezeCount(value.operatorCount), motionCount: freezeOptionalCount(value.motionCount),
-      register: value.register,
+      register: value.register, force: value.force,
     });
     case 'command-prefix': return Object.freeze({
       kind: 'command-prefix', prefix: value.prefix, count: freezeOptionalCount(value.count),
@@ -905,6 +949,11 @@ function appendCount(previous: VimCount | undefined, digit: string): VimCount {
   return Object.freeze({ value: base * 10 + value, saturated: false, explicit: true });
 }
 
+function mergeRegisterCounts(precount: VimCount | undefined, postCount: VimCount | undefined): VimCount | undefined {
+  if (precount === undefined && postCount === undefined) return undefined;
+  return multiplyCounts(precount ?? oneCount(), postCount ?? oneCount());
+}
+
 function multiplyCounts(left: VimCount, right: VimCount): VimCount {
   const explicit = left.explicit || right.explicit;
   if (left.saturated || right.saturated || left.value > MAX_SAFE_COUNT / right.value) return Object.freeze({ value: MAX_SAFE_COUNT, saturated: true, explicit });
@@ -918,6 +967,12 @@ function isSingleLiteral(value: string): boolean { return value.length > 0 && Ar
 function isFindLiteral(commandKind: VimLiteralCommand): boolean {
   return commandKind === 'find-forward' || commandKind === 'find-backward'
     || commandKind === 'till-forward' || commandKind === 'till-backward';
+}
+
+// nvim (d`a, y'a): mark jumps take a literal mark-register argument and are
+// valid operator motions, just like f/F/t/T.
+function isOperatorMotionLiteral(commandKind: VimLiteralCommand): boolean {
+  return isFindLiteral(commandKind) || commandKind === 'jump-mark' || commandKind === 'jump-mark-line';
 }
 
 function literalKey(commandKind: VimLiteralCommand): string {

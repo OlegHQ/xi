@@ -45,6 +45,7 @@ export type VimSelectionCommandFailure =
   | { readonly kind: 'invalid-pattern' | 'cancelled' | 'unsupported-command' };
 
 const DEFAULT_LIMIT = 10_000;
+const GRAPHEME_SEGMENTER = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('und', { granularity: 'grapheme' }) : undefined;
 
 /** Execute one selection-set command atomically against one immutable snapshot. */
 export function applyVimSelectionCommand(input: VimSelectionCommandInput): Result<VimSelectionCommandResult, VimSelectionCommandFailure> {
@@ -376,14 +377,14 @@ function previousGraphemeStart(snapshot: DocumentSnapshot, start: number, end: n
   if (end <= start) return undefined;
   const text = snapshot.slice(start as Utf16Offset, end as Utf16Offset);
   if (!text.ok || text.value.length === 0) return undefined;
-  if (typeof Intl.Segmenter !== 'function') {
+  if (GRAPHEME_SEGMENTER === undefined) {
     let candidate = end - 1;
     const unit = text.value.charCodeAt(text.value.length - 1);
     if (unit >= 0xdc00 && unit <= 0xdfff) candidate -= 1;
     return candidate;
   }
   let last = 0;
-  for (const part of new Intl.Segmenter('und', { granularity: 'grapheme' }).segment(text.value)) last = part.index;
+  for (const part of GRAPHEME_SEGMENTER.segment(text.value)) last = part.index;
   return start + last;
 }
 
@@ -457,8 +458,8 @@ function lineSpan(snapshot: DocumentSnapshot, lineIndex: LineIndex): { readonly 
 }
 
 function firstGraphemeEnd(snapshot: DocumentSnapshot, start: number, end: number): number | null {
-  if (typeof Intl.Segmenter !== 'function') return Math.min(end, start + 1);
-  const segmenter = new Intl.Segmenter('und', { granularity: 'grapheme' });
+  if (GRAPHEME_SEGMENTER === undefined) return Math.min(end, start + 1);
+  const segmenter = GRAPHEME_SEGMENTER;
   let offset = start;
   let windowSize = 8;
   let text = '';

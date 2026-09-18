@@ -266,4 +266,26 @@ host.openBufferAtPath = ((path: string, options?: { readonly preview?: boolean }
 await controller.openNode(tree.readNode(fileNode.id) as ExplorerTreeNode);
 assert.equal(capturedOpenOptions?.preview, true, 'T116-EXPLORER-07 explorer opens files as a preview buffer');
 
-console.log('T116 ExplorerController passed pending-g, rename-commit, delete-confirm, undo-restore and preview-open fixtures');
+// F2-13: a rejected ensureServices() must surface via onError instead of an unhandled
+// rejection that leaves open() as a silent, permanently unresolved dead panel.
+{
+  const failingErrors: string[] = [];
+  const failingController = new ExplorerController({
+    host,
+    session,
+    filesystem,
+    fileOperations,
+    clock: testClock,
+    marker: () => {},
+    onError: (message) => { failingErrors.push(message); },
+    workspaceRelativePath: () => undefined,
+    trashDirectory: '/workspace/.xi-trash',
+    ensureServices: async () => { throw new Error('services unavailable'); },
+  });
+  failingController.open();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(failingErrors.length > 0, true, 'F2-13: a rejected ensureServices() is surfaced via onError, not swallowed');
+  assert.equal(failingController.isOpen, false, 'F2-13: the panel does not stay stuck open after ensureServices() fails');
+}
+
+console.log('T116 ExplorerController passed pending-g, rename-commit, delete-confirm, undo-restore, preview-open and ensureServices rejection handling (F2-13) fixtures');

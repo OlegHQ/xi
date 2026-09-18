@@ -5,11 +5,22 @@ import {
   escapeDirectoryName,
   type DirectoryDraftSourceEntry,
 } from '../../packages/services/files/index';
+import type { DirectoryDraftDocumentOpener } from '../../packages/services/files/directory-draft';
 import {
   DirectoryReviewFocusLifecycle,
   formatDirectoryReviewLines,
 } from '../../packages/ui/directory/index';
 import { FocusGraph } from '../../packages/workbench/focus/index';
+import { openTextDocument } from '../../packages/document/src/index';
+import type { DocumentId } from '../../packages/contracts/src/index';
+
+// DirectoryDraft (a service) never opens documents itself; tests stand in for the
+// workbench/composition root that owns the real document (docs/plan/01-architecture.md).
+const openDraftDocument: DirectoryDraftDocumentOpener = (id, text) => {
+  const opened = openTextDocument(id as DocumentId, new TextEncoder().encode(text), 41027, { fileFormat: 'unix' });
+  if (opened.kind !== 'editable') return { ok: false, error: `document open failed: ${opened.kind}` };
+  return { ok: true, value: opened.document };
+};
 
 const entries: readonly DirectoryDraftSourceEntry[] = [
   { id: 'source-alpha', name: 'alpha.txt', path: '/workspace/alpha.txt', stableIdentity: 'inode-a' },
@@ -18,7 +29,7 @@ const entries: readonly DirectoryDraftSourceEntry[] = [
 ];
 
 function draft() {
-  const created = DirectoryDraft.create('/workspace', entries);
+  const created = DirectoryDraft.create('/workspace', entries, openDraftDocument);
   assert.equal(created.ok, true);
   if (created.ok) return created.value;
   throw new Error('directory draft fixture failed to initialize');

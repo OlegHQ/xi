@@ -7,16 +7,36 @@ import type {
 } from '../../contracts/src/index';
 import { asIdentifier } from '../../contracts/src/index';
 import type { DocumentId, DocumentVersion } from '../../contracts/src/index';
-import {
-  encodeTextFileChunks,
-  openTextDocument,
-  openTextDocumentChunks,
+import { encodeTextFileChunks } from '../../document/src/entrypoints/launch';
+import type {
+  OpenTextDocument,
+  OpenTextDocumentOptions,
+  ReadOnlyByteDocument,
+  RevisionId,
+  TextDocumentCreateFailure,
   TextFileDocument,
-  type OpenTextDocumentOptions,
-  type ReadOnlyByteDocument,
-  type RevisionId,
-  type TextFileSnapshot,
+  TextFileSnapshot,
 } from '../../document/src/entrypoints/launch';
+
+/**
+ * Services never construct or mutate documents themselves (docs/plan/01-architecture.md
+ * ownership table): opening a file's bytes/chunks into a `TextFileDocument`, and restoring
+ * one from a recovery checkpoint, are the composition root's job. This service only asks
+ * for one through this port, injected at construction (`apps/xi/src/main.ts`).
+ */
+export interface PersistenceDocumentFactory {
+  openText(id: DocumentId, bytes: Uint8Array, seed: number, options: OpenTextDocumentOptions): OpenTextDocument;
+  openTextChunks(id: DocumentId, chunks: AsyncIterable<Uint8Array>, seed: number, options: OpenTextDocumentOptions): Promise<OpenTextDocument>;
+  restoreCheckpoint(
+    id: DocumentId,
+    normalizedText: string,
+    lineEndings: readonly ('lf' | 'crlf' | 'cr')[],
+    defaultLineEnding: 'lf' | 'crlf' | 'cr',
+    hasUtf8Bom: boolean,
+    seed: number,
+    textIntent: 'literal-control' | undefined,
+  ): Result<TextFileDocument, TextDocumentCreateFailure>;
+}
 
 const RECOVERY_SCHEMA_VERSION = 1 as const;
 const SESSION_SCHEMA_VERSION = 1 as const;
@@ -135,6 +155,7 @@ export interface SessionSnapshot {
 
 interface JournalEntryEncoding {
   readonly json: string;
+  readonly encoded: Uint8Array;
   readonly bytes: number;
 }
 
@@ -158,10 +179,22 @@ export class PersistenceService {
   /** Journal path -> the in-flight checkpoint write for it, and a way to stop it early.
    * Bounded by the number of journals with a checkpoint currently in flight (ordinarily 0 or 1). */
   readonly #pendingCheckpoints = new Map<string, { readonly promise: Promise<Result<RecoveryCheckpoint, PersistenceFailure>>; readonly cancel: () => void }>();
+  readonly #onError: (message: string) => void;
+  readonly #documents: PersistenceDocumentFactory | undefined;
   #disposed = false;
 
-  constructor(filesystem: FilesystemPort) {
+  constructor(filesystem: FilesystemPort, onError: (message: string) => void = () => {}, documents?: PersistenceDocumentFactory) {
     this.#filesystem = filesystem;
+    this.#onError = onError;
+    this.#documents = documents;
+  }
+
+  /** `openFile`/`recover` construct documents; both require the composition root to have
+   * injected `documents` at construction (`apps/xi/src/main.ts`) -- there is no in-package
+   * default, since this package never imports `openTextDocument`/`TextFileDocument` itself. */
+  #requireDocuments(): PersistenceDocumentFactory {
+    if (this.#documents === undefined) throw new Error('persistence-document-factory-not-configured');
+    return this.#documents;
   }
 
   /** Idempotent. Releases the opened-file and journal caches; later calls fail with `{ kind: 'disposed' }`. */
@@ -170,6 +203,7 @@ export class PersistenceService {
     this.#disposed = true;
     this.#opened.clear();
     this.#journalCache.clear();
+    for (const pending of this.#pendingCheckpoints.values()) pending.cancel();
     this.#pendingCheckpoints.clear();
   }
 
@@ -223,7 +257,7 @@ export class PersistenceService {
           yield chunk;
         }
       })();
-      const opened = await openTextDocumentChunks(documentId, observed, options.seed ?? 41027, textOptions);
+      const opened = await this.#requireDocuments().openTextChunks(documentId, observed, options.seed ?? 41027, textOptions);
       if (cancellation.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
       const final = await this.#stat(path, cancellation);
       if (!final.ok) return final;
@@ -250,7 +284,7 @@ export class PersistenceService {
       || initial.value.inode !== final.value.inode || initial.value.device !== final.value.device) {
       return { ok: false, error: { kind: 'external-change', path, expected: null, actual: identity } };
     }
-    const opened = openTextDocument(documentId, read.value, options.seed ?? 41027, textOptions);
+    const opened = this.#requireDocuments().openText(documentId, read.value, options.seed ?? 41027, textOptions);
     if (opened.kind === 'editable') {
       this.#opened.set(documentId, identity);
       return { ok: true, value: { kind: 'editable', path, identity, document: opened.document } };
@@ -419,8 +453,10 @@ export class PersistenceService {
     }
     if (totalBytes > maxBytes) return { ok: false, error: { kind: 'journal-too-large', path: journalPath, bytes: totalBytes } };
     if (cancellation.isCancelled || cancelFlag.cancelled) return { ok: false, error: { kind: 'cancelled' } };
-    const buffer = new TextEncoder().encode(joinJournalEntries(encodedEntries));
-    const written = await this.#filesystem.writeFileAtomic(journalPath, buffer, cancellation);
+    const writeChunks = this.#filesystem.writeFileAtomicChunks;
+    const written = writeChunks !== undefined
+      ? await writeChunks.call(this.#filesystem, journalPath, journalEntryChunks(encodedEntries), cancellation)
+      : await this.#filesystem.writeFileAtomic(journalPath, new TextEncoder().encode(joinJournalEntries(encodedEntries)), cancellation);
     if (!written.ok) return this.#platform(written.error);
     const info = await this.#stat(journalPath, cancellation);
     this.#journalCache.set(journalPath, {
@@ -445,7 +481,7 @@ export class PersistenceService {
     if (!journal.ok) return journal;
     const checkpoint = [...journal.value].reverse().find((entry) => entry.path === path && entry.documentId === documentId);
     if (checkpoint === undefined) return { ok: true, value: { kind: 'none', path } };
-    const restored = restoreCheckpoint(checkpoint, documentId, options.seed ?? 41027);
+    const restored = restoreCheckpointDocument(this.#requireDocuments(), checkpoint, documentId, options.seed ?? 41027);
     if (!restored.ok) return restored;
     const disk = await this.#readIdentity(path, cancellation, checkpoint.baseDisk);
     if (!disk.ok) return disk;
@@ -571,7 +607,21 @@ export class PersistenceService {
       return this.#platform(read.error);
     }
     const decoded = decodeJournal(read.value, path);
-    if (!decoded.ok) return decoded;
+    if (!decoded.ok) {
+      // An unparseable journal must not permanently block every future checkpoint for this
+      // path (returning the error here left #runCheckpoint aborting before it ever wrote a
+      // fresh journal, so the same corrupt bytes kept failing every checkpoint forever).
+      // Treat it as empty so the next successful checkpoint overwrites the corrupt file, and
+      // report it once here rather than silently discarding the recovery data it held.
+      this.#onError(`xi: recovery journal ${path} is corrupt and will be reset: ${decoded.error.kind === 'journal-corrupt' ? decoded.error.message : decoded.error.kind}`);
+      const empty: JournalCacheEntry = {
+        info: { sizeBytes: info.value.sizeBytes, modifiedMilliseconds: info.value.modifiedMilliseconds },
+        entries: [],
+        encoded: [],
+      };
+      this.#journalCache.set(path, empty);
+      return { ok: true, value: empty };
+    }
     const entry: JournalCacheEntry = {
       info: { sizeBytes: info.value.sizeBytes, modifiedMilliseconds: info.value.modifiedMilliseconds },
       entries: decoded.value,
@@ -588,8 +638,8 @@ export class PersistenceService {
   }
 }
 
-export function createPersistenceService(filesystem: FilesystemPort): PersistenceService {
-  return new PersistenceService(filesystem);
+export function createPersistenceService(filesystem: FilesystemPort, documents?: PersistenceDocumentFactory): PersistenceService {
+  return new PersistenceService(filesystem, undefined, documents);
 }
 
 export function openFile(
@@ -598,8 +648,9 @@ export function openFile(
   documentId: DocumentId,
   cancellation: CancellationToken,
   options: OpenFileOptions = {},
+  documents?: PersistenceDocumentFactory,
 ): Promise<Result<OpenedFile, PersistenceFailure>> {
-  return new PersistenceService(filesystem).openFile(path, documentId, cancellation, options);
+  return new PersistenceService(filesystem, undefined, documents).openFile(path, documentId, cancellation, options);
 }
 
 export function saveFile(
@@ -618,8 +669,9 @@ export function recoverFile(
   documentId: DocumentId,
   cancellation: CancellationToken,
   options: RecoveryOptions = {},
+  documents?: PersistenceDocumentFactory,
 ): Promise<Result<RecoveryResult, PersistenceFailure>> {
-  return new PersistenceService(filesystem).recover(path, documentId, cancellation, options);
+  return new PersistenceService(filesystem, undefined, documents).recover(path, documentId, cancellation, options);
 }
 
 export function recoveryJournalPath(path: string): string {
@@ -713,14 +765,19 @@ function validateCheckpoint(value: unknown): Result<RecoveryCheckpoint, string> 
   }) };
 }
 
-function restoreCheckpoint(checkpoint: RecoveryCheckpoint, documentId: DocumentId, seed: number): Result<TextFileDocument, PersistenceFailure> {
+function restoreCheckpointDocument(
+  documents: PersistenceDocumentFactory,
+  checkpoint: RecoveryCheckpoint,
+  documentId: DocumentId,
+  seed: number,
+): Result<TextFileDocument, PersistenceFailure> {
   const checkedId = asIdentifier<DocumentId>(checkpoint.documentId, 'documentId');
   if (!checkedId.ok || checkedId.value !== documentId) return { ok: false, error: { kind: 'journal-corrupt', path: checkpoint.path, message: 'checkpoint document identity does not match request' } };
   if (!isNonnegativeSafeInteger(checkpoint.documentVersion) || checkpoint.documentVersion < 1
     || !isNonnegativeSafeInteger(checkpoint.revisionId) || checkpoint.revisionId < 1) {
     return { ok: false, error: { kind: 'journal-corrupt', path: checkpoint.path, message: 'checkpoint version identity is invalid' } };
   }
-  const created = TextFileDocument.create(
+  const created = documents.restoreCheckpoint(
     documentId,
     checkpoint.normalizedText,
     checkpoint.lineEndings,
@@ -776,6 +833,12 @@ function createFingerprintAccumulator(): { update(bytes: Uint8Array): void; valu
 }
 
 function identityMatchesStat(hint: FileIdentity, path: string, info: FileInfo): boolean {
+  // An mtime within ~2 ms of "now" is inside the filesystem's mtime granularity: a second,
+  // external write landing in that same window can produce an identical (sizeBytes, mtime)
+  // pair to the hint even though the content changed. Refuse the stat-only shortcut and force
+  // a re-hash whenever the observed mtime is this fresh, rather than trusting a coincidental
+  // match.
+  if (Date.now() - info.modifiedMilliseconds < 2) return false;
   return hint.path === path && hint.kind === info.kind && hint.sizeBytes === info.sizeBytes
     && hint.modifiedMilliseconds === info.modifiedMilliseconds && hint.device === info.device && hint.inode === info.inode
     && hint.linkCount === info.linkCount;
@@ -797,8 +860,26 @@ function encodeJson(value: unknown): Uint8Array {
 
 function journalEntryEncoding(entry: RecoveryCheckpoint): JournalEntryEncoding {
   const json = JSON.stringify(entry);
-  return { json, bytes: Buffer.byteLength(json, 'utf8') };
+  const encoded = new TextEncoder().encode(json);
+  return { json, encoded, bytes: encoded.byteLength };
 }
+
+/** Streams `[` + each entry's already-UTF-8-encoded JSON, joined by `,` + `]`, without
+ * building one giant joined string (`joinJournalEntries`) and re-encoding it (a second full
+ * O(journal) pass) on every checkpoint. */
+async function* journalEntryChunks(encoded: readonly JournalEntryEncoding[]): AsyncIterable<Uint8Array> {
+  yield OPEN_BRACKET;
+  let first = true;
+  for (const entry of encoded) {
+    if (!first) yield COMMA;
+    first = false;
+    yield entry.encoded;
+  }
+  yield CLOSE_BRACKET;
+}
+const OPEN_BRACKET = new TextEncoder().encode('[');
+const CLOSE_BRACKET = new TextEncoder().encode(']');
+const COMMA = new TextEncoder().encode(',');
 
 /** Byte length of `JSON.stringify(entries.map(e => JSON.parse(e.json)))`, computed from cached per-entry sizes. */
 function journalTotalBytes(encoded: readonly JournalEntryEncoding[]): number {

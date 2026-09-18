@@ -57,9 +57,12 @@ import {
 import { resolveVimFind, type VimFindFailure, type VimFindInvocation, type VimFindOptions, type VimFindOutcome, type VimLastFind } from '../motions/find';
 import type { VimJumpHistory, VimJumpReason, VimNavigationTarget, VimMarkStore } from '../navigation/index';
 import { recordVimJump, setVimMark } from '../navigation/index';
-import { searchVimBuffer, type VimSearchFailure, type VimSearchOutcome, type VimSearchRequest, type VimSearchState, type VimSearchView } from '../search/index';
+import { searchVimBuffer, type VimSearchFailure, type VimSearchOutcome, type VimSearchRequest, type VimSearchState, type VimSearchView, type VimOperatorSearchRange } from '../search/index';
 
 export type VimMultiFailurePolicy = 'retain-failed' | 'reject-command';
+
+/** o_v/o_V/o_CTRL-V: forces an otherwise linewise/characterwise motion to the given wise-ness. */
+export type VimOperatorForce = 'v' | 'V' | '<C-v>';
 export type VimMultiMotionInvocation = VimMotionInvocation | VimWordMotionInvocation | VimTextObjectInvocation;
 export type VimMultiMotionOptions = VimMotionOptions & VimTextObjectOptions;
 
@@ -153,22 +156,25 @@ export function resolveVimMultiMotion(
     if (!next.ok) return failure({ kind: 'selection-update-failed' });
     nextMembers.push(next.value);
     outcomes.push(Object.freeze({ id: member.id, status: 'completed', source: sourceOffset, outcome: resolved.value, failure: null }));
-    const extent = motionExtent(input.snapshot, sourceOffset, resolved.value);
-    if (!extent.ok) return failure({ kind: 'preview-failed' });
-    previewMembers.push(Object.freeze({
-      memberId: member.id,
-      source: sourceOffset,
-      destination: resolved.value.cursor.offset,
-      moved: resolved.value.moved,
-      extent: extent.value,
-    }));
+    if (input.previewEnabled === true) {
+      const extent = motionExtent(input.snapshot, sourceOffset, resolved.value);
+      if (!extent.ok) return failure({ kind: 'preview-failed' });
+      previewMembers.push(Object.freeze({
+        memberId: member.id,
+        source: sourceOffset,
+        destination: resolved.value.cursor.offset,
+        moved: resolved.value.moved,
+        extent: extent.value,
+      }));
+    }
   }
   const updated = updateSelectionSet(input.snapshot, input.selections, {
     primaryId: input.selections.primaryId,
     members: nextMembers,
   });
   if (!updated.ok) return failure({ kind: 'selection-update-failed' });
-  const preview = input.previewEnabled === false ? null : Object.freeze({
+  // C9: motion previews are opt-in (default off) — no consumer in workbench/ui builds them by default.
+  const preview = input.previewEnabled !== true ? null : Object.freeze({
     documentId: input.snapshot.id,
     documentVersion: input.snapshot.version,
     selectionGeneration: input.selections.selectionGeneration,
@@ -437,13 +443,16 @@ export function resolveVimMultiVisualMotion(
     }
     targets.push({ id: member.id, cursor: visualCursorFromMotion(resolved.value) });
     outcomes.push(Object.freeze({ id: member.id, status: 'completed', source: sourceOffset, outcome: resolved.value, failure: null }));
-    const extent = motionExtent(input.snapshot, sourceOffset, resolved.value);
-    if (!extent.ok) return failure({ kind: 'preview-failed' });
-    previewMembers.push(Object.freeze({ memberId: member.id, source: sourceOffset, destination: resolved.value.cursor.offset, moved: resolved.value.moved, extent: extent.value }));
+    if (input.previewEnabled === true) {
+      const extent = motionExtent(input.snapshot, sourceOffset, resolved.value);
+      if (!extent.ok) return failure({ kind: 'preview-failed' });
+      previewMembers.push(Object.freeze({ memberId: member.id, source: sourceOffset, destination: resolved.value.cursor.offset, moved: resolved.value.moved, extent: extent.value }));
+    }
   }
   const extended = extendVimVisualSelection(input.snapshot, input.selections, targets, input.visualOptions);
   if (!extended.ok) return failure({ kind: 'selection-update-failed' });
-  const preview = input.previewEnabled === false ? null : Object.freeze({
+  // C9: motion previews are opt-in (default off).
+  const preview = input.previewEnabled !== true ? null : Object.freeze({
     documentId: input.snapshot.id,
     documentVersion: input.snapshot.version,
     selectionGeneration: input.selections.selectionGeneration,
@@ -470,6 +479,10 @@ export interface VimMultiOperatorInput {
   /** One parsed motion shared by all normal members. Visual members use their stored shape. */
   readonly motion?: VimMultiMotionInvocation;
   readonly motionOptions?: VimMultiMotionOptions;
+  readonly force?: VimOperatorForce;
+  /** A `/pat<CR>` or `?pat<CR>` search-motion range (searchVimOperator), used
+   * instead of `motion` for normal-cursor members (e.g. `d/two/+1<CR>`). */
+  readonly searchRange?: VimOperatorSearchRange;
   readonly operatorCount?: number;
   readonly motionCount?: number;
   readonly doubled?: boolean;
@@ -508,7 +521,7 @@ export function prepareVimMultiOperator(
   if (!sameSelectionDocument(input.snapshot, input.selections)) return failure({ kind: 'stale-selection' });
   if (input.selections.members.length === 0) return failure({ kind: 'invalid-selection' });
   if (input.operator !== 'delete' && input.operator !== 'change' && input.operator !== 'yank') return failure({ kind: 'invalid-operator' });
-  if (input.motion === undefined && input.selections.members.some((member) => member.kind === 'normal-cursor')) return failure({ kind: 'invalid-selection' });
+  if (input.motion === undefined && input.searchRange === undefined && input.selections.members.some((member) => member.kind === 'normal-cursor')) return failure({ kind: 'invalid-selection' });
   const policy = input.failurePolicy ?? 'reject-command';
   const state = input.state ?? { mode: 'normal', repeatTarget: null };
   const members: VimMultiOperatorMember[] = [];
@@ -520,7 +533,9 @@ export function prepareVimMultiOperator(
     if (member === undefined) return failure({ kind: 'invalid-selection' });
     const motion = member.kind === 'visual-character' || member.kind === 'visual-line' || member.kind === 'visual-block'
       ? visualMemberMotion(input.snapshot, member)
-      : normalMemberMotion(input.snapshot, member, input.motion as VimMultiMotionInvocation, input.motionOptions);
+      : input.searchRange !== undefined
+        ? searchMemberMotion(input.snapshot, input.searchRange)
+        : normalMemberMotion(input.snapshot, member, input.motion as VimMultiMotionInvocation, input.motionOptions, input.force);
     if (!motion.ok) {
       if (input.operator !== 'yank' || policy === 'reject-command') {
         return failure({ kind: 'member-failed', memberId: member.id, memberIndex: index, cause: motion.error });
@@ -728,6 +743,7 @@ function normalMemberMotion(
   member: SelectionMember,
   invocation: VimMultiMotionInvocation,
   options?: VimMultiMotionOptions,
+  force?: VimOperatorForce,
 ): Result<Omit<import('../ranges/normalize').VimOperatorRangeInput, 'operator'>, VimOperatorMotionFailure> {
   const cursor = motionCursorForMember(snapshot, member);
   if (!cursor.ok) return { ok: false, error: { kind: 'motion-failed', reason: cursor.error.kind } };
@@ -735,6 +751,16 @@ function normalMemberMotion(
   if (!outcome.ok) return { ok: false, error: { kind: 'motion-failed', reason: outcome.error.kind } };
   const start = memberOffset(member) as number;
   const target = outcome.value.cursor.offset as number;
+  // o_v/o_V/o_CTRL-V (:help o_v): v forces characterwise, toggling
+  // inclusive/exclusive if the motion already was characterwise (a
+  // linewise motion's recorded inclusive is always false, so toggling and
+  // forcing false coincide); V forces linewise; <C-v> forces blockwise.
+  // nvim: normal! d1G|call cursor(1,2)|normal! dvj / dVl / dv$ / dve / d<C-v>j on ['abc','def','ghi'] cursor (1,2)
+  const forceKind = force === 'V' ? ('linewise' as const)
+    : force === '<C-v>' ? ('blockwise' as const)
+    : force === 'v' ? ('characterwise' as const)
+    : undefined;
+  const baseInclusive = operatorMotionInclusive(invocation.key);
   return {
     ok: true,
     value: {
@@ -742,8 +768,10 @@ function normalMemberMotion(
       target: { documentVersion: snapshot.version, offset: outcome.value.cursor.offset, ...(outcome.value.cursor.desiredDisplayCellColumn === null ? {} : { displayCellColumn: outcome.value.cursor.desiredDisplayCellColumn }) },
       direction: target >= start ? 'forward' : 'backward',
       motionKind: outcome.value.kind,
-      inclusive: operatorMotionInclusive(invocation.key),
+      inclusive: force === 'v' ? (outcome.value.kind === 'linewise' ? false : !baseInclusive) : baseInclusive,
       motionKey: invocation.key,
+      ...(forceKind === undefined ? {} : { forceKind }),
+      ...(forceKind === 'blockwise' ? { blockTabPolicy: 'preserve' as const } : {}),
       ...(options?.tabSize === undefined ? {} : { tabSize: options.tabSize }),
       ...(options?.widthPolicy === undefined ? {} : { widthPolicy: options.widthPolicy }),
       ...(options?.folds === undefined ? {} : { folds: options.folds }),
@@ -775,13 +803,41 @@ function visualMemberMotion(
   };
 }
 
+// A `/pat<CR>` or `?pat<CR>` search-motion range from searchVimOperator. Its
+// `linewise` flag (set by a numeric search-offset like `/pat/+1`) expands the
+// range to whole lines via forceKind, reusing normalizeLinewise.
+// nvim: :call setline(1,['one','two','three']) | normal! d/two/+1<CR> -> [''] (all 3 lines removed)
+function searchMemberMotion(
+  snapshot: DocumentSnapshot,
+  range: VimOperatorSearchRange,
+): Result<Omit<import('../ranges/normalize').VimOperatorRangeInput, 'operator'>, VimOperatorMotionFailure> {
+  return {
+    ok: true,
+    value: {
+      // range.start/end are already sorted low/high; the cursor (origin) is
+      // whichever endpoint isn't the match (range.target).
+      origin: { documentVersion: snapshot.version, offset: range.direction === 'forward' ? range.start : range.end },
+      target: { documentVersion: snapshot.version, offset: range.target },
+      direction: range.direction === 'forward' ? 'forward' : 'backward',
+      motionKind: 'characterwise',
+      inclusive: range.inclusive,
+      motionKey: range.direction === 'forward' ? '/' : '?',
+      ...(range.linewise ? { forceKind: 'linewise' as const } : {}),
+    },
+  };
+}
+
+// C3: Vim motion inclusivity is an explicit allow-list, not "everything
+// except a few keys" — most motions (0 ^ | ( ) n N ` gg G H M L h l w W b B
+// arrows...) are exclusive. Only these land on and must consume their own
+// target character. Text objects (iw/aw/ip/...) are always inclusive — they
+// already resolve to the exact span to act on.
+// nvim: :call setline(1,['abcdef']) | normal! 03ld0 -> 'ef' (0 is exclusive: def is removed)
+const INCLUSIVE_MOTION_KEYS: ReadonlySet<string> = new Set(['e', 'E', 'ge', 'gE', '$', 'g_', 'f', 'F', 't', 'T', '%']);
+
 function operatorMotionInclusive(key: string): boolean {
-  // Character motions select the traversed characters; the endpoint is
-  // exclusive for h/l and their arrow aliases, so `dl`/`dh` match `x`.
-  // e/E/ge/gE are inclusive: they land on the last character of a word, and
-  // operators must consume that character too (`de` on "foo bar" -> " bar").
-  // `{`/`}` (paragraph motions) are exclusive charwise motions.
-  return !new Set(['h', 'l', '<Left>', '<Right>', 'w', 'W', 'b', 'B', '{', '}']).has(key);
+  if (TEXT_OBJECT_KEYS.has(key)) return true;
+  return INCLUSIVE_MOTION_KEYS.has(key);
 }
 
 function mapOperatorCursors(
@@ -836,7 +892,10 @@ function endpointForOffset(snapshot: DocumentSnapshot, offset: Utf16Offset): Res
   if (next !== null && !next.ok) return failure({ kind: 'selection-update-failed' });
   const lineEnd = next?.ok === true ? (next.value as number) - 1 : snapshot.lengthUtf16;
   if ((offset as number) === snapshot.lengthUtf16 && snapshot.lengthUtf16 > lineEnd) return { ok: true, value: { kind: 'eof' } };
-  const content = snapshot.slice(offset, lineEnd as Utf16Offset);
+  // C8: bound the read to a small window instead of slicing the rest of the
+  // line — only the first grapheme's length is needed.
+  const windowEnd = Math.min(lineEnd, (offset as number) + 16);
+  const content = snapshot.slice(offset, windowEnd as Utf16Offset);
   if (!content.ok) return failure({ kind: 'selection-update-failed' });
   if (content.value.length === 0) return { ok: true, value: { kind: 'empty-line', lineIndex: line.value } };
   const first = firstGrapheme(content.value);
@@ -844,10 +903,12 @@ function endpointForOffset(snapshot: DocumentSnapshot, offset: Utf16Offset): Res
   return { ok: true, value: { kind: 'character', offset, after: (offset as number + first.length) as Utf16Offset } };
 }
 
+const MULTI_GRAPHEME_SEGMENTER = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('und', { granularity: 'grapheme' }) : undefined;
+
 function firstGrapheme(text: string): string | null {
-  if (typeof Intl.Segmenter === 'function') {
-    const first = [...new Intl.Segmenter('und', { granularity: 'grapheme' }).segment(text)][0];
-    return first?.segment ?? null;
+  if (MULTI_GRAPHEME_SEGMENTER !== undefined) {
+    const first = MULTI_GRAPHEME_SEGMENTER.segment(text)[Symbol.iterator]().next();
+    return first.done === true ? null : first.value.segment;
   }
   return [...text][0] ?? null;
 }

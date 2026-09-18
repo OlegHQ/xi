@@ -178,8 +178,8 @@ function caseEdits(
   for (const item of range.ranges) {
     if (isCancelled(input)) return failure({ kind: 'cancelled' });
     const text = item.text;
-    const transformed = operator === 'gu' ? text.toLocaleLowerCase('en-US')
-      : operator === 'gU' ? text.toLocaleUpperCase('en-US')
+    const transformed = operator === 'gu' ? mapCodePoints(text, simpleLowerCase)
+      : operator === 'gU' ? mapCodePoints(text, simpleUpperCase)
         : operator === 'g~' ? swapCase(text) : rot13(text);
     const replacement = `${item.replacementPrefix ?? ''}${transformed}${item.replacementSuffix ?? ''}`;
     const original = `${item.replacementPrefix ?? ''}${text}${item.replacementSuffix ?? ''}`;
@@ -224,7 +224,6 @@ function indentEdits(
 ): VimTextTransformResult<readonly DocumentEdit[]> {
   const lines = touchedLines(snapshot, range);
   if (!lines.ok) return lines;
-  const unit = indentUnit(options);
   const edits: DocumentEdit[] = [];
   for (const line of lines.value) {
     if (isCancelled(input)) return failure({ kind: 'cancelled' });
@@ -236,7 +235,9 @@ function indentEdits(
     if (!text.ok) return failure({ kind: 'document-read-failed' });
     const indentLength = /^[\t ]*/u.exec(text.value)?.[0].length ?? 0;
     const current = text.value.slice(0, indentLength);
-    const next = operator === '>' ? `${current}${unit}` : removeIndent(current, options.shiftwidth, options.tabstop);
+    const currentWidth = indentWidth(current, options.tabstop);
+    const nextWidth = operator === '>' ? currentWidth + options.shiftwidth : Math.max(0, currentWidth - options.shiftwidth);
+    const next = renderIndent(nextWidth, options.expandtab, options.tabstop);
     if (next !== current) edits.push(makeEdit(start.value, (start.value as number + indentLength) as Utf16Offset, next));
   }
   return { ok: true, value: Object.freeze(edits) };
@@ -267,47 +268,81 @@ function nextLineContentEnd(snapshot: DocumentSnapshot, line: number): VimTextTr
 }
 
 function joinLines(text: string, noSpace: boolean, joinspaces: boolean): string {
+  // Verified against `.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE`:
+  // J keeps existing left-trailing whitespace as the separator (no extra space added),
+  // never inserts a space before a right line starting with ')', drops the separator
+  // entirely when the right line is blank, and gJ (noSpace) does not strip either side.
   const parts = text.split('\n');
   const hasTrailingNewline = parts.length > 1 && parts[parts.length - 1] === '';
   const content = hasTrailingNewline ? parts.slice(0, -1) : parts;
   if (content.length < 2) return text;
-  let result = content[0]?.replace(/[\t ]+$/u, '') ?? '';
+  let result = content[0] ?? '';
+  if (noSpace) {
+    for (let index = 1; index < content.length; index += 1) result += content[index] ?? '';
+    return hasTrailingNewline ? `${result}\n` : result;
+  }
   for (let index = 1; index < content.length; index += 1) {
     const right = (content[index] ?? '').replace(/^[\t ]+/u, '');
+    if (right === '') continue;
+    const endsWithSpace = /[\t ]$/u.test(result);
     const sentence = /[.!?]$/u.test(result);
-    const separator = noSpace ? '' : sentence && joinspaces ? '  ' : ' ';
+    const separator = endsWithSpace || right.startsWith(')') ? '' : sentence && joinspaces ? '  ' : ' ';
     result += separator + right;
   }
   return hasTrailingNewline ? `${result}\n` : result;
 }
 
-function indentUnit(options: Required<VimTextTransformOptions>): string {
-  if (options.expandtab) return ' '.repeat(options.shiftwidth);
-  const tabs = Math.floor(options.shiftwidth / options.tabstop);
-  const spaces = options.shiftwidth % options.tabstop;
-  return '\t'.repeat(tabs) + ' '.repeat(spaces);
+// nvim (`.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE -c 'set
+// shiftwidth=4 tabstop=8 noexpandtab' -c 'normal <<'` on "\tfoo"): "    foo" -- `<<`
+// removes exactly 'shiftwidth' display cells, re-rendering the remainder (4 of the tab's
+// 8 cells survive as spaces), it never consumes a whole tab merely because stepping past
+// it overshoots the budget.
+function indentWidth(value: string, tabstop: number): number {
+  let width = 0;
+  for (const character of value) {
+    width += character === '\t' ? tabstop - (width % tabstop) : 1;
+  }
+  return width;
 }
 
-function removeIndent(value: string, shiftwidth: number, tabstop: number): string {
-  let remaining = shiftwidth;
-  let index = 0;
-  while (index < value.length && remaining > 0) {
-    if (value[index] === '\t') remaining -= tabstop;
-    else if (value[index] === ' ') remaining -= 1;
-    else break;
-    index += 1;
-  }
-  return value.slice(index);
+function renderIndent(width: number, expandtab: boolean, tabstop: number): string {
+  if (width <= 0) return '';
+  if (expandtab) return ' '.repeat(width);
+  const tabs = Math.floor(width / tabstop);
+  const spaces = width % tabstop;
+  return '\t'.repeat(tabs) + ' '.repeat(spaces);
 }
 
 function swapCase(text: string): string {
   const parts: string[] = [];
   for (const character of text) {
-    const upper = character.toLocaleUpperCase('en-US');
-    const lower = character.toLocaleLowerCase('en-US');
+    const upper = simpleUpperCase(character);
+    const lower = simpleLowerCase(character);
     parts.push(character === upper ? lower : upper);
   }
   return parts.join('');
+}
+
+// nvim (`.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE -c
+// 'normal gUU'` on "straße"): "STRAẞE" -- ß maps to U+1E9E (a single code point, Vim's
+// simple case mapping), never JS's full-mapping "SS", which would desync per-code-point
+// offsets across the rest of the transformed range.
+const UPPER_CASE_OVERRIDES: Readonly<Record<string, string>> = Object.freeze({ ß: 'ẞ' });
+
+function simpleUpperCase(character: string): string {
+  const overridden = UPPER_CASE_OVERRIDES[character];
+  if (overridden !== undefined) return overridden;
+  const upper = character.toLocaleUpperCase('en-US');
+  return [...upper].length === 1 ? upper : character;
+}
+
+function simpleLowerCase(character: string): string {
+  const lower = character.toLocaleLowerCase('en-US');
+  return [...lower].length === 1 ? lower : character;
+}
+
+function mapCodePoints(text: string, transform: (character: string) => string): string {
+  return [...text].map(transform).join('');
 }
 
 function makeEdit(start: Utf16Offset, end: Utf16Offset, text: string): DocumentEdit {

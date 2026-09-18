@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CancellationSource, type CancellationToken, type Disposable, type FileWatchEvent, type PlatformFailure, type Result } from '../../packages/contracts/src/index';
 import { DirectoryDraft, type DirectoryOperationPlan } from '../../packages/services/files/index';
+import { openDraftDocument } from './directory-draft-document-factory';
 import {
   JournaledFilesystemOperations,
   type FileOperationFailure,
@@ -37,7 +38,7 @@ async function testRenameCycleCaseAndRestore(root: string): Promise<void> {
   const created = DirectoryDraft.create(directory, [
     { id: 'a', name: 'a.txt', path: a, stableIdentity: 'a' },
     { id: 'b', name: 'b.txt', path: b, stableIdentity: 'b' },
-  ]);
+  ], openDraftDocument);
   assert.equal(created.ok, true, 'T042-CYCLE-01 draft initializes');
   if (!created.ok) return;
   assert.equal(created.value.rename('a', 'b.txt').ok, true, 'T042-CYCLE-02 first cycle rename is draft-only');
@@ -63,7 +64,7 @@ async function testRenameCycleCaseAndRestore(root: string): Promise<void> {
   const upper = join(caseDirectory, 'README');
   await mkdir(caseDirectory);
   await writeFile(lower, 'case');
-  const caseDraft = DirectoryDraft.create(caseDirectory, [{ id: 'readme', name: 'readme', path: lower, stableIdentity: 'case' }], { caseSensitive: false });
+  const caseDraft = DirectoryDraft.create(caseDirectory, [{ id: 'readme', name: 'readme', path: lower, stableIdentity: 'case' }], openDraftDocument, { caseSensitive: false });
   assert.equal(caseDraft.ok, true, 'T042-CASE-01 case draft initializes');
   if (!caseDraft.ok) return;
   assert.equal(caseDraft.value.rename('readme', 'README').ok, true, 'T042-CASE-02 case-only draft rename compiles');
@@ -105,7 +106,7 @@ async function testCopyTrashAndDraftUndoRemainSeparate(root: string): Promise<vo
   assert.equal(await readFile(removed, 'utf8'), 'removed', 'T042-TRASH-06 restore returns trashed bytes');
   await assert.rejects(readFile(copy, 'utf8'), 'T042-TRASH-07 restore removes an applied copy');
 
-  const draft = DirectoryDraft.create(directory, [{ id: 'source', name: 'source.txt', path: source }]);
+  const draft = DirectoryDraft.create(directory, [{ id: 'source', name: 'source.txt', path: source }], openDraftDocument);
   assert.equal(draft.ok, true, 'T042-DRAFT-01 draft initializes');
   if (!draft.ok) return;
   assert.equal(draft.value.rename('source', 'renamed.txt').ok, true, 'T042-DRAFT-02 draft mutation is accepted');

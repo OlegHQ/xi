@@ -500,7 +500,11 @@ async function safeLstat(path: string): Promise<import('node:fs').Stats | undefi
 
 async function safeUnlink(path: string): Promise<void> {
   try { await fs.unlink(path); } catch (error: unknown) {
-    if (errorCode(error) !== 'ENOENT') return;
+    // A missing temp file is expected (e.g. it was never created, or a prior cleanup already
+    // removed it) and is swallowed; anything else (EPERM, EBUSY, ...) is a real failure to
+    // clean up a temp file and must not be silently dropped -- both branches previously fell
+    // through to the same implicit return regardless of the error.
+    if (errorCode(error) !== 'ENOENT') throw error;
   }
 }
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { strict as assert } from 'node:assert';
+import { testDocumentFactory } from '../persistence/document-factory';
 import {
   CancellationSource,
   type CancellationToken,
@@ -29,7 +30,7 @@ async function main(): Promise<void> {
 async function testPersistenceServiceDispose(): Promise<void> {
   const fs = new FakeFilesystem();
   fs.seed('/tmp/dispose-lifecycle.txt', new TextEncoder().encode('hello'));
-  const service = new PersistenceService(fs);
+  const service = new PersistenceService(fs, undefined, testDocumentFactory);
   const opened = await service.openFile('/tmp/dispose-lifecycle.txt', identifier<DocumentId>('dispose-doc'), cancellation);
   assert.equal(opened.ok, true, 'DISPOSE-PERSISTENCE-01 a normal open succeeds before dispose');
 

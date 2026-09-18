@@ -38,6 +38,11 @@ class FakeFilesystem implements CtagsFilesystemPort {
     const index = path.lastIndexOf('/');
     return index === -1 ? path : path.slice(0, index);
   }
+
+  workspaceRelativePath(root: string, path: string): string | undefined {
+    const prefix = root.endsWith('/') ? root : `${root}/`;
+    return path === root ? '' : path.startsWith(prefix) ? path.slice(prefix.length) : undefined;
+  }
 }
 
 async function testCachesUnchangedTagsFile(): Promise<void> {

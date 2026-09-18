@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 const budgets = new Set(JSON.parse(readFileSync(new URL('../../docs/plan/performance-budgets.json', import.meta.url), 'utf8')).budgets.map(row => row.id));
-const codes = new Set(['allocation', 'strings', 'sync', 'materialize', 'microtask']);
+const codes = new Set(['allocation', 'strings', 'sync', 'materialize', 'microtask', 'segmenter']);
 const functions = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
 const loops = new Set(['ForStatement', 'ForOfStatement', 'ForInStatement', 'WhileStatement', 'DoWhileStatement']);
 const iterations = new Set(['map', 'filter', 'flatMap', 'forEach', 'reduce', 'reduceRight', 'some', 'every', 'find', 'findIndex']);
@@ -12,6 +12,15 @@ function memberName(node) {
   return node?.type === 'MemberExpression'
     ? node.computed ? node.property.value : node.property.name
     : node?.type === 'Identifier' ? node.name : undefined;
+}
+function isIntlSegmenterConstructor(callee) {
+  return callee?.type === 'MemberExpression' && callee.object?.type === 'Identifier' && callee.object.name === 'Intl'
+    && !callee.computed && callee.property?.name === 'Segmenter';
+}
+function hasGranularityOption(args) {
+  return args.some(argument => argument.type === 'ObjectExpression'
+    && argument.properties.some(property => property.type === 'Property' && !property.computed
+      && (property.key?.name === 'granularity' || property.key?.value === 'granularity')));
 }
 
 export default {
@@ -159,6 +168,12 @@ export default {
         function allocation(node) {
           if (currentClass() === 'H0' && inLoop(node)) emit(node, 'allocation', 'H0 loop creates temporary storage/closure; use bounded private scratch or justify this allocation.');
         }
+        function newExpression(node) {
+          allocation(node);
+          if (classes.length > 0 && (isIntlSegmenterConstructor(node.callee) || hasGranularityOption(node.arguments))) {
+            emit(node, 'segmenter', 'Segmenter-class constructors are expensive to initialize; construct once at module scope and reuse, not per call inside a function body.');
+          }
+        }
         return {
           Program() {
             for (const comment of comments) {
@@ -186,7 +201,7 @@ export default {
           'ArrowFunctionExpression:exit'() { classes.pop(); },
           ObjectExpression: allocation,
           ArrayExpression: allocation,
-          NewExpression: allocation,
+          NewExpression: newExpression,
           SpreadElement: allocation,
           TemplateLiteral(node) { if (node.expressions.length) allocation(node); },
           Literal(node) { if (node.regex) allocation(node); },

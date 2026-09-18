@@ -59,6 +59,12 @@ export class SidebarController {
   #hadSymbols: boolean;
   #width: number;
   #resizing = false;
+  // readModel() is called many times per keystroke (layout, sidebar paint, ...); memoize by a
+  // cheap key of the fields it reads so unchanged state returns the same frozen object instead
+  // of allocating four new ones every call.
+  #cachedModel: SidebarReadModel | undefined;
+  #cachedModelKey = '';
+  #disposed = false;
 
   constructor(options: SidebarControllerOptions) {
     this.#options = options;
@@ -111,7 +117,9 @@ export class SidebarController {
   }
 
   readModel(): SidebarReadModel {
-    return Object.freeze({
+    const key = `${this.#filesExpanded}|${this.#outlineExpanded}|${this.#activeSection}|${this.#width}`;
+    if (this.#cachedModel !== undefined && this.#cachedModelKey === key) return this.#cachedModel;
+    const model = Object.freeze({
       sections: Object.freeze([
         Object.freeze({ id: 'files' as const, label: 'Files', expanded: this.#filesExpanded }),
         Object.freeze({ id: 'outline' as const, label: 'Outline', expanded: this.#outlineExpanded }),
@@ -119,5 +127,19 @@ export class SidebarController {
       activeSection: this.#activeSection,
       width: this.#width,
     });
+    this.#cachedModel = model;
+    this.#cachedModelKey = key;
+    return model;
+  }
+
+  /** H2-5 follow-up: `SidebarController` owns no subscription or timer today, but every other
+   * workbench controller `apps/xi/src/main.ts` tears down exposes `dispose()`, so callers can
+   * treat the teardown list uniformly instead of special-casing this one. Idempotent, and
+   * drops the memoized read model so a disposed-but-still-referenced controller cannot hand
+   * out stale state. */
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#cachedModel = undefined;
   }
 }

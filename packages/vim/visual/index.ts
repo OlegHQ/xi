@@ -398,14 +398,12 @@ function endpointFor(
 /** Base window size (UTF-16 units) for the bounded grapheme scans below; doubles toward the line bounds. */
 const GRAPHEME_WINDOW_BASE = 64;
 
-const VISUAL_GRAPHEME_SEGMENTER = ((): { segment(input: string): Iterable<{ readonly segment: string; readonly index: number }> } | undefined => {
-  const ctor = (Intl as typeof Intl & {
-    readonly Segmenter?: new (locales?: string | readonly string[], options?: { readonly granularity: 'grapheme' }) => {
-      segment(input: string): Iterable<{ readonly segment: string; readonly index: number }>;
-    };
-  }).Segmenter;
-  return typeof ctor === 'function' ? new ctor(undefined, { granularity: 'grapheme' }) : undefined;
-})();
+const VISUAL_SEGMENTER_CTOR = (Intl as typeof Intl & {
+  readonly Segmenter?: new (locales?: string | readonly string[], options?: { readonly granularity: 'grapheme' }) => {
+    segment(input: string): Iterable<{ readonly segment: string; readonly index: number }>;
+  };
+}).Segmenter;
+const VISUAL_GRAPHEME_SEGMENTER = typeof VISUAL_SEGMENTER_CTOR === 'function' ? new VISUAL_SEGMENTER_CTOR(undefined, { granularity: 'grapheme' }) : undefined;
 
 /** True when `offset` is where a grapheme cluster starts (or the line start itself). */
 function graphemeBoundaryConfirmed(snapshot: DocumentSnapshot, offset: number, lineStart: number): boolean {
@@ -534,12 +532,7 @@ function measureCells(
 }
 
 function graphemeTexts(text: string): readonly string[] {
-  const segmenter = (Intl as typeof Intl & {
-    readonly Segmenter?: new (locales?: string | readonly string[], options?: { readonly granularity: 'grapheme' }) => {
-      segment(input: string): Iterable<{ readonly segment: string }>;
-    };
-  }).Segmenter;
-  if (segmenter !== undefined) return [...new segmenter(undefined, { granularity: 'grapheme' }).segment(text)].map((part) => part.segment);
+  if (VISUAL_GRAPHEME_SEGMENTER !== undefined) return [...VISUAL_GRAPHEME_SEGMENTER.segment(text)].map((part) => part.segment);
   return Array.from(text);
 }
 

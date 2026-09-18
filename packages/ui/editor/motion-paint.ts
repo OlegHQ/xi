@@ -97,6 +97,21 @@ function resolveSyntaxColors(colors: Partial<Record<SyntaxTokenKind, string>> | 
   return resolved;
 }
 
+// `options.syntaxColors` is the same object reference for as long as the theme doesn't
+// change (it comes straight from `theme.syntax`), so resolving it is memoized by
+// (colors, colorMode) instead of rebuilt on every `drawFrame` call -- one call per paint
+// range, several ranges per frame, every frame.
+const syntaxColorCache = new WeakMap<Partial<Record<SyntaxTokenKind, string>>, Map<EditorColorMode, Map<SyntaxTokenKind, RGBA>>>();
+
+function resolveSyntaxColorsCached(colors: Partial<Record<SyntaxTokenKind, string>> | undefined, colorMode: EditorColorMode): Map<SyntaxTokenKind, RGBA> {
+  if (colors === undefined) return resolveSyntaxColors(colors, colorMode);
+  let byMode = syntaxColorCache.get(colors);
+  if (byMode === undefined) { byMode = new Map(); syntaxColorCache.set(colors, byMode); }
+  let resolved = byMode.get(colorMode);
+  if (resolved === undefined) { resolved = resolveSyntaxColors(colors, colorMode); byMode.set(colorMode, resolved); }
+  return resolved;
+}
+
 /** True when the active syntax read's version matches the painted frame's document version. */
 function syntaxIsCurrent(frame: VisibleFrame, syntax: SyntaxRead | undefined): boolean {
   return syntax !== undefined && (frame.identity.documentVersion as unknown as number) === (syntax.documentVersion as unknown as number);
@@ -171,7 +186,7 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
     return paintPlainFrame(buffer, options, rowRange);
   }
   const masks = buildPaintMasks(options.frame, options.presentation, options.mode, colorMode, rowRange);
-  const syntaxColors = colorMode === 'no-color' ? undefined : resolveSyntaxColors(options.syntaxColors, colorMode);
+  const syntaxColors = colorMode === 'no-color' ? undefined : resolveSyntaxColorsCached(options.syntaxColors, colorMode);
   const colors = {
     trail: resolvePaintColor(options.theme.motionTrail, colorMode),
     operator: resolvePaintColor(options.theme.operatorPreview, colorMode),
@@ -287,6 +302,35 @@ function canPaintPlainFrameCached(frame: VisibleFrame, presentation: EditorPrese
   return result;
 }
 
+// `canPaintPlainFrame` is checked once per key, but `frame` (and therefore the WeakMap
+// keyed on it, above) is a new object every render, so that memo never actually hits.
+// A row's `contentKey` -- unlike the row object -- is stable across an edit that didn't
+// touch that row (see its doc comment in packages/layout/src/index.ts), so per-row
+// plain-ness is cached by contentKey instead: an edit only pays the per-cell scan for
+// the rows it actually touched, not the whole ~4800-cell visible frame every keystroke.
+const ROW_PLAIN_CACHE_CAP = 4096;
+const rowPlainCache = new Map<string, boolean>();
+
+function isRowPlain(row: ScreenRow): boolean {
+  const key = row.contentKey;
+  if (key !== null) {
+    const cached = rowPlainCache.get(key);
+    if (cached !== undefined) return cached;
+  }
+  let plain = true;
+  for (const cell of row.cells) {
+    if (cell.text.length !== 1) { plain = false; break; }
+  }
+  if (key !== null) {
+    if (rowPlainCache.size >= ROW_PLAIN_CACHE_CAP) {
+      const oldest = rowPlainCache.keys().next().value;
+      if (oldest !== undefined) rowPlainCache.delete(oldest);
+    }
+    rowPlainCache.set(key, plain);
+  }
+  return plain;
+}
+
 /** Exported for direct unit testing of the plain-paint fast path (see tests/ui). */
 export function canPaintPlainFrame(frame: VisibleFrame, presentation: EditorPresentationRead | undefined): boolean {
   if (presentation?.motionPreview != null || presentation?.operatorPreview != null) return false;
@@ -298,9 +342,7 @@ export function canPaintPlainFrame(frame: VisibleFrame, presentation: EditorPres
     if (selection.kind !== 'normal-cursor' && selection.kind !== 'insert-caret') return false;
   }
   for (const row of frame.rows) {
-    for (const cell of row.cells) {
-      if (cell.text.length !== 1) return false;
-    }
+    if (!isRowPlain(row)) return false;
   }
   return true;
 }
@@ -329,7 +371,7 @@ function paintPlainFrame(buffer: OptimizedBuffer, options: MotionPaintOptions, r
     cursorPrimary: resolvePaintColor(options.theme.cursorPrimary, options.colorMode),
     cursorSecondary: resolvePaintColor(options.theme.cursorSecondary, options.colorMode),
   };
-  const syntaxColors = options.colorMode === 'no-color' ? undefined : resolveSyntaxColors(options.syntaxColors, options.colorMode);
+  const syntaxColors = options.colorMode === 'no-color' ? undefined : resolveSyntaxColorsCached(options.syntaxColors, options.colorMode);
   for (let rowIndex = rowRange.start; rowIndex < rowRange.end; rowIndex += 1) {
     const row = options.frame.rows[rowIndex];
     if (row === undefined || row.cells.length === 0) continue;

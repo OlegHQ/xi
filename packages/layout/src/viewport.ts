@@ -39,10 +39,12 @@ import {
   buildDiffFillerRow,
   buildFoldRow,
   buildGutterCells,
+  buildRebasedRows,
   buildRelativeMaterializedRows,
   cellColumn,
   fillerRow,
   groupAnnotationsByLine,
+  indexRebasedRows,
   layoutFailure,
   lineCacheKey,
   lineIndex,
@@ -50,8 +52,8 @@ import {
   prependGutter,
   readFailure,
   readVisibleLineText,
-  rebaseMaterializedRows,
   shapeLine,
+  utf16Offset,
   validateAnnotations,
   validateDiffFillerRows,
   validateFolds,
@@ -127,6 +129,16 @@ const MAX_MATERIALIZED_CELL_COST = 200_000;
  */
 const MAX_CACHED_LINE_UTF16 = MAX_SOURCE_PREFIX_UTF16;
 /**
+ * Absolute `ScreenRow`s reused by exact `(contentKey, baseOffset, lineEnd)` --
+ * separate from `#materializedLines`' content-only templates, which still need the
+ * per-frame absolute rebase this tier skips for a repeat. Same order of magnitude
+ * as `MAX_MATERIALIZED_CELL_COST`: it retains the same shape of data (rebuilt
+ * absolute cells instead of relative ones), just for the subset of lines whose
+ * exact absolute placement recurs across frames -- e.g. every visible line above
+ * an edit made on a line below it, whose own absolute offsets never move.
+ */
+const MAX_REBASED_ROW_CELL_COST = 200_000;
+/**
  * Byte budget for `#lineLayouts`' retained `text` (the cache key is a hash, not the
  * text -- see `CachedLineLayout`). 1,048,576 UTF-16 units * 2 bytes/unit = 2 MiB,
  * a modest slice of the 8 MiB workspace-wide layout-cache budget (docs/plan/12-
@@ -150,9 +162,20 @@ export class ViewportLayout {
   readonly #documentVersions = new Map<string, DocumentVersion>();
   readonly #lineLayouts = new Map<string, CachedLineLayout>();
   readonly #materializedLines = new Map<string, RelativeMaterializedRows>();
+  /** Absolute rebased rows keyed by `(materializedKey, baseOffset, lineEnd)`; see `MAX_REBASED_ROW_CELL_COST`. */
+  readonly #rebasedRows = new Map<string, { readonly rows: readonly ScreenRow[]; readonly cellCost: number }>();
   /** Gutter label cells keyed by (line, wrapIndex, gutterWidth); see `withGutter`. */
   readonly #gutterCells = new Map<string, GutterCells>();
+  /**
+   * `fillerRow(width)` is a pure function of `width` (a filler row carries no offset
+   * or content), but was rebuilt -- `width` frozen cells plus the frozen row itself --
+   * on every below-EOF/past-content row of every frame. `width` is bounded by
+   * `validDimension` (<=2,000), so this never grows past a couple of thousand tiny
+   * entries even across every distinct viewport width ever projected.
+   */
+  readonly #fillerRows = new Map<number, ScreenRow>();
   #materializedCellCost = 0;
+  #rebasedRowCellCost = 0;
   #lineCacheUtf16Units = 0;
   #lineCacheHits = 0;
   #lineCacheMisses = 0;
@@ -201,7 +224,7 @@ export class ViewportLayout {
       return layoutFailure('stale-document-version');
     }
     const shouldTrackVersion = this.#currentDocumentKey === undefined || this.#currentDocumentKey === documentKey
-      || [...this.#frames.values()].some((stored) => stored.frame.identity.documentId === snapshot.id);
+      || someStoredFrame(this.#frames, (stored) => stored.frame.identity.documentId === snapshot.id);
     if (shouldTrackVersion && (knownVersion === undefined || (snapshot.version as number) > (knownVersion as number))) {
       this.#documentVersions.set(documentKey, snapshot.version);
       this.#trimDocumentVersions();
@@ -424,23 +447,54 @@ export class ViewportLayout {
       if ((baseOffset as number) < (line.value.start as number) || (baseOffset as number) > (line.value.end as number)) {
         return layoutFailure('invalid-anchor');
       }
-      // Include `horizontalScrollCells` in the requested width: with wrap off, the
-      // visible slice starts `horizontalScrollCells` display cells into the line
-      // (see `shapeLine`'s `screen = logicalCell - horizontalScroll`), so reading
-      // only `contentWidth` worth of source text would truncate before ever
-      // reaching the scrolled-to columns, leaving the caret's cell unplaced.
-      const read = readVisibleLineText(snapshot, baseOffset, line.value.end, contentWidth + horizontalScrollCells, input.heightCells - rows.length, wrap);
+      // With wrap off and a large horizontal scroll, reading/shaping from the true
+      // line start out past `horizontalScrollCells` display cells (below) walked
+      // every cluster from column 0 every frame just to throw the off-screen prefix
+      // away. When that skipped prefix is plain printable ASCII (no tabs, so
+      // column === utf16 offset), the source offset of the first visible column is
+      // known for free: skip reading straight to it instead, so the read below only
+      // ever pulls the actually-visible window (plus its own row budget). `effDisplayStart`
+      // (the display column the read text now starts at) is passed to `shapeLine` in
+      // place of `logicalDisplayStart`, but `horizontalScrollCells` itself is passed
+      // through unchanged -- `shapeLine`'s `screen = logicalCell - horizontalScroll`
+      // still needs the *global* scroll offset to place cells at the right screen
+      // column; only how much of that offset the read has to cover (`readScrollWidth`
+      // below) shrinks. Mixed ASCII/non-ASCII lines fall through unskipped (`effBaseOffset`/
+      // `effDisplayStart` stay at the line origin, `readScrollWidth` stays the full
+      // `horizontalScrollCells`), which remains fully correct, just not fast.
+      let effBaseOffset = baseOffset;
+      let effDisplayStart = logicalDisplayStart;
+      let readScrollWidth = horizontalScrollCells;
+      if (!wrap && horizontalScrollCells > 0 && logicalDisplayStart === 0) {
+        const lineLength = (line.value.end as number) - (baseOffset as number);
+        const skip = Math.min(horizontalScrollCells, lineLength);
+        if (skip > 0) {
+          const skipEnd = utf16Offset((baseOffset as number) + skip);
+          const ascii = snapshot.isPrintableAsciiRange?.(baseOffset, skipEnd);
+          if (ascii !== undefined && ascii.ok && ascii.value) {
+            effBaseOffset = skipEnd;
+            effDisplayStart = skip;
+            readScrollWidth = horizontalScrollCells - skip;
+          }
+        }
+      }
+      // Include the remaining `readScrollWidth` in the requested width: with wrap
+      // off, the visible slice starts that many display cells further into
+      // `effBaseOffset` (see `shapeLine`'s `screen = logicalCell - horizontalScroll`),
+      // so reading only `contentWidth` worth of source text would truncate before
+      // ever reaching the scrolled-to columns, leaving the caret's cell unplaced.
+      const read = readVisibleLineText(snapshot, effBaseOffset, line.value.end, contentWidth + readScrollWidth, input.heightCells - rows.length, wrap);
       if (!read.ok) return read;
       const prefix = read.value.text;
       const lineAnnotations = (annotationsByLine.get(logicalLine) ?? []).flatMap((annotation) => {
         const absoluteOffset = annotation.offset as number;
-        const relativeOffset = absoluteOffset - (baseOffset as number);
+        const relativeOffset = absoluteOffset - (effBaseOffset as number);
         const withinRead = relativeOffset < prefix.length || (relativeOffset === prefix.length && read.value.complete);
         return relativeOffset >= 0 && withinRead
           ? [{ id: annotation.id, offset: relativeOffset, text: annotation.text } satisfies RelativeAnnotation]
           : [];
       });
-      const startsAtLineOrigin = baseOffset === line.value.start && logicalDisplayStart === 0;
+      const startsAtLineOrigin = effBaseOffset === line.value.start && effDisplayStart === 0;
       const canCache = startsAtLineOrigin && prefix.length <= MAX_CACHED_LINE_UTF16 && read.value.complete;
       // rowBudget only caps how many wrapped rows one logical line may produce; with
       // wrap off every line always shapes to exactly one row regardless of how much
@@ -448,7 +502,7 @@ export class ViewportLayout {
       // it into the key when unwrapped only fragments the cache across scroll
       // positions without changing the cached shape.
       const cacheKey = lineCacheKey(prefix, contentWidth, wrap ? input.heightCells - rows.length : 1, wrap, tabSize,
-        logicalDisplayStart, horizontalScrollCells, widthPolicy);
+        effDisplayStart, horizontalScrollCells, widthPolicy);
       const cacheableLine = canCache && lineAnnotations.length === 0;
       const cachedLineEntry = cacheableLine ? this.#lineLayouts.get(cacheKey) : undefined;
       const cacheHit = cachedLineEntry !== undefined && cachedLineEntry.text === prefix ? cachedLineEntry : undefined;
@@ -461,14 +515,14 @@ export class ViewportLayout {
       } else {
         this.#lineCacheMisses += 1;
         const shaped = shapeLine(prefix, contentWidth, input.heightCells - rows.length, wrap, tabSize,
-          logicalDisplayStart, horizontalScrollCells, widthPolicy, !read.value.complete, lineAnnotations);
+          effDisplayStart, horizontalScrollCells, widthPolicy, !read.value.complete, lineAnnotations);
         if (!shaped.ok) return shaped;
         relative = shaped.value;
         this.#rowsBuilt += relative.rows.length;
         if (cacheableLine) this.#cacheLine(cacheKey, prefix, relative);
       }
       if (!read.value.complete || !relative.complete) truncatedLongLine = true;
-      const annotationsKey = JSON.stringify(lineAnnotations.map((annotation) => [annotation.id, annotation.offset, annotation.text]));
+      const annotationsKey = lineAnnotations.length === 0 ? '' : JSON.stringify(lineAnnotations.map((annotation) => [annotation.id, annotation.offset, annotation.text]));
       // Content-only key: independent of `logicalLine`/`baseOffset`/`line.value.end`.
       // Editing an earlier line shifts every later line's absolute offsets without
       // changing its rendered glyphs, so the *template* below (built once per
@@ -486,10 +540,24 @@ export class ViewportLayout {
         if (template.cellCost <= MAX_MATERIALIZED_CELL_COST) this.#cacheMaterializedLine(materializedKey, template);
       }
       const rowBase = rows.length;
-      const materializedRows = rebaseMaterializedRows(
-        template, lineIndex(logicalLine), baseOffset, line.value.end, contentWidth, materializedKey,
-        positions, rowBase, gutterWidthCells, needsDisplayIndex,
-      );
+      // Keyed by exact absolute placement, not just content: unlike `#materializedLines`
+      // (content-only template), a hit here skips rebuilding the absolute `ScreenRow`/
+      // `ScreenCell` objects entirely (see `buildRebasedRows`'s comment) -- only
+      // `indexRebasedRows` below still has to run, since `positions` is fresh per frame.
+      const rebasedKey = `${materializedKey}|${effBaseOffset}|${line.value.end}`;
+      let rebasedEntry = this.#rebasedRows.get(rebasedKey);
+      if (rebasedEntry === undefined) {
+        const built = buildRebasedRows(template, lineIndex(logicalLine), effBaseOffset, line.value.end, materializedKey);
+        let cellCost = 0;
+        for (const builtRow of built) cellCost += builtRow.cells.length;
+        rebasedEntry = { rows: built, cellCost };
+        if (cellCost <= MAX_REBASED_ROW_CELL_COST) this.#cacheRebasedRows(rebasedKey, rebasedEntry);
+      } else {
+        this.#rebasedRows.delete(rebasedKey);
+        this.#rebasedRows.set(rebasedKey, rebasedEntry);
+      }
+      const materializedRows = rebasedEntry.rows;
+      indexRebasedRows(template, materializedRows, contentWidth, positions, rowBase, gutterWidthCells, needsDisplayIndex);
       for (let rowIndex = 0; rowIndex < materializedRows.length; rowIndex += 1) {
         const row = materializedRows[rowIndex];
         if (row === undefined || rows.length >= input.heightCells) break;
@@ -511,7 +579,7 @@ export class ViewportLayout {
     }
 
     while (rows.length < input.heightCells) {
-      rows.push(fillerRow(input.widthCells));
+      rows.push(this.#fillerRow(input.widthCells));
     }
 
     const projectedSelections = projectSelections(snapshot, selection, rows, positions, folds);
@@ -619,7 +687,7 @@ export class ViewportLayout {
     const documentKey = change.documentId as string;
     const known = this.#documentVersions.get(documentKey);
     const isCurrentOrRetained = this.#currentDocumentKey === undefined || this.#currentDocumentKey === documentKey
-      || [...this.#frames.values()].some((stored) => stored.frame.identity.documentId === change.documentId);
+      || someStoredFrame(this.#frames, (stored) => stored.frame.identity.documentId === change.documentId);
     if (isCurrentOrRetained && (known === undefined || (change.after as number) > (known as number))) {
       if (this.#currentDocumentKey === undefined) this.#currentDocumentKey = documentKey;
       this.#documentVersions.set(documentKey, change.after);
@@ -636,8 +704,11 @@ export class ViewportLayout {
     this.#currentDocumentKey = undefined;
     this.#lineLayouts.clear();
     this.#materializedLines.clear();
+    this.#rebasedRows.clear();
     this.#gutterCells.clear();
+    this.#fillerRows.clear();
     this.#materializedCellCost = 0;
+    this.#rebasedRowCellCost = 0;
     this.#lineCacheUtf16Units = 0;
     this.#currentFrameId = null;
     this.#lastGeometryKey = '';
@@ -677,6 +748,27 @@ export class ViewportLayout {
     }
   }
 
+  #fillerRow(width: number): ScreenRow {
+    let row = this.#fillerRows.get(width);
+    if (row === undefined) {
+      row = fillerRow(width);
+      this.#fillerRows.set(width, row);
+    }
+    return row;
+  }
+
+  #cacheRebasedRows(key: string, value: { readonly rows: readonly ScreenRow[]; readonly cellCost: number }): void {
+    this.#rebasedRows.set(key, value);
+    this.#rebasedRowCellCost += value.cellCost;
+    while (this.#rebasedRows.size > MAX_MATERIALIZED_LINE_ENTRIES || this.#rebasedRowCellCost > MAX_REBASED_ROW_CELL_COST) {
+      const oldestKey = this.#rebasedRows.keys().next().value as string | undefined;
+      if (oldestKey === undefined) break;
+      const oldest = this.#rebasedRows.get(oldestKey);
+      this.#rebasedRows.delete(oldestKey);
+      if (oldest !== undefined) this.#rebasedRowCellCost -= oldest.cellCost;
+    }
+  }
+
   #isFrameVersionStale(stored: StoredFrame): boolean {
     const identity = stored.frame.identity;
     const known = this.#documentVersions.get(identity.documentId as string);
@@ -696,6 +788,14 @@ export class ViewportLayout {
       this.#materializedLineEvictions += 1;
     }
   }
+}
+
+/** `frames.values().some(...)` without the interim array `project()`/`observeDocumentChange` used to allocate per call. */
+function someStoredFrame(frames: ReadonlyMap<number, StoredFrame>, predicate: (stored: StoredFrame) => boolean): boolean {
+  for (const stored of frames.values()) {
+    if (predicate(stored)) return true;
+  }
+  return false;
 }
 
 function validDimension(value: number): boolean {
@@ -772,6 +872,23 @@ export function resolveScrollAnchor(
 }
 
 /**
+ * Last `measureDisplayColumn` result for one (document, version, lineStart), so a
+ * later call for a larger offset on the same line -- the common case, the primary
+ * head advancing rightward one grapheme per keystroke -- only measures the new
+ * delta text instead of rescanning the whole prefix from column 0 every time.
+ * Module-level rather than per-`ViewportLayout` since `resolveScrollAnchor` is a
+ * free function with no instance to hang state off; a stale/mismatched entry is
+ * simply ignored (see the guard below), never returned as-is.
+ */
+let displayColumnMemo: {
+  readonly documentId: string;
+  readonly version: number;
+  readonly lineStart: number;
+  readonly offset: number;
+  readonly column: number;
+} | undefined;
+
+/**
  * Display-cell column of `targetOffset` within the line starting at `lineStart`,
  * mirroring `shapeLine`'s unwrapped column advance (tab stops plus per-cluster
  * width) without materializing any cells -- only used to keep the horizontal
@@ -785,10 +902,51 @@ function measureDisplayColumn(
   tabSize: number,
   widthPolicy: CellWidthPolicy,
 ): number | undefined {
-  if ((targetOffset as number) <= (lineStart as number)) return 0;
-  const prefix = snapshot.slice(lineStart, targetOffset);
+  const lineStartNum = lineStart as number;
+  const targetNum = targetOffset as number;
+  if (targetNum <= lineStartNum) return 0;
+
+  // Fast path: printable ASCII (0x20-0x7e) has no tabs, no combining marks and no
+  // wide glyphs, so under the default width policy every unit is exactly one
+  // display column -- column === utf16 length, no grapheme split or width lookup
+  // needed at all. `isPrintableAsciiRange` is a cheap bounded classification, not a
+  // second full read+scan (see packages/document/src/contracts.ts).
+  if (widthPolicy === DEFAULT_WIDTH_POLICY) {
+    const ascii = snapshot.isPrintableAsciiRange?.(lineStart, targetOffset);
+    if (ascii !== undefined && ascii.ok && ascii.value) return targetNum - lineStartNum;
+  }
+
+  const documentId = snapshot.id as string;
+  const version = snapshot.version as number;
+  const memo = displayColumnMemo;
+  if (memo !== undefined && memo.documentId === documentId && memo.version === version && memo.lineStart === lineStartNum) {
+    if (memo.offset === targetNum) return memo.column;
+    if (memo.offset < targetNum) {
+      const column = measureDisplayColumnFrom(snapshot, memo.offset, targetNum, memo.column, tabSize, widthPolicy);
+      if (column !== undefined) {
+        displayColumnMemo = { documentId, version, lineStart: lineStartNum, offset: targetNum, column };
+      }
+      return column;
+    }
+  }
+  const column = measureDisplayColumnFrom(snapshot, lineStartNum, targetNum, 0, tabSize, widthPolicy);
+  if (column !== undefined) {
+    displayColumnMemo = { documentId, version, lineStart: lineStartNum, offset: targetNum, column };
+  }
+  return column;
+}
+
+function measureDisplayColumnFrom(
+  snapshot: DocumentSnapshot,
+  fromOffset: number,
+  toOffset: number,
+  startColumn: number,
+  tabSize: number,
+  widthPolicy: CellWidthPolicy,
+): number | undefined {
+  const prefix = snapshot.slice(utf16Offset(fromOffset), utf16Offset(toOffset));
   if (!prefix.ok) return undefined;
-  let column = 0;
+  let column = startColumn;
   let clusters: readonly { readonly text: string }[];
   try {
     clusters = splitGraphemes(prefix.value);
@@ -851,9 +1009,6 @@ function projectEndpoint(
     : snapshot.lineIndexAt(offset);
   if (typeof line !== 'number' && !line.ok) return readFailure(line.error.kind);
   if (typeof line !== 'number') line = line.value;
-  let displayColumn = endpoint.kind === 'block-cell'
-    ? endpoint.displayCellColumn as number
-    : findDisplayColumn(rows, line as LineIndex, offset as number);
   let relocatedByFold = false;
   const fold = foldContaining(folds, line as number);
   if (fold !== undefined) {
@@ -863,17 +1018,33 @@ function projectEndpoint(
       if (target?.kind === 'fold') {
         offset = target.offset;
         line = fold.startLine;
-        displayColumn = 0;
         relocatedByFold = true;
       }
     }
   }
+  // B5: `findDisplayColumn` used to linearly scan every row (twice through its
+  // cells, once to `.find` an exact match and once for the preceding-cell fallback)
+  // per endpoint per frame, even on the `#lastRows` cache-hit path. `positions`
+  // already indexes every recorded offset to its (row, column) in O(1) (see
+  // `indexRebasedRows`), so `projectedTextPosition` below reads the display column
+  // straight off that cell instead of a fresh scan -- same result, since a
+  // `PackedPositionIndex` hit for `offset` always lands on the same cell
+  // `findDisplayColumn`'s scan would have found (see its comment for the one
+  // special case -- an offset that lands exactly on `row.endOffset` -- handled the
+  // same way here).
+  let displayColumn: number;
   let position: CellPoint | null;
   if (endpoint.kind === 'block-cell') {
+    displayColumn = endpoint.displayCellColumn as number;
     position = positions.getDisplay(line as number, endpoint.displayCellColumn as number)
       ?? positionForDisplayCell(rows, line as LineIndex, endpoint.displayCellColumn as number);
-  } else {
+  } else if (relocatedByFold) {
+    displayColumn = 0;
     position = lookupOffsetPosition(rows, positions, offset as number) ?? null;
+  } else {
+    const projected = projectedTextPosition(rows, positions, offset as number);
+    displayColumn = projected.displayColumn;
+    position = projected.position;
   }
   return {
     ok: true,
@@ -891,22 +1062,24 @@ function projectEndpoint(
   };
 }
 
-function findDisplayColumn(rows: readonly ScreenRow[], line: LineIndex, offset: number): number {
-  for (const row of rows) {
-    if (row.lineIndex !== line || row.kind !== 'text') continue;
-    if ((row.startOffset as number) <= offset && offset <= (row.endOffset as number)) {
-      if (offset === (row.endOffset as number)) return row.displayEndCell;
-      const cell = row.cells.find((entry) => entry.target?.kind === 'text' && (entry.target.offset as number) === offset);
-      if (cell?.target?.kind === 'text') return cell.target.displayCellColumn as number;
-      let preceding: ScreenCell | undefined;
-      for (const entry of row.cells) {
-        if (entry.target?.kind === 'text' && (entry.target.offset as number) < offset) preceding = entry;
-      }
-      if (preceding?.target?.kind === 'text') return preceding.target.displayCellColumn as number;
-      return row.displayStartCell;
-    }
-  }
-  return 0;
+/**
+ * Position and display column for a non-block-cell, non-fold-relocated endpoint,
+ * derived together from one `lookupOffsetPosition` lookup (O(1) via `positions` on
+ * the common path) instead of `findDisplayColumn`'s separate full-row-and-cell scan.
+ */
+function projectedTextPosition(
+  rows: readonly ScreenRow[],
+  positions: PackedPositionIndex,
+  offset: number,
+): { readonly position: CellPoint | null; readonly displayColumn: number } {
+  const point = lookupOffsetPosition(rows, positions, offset);
+  if (point === undefined) return { position: null, displayColumn: 0 };
+  const row = rows[point.row];
+  if (row === undefined || row.kind !== 'text') return { position: point, displayColumn: 0 };
+  if (offset === (row.endOffset as number)) return { position: point, displayColumn: row.displayEndCell };
+  const target = row.cells[point.column]?.target;
+  const displayColumn = target?.kind === 'text' ? (target.displayCellColumn as number) : row.displayStartCell;
+  return { position: point, displayColumn };
 }
 
 function lookupOffsetPosition(rows: readonly ScreenRow[], positions: PackedPositionIndex, offset: number): CellPoint | undefined {
@@ -954,15 +1127,27 @@ function positionForDisplayCell(rows: readonly ScreenRow[], line: LineIndex, cel
 }
 
 /**
- * O(1) cache-key fingerprint for a list: length plus the first and last entries, JSON-encoded
- * individually (not joined as delimited text, which lets an id containing the delimiter collide
- * with a different entry's fields -- e.g. fold ids 'x:1' and 'x' with a ':'-joined fingerprint).
+ * Cache-key fingerprint for a list: length plus a rolling FNV-1a hash over every
+ * entry's JSON-encoded fingerprint (`hashLineText` style, see shaping.ts), not just
+ * the first and last -- a length+first+last fingerprint let a middle-entry-only
+ * change (e.g. a fold/annotation/filler text edit with the same count, first and
+ * last) collide with the previous geometryKey and serve a stale `#lastRows`/
+ * `#lastProjection` frame. A per-entry hash mix (rather than one JSON.stringify over
+ * the whole mapped list) keeps this from re-allocating a large string every call.
  */
 function cheapListFingerprint<T>(list: readonly T[], fingerprint: (item: T) => unknown): string {
   if (list.length === 0) return '0';
-  const first = list[0] as T;
-  const last = list[list.length - 1] as T;
-  return `${list.length}:${JSON.stringify(fingerprint(first))}:${JSON.stringify(fingerprint(last))}`;
+  let hash = 0x811c9dc5;
+  for (const item of list) {
+    const part = JSON.stringify(fingerprint(item));
+    for (let index = 0; index < part.length; index += 1) {
+      hash ^= part.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    // Mix a boundary marker between entries so ['ab','c'] and ['a','bc'] hash differently.
+    hash = Math.imul(hash ^ 0x9e3779b9, 0x01000193);
+  }
+  return `${list.length}:${(hash >>> 0).toString(36)}`;
 }
 
 function foldAt(folds: readonly FoldRegion[], line: number): FoldRegion | undefined {

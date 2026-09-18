@@ -7,7 +7,7 @@ import { loadStartupXiConfig } from '../../../packages/services/src/entrypoints/
 import { parseCliArgs, resolveFileArgument } from './cli';
 import { installCrashHandlers } from './lifecycle';
 import { createThemeWiring, themeStateDirectory } from './wiring/theme';
-import { createControllers, id } from './wiring/controllers';
+import { createControllers, id, type Controllers } from './wiring/controllers';
 import { wireControllerPanels } from './wiring/pointer';
 import { buildWorkbenchUiOptions } from './wiring/ui';
 
@@ -50,11 +50,18 @@ async function main(): Promise<void> {
   // the launch read is not serialized behind native renderer startup.
   const earlyUi = filePath?.path === undefined ? import('../../../packages/ui/src/entrypoints/launch') : undefined;
   const vimSession = import('../../../packages/workbench/src/entrypoints/launch');
-  const [{ PersistenceService }, { NodeFilesystemPort, NodeProcessPort, createNodeClock, installJobControl }, { openTextDocument, positionToOffset }] = await Promise.all([persistenceModule, platformModule, documentModule]);
+  const [{ PersistenceService }, { NodeFilesystemPort, NodeProcessPort, createNodeClock, installJobControl }, { openTextDocument, openTextDocumentChunks, TextFileDocument, positionToOffset }] = await Promise.all([persistenceModule, platformModule, documentModule]);
   startupTrace('base-modules');
   const filesystem = new NodeFilesystemPort();
   const clock = createNodeClock();
-  const persistence = new PersistenceService(filesystem);
+  // PersistenceService (a service) never constructs documents itself
+  // (docs/plan/01-architecture.md); this composition root owns that and hands it a factory.
+  const persistence = new PersistenceService(filesystem, undefined, {
+    openText: (documentId, bytes, seed, options) => openTextDocument(documentId, bytes, seed, options),
+    openTextChunks: (documentId, chunks, seed, options) => openTextDocumentChunks(documentId, chunks, seed, options),
+    restoreCheckpoint: (documentId, text, lineEndings, defaultLineEnding, hasUtf8Bom, seed, textIntent) =>
+      TextFileDocument.create(documentId, text, lineEndings, defaultLineEnding, hasUtf8Bom, seed, textIntent),
+  });
   const configCancellation = new CancellationSource();
   // Kicked off now, alongside the other startup filesystem work, so the awaits below (once,
   // before it's first needed) do not add a second sequential round-trip on top of it.
@@ -112,55 +119,74 @@ async function main(): Promise<void> {
       installJobControl,
     }));
     marker('XI_TEARDOWN', { step: 'workbench-returned' });
-    controllers.fileIndexStarter.cancel();
-    await controllers.optionalServices.awaitPending();
-    controllers.pointerRouter.dispose();
-
-    controllers.pickerModel.dispose();
-    controllers.fileIndex.dispose();
-    controllers.optionalServices.explorerSubscription?.dispose();
-    controllers.searchFeature.dispose();
-    controllers.languageWiring.completionSubscription?.dispose();
-    controllers.languageWiring.signatureSubscription?.dispose();
-    controllers.optionalServices.searchService?.dispose();
-    controllers.optionalServices.replaceService?.dispose();
-    marker('XI_TEARDOWN', { step: 'language-dispose' });
-    await controllers.languageWiring.session?.dispose();
-    marker('XI_TEARDOWN', { step: 'language-disposed' });
-    controllers.syntaxResultSubscription.dispose();
-    controllers.syntaxTracker.dispose();
-    controllers.syntaxAssetsCancellation.dispose();
-    controllers.optionalServices.hostNavigation?.dispose();
-    controllers.languageWiring.navigationController?.dispose();
-    controllers.languageWiring.navigationSubscription?.dispose();
-    controllers.overlayFeature.dispose();
-    controllers.languageWiring.completionController?.dispose();
-    controllers.languageWiring.signatureController?.dispose();
-    controllers.languageWiring.workspaceEditCoordinator?.dispose();
-    controllers.workspaceEditsFeature.dispose();
-    controllers.diagnostics.dispose();
-    controllers.problemsFeature.dispose();
-    controllers.taskWiring.dispose();
-    controllers.optionalServices.explorerController?.dispose();
-    controllers.optionalServices.explorerTree?.dispose();
-    controllers.explorerFeature.dispose();
-    marker('XI_TEARDOWN', { step: 'contributions-dispose' });
-    await controllers.contributionRegistry.dispose();
-    marker('XI_TEARDOWN', { step: 'contributions-disposed' });
-    controllers.commandRegistry.dispose();
-    controllers.completionFeature.dispose();
-    controllers.inputRouter.dispose();
-    controllers.pointerCapture.dispose();
-    controllers.saveCoordinator.dispose();
-    controllers.host.dispose();
-    persistence.dispose();
-    for (const disposable of controllers.jobControlDisposables) disposable.dispose();
-    marker('XI_TEARDOWN', { step: 'done' });
+    await teardownControllers(controllers, persistence, marker);
   } catch (error) {
     const created = await renderer.catch(() => undefined);
     if (created !== undefined && !created.isDestroyed) created.destroy();
     throw error;
   }
+}
+
+/** Every disposable `createControllers` constructed, torn down in the order main() used
+ * before this extraction. Mechanical split out of `main()` to stay under
+ * ARCH-APP-FUNCTION-LENGTH-01's line budget; no ordering or behavior change. */
+async function teardownControllers(controllers: Controllers, persistence: PersistenceService, marker: (name: string, payload?: unknown) => void): Promise<void> {
+  controllers.fileIndexStarter.cancel();
+  // H2-4: `awaitPending()` hands back the same typed bundle `ensure()` resolved to (or
+  // `undefined` if the optional services never loaded) -- teardown reads it once instead of
+  // going back through twelve independent nullable getters on `optionalServices`.
+  const resolvedOptionalServices = await controllers.optionalServices.awaitPending();
+  controllers.pointerRouter.dispose();
+
+  controllers.picker.dispose();
+  controllers.pickerModel.dispose();
+  controllers.fileIndex.dispose();
+  controllers.hostCommands.dispose();
+  controllers.directoryDraftController.dispose();
+  resolvedOptionalServices?.explorerSubscription.dispose();
+  controllers.searchFeature.dispose();
+  controllers.languageWiring.completionSubscription?.dispose();
+  controllers.languageWiring.signatureSubscription?.dispose();
+  resolvedOptionalServices?.searchService.dispose();
+  resolvedOptionalServices?.replaceService.dispose();
+  marker('XI_TEARDOWN', { step: 'language-dispose' });
+  await controllers.languageWiring.session?.dispose();
+  marker('XI_TEARDOWN', { step: 'language-disposed' });
+  controllers.syntaxResultSubscription.dispose();
+  controllers.syntaxTracker.dispose();
+  controllers.syntaxAssetsCancellation.dispose();
+  resolvedOptionalServices?.hostNavigation.dispose();
+  controllers.languageWiring.navigationController?.dispose();
+  controllers.languageWiring.navigationSubscription?.dispose();
+  controllers.overlayFeature.dispose();
+  controllers.languageWiring.completionController?.dispose();
+  controllers.languageWiring.signatureController?.dispose();
+  controllers.languageWiring.workspaceEditCoordinator?.dispose();
+  controllers.workspaceEditsFeature.dispose();
+  controllers.diagnostics.dispose();
+  controllers.problemsFeature.dispose();
+  controllers.taskWiring.dispose();
+  resolvedOptionalServices?.explorerController.dispose();
+  resolvedOptionalServices?.explorerTree.dispose();
+  controllers.explorerFeature.dispose();
+  // Clears the coalesced git-refresh timer and disposes the git status subscription plus
+  // gitStatusService/gitMutationCoordinator, none of which any other dispose call above
+  // touches (H2-5).
+  controllers.optionalServices.dispose();
+  marker('XI_TEARDOWN', { step: 'contributions-dispose' });
+  await controllers.contributionRegistry.dispose();
+  marker('XI_TEARDOWN', { step: 'contributions-disposed' });
+  controllers.commandRegistry.dispose();
+  controllers.completionFeature.dispose();
+  controllers.inputRouter.dispose();
+  controllers.pointerCapture.dispose();
+  controllers.saveCoordinator.dispose();
+  controllers.host.dispose();
+  persistence.dispose();
+  controllers.sidebarController.dispose();
+  controllers.contextMenuStore.dispose();
+  for (const disposable of controllers.jobControlDisposables) disposable.dispose();
+  marker('XI_TEARDOWN', { step: 'done' });
 }
 
 async function openDocument(

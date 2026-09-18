@@ -1,5 +1,13 @@
 import type { DocumentSnapshot, Result, Utf16Offset } from '../../document/src/index.ts';
 
+const SEGMENTER_CTOR = (Intl as typeof Intl & {
+  readonly Segmenter?: new (_locales?: string | readonly string[], _options?: { readonly granularity: 'grapheme' }) => {
+    segment(value: string): Iterable<{ readonly segment: string; readonly index: number }>;
+  };
+}).Segmenter;
+/** One reusable instance instead of constructing a new Intl.Segmenter on every call (C10). */
+const GRAPHEME_SEGMENTER = SEGMENTER_CTOR === undefined ? undefined : new SEGMENTER_CTOR('und', { granularity: 'grapheme' });
+
 /** Read-only character metadata consumed by `ga` and `g8` message views. */
 export interface VimCharacterInfo {
   /** One Vim grapheme at the supplied UTF-16 cursor boundary. */
@@ -39,13 +47,9 @@ export function resolveVimCharacterInfo(
   const local = offset - (startResult.value as number);
   let grapheme: string | undefined;
   if (local < 0 || local >= line.value.length) return failure('no-character');
-  const segmenter = (Intl as typeof Intl & {
-    readonly Segmenter?: new (_locales?: string | readonly string[], _options?: { readonly granularity: 'grapheme' }) => {
-      segment(value: string): Iterable<{ readonly segment: string; readonly index: number }>;
-    };
-  }).Segmenter;
-  if (typeof segmenter !== 'function') return failure('document-read-failed');
-  for (const part of new segmenter('und', { granularity: 'grapheme' }).segment(line.value)) {
+  const segmenter = GRAPHEME_SEGMENTER;
+  if (segmenter === undefined) return failure('document-read-failed');
+  for (const part of segmenter.segment(line.value)) {
     if (part.index === local) {
       grapheme = part.segment;
       break;

@@ -43,7 +43,14 @@ for (const fixture of catalog.fixtures) {
   assert.ok(expectedFixture, `T017-MOTION-FIXTURE-01 ${fixture.id} has a pinned trace`);
   if (expectedFixture === undefined) throw new Error(`T017-MOTION-FIXTURE-01 missing trace ${fixture.id}`);
 
-  const text = fixture.lines.join('\n');
+  // The oracle trace is captured via nvim_buf_set_lines(0, 0, -1, true, fixture.lines) — an
+  // exact N-line buffer, independent of any file "no trailing newline" convention. A plain
+  // `lines.join('\n')` loses a genuinely-empty last line (e.g. ["...","  bar",""]) once opened,
+  // because the resulting text ends in a single '\n' that the document model (and vimLineCount,
+  // see motions/index.ts) treats as *terminating* the prior line, not as a separate empty line.
+  // Appending one more '\n' preserves the fixture's real line count faithfully: for a non-empty
+  // last line this is a no-op under vimLineCount's trailing-newline subtraction.
+  const text = fixture.lines.length === 0 ? '' : `${fixture.lines.join('\n')}\n`;
   const opened = openTextDocument(asDocumentId(fixture.id), new TextEncoder().encode(text));
   assert.equal(opened.kind, 'editable', `T017-MOTION-DOCUMENT-01 ${fixture.id} opens as UTF-8`);
   if (opened.kind !== 'editable') throw new Error(`T017-MOTION-DOCUMENT-01 ${fixture.id} did not open`);

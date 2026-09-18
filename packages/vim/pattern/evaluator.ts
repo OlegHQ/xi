@@ -355,6 +355,11 @@ function* evaluateAll(context: EvaluationContext): Generator<void, InternalResul
   yield* prepareLineStartIndex(context);
   const matches: InternalMatch[] = [];
   let offset = 0;
+  // Vim's global scan (`:s///g`) never reports an empty match landing exactly where
+  // the previous accepted match ended (nvim `:%s/\d*/N/g` on "a1b" -> "NaNb", not
+  // "NaNNb"; `:%s/e*/-/g` on "feed" -> "-f-d", not "-f--d"). Distinct from the
+  // existing end-of-line suppression below, which guards a different empty match.
+  let previousMatchEnd: number | null = null;
   while (offset <= context.text.length) {
     yield* visit(context, { start: 0, end: 0 });
     const initial: EvaluationState = { position: offset, captures: new Map(), reportedStart: null, reportedEnd: null };
@@ -371,8 +376,10 @@ function* evaluateAll(context: EvaluationContext): Generator<void, InternalResul
     }
     const zeroWidth = start === end && matchState.position === offset;
     const endOfLineBoundary = isEndOfLine(context.text, offset);
-    const shouldSkipTerminalEmpty = zeroWidth && endOfLineBoundary && !context.program.features.containsLineBoundary;
+    const adjacentToPreviousMatch = zeroWidth && previousMatchEnd !== null && start === previousMatchEnd;
+    const shouldSkipTerminalEmpty = zeroWidth && ((endOfLineBoundary && !context.program.features.containsLineBoundary) || adjacentToPreviousMatch);
     if (!shouldSkipTerminalEmpty) {
+      previousMatchEnd = end;
       if (matches.length >= context.program.outputLimit) {
         throw new PatternEvaluationError('output-limit-exceeded', `pattern-output-limit-exceeded: ${context.program.outputLimit}`, context.budget.steps, context.program.root.source);
       }
@@ -412,6 +419,9 @@ function* evaluateNfaAll(context: EvaluationContext, nfa: NfaProgram): Generator
   yield* prepareLineStartIndex(context);
   const matches: InternalMatch[] = [];
   let offset = 0;
+  // See the identical suppression in evaluateAll: an empty match landing exactly
+  // where the previous accepted match ended is never reported.
+  let previousMatchEnd: number | null = null;
   while (offset <= context.text.length) {
     yield* visit(context, { start: 0, end: 0 });
     const match = yield* findNextNfaMatch(context, nfa, offset);
@@ -421,8 +431,10 @@ function* evaluateNfaAll(context: EvaluationContext, nfa: NfaProgram): Generator
     }
     const zeroWidth = match.start === match.end && match.consumedEnd === match.consumedStart;
     const endOfLineBoundary = isEndOfLine(context.text, match.consumedStart);
-    const shouldSkipTerminalEmpty = zeroWidth && endOfLineBoundary && !context.program.features.containsLineBoundary;
+    const adjacentToPreviousMatch = zeroWidth && previousMatchEnd !== null && match.start === previousMatchEnd;
+    const shouldSkipTerminalEmpty = zeroWidth && ((endOfLineBoundary && !context.program.features.containsLineBoundary) || adjacentToPreviousMatch);
     if (!shouldSkipTerminalEmpty) {
+      previousMatchEnd = match.end;
       if (matches.length >= context.program.outputLimit) {
         throw new PatternEvaluationError('output-limit-exceeded', `pattern-output-limit-exceeded: ${context.program.outputLimit}`, context.budget.steps, context.program.root.source);
       }

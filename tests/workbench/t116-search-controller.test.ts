@@ -101,6 +101,7 @@ class FakeReplaceService implements ReplaceServicePort {
 // -- A fake filesystem port recording every read/write call. --
 class FakeFilesystem implements SearchFilesystemPort {
   readonly calls: string[] = [];
+  readonly contents = new Map<string, string>();
   workspaceRelativePath(root: string, path: string): string | undefined {
     return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : undefined;
   }
@@ -109,10 +110,16 @@ class FakeFilesystem implements SearchFilesystemPort {
   }
   async readFile(path: string, _cancellation: CancellationToken): Promise<Result<Uint8Array, PlatformFailure>> {
     this.calls.push(`read:${path}`);
-    return { ok: false, error: failure };
+    const content = this.contents.get(path);
+    return content === undefined ? { ok: false, error: failure } : { ok: true, value: new TextEncoder().encode(content) };
   }
-  async writeFileAtomic(path: string, _contents: Uint8Array, _cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
+  async writeFileAtomic(path: string, contents: Uint8Array, _cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
     this.calls.push(`write:${path}`);
+    this.contents.set(path, new TextDecoder().decode(contents));
+    return { ok: true, value: undefined };
+  }
+  async makeDirectory(path: string, _cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
+    this.calls.push(`mkdir:${path}`);
     return { ok: true, value: undefined };
   }
 }
@@ -218,7 +225,7 @@ assert.equal(dirtyBuffer?.dirty, true, 'sanity: the buffer is dirty after the di
 const plan: WorkbenchReplacePlan = Object.freeze({
   query: { rootId: 'workspace', rootPath: '/workspace', query: 'hello' },
   replacement: 'HELLO',
-  edits: Object.freeze([{ path: 'a.txt', startUtf16: 0, endUtf16: 5, replacement: 'HELLO', original: 'hello' }]),
+  edits: Object.freeze([{ path: 'a.txt', rootId: 'workspace', startUtf16: 0, endUtf16: 5, replacement: 'HELLO', original: 'hello' }]),
   targets: Object.freeze([{ path: 'a.txt', rootId: 'workspace', text: 'hello!', source: 'buffer' as const, version: bufferDocument.version }]),
   generation: 1,
 });
@@ -226,8 +233,52 @@ const replacePort = controller.createReplacePort();
 const applied = await replacePort.apply(plan);
 assert.ok(applied.ok, `T116-SEARCH-04a replace applied through the document port: ${applied.ok ? '' : applied.error.message}`);
 assert.equal(textOf(bufferDocument), 'HELLO!', 'T116-SEARCH-04b the dirty buffer was edited through applyDocumentEdits');
-assert.deepEqual(filesystem.calls, [], 'T116-SEARCH-04c a dirty buffer replacement never touches the filesystem port');
+assert.equal(filesystem.calls.length, 0, 'T116-SEARCH-04c a dirty buffer replacement never touches the filesystem port');
+
+// F2-3: a disk-target replace must write a durable pre-mutation journal (paths + before text)
+// before the first disk mutation, so a crash between two file mutations still leaves a
+// restore record -- mirroring JournaledFilesystemOperations.
+filesystem.calls.length = 0;
+filesystem.contents.set('/workspace/disk.txt', 'hello disk');
+const diskTargetRead = await replacePort.readTarget('disk.txt');
+assert.ok(diskTargetRead.ok, 'F2-3 sanity: the seeded disk file reads back');
+if (!diskTargetRead.ok) throw new Error('unreachable');
+filesystem.calls.length = 0;
+const diskPlan: WorkbenchReplacePlan = Object.freeze({
+  query: { rootId: 'workspace', rootPath: '/workspace', query: 'hello' },
+  replacement: 'HELLO',
+  edits: Object.freeze([{ path: 'disk.txt', rootId: 'workspace', startUtf16: 0, endUtf16: 5, replacement: 'HELLO', original: 'hello' }]),
+  targets: Object.freeze([diskTargetRead.value]),
+  generation: 2,
+});
+const diskApplied = await replacePort.apply(diskPlan);
+assert.ok(diskApplied.ok, `F2-3 sanity: disk replace applies: ${diskApplied.ok ? '' : diskApplied.error.message}`);
+const journalCallIndex = filesystem.calls.findIndex((call) => call.includes('.xi/replace/') && call.startsWith('write:'));
+const diskWriteIndex = filesystem.calls.findIndex((call) => call === 'write:/workspace/disk.txt');
+assert.ok(journalCallIndex >= 0, 'F2-3: a durable journal is written to .xi/replace before the disk mutation');
+assert.ok(journalCallIndex < diskWriteIndex, 'F2-3: the durable journal is written before the first disk mutation, not after');
+assert.equal(filesystem.contents.get('/workspace/disk.txt'), 'HELLO disk', 'sanity: the disk file was actually replaced');
 
 controller.dispose();
 
-console.log('T116 SearchController passed generation-drop, selection-clamp, escape-close and dirty-buffer-replace fixtures');
+// F2-13: a rejected ensureServices() must not leave open()/query() as a silent, permanently
+// unresolved dead panel -- it must surface via onError instead of an unhandled rejection.
+{
+  const failingErrors: string[] = [];
+  const failingController = new SearchController({
+    host,
+    session,
+    filesystem,
+    marker: () => {},
+    onError: (message) => { failingErrors.push(message); },
+    workspaceRoot: '/workspace',
+    ensureServices: async () => { throw new Error('services unavailable'); },
+  });
+  failingController.open();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(failingErrors.length > 0, true, 'F2-13: a rejected ensureServices() is surfaced via onError, not swallowed');
+  assert.equal(failingController.isOpen, false, 'F2-13: the panel does not stay stuck open after ensureServices() fails');
+  failingController.dispose();
+}
+
+console.log('T116 SearchController passed generation-drop, selection-clamp, escape-close, dirty-buffer-replace, durable disk-replace journal (F2-3) and ensureServices rejection handling (F2-13) fixtures');

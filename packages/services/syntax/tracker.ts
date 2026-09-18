@@ -55,10 +55,19 @@ export class SyntaxDocumentTracker implements SyntaxReadPort, Disposable {
   changeDocument(change: CommittedDocumentChange): void {
     if (!this.#languageIds.has(change.documentId)) return;
     const languageId = this.#languageIds.get(change.documentId);
-    const delta: SyntaxDelta | undefined = change.changedSpans.length === 1
-      ? { start: change.changedSpans[0]!.start, oldEnd: change.changedSpans[0]!.oldEnd, newEnd: change.changedSpans[0]!.newEnd }
-      : undefined;
-    this.#submit(change.documentId, change.snapshot, languageId, delta);
+    // changedSpans is in document order (ascending start); hand tree.edit() the spans in
+    // reverse so a multi-cursor edit stays a bounded incremental reparse instead of falling
+    // back to a full reparse (oldTree=null) the way a single-span-only delta used to (F1-5).
+    // `tree.edit()` calls are sequential and self-cumulative: tree-sitter re-shifts every
+    // already-touched (higher-offset) node again on each subsequent (lower-offset) call, so
+    // each call's own `newEnd` must describe only THAT span's local replacement length against
+    // the still-unshifted base offset (`span.start + insertedLength`) -- never the span's
+    // cumulative final-document position (`span.newEnd`), which double-counts shift from spans
+    // processed earlier in this same reverse pass and corrupts the tree (observed: a ~7x parse
+    // slowdown from the resulting bogus edit ranges, worse than just doing a full reparse).
+    const deltas: readonly SyntaxDelta[] | undefined = change.changedSpans.length === 0 ? undefined
+      : [...change.changedSpans].reverse().map((span) => ({ start: span.start, oldEnd: span.oldEnd, newEnd: span.start + (span.newEnd - span.newStart) }));
+    this.#submit(change.documentId, change.snapshot, languageId, deltas);
   }
 
   closeDocument(documentId: DocumentId): void {
@@ -86,7 +95,7 @@ export class SyntaxDocumentTracker implements SyntaxReadPort, Disposable {
     this.#listeners.clear();
   }
 
-  #submit(documentId: DocumentId, snapshot: DocumentSnapshot, languageId: string | undefined, delta: SyntaxDelta | undefined): void {
+  #submit(documentId: DocumentId, snapshot: DocumentSnapshot, languageId: string | undefined, deltas: readonly SyntaxDelta[] | undefined): void {
     this.#requestSequence += 1;
     const generation = this.#generation;
     this.#generation += 1;
@@ -96,7 +105,7 @@ export class SyntaxDocumentTracker implements SyntaxReadPort, Disposable {
       requestId: `syntax-${documentId}-${this.#requestSequence}` as RequestId,
       generation,
       snapshot,
-      ...(delta === undefined ? {} : { delta }),
+      ...(deltas === undefined ? {} : { deltas }),
       ...(languageId === undefined ? {} : { languageId }),
     };
     this.#highlighter.submit(request);

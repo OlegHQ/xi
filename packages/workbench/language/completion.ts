@@ -159,6 +159,13 @@ export class CompletionSnippetController {
   #snippetApplying = false;
   #completionRead: CompletionModelRead | undefined;
   #signatureRead: SignatureModelRead | undefined;
+  /** Guards against an infinite `ensureLanguage().then(() => openCompletion/openSignature())`
+   * microtask loop when no language applies to the current file: `ensureLanguage` is a memoized,
+   * already-resolved promise in that case, so without this guard the retry would re-enter with
+   * the same unresolved controller/session forever (F1-1). Reset once a request attempt starts
+   * fresh (open) or completes/closes. */
+  #completionEnsureRetried = false;
+  #signatureEnsureRetried = false;
   readonly #options: CompletionSnippetControllerOptions;
 
   constructor(options: CompletionSnippetControllerOptions) {
@@ -236,14 +243,17 @@ export class CompletionSnippetController {
     const provider = this.#completionProvider;
     const session = this.#session;
     if (request === undefined || controller === undefined || provider === undefined || session === undefined) {
-      if (request !== undefined) {
+      if (request !== undefined && !this.#completionEnsureRetried) {
+        this.#completionEnsureRetried = true;
         this.#completionOpen = true;
         void this.#options.ensureLanguage().then(() => { if (this.#completionOpen) this.openCompletion(trigger); });
         return true;
       }
+      this.#completionEnsureRetried = false;
       this.#options.marker('XI_COMPLETION_STATE', { state: 'unavailable', items: 0 });
       return true;
     }
+    this.#completionEnsureRetried = false;
     this.#signatureOpen = false;
     this.#completionOpen = true;
     this.#completionCancellation?.cancel();
@@ -271,10 +281,13 @@ export class CompletionSnippetController {
     if (request === undefined) return true;
     const session = this.#session;
     if (controller === undefined || session === undefined) {
+      if (this.#signatureEnsureRetried) { this.#signatureEnsureRetried = false; return true; }
+      this.#signatureEnsureRetried = true;
       this.#signatureOpen = true;
       void this.#options.ensureLanguage().then(() => { if (this.#signatureOpen) this.openSignature(); });
       return true;
     }
+    this.#signatureEnsureRetried = false;
     this.#completionOpen = false;
     this.#signatureOpen = true;
     this.#signatureCancellation?.cancel();
@@ -291,6 +304,7 @@ export class CompletionSnippetController {
 
   closeCompletion(cancel = true): void {
     this.#completionOpen = false;
+    this.#completionEnsureRetried = false;
     this.#completionCancellation?.cancel();
     this.#completionCancellation = undefined;
     if (cancel) this.#completion?.cancel();
@@ -301,6 +315,7 @@ export class CompletionSnippetController {
    * `host.registerPanel('signature', { close: () => { signatureOpen = false; signatureController?.cancel(); } })`. */
   closeSignature(): void {
     this.#signatureOpen = false;
+    this.#signatureEnsureRetried = false;
     this.#signatureCancellation?.cancel();
     this.#signatureCancellation = undefined;
     this.#signature?.cancel();

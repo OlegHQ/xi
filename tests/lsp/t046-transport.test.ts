@@ -336,21 +336,32 @@ test('LSP-T046-EOF-MID-BODY-01', 'fails a truncated body on stdout EOF', async (
   await transport.dispose();
 });
 
-test('LSP-T046-DUPLICATE-RESPONSE-01', 'rejects a duplicate response ID after completing the original request', async () => {
+test('LSP-T046-DUPLICATE-RESPONSE-01', 'a duplicate response ID is a recorded protocol issue, not a connection-killing transport failure (F1-4)', async () => {
+  // Before F1-4, ResponseTracker#incoming throwing (invalid-response-id/duplicate-response/
+  // unknown-response) escaped feedEach uncaught, aborting the whole stdout read loop for one
+  // malformed/duplicate message and tearing down the entire connection via fail(). That is a
+  // server protocol slip, not a transport failure: the read loop must keep running so every
+  // later message (including a completely unrelated request/response) still gets through.
   const peer = new FakeLspPeer();
   const transport = await start(peer);
   peer.onMessage(async (message, activePeer) => {
     const record = messageRecord(message);
-    if (record.method !== 'client/once') return;
-    const response = { jsonrpc: '2.0', id: record.id, result: true };
-    await activePeer.send(response);
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
-    await activePeer.send(response);
+    if (record.method === 'client/once') {
+      const response = { jsonrpc: '2.0', id: record.id, result: true };
+      await activePeer.send(response);
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      await activePeer.send(response); // duplicate: the original request already completed
+    } else if (record.method === 'client/after') {
+      await activePeer.send({ jsonrpc: '2.0', id: record.id, result: 'still-alive' });
+    }
   });
   const result = await transport.request<boolean>('client/once', {});
   equal(result, true, 'first response is delivered');
-  await waitFor(() => transport.state === 'failed', 'duplicate response did not fail the transport');
-  assert(transport.diagnostics.failure?.includes('duplicate JSON-RPC response'), 'duplicate response ID is reported');
+  // Give the duplicate a turn to arrive and be discarded.
+  await new Promise<void>((resolve) => setTimeout(resolve, 30));
+  equal(transport.state, 'running', 'a duplicate response is recorded but must not fail the transport');
+  const after = await transport.request<string>('client/after', {});
+  equal(after, 'still-alive', 'the read loop keeps delivering messages after the duplicate response');
   await transport.dispose();
 });
 

@@ -1,5 +1,5 @@
 import type { Result } from '../../contracts/src/index';
-import type { DocumentEdit, DocumentSnapshot, DocumentVersion, LineIndex, Utf16Offset } from '../../document/src/index';
+import type { DocumentEdit, DocumentSnapshot, DocumentVersion, LineIndex, Utf16Offset, Utf32Offset, Utf8ByteOffset } from '../../document/src/index';
 import {
   compilePattern,
   createPatternEvaluation,
@@ -45,8 +45,8 @@ export interface VimExRangeSpec {
 }
 
 export type VimExArguments =
-  | { readonly kind: 'substitute'; readonly pattern: string; readonly replacement: string; readonly flags: string }
-  | { readonly kind: 'global'; readonly pattern: string; readonly inverse: boolean; readonly body: VimExCommand }
+  | { readonly kind: 'substitute'; readonly pattern: string; readonly replacement: string; readonly flags: string; readonly repeatLast?: boolean; readonly count?: number }
+  | { readonly kind: 'global'; readonly pattern: string; readonly inverse: boolean; readonly body: VimExCommand; readonly bodies: readonly VimExCommand[] }
   | { readonly kind: 'normal'; readonly keys: string }
   | { readonly kind: 'destination'; readonly destination: VimExAddressExpression }
   | { readonly kind: 'text'; readonly value: string }
@@ -169,7 +169,7 @@ const COMMANDS: ReadonlyArray<{ readonly name: VimExCommandName; readonly min: n
 
 /** Resolve only native names and reviewed native abbreviations. */
 export function resolveVimExCommandName(typedName: string): Result<VimExCommandName, VimExParseFailure> {
-  if (typedName === '&' || typedName === '~') return { ok: true, value: 'substitute' };
+  if (typedName === '&' || typedName === '&&' || typedName === '~') return { ok: true, value: 'substitute' };
   // A full alias always resolves regardless of its minimum abbreviation
   // length (`:t` for `copy`'s short alias), even when that alias is shorter
   // than `min`; `min` only governs prefix abbreviations of the long name.
@@ -302,11 +302,14 @@ function prepareCommand(
       const destination = resolveAddress(snapshot, command.arguments.destination, context, context.currentLine, { allowLineZero: true });
       if (!destination.ok) return destination;
       const destinationLine = destination.value as number;
-      // `:m$`/`:2,3m3` moving a range to right after its own last line is a
-      // no-op in Neovim, not the "range into itself" error (E134); only a
-      // destination strictly inside the range is rejected.
-      if (destinationLine === (range.lastLine as number)) return base([], null, [], [], null);
-      if (destinationLine >= (range.firstLine as number) && destinationLine <= (range.lastLine as number)) return fail(command, 'destination-in-range', 'destination-is-inside-source-range');
+      // nvim (`:1,2t2` duplicates; `:1,2m2` is a no-op): `:copy` never
+      // removes its source, so a destination inside (or at the end of) the
+      // range is always a plain insertion, never the move-only no-op or the
+      // move-only "range into itself" error (E134).
+      if (command.name === 'move') {
+        if (destinationLine === (range.lastLine as number)) return base([], null, [], [], null);
+        if (destinationLine >= (range.firstLine as number) && destinationLine <= (range.lastLine as number)) return fail(command, 'destination-in-range', 'destination-is-inside-source-range');
+      }
       const transformed = command.name === 'copy'
         ? copyLineEdits(snapshot, range, destinationLine)
         : moveLineEdits(snapshot, range, destinationLine);
@@ -319,7 +322,8 @@ function prepareCommand(
     }
     case 'substitute': {
       if (command.arguments.kind !== 'substitute') return fail(command, 'invalid-command', 'missing-substitute-payload');
-      const substitute = prepareSubstitute(snapshot, command, context, range, command.arguments.pattern, command.arguments.replacement, command.arguments.flags);
+      const effectiveRange = extendRangeByCount(snapshot, range, command.arguments.count);
+      const substitute = prepareSubstitute(snapshot, command, context, effectiveRange, command.arguments.pattern, command.arguments.replacement, command.arguments.flags);
       if (!substitute.ok) return substitute;
       return base(substitute.value.edits, null, [], [], { pattern: substitute.value.pattern, replacement: substitute.value.replacement, flags: substitute.value.flags });
     }
@@ -330,26 +334,257 @@ function prepareCommand(
       const selected = matchingLines(snapshot, range, command.arguments.pattern, context.patternOptions);
       if (!selected.ok) return selected;
       const wanted = command.name === 'global' ? selected.value : allLinesExcept(range, selected.value);
+      // nvim (`:g/^/m0` on a\nb\nc -> c\nb\na): :m/:t bodies reorder lines, so
+      // later marks in `wanted` must see earlier moves/copies, not the
+      // original snapshot. Everything else (:d, :s, :normal char edits) only
+      // ever touches its own original line's own offsets, so those stay on
+      // the original per-line prepareCommand path below, which is already
+      // coordinate-safe across independent lines.
+      if (command.arguments.body.name === 'move' || command.arguments.body.name === 'copy') {
+        return prepareGlobalReorder(snapshot, command, command.arguments.body, context, range, wanted, base);
+      }
+      const bodies = command.arguments.bodies;
       const nestedPlans: VimExPlan[] = [];
       const edits: DocumentEdit[] = [];
       let registerEffect: VimExRegisterEffect | null = null;
       for (const line of wanted) {
-        const nestedRange: VimExResolvedRange = { firstLine: line, lastLine: line, sourceStart: range.sourceStart, sourceEnd: range.sourceEnd };
-        const nested = prepareCommand(snapshot, command.arguments.body, context, nestedRange);
-        if (!nested.ok) return { ok: false, error: { kind: 'nested-command-failed', sourceOffset: command.metadata.argumentStart, failure: nested.error } };
-        nestedPlans.push(nested.value);
-        edits.push(...nested.value.edits);
-        if (nested.value.registerEffect !== null) {
-          registerEffect = registerEffect === null ? nested.value.registerEffect : Object.freeze({
-            ...nested.value.registerEffect,
-            lines: Object.freeze([...registerEffect.lines, ...nested.value.registerEffect.lines]),
+        // A single body command runs against the shared original snapshot (its
+        // edits only ever touch its own line's own offsets -- see the comment
+        // above). A `|`-chained body (nvim: `:g/a/s/X/Y/|s/x/Z/`) instead runs
+        // each piece in order against the *result* of the previous one, so the
+        // line is isolated into its own tiny synthetic snapshot first.
+        const chained = bodies.length === 1
+          ? prepareGlobalSingleBody(snapshot, command, bodies[0]!, context, range, line)
+          : prepareGlobalChainedBody(snapshot, command, bodies, context, range, line);
+        if (!chained.ok) return chained;
+        nestedPlans.push(...chained.value.nestedPlans);
+        edits.push(...chained.value.edits);
+        if (chained.value.registerEffect !== null) {
+          registerEffect = registerEffect === null ? chained.value.registerEffect : Object.freeze({
+            ...chained.value.registerEffect,
+            lines: Object.freeze([...registerEffect.lines, ...chained.value.registerEffect.lines]),
           });
         }
-        if (nested.value.hostEffects.length !== 0) return fail(command, 'unsupported-script', 'global-host-effect-not-allowed');
       }
       return base(mergeEdits(edits), registerEffect, [], nestedPlans, null);
     }
   }
+}
+
+type VimExBasePlanBuilder = (
+  edits: readonly DocumentEdit[],
+  registerEffect: VimExRegisterEffect | null,
+  hostEffects: readonly VimExHostEffect[],
+  nestedPlans: readonly VimExPlan[],
+  substituteState: VimExSubstituteState | null,
+) => Result<VimExPlan, VimExPrepareFailure>;
+
+/**
+ * `:g`/`:v` with a `:move`/`:copy` body: simulate the reorder on a plain
+ * array of original line ids (fast; not a keystroke-path operation), then
+ * emit one whole-document replace with the final text. Destinations are
+ * resolved against the array's CURRENT length/positions, matching Neovim's
+ * per-iteration marks instead of the original, now-stale snapshot.
+ */
+function prepareGlobalReorder(
+  snapshot: DocumentSnapshot,
+  command: VimExCommand,
+  body: VimExCommand,
+  context: VimExPrepareContext,
+  range: VimExResolvedRange,
+  wanted: readonly LineIndex[],
+  base: VimExBasePlanBuilder,
+): Result<VimExPlan, VimExPrepareFailure> {
+  if (body.arguments.kind !== 'destination') return fail(command, 'invalid-command', 'missing-destination');
+  const totalLines = snapshot.lineCount;
+  const wholeRange: VimExResolvedRange = { firstLine: 0 as LineIndex, lastLine: (totalLines - 1) as LineIndex, sourceStart: range.sourceStart, sourceEnd: range.sourceEnd };
+  const wholeLines = lineContents(snapshot, wholeRange);
+  if (!wholeLines.ok) return wholeLines;
+  const lines: string[] = [...wholeLines.value];
+  const ids: number[] = lines.map((_, index) => index);
+  for (const originalLine of wanted) {
+    const currentIndex = ids.indexOf(originalLine as number);
+    if (currentIndex === -1) continue; // an earlier :move already relocated this line's id; content still counted once
+    const destination = resolveVirtualDestination(body.arguments.destination, ids, currentIndex, context);
+    if (!destination.ok) return destination;
+    const destinationLine = destination.value;
+    if (destinationLine === currentIndex) continue;
+    if (body.name === 'move') {
+      const [text] = lines.splice(currentIndex, 1);
+      const [id] = ids.splice(currentIndex, 1);
+      const insertAt = destinationLine < currentIndex ? destinationLine + 1 : destinationLine;
+      lines.splice(insertAt, 0, text ?? '');
+      ids.splice(insertAt, 0, id ?? (originalLine as number));
+    } else {
+      const text = lines[currentIndex] ?? '';
+      const insertAt = destinationLine + 1;
+      lines.splice(insertAt, 0, text);
+      ids.splice(insertAt, 0, -1);
+    }
+  }
+  const documentText = snapshot.slice(0 as Utf16Offset, snapshot.lengthUtf16 as Utf16Offset);
+  if (!documentText.ok) return { ok: false, error: { kind: 'document-read-failed', sourceOffset: range.sourceStart } };
+  const trailingNewline = documentText.value.endsWith('\n');
+  const finalText = `${lines.join('\n')}${trailingNewline ? '\n' : ''}`;
+  const edits: DocumentEdit[] = finalText === documentText.value
+    ? []
+    : [{ start: 0 as Utf16Offset, end: snapshot.lengthUtf16 as Utf16Offset, text: finalText }];
+  return base(edits, null, [], [], null);
+}
+
+interface VimExGlobalBodyResult {
+  readonly edits: readonly DocumentEdit[];
+  readonly nestedPlans: readonly VimExPlan[];
+  readonly registerEffect: VimExRegisterEffect | null;
+}
+
+function prepareGlobalSingleBody(
+  snapshot: DocumentSnapshot,
+  command: VimExCommand,
+  body: VimExCommand,
+  context: VimExPrepareContext,
+  range: VimExResolvedRange,
+  line: LineIndex,
+): Result<VimExGlobalBodyResult, VimExPrepareFailure> {
+  const nestedRange: VimExResolvedRange = { firstLine: line, lastLine: line, sourceStart: range.sourceStart, sourceEnd: range.sourceEnd };
+  const nested = prepareCommand(snapshot, body, context, nestedRange);
+  if (!nested.ok) return { ok: false, error: { kind: 'nested-command-failed', sourceOffset: command.metadata.argumentStart, failure: nested.error } };
+  if (nested.value.hostEffects.length !== 0) return fail(command, 'unsupported-script', 'global-host-effect-not-allowed');
+  return { ok: true, value: { edits: nested.value.edits, nestedPlans: [nested.value], registerEffect: nested.value.registerEffect } };
+}
+
+/**
+ * Run a `|`-chained `:g` body (nvim: `:g/a/s/X/Y/|s/x/Z/` applies both per
+ * matched line, each seeing the previous one's result). The matched line is
+ * isolated into its own single-line synthetic snapshot so each chained
+ * command reads the text the previous one produced; the final text is
+ * folded back into one edit against the real document.
+ */
+function prepareGlobalChainedBody(
+  snapshot: DocumentSnapshot,
+  command: VimExCommand,
+  bodies: readonly VimExCommand[],
+  context: VimExPrepareContext,
+  range: VimExResolvedRange,
+  line: LineIndex,
+): Result<VimExGlobalBodyResult, VimExPrepareFailure> {
+  const startResult = snapshot.lineStartOffset(line);
+  if (!startResult.ok) return { ok: false, error: { kind: 'document-read-failed', sourceOffset: range.sourceStart } };
+  const lineStart = startResult.value as number;
+  const nextResult = snapshot.lineStartOffset(((line as number) + 1) as LineIndex);
+  const lineEnd = nextResult.ok ? (nextResult.value as number) - 1 : snapshot.lengthUtf16;
+  const originalText = snapshot.slice(lineStart as Utf16Offset, lineEnd as Utf16Offset);
+  if (!originalText.ok) return { ok: false, error: { kind: 'document-read-failed', sourceOffset: range.sourceStart } };
+  let text = originalText.value;
+  const nestedPlans: VimExPlan[] = [];
+  let registerEffect: VimExRegisterEffect | null = null;
+  const localContext: VimExPrepareContext = { ...context, currentLine: 0 as LineIndex };
+  const localRange: VimExResolvedRange = { firstLine: 0 as LineIndex, lastLine: 0 as LineIndex, sourceStart: range.sourceStart, sourceEnd: range.sourceEnd };
+  for (const body of bodies) {
+    const nested = prepareCommand(createLineSnapshot(snapshot, text), body, localContext, localRange);
+    if (!nested.ok) return { ok: false, error: { kind: 'nested-command-failed', sourceOffset: command.metadata.argumentStart, failure: nested.error } };
+    if (nested.value.hostEffects.length !== 0) return fail(command, 'unsupported-script', 'global-host-effect-not-allowed');
+    nestedPlans.push(nested.value);
+    if (nested.value.registerEffect !== null) {
+      registerEffect = registerEffect === null ? nested.value.registerEffect : Object.freeze({
+        ...nested.value.registerEffect,
+        lines: Object.freeze([...registerEffect.lines, ...nested.value.registerEffect.lines]),
+      });
+    }
+    text = applyEditsToText(text, nested.value.edits);
+  }
+  const edits: DocumentEdit[] = text === originalText.value
+    ? []
+    : [{ start: lineStart as Utf16Offset, end: lineEnd as Utf16Offset, text }];
+  return { ok: true, value: { edits, nestedPlans, registerEffect } };
+}
+
+function applyEditsToText(text: string, edits: readonly DocumentEdit[]): string {
+  if (edits.length === 0) return text;
+  const sorted = [...edits].sort((left, right) => (right.start as number) - (left.start as number));
+  let result = text;
+  for (const edit of sorted) result = result.slice(0, edit.start as number) + edit.text + result.slice(edit.end as number);
+  return result;
+}
+
+/** A read-only single-line synthetic snapshot, for running a body command in
+ * isolation against one already-edited line without a real document. */
+function createLineSnapshot(parent: DocumentSnapshot, text: string): DocumentSnapshot {
+  const length = text.length;
+  const inBounds = (offset: number): boolean => Number.isSafeInteger(offset) && offset >= 0 && offset <= length;
+  return {
+    id: parent.id,
+    version: parent.version,
+    revisionId: parent.revisionId,
+    lengthUtf16: length,
+    lineCount: 1,
+    readOnly: false,
+    slice: (start, end) => {
+      const s = start as number;
+      const e = end as number;
+      if (!inBounds(s) || !inBounds(e) || e < s) return { ok: false, error: { kind: 'invalid-range' } };
+      return { ok: true, value: text.slice(s, e) };
+    },
+    lineIndexAt: (offset) => (inBounds(offset as number) ? { ok: true, value: 0 as LineIndex } : { ok: false, error: { kind: 'invalid-line' } }),
+    lineStartOffset: (lineIndex) => ((lineIndex as number) === 0 ? { ok: true, value: 0 as Utf16Offset } : { ok: false, error: { kind: 'invalid-line' } }),
+    utf8OffsetAt: (offset) => (inBounds(offset as number) ? { ok: true, value: new TextEncoder().encode(text.slice(0, offset as number)).length as Utf8ByteOffset } : { ok: false, error: { kind: 'invalid-encoded-offset' } }),
+    utf32OffsetAt: (offset) => (inBounds(offset as number) ? { ok: true, value: [...text.slice(0, offset as number)].length as Utf32Offset } : { ok: false, error: { kind: 'invalid-encoded-offset' } }),
+    offsetAtUtf8: (byteOffset) => {
+      const target = byteOffset as number;
+      if (!Number.isSafeInteger(target) || target < 0) return { ok: false, error: { kind: 'invalid-encoded-offset' } };
+      let bytes = 0;
+      let index = 0;
+      for (const scalar of text) {
+        if (bytes === target) return { ok: true, value: index as Utf16Offset };
+        bytes += new TextEncoder().encode(scalar).length;
+        index += scalar.length;
+      }
+      return bytes === target ? { ok: true, value: index as Utf16Offset } : { ok: false, error: { kind: 'invalid-encoded-offset' } };
+    },
+    offsetAtUtf32: (scalarOffset) => {
+      const target = scalarOffset as number;
+      if (!Number.isSafeInteger(target) || target < 0) return { ok: false, error: { kind: 'invalid-encoded-offset' } };
+      let scalars = 0;
+      let index = 0;
+      for (const scalar of text) {
+        if (scalars === target) return { ok: true, value: index as Utf16Offset };
+        scalars += 1;
+        index += scalar.length;
+      }
+      return scalars === target ? { ok: true, value: index as Utf16Offset } : { ok: false, error: { kind: 'invalid-encoded-offset' } };
+    },
+  };
+}
+
+function resolveVirtualDestination(
+  expression: VimExAddressExpression,
+  ids: readonly number[],
+  currentIndex: number,
+  context: VimExPrepareContext,
+): Result<number, VimExPrepareFailure> {
+  let line: number;
+  switch (expression.address.kind) {
+    case 'current': line = currentIndex; break;
+    case 'last': line = ids.length - 1; break;
+    case 'line': line = expression.address.line - 1; break;
+    case 'relative': line = currentIndex + expression.address.delta; break;
+    case 'mark': {
+      const marked = context.marks instanceof Map
+        ? context.marks.get(expression.address.name)
+        : context.marks === undefined ? undefined : (context.marks as Readonly<Record<string, LineIndex>>)[expression.address.name];
+      if (marked === undefined) return { ok: false, error: { kind: 'missing-mark', name: expression.address.name, sourceOffset: expression.sourceStart } };
+      const at = ids.indexOf(marked as number);
+      if (at === -1) return { ok: false, error: { kind: 'missing-mark', name: expression.address.name, sourceOffset: expression.sourceStart } };
+      line = at;
+      break;
+    }
+    case 'search':
+      return { ok: false, error: { kind: 'unsupported-script', sourceOffset: expression.sourceStart } };
+  }
+  line += expression.offset;
+  if (line === -1) return { ok: true, value: -1 };
+  if (!Number.isSafeInteger(line) || line < 0 || line >= ids.length) return { ok: false, error: { kind: 'invalid-line-range', sourceOffset: expression.sourceStart } };
+  return { ok: true, value: line };
 }
 
 function prepareSubstitute(
@@ -364,12 +599,30 @@ function prepareSubstitute(
   let actualPattern = pattern;
   let actualReplacement = replacement;
   let actualFlags = flags;
-  if (command.typedName === '&' || command.typedName === '~') {
+  const isRepeat = command.typedName === '&' || command.typedName === '&&' || command.typedName === '~' || (command.arguments.kind === 'substitute' && command.arguments.repeatLast === true);
+  if (isRepeat) {
     const previous = context.lastSubstitute;
     if (previous === undefined) return fail(command, 'no-previous-substitute', 'no-previous-substitute');
     actualPattern = previous.pattern;
     actualReplacement = previous.replacement;
-    actualFlags = previous.flags;
+    // nvim :help :s_r -- `:~`/`:&r` reuse the shared last-used (search-or-
+    // substitute) pattern instead of the last-substitute-only pattern; a bare
+    // `:&`/`:&&` (no r) keeps the last-substitute-only pattern even if a
+    // plain search ran more recently.
+    if (command.typedName === '~' || flags.includes('r')) {
+      const state = context.searchState ?? EMPTY_VIM_SEARCH_STATE;
+      if (state.pattern !== null && state.pattern.length !== 0) actualPattern = state.pattern;
+    }
+  }
+  // `&` flag (must be first, nvim :help :s_flags): union this invocation's
+  // flags onto the previous substitute's flags rather than replacing them
+  // (`:s/x/y/&g` and `:&&g` both keep+add; a bare `:&`/`:s` drop them).
+  const keepsFlags = command.typedName === '&&' || actualFlags.startsWith('&');
+  if (keepsFlags) {
+    const previous = context.lastSubstitute;
+    if (previous === undefined) return fail(command, 'no-previous-substitute', 'no-previous-substitute');
+    const extra = actualFlags.startsWith('&') ? actualFlags.slice(1) : actualFlags;
+    actualFlags = [...new Set([...previous.flags, ...extra])].join('');
   }
   const state = context.searchState ?? EMPTY_VIM_SEARCH_STATE;
   const substituteRequest = {
@@ -606,6 +859,12 @@ function parseExRegisterAndCount(text: string): { readonly register?: string; re
 function applyExCountRange(snapshot: DocumentSnapshot, range: VimExResolvedRange, command: VimExCommand): VimExResolvedRange {
   if (command.arguments.kind !== 'text') return range;
   const { count } = parseExRegisterAndCount(command.arguments.value);
+  return extendRangeByCount(snapshot, range, count);
+}
+
+/** A trailing `[count]` (`:d 3`, `:s/a/b/g 3`) replaces the range with `count`
+ * lines starting at the original range's last line. */
+function extendRangeByCount(snapshot: DocumentSnapshot, range: VimExResolvedRange, count: number | undefined): VimExResolvedRange {
   if (count === undefined || count < 1) return range;
   const firstLine = range.lastLine as number;
   const lastLine = Math.min(snapshot.lineCount - 1, firstLine + count - 1);
@@ -630,7 +889,10 @@ function parseOne(source: string, start: number, _nested: boolean): Result<{ rea
   const rangeEnd = index;
   const nameStart = index;
   let typedName: string;
-  if (source[index] === '&' || source[index] === '~') {
+  if (source[index] === '&' && source[index + 1] === '&') {
+    typedName = '&&';
+    index += 2;
+  } else if (source[index] === '&' || source[index] === '~') {
     typedName = source[index] ?? '';
     index += 1;
   } else {
@@ -654,19 +916,29 @@ function parseOne(source: string, start: number, _nested: boolean): Result<{ rea
   let arguments_: VimExArguments;
   let next = index;
   if (resolved.value === 'substitute') {
-    if (typedName === '&' || typedName === '~') {
+    if (typedName === '&' || typedName === '&&' || typedName === '~') {
       const end = scanUntilPipe(source, index);
-      const flags = source.slice(index, end).trim();
-      arguments_ = { kind: 'substitute', pattern: '', replacement: '', flags };
+      const { flags, count } = splitFlagsAndCount(source.slice(index, end).trim());
+      arguments_ = { kind: 'substitute', pattern: '', replacement: '', flags, repeatLast: true, ...(count === undefined ? {} : { count }) };
       next = end;
     } else {
       const first = readExDelimited(source, index);
-      if (!first.ok) return first;
-      const second = readExDelimited(source, first.value.next, first.value.delimiter);
-      if (!second.ok) return second;
-      const end = scanUntilPipe(source, second.value.next);
-      arguments_ = { kind: 'substitute', pattern: first.value.value, replacement: second.value.value, flags: source.slice(second.value.next, end).trim() };
-      next = end;
+      if (!first.ok) {
+        // nvim (bare `:s`, `:s g`): no delimiter at all means "repeat the
+        // last substitute", same as `:&`, with any trailing text as flags.
+        if (first.error.kind !== 'invalid-delimiter') return first;
+        const end = scanUntilPipe(source, index);
+        const { flags, count } = splitFlagsAndCount(source.slice(index, end).trim());
+        arguments_ = { kind: 'substitute', pattern: '', replacement: '', flags, repeatLast: true, ...(count === undefined ? {} : { count }) };
+        next = end;
+      } else {
+        const second = readExDelimited(source, first.value.next, first.value.delimiter);
+        if (!second.ok) return second;
+        const end = scanUntilPipe(source, second.value.next);
+        const { flags, count } = splitFlagsAndCount(source.slice(second.value.next, end).trim());
+        arguments_ = { kind: 'substitute', pattern: first.value.value, replacement: second.value.value, flags, ...(count === undefined ? {} : { count }) };
+        next = end;
+      }
     }
   } else if (resolved.value === 'global' || resolved.value === 'vglobal') {
     const pattern = readExDelimited(source, index);
@@ -674,11 +946,23 @@ function parseOne(source: string, start: number, _nested: boolean): Result<{ rea
     let bodyStart = pattern.value.next;
     while (source[bodyStart] === ' ' || source[bodyStart] === '\t') bodyStart += 1;
     if (source[bodyStart] === undefined || source[bodyStart] === '|') return { ok: false, error: { kind: 'empty-argument', sourceOffset: bodyStart } };
-    const body = parseOne(source, bodyStart, true);
-    if (!body.ok) return body;
-    if (body.value.command.name === 'global' || body.value.command.name === 'vglobal') return { ok: false, error: { kind: 'nested-global', sourceOffset: bodyStart } };
-    arguments_ = { kind: 'global', pattern: pattern.value.value, inverse: resolved.value === 'vglobal', body: body.value.command };
-    next = body.value.next;
+    const firstBody = parseOne(source, bodyStart, true);
+    if (!firstBody.ok) return firstBody;
+    if (firstBody.value.command.name === 'global' || firstBody.value.command.name === 'vglobal') return { ok: false, error: { kind: 'nested-global', sourceOffset: bodyStart } };
+    // nvim (`:g/a/s/X/Y/|s/x/Z/`): a `:g`/`:v` body runs to end of line, so any
+    // `|`-chained commands after the first belong to the body too (unlike a
+    // top-level `|` between independent commands), except `:normal`'s body,
+    // which already consumes to end of line and treats `|` as a literal key.
+    const bodies: VimExCommand[] = [firstBody.value.command];
+    next = firstBody.value.next;
+    while (source[next] === '|') {
+      const more = parseOne(source, next + 1, true);
+      if (!more.ok) return more;
+      if (more.value.command.name === 'global' || more.value.command.name === 'vglobal') return { ok: false, error: { kind: 'nested-global', sourceOffset: next + 1 } };
+      bodies.push(more.value.command);
+      next = more.value.next;
+    }
+    arguments_ = { kind: 'global', pattern: pattern.value.value, inverse: resolved.value === 'vglobal', body: firstBody.value.command, bodies: Object.freeze(bodies) };
   } else if (resolved.value === 'move' || resolved.value === 'copy') {
     while (source[index] === ' ' || source[index] === '\t') index += 1;
     const destination = parseAddress(source, index);
@@ -687,7 +971,10 @@ function parseOne(source: string, start: number, _nested: boolean): Result<{ rea
     if (source.slice(destination.value.next, next).trim().length !== 0) return { ok: false, error: { kind: 'invalid-address', sourceOffset: destination.value.next, reason: 'trailing-destination' } };
     arguments_ = { kind: 'destination', destination: destination.value.expression };
   } else if (resolved.value === 'normal') {
-    const end = scanUntilPipe(source, index);
+    // nvim (`:normal x|x` deletes twice, not once): `:normal`'s key argument
+    // runs to end of line; `|` is a literal key, never a command separator,
+    // both at top level and inside a `:g`/`:v` body.
+    const end = source.length;
     const keys = source.slice(index, end).trim();
     if (keys.length === 0) return { ok: false, error: { kind: 'empty-argument', sourceOffset: index } };
     arguments_ = { kind: 'normal', keys };
@@ -715,16 +1002,21 @@ function parseRange(source: string, start: number): Result<{ readonly range: Vim
   }
   const first = parseAddress(source, start);
   if (!first.ok) return first;
-  if (first.value === undefined) return { ok: true, value: { range: null, next: start } };
-  let next = first.value.next;
+  // nvim (`:,$d`): an omitted first address before `,`/`;` defaults to the
+  // current line, rather than making the whole range absent.
+  if (first.value === undefined && source[start] !== ',' && source[start] !== ';') {
+    return { ok: true, value: { range: null, next: start } };
+  }
+  const firstAddress = first.value ?? { expression: dummyAddress(start), next: start };
+  let next = firstAddress.next;
   const separator = source[next];
   if (separator !== ',' && separator !== ';') {
-    return { ok: true, value: { range: Object.freeze({ start: first.value.expression, end: first.value.expression, separator: 'single', sourceStart: start, sourceEnd: next }), next } };
+    return { ok: true, value: { range: Object.freeze({ start: firstAddress.expression, end: firstAddress.expression, separator: 'single', sourceStart: start, sourceEnd: next }), next } };
   }
   const second = parseAddress(source, next + 1);
   if (!second.ok || second.value === undefined) return { ok: false, error: { kind: 'invalid-range', sourceOffset: next + 1, reason: 'missing-range-end' } };
   next = second.value.next;
-  return { ok: true, value: { range: Object.freeze({ start: first.value.expression, end: second.value.expression, separator, sourceStart: start, sourceEnd: next }), next } };
+  return { ok: true, value: { range: Object.freeze({ start: firstAddress.expression, end: second.value.expression, separator, sourceStart: start, sourceEnd: next }), next } };
 }
 
 function parseAddress(source: string, start: number): Result<{ readonly expression: VimExAddressExpression; readonly next: number } | undefined, VimExParseFailure> {
@@ -789,7 +1081,21 @@ function readExDelimited(source: string, start: number, expectedDelimiter?: stri
     } else if (character === delimiter) return { ok: true, value: { value: output.join(''), next: index + 1, delimiter } };
     else if (character !== undefined) output.push(character);
   }
-  return { ok: false, error: { kind: 'unterminated-delimiter', sourceOffset: start } };
+  // nvim (`:s/a/b`, `:s/a`): a missing trailing delimiter is not an error;
+  // Vim treats end-of-line as an implicit close for the final field.
+  return { ok: true, value: { value: output.join(''), next: source.length, delimiter } };
+}
+
+/**
+ * `:s{pat}{rep}{flags} [count]`: a trailing decimal count, separated by
+ * whitespace from the flag letters, is `:s`'s line count (like `:d`/`:y`'s
+ * trailing count) -- nvim: `:2s/a/b/g 3` substitutes lines 2-4.
+ */
+function splitFlagsAndCount(raw: string): { readonly flags: string; readonly count?: number } {
+  const trailing = /^(.*?)\s+(\d+)$/u.exec(raw);
+  if (trailing !== null) return { flags: trailing[1] ?? '', count: Number(trailing[2]) };
+  if (/^\d+$/u.test(raw)) return { flags: '', count: Number(raw) };
+  return { flags: raw };
 }
 
 function scanUntilPipe(source: string, start: number): number {

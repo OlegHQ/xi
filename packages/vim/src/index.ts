@@ -487,6 +487,8 @@ export {
   parseVimSubstituteCommand,
   prepareVimSubstitute,
   searchVimBuffer,
+  searchVimBufferInteractive,
+  interactiveSearchStepSlice,
   searchVimOperator,
 } from '../search/index';
 export type {

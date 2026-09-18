@@ -4,6 +4,7 @@ export {
   DEFAULT_COMMAND_CATALOG,
   DEFAULT_CONFIG_TOML,
   decodeRequiredWorkbenchThemeTokens,
+  decodeWorkbenchThemeTokens,
   loadStartupXiConfig,
   resolveFormatOnSave,
   resolveFormatterSelection,
@@ -18,4 +19,5 @@ export type {
   LoadedStartupConfig,
   RequiredWorkbenchThemeTokens,
   StartupConfigFilesystemPort,
+  WorkbenchThemeTokens,
 } from '../../config/index';

@@ -91,6 +91,14 @@ export interface UndoTextSource {
   readonly end: Utf16Offset;
   /** EOL metadata aligned with the source snapshot, retained for exact root restore. */
   readonly lineEndings?: LineEndingSequence;
+  /**
+   * Offset (in `inverseEdits[editIndex].text`, before this source's read is
+   * spliced in) where that edit's own inverse edits at `editIndex` were
+   * merged with a neighboring edit (A1); 0 when there is no merge. Several
+   * sources can share one `editIndex` after a merge and are spliced in
+   * ascending `insertOffset` order.
+   */
+  readonly insertOffset: number;
 }
 
 export interface UndoRetention {
@@ -550,7 +558,11 @@ export class UndoTree {
   private prune(): void {
     while (this.#entryCount > UNDO_HISTORY_POLICY.maxEntries
       || this.#retainedUtf16 > UNDO_HISTORY_POLICY.maxRetainedUtf16
-      || this.#retainedMetadataBytes > UNDO_HISTORY_POLICY.maxRetainedPrivateBytes) {
+      || this.#retainedMetadataBytes > UNDO_HISTORY_POLICY.maxRetainedPrivateBytes
+      // Without this, once #retainedRootUtf16 exceeds the budget canAppend
+      // (:332) rejects every future append forever, since nothing else here
+      // evicts source-root retention (A7).
+      || this.#retainedRootUtf16 > UNDO_HISTORY_POLICY.maxRetainedRootUtf16) {
       const ancestry = new Set<UndoTreeEntry>();
       let cursor = this.#current;
       while (cursor !== null) {
@@ -805,13 +817,19 @@ export function decodeUndoHistory(bytes: Uint8Array, expectedDocumentId: Documen
   };
 }
 
+// Two independent 32-bit FNV-1a hashes via Math.imul, concatenated to the
+// same 16-hex-char shape the persisted-history schema validates. BigInt
+// per-byte arithmetic was ~116 ms/MiB (A4); plain 32-bit ops are ~two orders
+// of magnitude cheaper.
 export function fingerprintUndoContent(bytes: Uint8Array): string {
-  let hash = 0xcbf29ce484222325n;
-  for (const byte of bytes) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  let h1 = 0x811c9dc5;
+  let h2 = 0x1000193;
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index] as number;
+    h1 = Math.imul(h1 ^ byte, 0x01000193);
+    h2 = Math.imul(h2 ^ byte, 0x85ebca6b);
   }
-  return hash.toString(16).padStart(16, '0');
+  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
 }
 
 function validateEntry(input: unknown, maximumRevisionId: number): ValidatedUndoEntry | undefined {
@@ -984,21 +1002,38 @@ export function materializeUndoEdits(
   step: UndoStep,
   direction: 'forward' | 'inverse',
 ): Result<readonly DocumentEdit[], 'history-source-read-failed'> {
-  const sourceByEdit = direction === 'inverse'
-    ? new Map(step.inverseSources.map((source) => [source.editIndex, source] as const))
-    : new Map<number, UndoTextSource>();
+  // A merge (combineAmbiguousInverseEdits, A1) can fold several original
+  // inverse edits -- some source-backed, some not -- into one edit index; all
+  // of that index's sources are spliced back in ascending insertOffset order
+  // rather than one replacing the whole edit text.
+  const sourcesByEdit = direction === 'inverse'
+    ? step.inverseSources.reduce((map, source) => {
+      const bucket = map.get(source.editIndex);
+      if (bucket === undefined) map.set(source.editIndex, [source]);
+      else bucket.push(source);
+      return map;
+    }, new Map<number, UndoTextSource[]>())
+    : new Map<number, UndoTextSource[]>();
   const runs = direction === 'forward' ? step.forwardTextRuns : [];
   const edits = direction === 'forward' ? step.forwardEdits : step.inverseEdits;
   const materialized: DocumentEdit[] = [];
   for (let index = 0; index < edits.length; index += 1) {
     const edit = edits[index];
     if (edit === undefined) return { ok: false, error: 'history-source-read-failed' };
-    const source = sourceByEdit.get(index);
+    const sources = sourcesByEdit.get(index);
     let text = textForEdit(edit, index, runs);
-    if (source !== undefined) {
-      const read = source.snapshot.slice(source.start, source.end);
-      if (!read.ok) return { ok: false, error: 'history-source-read-failed' };
-      text = read.value;
+    if (sources !== undefined) {
+      const ordered = [...sources].sort((left, right) => left.insertOffset - right.insertOffset);
+      const parts: string[] = [];
+      let cursor = 0;
+      for (const source of ordered) {
+        const read = source.snapshot.slice(source.start, source.end);
+        if (!read.ok) return { ok: false, error: 'history-source-read-failed' };
+        parts.push(text.slice(cursor, source.insertOffset), read.value);
+        cursor = source.insertOffset;
+      }
+      parts.push(text.slice(cursor));
+      text = parts.join('');
     }
     materialized.push(Object.freeze({
       start: edit.start,

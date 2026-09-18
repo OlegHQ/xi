@@ -60,6 +60,7 @@ loops (no escaping object per iteration) are annotated H0.
 | `sync` | H0/H1 | Direct or member calls ending in `Sync`; H0 async functions/await |
 | `materialize` | H0/H1 | Calls named `getText`, `readAll`, `getLine`, `lineText` |
 | `microtask` | H0/H1/B | Direct/member `queueMicrotask` calls |
+| `segmenter` | H0/H1/B/C | `new Intl.Segmenter(...)` or any `new X(...)` given a `granularity` option, constructed inside a function body instead of module scope |
 
 H1 immutable transaction/results and numeric counters are allowed. H0 scratch
 initialization outside loops is allowed. Normal cold/control code remains idiomatic.

@@ -419,7 +419,9 @@ function findNumber(line: string, cursor: number, options: Nrformats): NumberCan
   for (const match of line.matchAll(numeric)) {
     const start = match.index ?? 0;
     const text = match[0];
-    if (start > 0 && /[A-Za-z0-9_]/u.test(line[start - 1] ?? '')) continue;
+    // nvim (`.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE -c
+    // 'exe "normal \<C-a>"'` on "abc123"): "abc124" -- <C-a> increments a number run even
+    // when it's directly preceded by a word character; it is never skipped.
     if (start + text.length <= cursor) continue;
     const parsed = parseCandidate(text, start, options);
     if (parsed !== null) candidates.push(parsed);

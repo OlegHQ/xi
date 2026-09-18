@@ -1,5 +1,6 @@
 import { asIdentifier, asUtf16Offset, CancellationSource, type DocumentId, type Disposable, type ViewId, type Result } from '../../../../packages/primitives/src/entrypoints/launch';
 import type { DocumentSnapshot, TextFileDocument } from '../../../../packages/document/src/entrypoints/launch';
+import { openTextDocument } from '../../../../packages/document/src/entrypoints/launch';
 import type { NodeFilesystemPort, NodeProcessPort, WorkspaceDirectoryEntry, WorkspaceDirectoryWatchEvent, createNodeClock } from '../../../../packages/platform/src/entrypoints/launch';
 import type { WorkbenchTheme } from '../../../../packages/ui/src/entrypoints/launch';
 import type {
@@ -35,8 +36,14 @@ import {
   DirectoryDraftController,
 } from '../../../../packages/workbench/src/entrypoints/launch';
 import { DirectoryDraft, JournaledFilesystemOperations, type DirectoryOperationPlan } from '../../../../packages/services/src/entrypoints/files';
+// Routed through the git entrypoint (not a direct packages/services/git/decorations import)
+// so apps/xi only ever imports services via packages/services/src/entrypoints/* -- see H2-7's
+// import-graph rule. Both functions are pure/cheap module-level code (no process/filesystem
+// work at import time), so statically loading this entrypoint costs a module evaluation, not
+// the async round trip optional-services.ts's lazy `import('.../entrypoints/git')` avoids.
+import { toExplorerGitDecoration, createGitDecorationPort } from '../../../../packages/services/src/entrypoints/git';
 import { resolveFormatOnSave, resolveFormatterSelection } from '../../../../packages/services/src/entrypoints/config';
-import type { LanguageConfig, LanguageServerConfig, loadStartupXiConfig } from '../../../../packages/services/src/entrypoints/config';
+import type { CompiledConfig, LanguageConfig, LanguageServerConfig, loadStartupXiConfig } from '../../../../packages/services/src/entrypoints/config';
 import { SyntaxDocumentTracker } from '../../../../packages/services/src/entrypoints/syntax';
 import { createBundledGrammarProvider, resolveTreeSitterRuntimeOptions } from '../syntax-assets';
 import type { ThemeWiring } from './theme';
@@ -179,14 +186,6 @@ function processEnvironment(): Readonly<Record<string, string>> {
   return Object.freeze(environment);
 }
 
-/** Maps a Git status entry onto the explorer's decoration vocabulary; `git.<state>` color
- * tokens follow the same naming already exercised by tests/e2e/t040-explorer.test.ts. */
-function toExplorerGitDecoration(entry: { readonly state: string; readonly staged: boolean; readonly unstaged: boolean; readonly conflict: boolean }): { readonly state: 'modified' | 'staged' | 'untracked' | 'ignored' | 'conflicted'; readonly label: string; readonly colorToken: string } {
-  const label = entry.state === 'added' ? 'A' : entry.state === 'deleted' ? 'D' : entry.state === 'renamed' ? 'R' : entry.state === 'untracked' ? 'U' : entry.state === 'ignored' ? 'I' : entry.state === 'conflicted' ? 'C' : 'M';
-  const state = entry.conflict ? 'conflicted' : entry.state === 'untracked' ? 'untracked' : entry.state === 'ignored' ? 'ignored' : entry.staged && !entry.unstaged ? 'staged' : 'modified';
-  return { state, label, colorToken: `git.${state}` };
-}
-
 function toExplorerEntry(entry: WorkspaceDirectoryEntry): ExplorerDirectoryEntry {
   return {
     name: entry.name,
@@ -201,20 +200,14 @@ function toExplorerEntry(entry: WorkspaceDirectoryEntry): ExplorerDirectoryEntry
   };
 }
 
-function relativeWorkspacePath(root: string, path: string): string {
-  if (path === root) return '';
-  const prefix = root.endsWith('/') ? root : `${root}/`;
-  return path.startsWith(prefix) ? path.slice(prefix.length).replaceAll('\\', '/') : '';
-}
-
 function toExplorerFailure(error: { readonly code: string; readonly message: string }, path: string): ExplorerFailure {
   if (error.code === 'EACCES' || error.code === 'EPERM') return { kind: 'permission-denied', path, message: error.message };
   if (error.code === 'ABORT_ERR' || error.code === 'ECANCELED' || error.code === 'cancelled') return { kind: 'cancelled', message: error.message };
   return { kind: 'filesystem', path, message: error.message };
 }
 
-function toExplorerWatchEvent(event: WorkspaceDirectoryWatchEvent, root: string): import('../../../../packages/services/src/entrypoints/launch').ExplorerWatchEvent {
-  const relativePath = relativeWorkspacePath(root, event.path);
+function toExplorerWatchEvent(filesystem: NodeFilesystemPort, event: WorkspaceDirectoryWatchEvent, root: string): import('../../../../packages/services/src/entrypoints/launch').ExplorerWatchEvent {
+  const relativePath = filesystem.workspaceRelativePath(root, event.path) ?? '';
   if (event.kind === 'overflow') return { kind: 'overflow', rootId: 'workspace', relativePath };
   return { kind: 'changed', rootId: 'workspace', relativePath };
 }
@@ -230,82 +223,88 @@ function createExplorerFilesystem(filesystem: NodeFilesystemPort, root: string, 
       return { ok: true, value: Object.freeze(result.value.map(toExplorerEntry)) };
     },
     async watchDirectory(path, listener, cancellation) {
-      const watched = await filesystem.watchDirectory(path, (event) => { onChanged?.(); listener(toExplorerWatchEvent(event, root)); }, cancellation);
+      const watched = await filesystem.watchDirectory(path, (event) => { onChanged?.(); listener(toExplorerWatchEvent(filesystem, event, root)); }, cancellation);
       if (!watched.ok) return { ok: false, error: toExplorerFailure(watched.error, path) };
       return watched;
     },
   };
 }
 
-/** Read-only adapter from the polled `GitStatusService` snapshot to ExplorerTree's per-path
- * decoration port; ExplorerTree calls this lazily (on node add/refresh), so a decoration can
- * lag the most recent `git.refresh()` by up to one coalesced refresh window. */
-function createGitDecorationPort(service: { readonly snapshot: { readonly entries: readonly { readonly path: string; readonly state: string; readonly staged: boolean; readonly unstaged: boolean; readonly conflict: boolean }[] } | undefined }, root: string): { read(path: string): Promise<Result<{ readonly state: 'modified' | 'staged' | 'untracked' | 'ignored' | 'conflicted'; readonly label: string; readonly colorToken: string } | undefined, ExplorerFailure>> } {
-  return {
-    async read(path: string) {
-      const snapshot = service.snapshot;
-      if (snapshot === undefined) return { ok: true, value: undefined };
-      const relative = relativeWorkspacePath(root, path);
-      const entry = snapshot.entries.find((candidate) => candidate.path === relative);
-      return { ok: true, value: entry === undefined ? undefined : toExplorerGitDecoration(entry) };
-    },
-  };
+/** The handful of controllers that a closure created *before* the controller itself exists
+ * must still be able to reach once that closure actually runs (e.g. `workbench`'s
+ * `onDocumentChange` needs `languageWiring`, defined afterward). `createControllers` used a
+ * flat `let` per circular value; splitting construction across feature functions turns each
+ * of those into a field on one shared mutable record instead, assigned by the helper that
+ * builds it and read (only from callbacks invoked later, never at construction time) by
+ * whichever earlier helper's closure needs it -- same forward-reference shape, just crossing
+ * function boundaries instead of `let` bindings in one function body. */
+interface ForwardRefs {
+  host: BufferHost;
+  saveCoordinator: SaveCoordinator;
+  hostCommands: WorkbenchHostCommands;
+  inputRouter: WorkbenchInputRouter;
+  languageWiring: LanguageWiring;
+  completionFeature: CompletionSnippetController;
+  explorerFeature: ExplorerController;
+  searchFeature: SearchController;
+  optionalServices: OptionalServicesWiring;
+  directoryDraftController: DirectoryDraftController;
+  startFileIndexPopulation: () => Promise<void>;
 }
 
-/** Constructs BufferHost, SaveCoordinator, HostCommands, InputRouter, PointerRouter and every
- * picker/explorer/search/problems/directory/sidebar controller in one call, in dependency
- * order, resolving the genuinely-circular ones (`host` <-> `workbench`/`saveCoordinator`/
- * `hostCommands`/`inputRouter`) with `let` forward declarations exactly as main() did before
- * this extraction. */
-export async function createControllers(deps: ControllersDeps): Promise<Controllers> {
-  const {
-    BoundedPickerModel,
-    BufferPickerProvider,
-    createNavigationContributionModule,
-    DiagnosticStore,
-    FilePathIndex,
-    FilePickerProvider,
-    StaticPickerProvider,
-    fileUri,
-    workspacePathFromUri,
-    workspaceRelativePathFromUri,
-  } = deps.coreServices;
-  const { filesystem, clock, persistence, document, filePath, languageId, marker } = deps;
-  let host: BufferHost;
-  // Constructed once the feature controllers they delegate to exist (below); every
-  // reference to them before that point is a closure invoked only later, matching the
-  // existing `host` forward-declaration pattern.
-  let saveCoordinator: SaveCoordinator;
-  let hostCommands: WorkbenchHostCommands;
-  let inputRouter: WorkbenchInputRouter;
-  let pointerRouter: WorkbenchPointerRouter;
-  const mouseMode = createMouseModeToggle();
-  const jobControlDisposables: Disposable[] = [];
-  // Grammar/runtime wasm loads lazily on the first request for a known languageId,
-  // never here: constructing the tracker does no filesystem or wasm work.
+type StartupConfig = CompiledConfig | undefined;
+
+/** Values every feature-construction helper below needs and none of them own; threaded
+ * through as one bag instead of repeating the same six parameters on every function. */
+interface BuildContext {
+  readonly deps: ControllersDeps;
+  readonly filesystem: NodeFilesystemPort;
+  readonly clock: ReturnType<typeof createNodeClock>;
+  readonly persistence: PersistenceService;
+  readonly marker: (name: string, payload?: unknown) => void;
+  readonly workspaceRoot: string;
+  readonly startupConfig: StartupConfig;
+  readonly configuredLanguages: readonly LanguageConfig[] | undefined;
+  readonly formatOnSave: boolean;
+}
+
+/** Syntax tracking is constructed first and touched by almost everything else (workbench,
+ * host, language wiring); grammar/runtime wasm loads lazily on the first request for a known
+ * languageId, never here, so this does no filesystem or wasm work. */
+function createSyntaxTracker(filesystem: NodeFilesystemPort): { readonly syntaxAssetsCancellation: CancellationSource; readonly syntaxTracker: SyntaxDocumentTracker } {
   const syntaxAssetsCancellation = new CancellationSource();
   const syntaxTracker = new SyntaxDocumentTracker({
     grammars: createBundledGrammarProvider(filesystem, syntaxAssetsCancellation.token),
     runtime: resolveTreeSitterRuntimeOptions,
   });
+  return { syntaxAssetsCancellation, syntaxTracker };
+}
+
+/** The workbench session itself, plus opening the launch document into it. Its
+ * `onDocumentChange`/`saveBuffer` callbacks reach `host`, `saveCoordinator`, `languageWiring`
+ * and `completionFeature` only when actually invoked (after every controller below exists),
+ * so they read them off `forward` rather than closing over not-yet-constructed locals. */
+function createWorkbenchCore(ctx: BuildContext, forward: ForwardRefs, syntaxTracker: SyntaxDocumentTracker): WorkbenchSession {
+  const { deps } = ctx;
+  const { document, filePath, languageId } = deps;
   const workbench = new WorkbenchSession({
     saveBuffer: async (buffer) => {
       if (buffer.path === undefined) return { ok: false, error: 'no file name' };
-      const bufferDocument = host.documents.get(buffer.documentId);
+      const bufferDocument = forward.host.documents.get(buffer.documentId);
       if (bufferDocument === undefined) return { ok: false, error: 'document is no longer open' };
-      const saved = await saveCoordinator.requestSave(bufferDocument, buffer.path, undefined);
+      const saved = await forward.saveCoordinator.requestSave(bufferDocument, buffer.path, undefined);
       return saved ? { ok: true, value: undefined } : { ok: false, error: 'save failed' };
     },
     onDocumentChange: (change) => {
       syntaxTracker.changeDocument(change);
-      languageWiring.changeDocument(change);
+      forward.languageWiring.changeDocument(change);
       // Vim-originated commits already advanced their owning session during
       // command execution. Remapping those sessions would add avoidable work
       // to every typed character; external LSP/workspace commits still map
       // every live session sharing the document.
-      if (change.origin !== 'vim') for (const session of host.sessions.values()) session.applyExternalChange(change);
-      completionFeature.cancelSnippetOnExternalChange();
-      saveCoordinator.scheduleCheckpoint(change.snapshot.id);
+      if (change.origin !== 'vim') for (const session of forward.host.sessions.values()) session.applyExternalChange(change);
+      forward.completionFeature.cancelSnippetOnExternalChange();
+      forward.saveCoordinator.scheduleCheckpoint(change.snapshot.id);
     },
   });
   const opened = workbench.openBuffer(document, {
@@ -315,17 +314,34 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   if (!opened.ok) throw new Error(`xi-workbench-open:${opened.error.kind}`);
   syntaxTracker.openDocument({ documentId: document.id, languageId, snapshot: document.snapshot() });
   deps.startupTrace('workbench');
+  return workbench;
+}
+
+/** Awaits the startup config (kicked off in parallel with the rest of startup, so it's
+ * normally already settled by the time this runs) and derives the handful of values later
+ * helpers need from it. */
+async function loadStartupSettings(deps: ControllersDeps): Promise<{ readonly startupConfig: StartupConfig; readonly configuredLanguages: readonly LanguageConfig[] | undefined; readonly formatOnSave: boolean; readonly workspaceRoot: string }> {
   const workspaceRoot = process.cwd();
-  // Config finished loading (started above, in parallel with the rest of startup) by the time
-  // any of it is actually needed: format-on-save/formatter selection here, and language-server
-  // selection inside languageWiring below.
   const startupLoaded = await deps.startupConfigPromise;
   for (const message of startupLoaded.diagnostics) process.stderr.write(`xi: config: ${message}\n`);
   const startupConfig = startupLoaded.config;
   const configuredLanguages = startupConfig?.languages;
-  const formatOnSave = resolveFormatOnSave(process.env, languageId !== undefined && (configuredLanguages?.find((entry) => entry.name === languageId)?.autoFormat ?? false));
-  const diagnostics = new DiagnosticStore();
-  const contextMenuStore = new deps.ContextMenuStore();
+  const formatOnSave = resolveFormatOnSave(process.env, deps.languageId !== undefined && (configuredLanguages?.find((entry) => entry.name === deps.languageId)?.autoFormat ?? false));
+  return { startupConfig, configuredLanguages, formatOnSave, workspaceRoot };
+}
+
+/** Language-server wiring, task wiring and the surface-change subscriptions that make
+ * diagnostics/syntax results repaint without further input. */
+function createLanguageAndTaskWiring(
+  ctx: BuildContext,
+  forward: ForwardRefs,
+  workbench: WorkbenchSession,
+  syntaxTracker: SyntaxDocumentTracker,
+  diagnostics: InstanceType<CoreServicesModule['DiagnosticStore']>,
+  fileUri: CoreServicesModule['fileUri'],
+): { readonly languageWiring: LanguageWiring; readonly taskWiring: TaskWiring; readonly syntaxResultSubscription: Disposable } {
+  const { deps, filesystem, workspaceRoot, configuredLanguages, startupConfig, marker } = ctx;
+  const { document, filePath } = deps;
   const languageWiring = createLanguageWiring({
     filesystem,
     ProcessPort: deps.NodeProcessPort,
@@ -342,17 +358,30 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     workbenchBuffers: () => workbench.buffers(),
     renameBufferPath: (bufferId, path) => workbench.renameBufferPath(bufferId, path),
   });
+  forward.languageWiring = languageWiring;
   // On-demand rendering only paints after a keypress/resize/pointer event requests a frame.
   // Every service/model subscription below that can change what a surface reads (diagnostics,
   // explorer, search, picker, outline/hover/completion/signature, task output, file index) must
   // notify `host` so the next tick's frame reflects it even without further input.
-  diagnostics.subscribe(() => host.notifySurfaceChange());
+  diagnostics.subscribe(() => forward.host.notifySurfaceChange());
   const syntaxResultSubscription = syntaxTracker.onResult((result) => {
     // spans are lazy/windowed now: sample the first 4,096 units instead of the O(document) spans getter.
     if (deps.xiUiTestMarkersEnabled) marker('XI_SYNTAX_STATE', { documentId: result.documentId, version: result.documentVersion, status: result.status, spanCount: result.spansInRange(0, 4096).length });
-    host.notifySurfaceChange();
+    forward.host.notifySurfaceChange();
   });
-  const taskWiring = createTaskWiring({ filesystem, ProcessPort: deps.NodeProcessPort, notifySurfaceChange: () => host.notifySurfaceChange() });
+  const taskWiring = createTaskWiring({ filesystem, ProcessPort: deps.NodeProcessPort, notifySurfaceChange: () => forward.host.notifySurfaceChange() });
+  return { languageWiring, taskWiring, syntaxResultSubscription };
+}
+
+/** The file index and the command/contribution registries (navigation contributions register
+ * against the file index once it exists). */
+async function createRegistries(ctx: BuildContext): Promise<{
+  readonly fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>;
+  readonly commandRegistry: CommandRegistry;
+  readonly contributionRegistry: ContributionRegistry;
+}> {
+  const { deps, workspaceRoot } = ctx;
+  const { FilePathIndex, createNavigationContributionModule } = deps.coreServices;
   const fileIndex = new FilePathIndex({ maxEntries: 120_000 });
   const rootAdded = fileIndex.addRoot({ id: 'workspace', label: workspaceRoot, path: workspaceRoot });
   if (!rootAdded.ok) throw new Error(`xi-file-index-root:${rootAdded.error.kind}`);
@@ -363,14 +392,26 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   });
   const navigationActivation = await contributionRegistry.activate(createNavigationContributionModule({ fileIndex }));
   if (!navigationActivation.ok) throw new Error(`xi-navigation-contributions:${navigationActivation.error.kind}`);
+  return { fileIndex, commandRegistry, contributionRegistry };
+}
 
+/** The buffers/commands/themes/config/git picker providers. The git provider reads
+ * `optionalServices.gitStatusService`, constructed after this -- via `forward`. */
+function createPickerModel(
+  ctx: BuildContext,
+  forward: ForwardRefs,
+  workbench: WorkbenchSession,
+  fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>,
+): InstanceType<CoreServicesModule['BoundedPickerModel']> {
+  const { deps, filesystem, workspaceRoot } = ctx;
+  const { BoundedPickerModel, BufferPickerProvider, FilePickerProvider, StaticPickerProvider } = deps.coreServices;
   const bufferProvider = new BufferPickerProvider('xi.navigation.buffers', () => workbench.buffers().map((buffer) => Object.freeze({
     id: String(buffer.bufferId),
     label: buffer.path ?? '[No Name]',
     detail: buffer.dirty ? 'modified' : 'saved',
     value: String(buffer.bufferId),
   })));
-  const pickerModel = new BoundedPickerModel({ providers: [
+  return new BoundedPickerModel({ providers: [
     new FilePickerProvider(fileIndex),
     bufferProvider,
     new StaticPickerProvider('xi.navigation.commands', 'command', [
@@ -390,7 +431,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     // Live source: the changed-files list follows the git wiring's snapshot, which is only
     // constructed lazily (see `optionalServices.ensure()`); until then this reads as empty.
     new BufferPickerProvider('xi.navigation.git', () => {
-      const snapshot = optionalServices.gitStatusService?.snapshot;
+      const snapshot = forward.optionalServices.current?.gitStatusService.snapshot;
       if (snapshot === undefined) return [];
       return [...snapshot.entries]
         .sort((left, right) => left.path.localeCompare(right.path))
@@ -402,8 +443,16 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
         }));
     }, 'git'),
   ]});
-  host = new BufferHost(workbench, document, {
-    openDocument: async (path, documentId) => (path === undefined ? undefined : await directoryDraftController.openDocumentIfDirectory(path, documentId)) ?? deps.openDocumentAt(path, documentId),
+}
+
+/** `BufferHost`: the buffer/session substrate every feature controller below is constructed
+ * with. Its callbacks reach `directoryDraftController`, `saveCoordinator`, `hostCommands` and
+ * `inputRouter` -- all constructed after `host` -- via `forward`. */
+function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench: WorkbenchSession, syntaxTracker: SyntaxDocumentTracker): BufferHost {
+  const { deps, filesystem, persistence, marker, workspaceRoot, clock } = ctx;
+  const { document, filePath } = deps;
+  const host = new BufferHost(workbench, document, {
+    openDocument: async (path, documentId) => (path === undefined ? undefined : await forward.directoryDraftController.openDocumentIfDirectory(path, documentId)) ?? deps.openDocumentAt(path, documentId),
     workspaceRelativePath: (path) => filesystem.workspaceRelativePath(workspaceRoot, path),
     marker,
     launchViewId: id<ViewId>('xi-launch-view'),
@@ -413,30 +462,45 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     onSave: async (sessionDocument, viewId, target) => {
       // T041/T042: `:w` on a directory draft compiles a plan and opens review instead of
       // writing draft text to disk; the plan only reaches disk once the review is applied.
-      if (directoryDraftController.requestSave(sessionDocument.id)) return true;
+      if (forward.directoryDraftController.requestSave(sessionDocument.id)) return true;
       const buffer = workbench.views().find((view) => view.viewId === viewId);
       const path = target ?? (buffer === undefined ? undefined : workbench.buffer(buffer.bufferId)?.path);
       if (path === undefined) {
         process.stderr.write('xi: no file name\n');
         return false;
       }
-      return saveCoordinator.requestSave(sessionDocument, path, viewId);
+      return forward.saveCoordinator.requestSave(sessionDocument, path, viewId);
     },
-    onExCommand: (source, viewId) => hostCommands.handleWorkbenchCommand(source, viewId),
-    onPrefixStateChange: (viewId, state) => inputRouter.schedulePrefixHelp(viewId, state.pendingKeys, state.parserContinuations),
-    onCommandLineChange: (state) => inputRouter.handleCommandLineChange(state),
-    onHostCommand: (command, viewId) => hostCommands.handleVimHostCommand(command, viewId),
+    onExCommand: (source, viewId) => forward.hostCommands.handleWorkbenchCommand(source, viewId),
+    onPrefixStateChange: (viewId, state) => forward.inputRouter.schedulePrefixHelp(viewId, state.pendingKeys, state.parserContinuations),
+    onCommandLineChange: (state) => forward.inputRouter.handleCommandLineChange(state),
+    onHostCommand: (command, viewId) => forward.hostCommands.handleVimHostCommand(command, viewId),
     onBufferOpened: (buffer) => {
       syntaxTracker.openDocument({ documentId: buffer.documentId, languageId: languageIdForPath(buffer.path), snapshot: buffer.document.snapshot() });
-      languageWiring.admitBufferToLanguageSession(buffer.path, buffer.documentId, buffer.document);
+      forward.languageWiring.admitBufferToLanguageSession(buffer.path, buffer.documentId, buffer.document);
     },
     onBufferClosed: (buffer) => {
       persistence.closeDocument(buffer.documentId);
       syntaxTracker.closeDocument(buffer.documentId);
-      directoryDraftController.closeDocument(buffer.documentId);
-      languageWiring.releaseBufferFromLanguageSession(buffer.path);
+      forward.directoryDraftController.closeDocument(buffer.documentId);
+      forward.languageWiring.releaseBufferFromLanguageSession(buffer.path);
     },
   });
+  forward.host = host;
+  return host;
+}
+
+/** Optional-services wiring (lazy git/search-index/LSP-extra services) and the navigation
+ * picker controller that sits on top of it. */
+function createOptionalServicesAndPicker(
+  ctx: BuildContext,
+  forward: ForwardRefs,
+  host: BufferHost,
+  pickerModel: InstanceType<CoreServicesModule['BoundedPickerModel']>,
+  mouseMode: ReturnType<typeof createMouseModeToggle>,
+  fileUri: CoreServicesModule['fileUri'],
+): { readonly optionalServices: OptionalServicesWiring; readonly picker: PickerController<PickerEntry, WorkbenchTheme> } {
+  const { deps, filesystem, clock, marker, workspaceRoot } = ctx;
   const optionalServices = createOptionalServicesWiring({
     filesystem,
     ProcessPort: deps.NodeProcessPort,
@@ -446,32 +510,45 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     notifySurfaceChange: () => host.notifySurfaceChange(),
     createExplorerFilesystem,
     createGitDecorationPort,
-    getExplorerFeature: () => explorerFeature,
-    getSearchFeature: () => searchFeature,
+    getExplorerFeature: () => forward.explorerFeature,
+    getSearchFeature: () => forward.searchFeature,
   });
+  forward.optionalServices = optionalServices;
   const picker = new PickerController<PickerEntry, WorkbenchTheme>({
     host,
     model: pickerModel,
     theme: deps.themeWiring.themeController,
     clock,
     marker,
-    startFileIndexPopulation: () => startFileIndexPopulation(),
+    startFileIndexPopulation: () => forward.startFileIndexPopulation(),
     toggleMouseMode: mouseMode.toggle,
     openFile: (path, preview) => host.openBufferAtPath(path, { preview }),
-    onSecondaryAction: (entry, key) => {
-      const coordinator = optionalServices.gitMutationCoordinator;
-      const status = optionalServices.gitStatusService;
-      if (coordinator === undefined || status === undefined) return;
+    onSecondaryAction: (entry, action) => {
+      const resolved = optionalServices.current;
+      if (resolved === undefined) return;
+      const { gitMutationCoordinator: coordinator, gitStatusService: status } = resolved;
       const snapshot = status.snapshot;
       if (snapshot === undefined) return;
       const context = { root: workspaceRoot, generation: snapshot.generation, expectedGeneration: snapshot.generation };
-      const action = key === 's' ? coordinator.stage([entry.value], context) : coordinator.unstage([entry.value], context);
-      void action.then((result) => {
+      const mutation = action === 'stage' ? coordinator.stage([entry.value], context) : coordinator.unstage([entry.value], context);
+      void mutation.then((result) => {
         if (!result.ok) { marker('XI_GIT_MUTATION_FAILED', { kind: result.error.kind }); return; }
         void status.refresh();
       });
     },
   });
+  return { optionalServices, picker };
+}
+
+/** The explorer tree controller and the directory-draft ("directory as editable text")
+ * controller, both crash-recoverable via the same journaled filesystem operations. */
+function createExplorerAndDirectory(
+  ctx: BuildContext,
+  forward: ForwardRefs,
+  host: BufferHost,
+  workbench: WorkbenchSession,
+): { readonly explorerFeature: ExplorerController; readonly directoryDraftController: DirectoryDraftController; readonly journaledFileOperations: JournaledFilesystemOperations } {
+  const { filesystem, clock, marker, workspaceRoot } = ctx;
   // T041/T042: directory-as-editable-text ("Space O", docs/plan/03-ux.md). All orchestration
   // (map of open drafts, review-plan apply, Enter/Esc routing) lives in the workbench
   // controller below -- this composition root only constructs it with structural ports
@@ -488,8 +565,9 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     onError: (message) => process.stderr.write(message),
     workspaceRelativePath: (path) => filesystem.workspaceRelativePath(workspaceRoot, path),
     trashDirectory: `${workspaceRoot}/.xi-trash`,
-    ensureServices: () => optionalServices.ensure(),
+    ensureServices: async () => { await forward.optionalServices.ensure(); },
   });
+  forward.explorerFeature = explorerFeature;
   const directoryDraftController = new DirectoryDraftController({
     filesystem: {
       isDirectory: async (path) => {
@@ -531,9 +609,19 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
       return view === undefined ? undefined : workbench.buffer(view.bufferId)?.path;
     },
     createDraft: (path, documentId, entries) => {
-      const draft = DirectoryDraft.create(path, entries, { documentId: String(documentId) });
+      // DirectoryDraft (a service) never opens documents itself; this composition root owns
+      // that (docs/plan/01-architecture.md), and hands the opened document back to the draft
+      // through the narrow `DirectoryDraftDocumentPort` it declares.
+      let openedDocument: TextFileDocument | undefined;
+      const draft = DirectoryDraft.create(path, entries, (draftId, text) => {
+        const opened = openTextDocument(draftId as DocumentId, new TextEncoder().encode(text), 41027, { fileFormat: 'unix' });
+        if (opened.kind !== 'editable') return { ok: false, error: `directory draft document open failed: ${opened.kind}` };
+        openedDocument = opened.document;
+        return { ok: true, value: opened.document };
+      }, { documentId: String(documentId) });
       if (!draft.ok) return { ok: false, error: draft.error.message };
-      return { ok: true, value: { port: draft.value, document: draft.value.document } };
+      if (openedDocument === undefined) return { ok: false, error: 'directory draft document was not opened' };
+      return { ok: true, value: { port: draft.value, document: openedDocument } };
     },
     // T042: `.xi-trash` matches explorerFeature's own trash directory above so both
     // draft-review and explorer deletes recover from one place.
@@ -551,6 +639,23 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     marker,
     notifySurfaceChange: () => host.notifySurfaceChange(),
   });
+  forward.directoryDraftController = directoryDraftController;
+  return { explorerFeature, directoryDraftController, journaledFileOperations };
+}
+
+/** Search, problems, outline/hover/signature overlays and the sidebar model that reads the
+ * outline's symbol count. */
+function createSearchProblemsOverlaySidebar(
+  ctx: BuildContext,
+  forward: ForwardRefs,
+  host: BufferHost,
+  workbench: WorkbenchSession,
+  diagnostics: InstanceType<CoreServicesModule['DiagnosticStore']>,
+  taskWiring: TaskWiring,
+  fileUri: CoreServicesModule['fileUri'],
+  workspacePathFromUri: CoreServicesModule['workspacePathFromUri'],
+): { readonly searchFeature: SearchController; readonly problemsFeature: ProblemsController; readonly overlayFeature: LanguageOverlayController; readonly sidebarController: SidebarController } {
+  const { filesystem, marker, workspaceRoot } = ctx;
   const searchFeature = new SearchController({
     host,
     session: workbench,
@@ -558,8 +663,9 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     marker,
     onError: (message) => process.stderr.write(message),
     workspaceRoot,
-    ensureServices: () => optionalServices.ensure(),
+    ensureServices: async () => { await forward.optionalServices.ensure(); },
   });
+  forward.searchFeature = searchFeature;
   const problemsFeature = new ProblemsController({
     host,
     diagnostics,
@@ -579,11 +685,28 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     session: workbench,
     fileUri,
     marker,
-    ensureLanguage: () => languageWiring.ensureLanguage(),
+    ensureLanguage: () => forward.languageWiring.ensureLanguage(),
   });
   const sidebarController = new SidebarController({
     outline: { get hasSymbols() { return overlayFeature.outlineRead.model.symbols.length > 0; } },
   });
+  return { searchFeature, problemsFeature, overlayFeature, sidebarController };
+}
+
+/** Completion/snippets and workspace-edit (rename/code-action) controllers, plus connecting
+ * `languageWiring` to the feature controllers it dispatches LSP notifications into. */
+function createCompletionAndWorkspaceEdits(
+  ctx: BuildContext,
+  forward: ForwardRefs,
+  host: BufferHost,
+  workbench: WorkbenchSession,
+  diagnostics: InstanceType<CoreServicesModule['DiagnosticStore']>,
+  overlayFeature: LanguageOverlayController,
+  fileUri: CoreServicesModule['fileUri'],
+  workspaceRelativePathFromUri: CoreServicesModule['workspaceRelativePathFromUri'],
+): { readonly completionFeature: CompletionSnippetController; readonly workspaceEditsFeature: WorkspaceEditsController } {
+  const { deps, filesystem, marker, workspaceRoot } = ctx;
+  const { languageId } = deps;
   const completionFeature = new CompletionSnippetController({
     host,
     session: workbench,
@@ -591,10 +714,11 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     onError: (message) => process.stderr.write(message),
     fileUri,
     positionToOffset: deps.positionToOffset,
-    ensureLanguage: () => languageWiring.ensureLanguage(),
-    ensureOptionalServices: () => optionalServices.ensure(),
-    getSnippetSupport: () => (optionalServices.expandSnippet === undefined || optionalServices.SnippetSession === undefined ? undefined : { expandSnippet: optionalServices.expandSnippet, SnippetSession: optionalServices.SnippetSession }),
+    ensureLanguage: () => forward.languageWiring.ensureLanguage(),
+    ensureOptionalServices: async () => { await forward.optionalServices.ensure(); },
+    getSnippetSupport: () => (forward.optionalServices.current === undefined ? undefined : { expandSnippet: forward.optionalServices.current.expandSnippet, SnippetSession: forward.optionalServices.current.SnippetSession }),
   });
+  forward.completionFeature = completionFeature;
   const workspaceEditsFeature = new WorkspaceEditsController({
     host,
     session: workbench,
@@ -606,13 +730,13 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     workspaceAbsolutePath: (relativePath) => filesystem.workspaceAbsolutePath(workspaceRoot, relativePath),
     nextDocumentId: () => host.nextDocumentId(),
     languageId,
-    ensureLanguage: () => languageWiring.ensureLanguage(),
+    ensureLanguage: () => forward.languageWiring.ensureLanguage(),
     readDiagnostics: () => diagnostics.model.all,
     runWorkspaceEditProposal: async (proposal) => {
-      const session = languageWiring.session;
-      const coordinator = languageWiring.workspaceEditCoordinator;
-      const provider = languageWiring.workspaceEditProvider;
-      const executor = languageWiring.workspaceEditExecutor;
+      const session = forward.languageWiring.session;
+      const coordinator = forward.languageWiring.workspaceEditCoordinator;
+      const provider = forward.languageWiring.workspaceEditProvider;
+      const executor = forward.languageWiring.workspaceEditExecutor;
       if (coordinator === undefined || provider === undefined || executor === undefined || session === undefined) {
         return { ok: false, error: { kind: 'disposed', message: 'workspace edit coordinator is unavailable' } };
       }
@@ -629,13 +753,18 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
       return language.renameWithBoundedRetry(request, newName, rename, options);
     },
     ensureCodeActionExecutor: async () => {
-      if (optionalServices.executeLanguageCodeAction !== undefined) return optionalServices.executeLanguageCodeAction;
-      await optionalServices.ensure();
-      return optionalServices.executeLanguageCodeAction;
+      if (forward.optionalServices.current !== undefined) return forward.optionalServices.current.executeLanguageCodeAction;
+      const resolved = await forward.optionalServices.ensure();
+      return resolved.executeLanguageCodeAction;
     },
   });
-  languageWiring.connect({ getBufferDocument: (documentId) => host.documents.get(documentId), overlayFeature, completionFeature, workspaceEditsFeature });
-  const pointerCapture = new WorkbenchPointerCapture({
+  forward.languageWiring.connect({ getBufferDocument: (documentId) => host.documents.get(documentId), overlayFeature, completionFeature, workspaceEditsFeature });
+  return { completionFeature, workspaceEditsFeature };
+}
+
+function createPointerCapture(ctx: BuildContext, host: BufferHost, workbench: WorkbenchSession): WorkbenchPointerCapture {
+  const { deps, marker } = ctx;
+  return new WorkbenchPointerCapture({
     cancelPendingOperator: () => { host.activeSession()?.cancelPendingOperator(); },
     place: (intent) => {
       const session = host.sessions.get(intent.viewId as ViewId);
@@ -650,8 +779,21 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
       marker('XI_POINTER_SCROLL', { viewId, delta, scrollTop: result?.scrollTop });
     },
   });
+}
 
-  saveCoordinator = new SaveCoordinator({
+/** Save orchestration and the ex-command/Vim-host-command dispatcher. */
+function createSaveAndHostCommands(
+  ctx: BuildContext,
+  forward: ForwardRefs,
+  host: BufferHost,
+  workbench: WorkbenchSession,
+  workspaceEditsFeature: WorkspaceEditsController,
+  problemsFeature: ProblemsController,
+  workspacePathFromUri: CoreServicesModule['workspacePathFromUri'],
+): { readonly saveCoordinator: SaveCoordinator; readonly hostCommands: WorkbenchHostCommands } {
+  const { deps, filesystem, clock, persistence, marker, workspaceRoot, formatOnSave, configuredLanguages } = ctx;
+  const { languageId } = deps;
+  const saveCoordinator = new SaveCoordinator({
     host,
     session: workbench,
     persistence,
@@ -664,9 +806,10 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
       const configuredFormatter = languageId === undefined ? undefined : configuredLanguages?.find((entry) => entry.name === languageId)?.formatter;
       return createFormatterPipelineFromEnvironment(workspaceRoot, FormatterPipeline, createExternalFormatter, deps.NodeProcessPort, marker, configuredFormatter);
     },
-    onSaved: () => { void optionalServices.gitStatusService?.refresh(); },
+    onSaved: () => { void forward.optionalServices.current?.gitStatusService.refresh(); },
   });
-  hostCommands = new WorkbenchHostCommands({
+  forward.saveCoordinator = saveCoordinator;
+  const hostCommands = new WorkbenchHostCommands({
     host,
     session: workbench,
     filesystem,
@@ -674,29 +817,55 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     onError: (message) => process.stderr.write(message),
     workspaceRoot,
     workspacePathFromUri,
-    ensureHostNavigation: () => optionalServices.ensure(),
-    readHostNavigation: () => optionalServices.hostNavigation,
+    ensureHostNavigation: async () => { await forward.optionalServices.ensure(); },
+    readHostNavigation: () => forward.optionalServices.current?.hostNavigation,
     workspaceEdits: workspaceEditsFeature,
     problems: problemsFeature,
     saveCoordinator,
-    directoryDrafts: { open: (target, viewId) => directoryDraftController.explore(target, viewId) },
+    directoryDrafts: { open: (target, viewId) => forward.directoryDraftController.explore(target, viewId) },
   });
-  inputRouter = new WorkbenchInputRouter({
+  forward.hostCommands = hostCommands;
+  return { saveCoordinator, hostCommands };
+}
+
+/** The key-input focus-stack router and the pointer/click router; both are the last
+ * controllers built, so every dependency they read (including the forward ones) already has
+ * its real value by the time either is constructed. */
+function createInputAndPointerRouters(
+  ctx: BuildContext,
+  forward: ForwardRefs,
+  host: BufferHost,
+  workbench: WorkbenchSession,
+  commandRegistry: CommandRegistry,
+  picker: PickerController<PickerEntry, WorkbenchTheme>,
+  problemsFeature: ProblemsController,
+  overlayFeature: LanguageOverlayController,
+  workspaceEditsFeature: WorkspaceEditsController,
+  sidebarController: SidebarController,
+  pointerCapture: WorkbenchPointerCapture,
+  contextMenuStore: InstanceType<UiModule['ContextMenuStore']>,
+  pickerModel: InstanceType<CoreServicesModule['BoundedPickerModel']>,
+  diagnostics: InstanceType<CoreServicesModule['DiagnosticStore']>,
+  mouseMode: ReturnType<typeof createMouseModeToggle>,
+  directoryDraftController: DirectoryDraftController,
+): { readonly inputRouter: WorkbenchInputRouter; readonly pointerRouter: WorkbenchPointerRouter } {
+  const { marker, startupConfig, clock } = ctx;
+  const inputRouter = new WorkbenchInputRouter({
     host,
     session: workbench,
     marker,
     onError: (message) => process.stderr.write(message),
     commandRegistry,
     picker,
-    explorer: explorerFeature,
-    search: searchFeature,
+    explorer: forward.explorerFeature,
+    search: forward.searchFeature,
     problems: problemsFeature,
     overlays: overlayFeature,
-    completion: completionFeature,
+    completion: forward.completionFeature,
     workspaceEdits: workspaceEditsFeature,
-    isExplorerServiceLoaded: () => optionalServices.explorerTree !== undefined,
-    isSearchServiceLoaded: () => optionalServices.searchService !== undefined,
-    ensureOptionalServices: () => optionalServices.ensure(),
+    isExplorerServiceLoaded: () => forward.optionalServices.current !== undefined,
+    isSearchServiceLoaded: () => forward.optionalServices.current !== undefined,
+    ensureOptionalServices: async () => { await forward.optionalServices.ensure(); },
     toggleMouseMode: mouseMode.toggle,
     launchViewId: id<ViewId>('xi-launch-view'),
     bindings: startupConfig?.bindings ?? [],
@@ -707,8 +876,23 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
       return reported ?? Math.max(1, (process.stdout.rows ?? 24) - 2);
     },
     clock,
+    // H1-7: the ordered overlay-focus stack `dispatchKey` walks -- the same controller
+    // references `apps/xi/src/wiring/ui.ts` hands to `packages/ui/src/terminal.ts` for
+    // rendering/read models, now also reachable from the router for key dispatch.
+    overlayContextMenu: contextMenuStore,
+    overlayCompletion: { isOpen: () => forward.completionFeature.isCompletionOpen, onKeypress: (event) => forward.completionFeature.handleCompletionKeypress(event) },
+    overlayPicker: { isOpen: () => picker.isOpen, onKeypress: (event) => picker.handleKeypress(event) },
+    overlayExplorer: { isOpen: () => forward.explorerFeature.isOpen, onKeypress: (event) => forward.explorerFeature.handleKeypress(event) },
+    overlaySearch: { isOpen: () => forward.searchFeature.isOpen, onKeypress: (event) => forward.searchFeature.handleKeypress(event) },
+    overlayProblems: { isOpen: () => problemsFeature.isProblemsOpen, onKeypress: (event) => problemsFeature.handleProblemsKeypress(event) },
+    overlayOutput: { isOpen: () => problemsFeature.isOutputOpen, onKeypress: (event) => problemsFeature.handleOutputKeypress(event) },
+    overlayOutline: { isOpen: () => overlayFeature.isOutlineOpen, onKeypress: (event) => overlayFeature.handleOutlineKeypress(event) },
+    overlayHover: { isOpen: () => overlayFeature.isHoverOpen, onKeypress: (event) => overlayFeature.handleHoverKeypress(event) },
+    overlayDirectoryReview: { isOpen: () => directoryDraftController.isReviewOpen, onKeypress: (event) => directoryDraftController.handleKeypress(event) },
+    overlaySignature: { isOpen: () => forward.completionFeature.isSignatureOpen, onKeypress: (event) => forward.completionFeature.handleSignatureKeypress(event) },
   });
-  pointerRouter = new WorkbenchPointerRouter({
+  forward.inputRouter = inputRouter;
+  const pointerRouter = new WorkbenchPointerRouter({
     session: workbench,
     marker,
     clock,
@@ -732,11 +916,11 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
       },
     },
     pickerModel,
-    explorer: explorerFeature,
+    explorer: forward.explorerFeature,
     search: {
-      readModel: () => optionalServices.searchService?.model,
-      setSelectedIndex: (index) => searchFeature.setSelectedIndex(index),
-      openMatch: (match) => searchFeature.openMatch(match),
+      readModel: () => forward.optionalServices.current?.searchService.model,
+      setSelectedIndex: (index) => forward.searchFeature.setSelectedIndex(index),
+      openMatch: (match) => forward.searchFeature.openMatch(match),
     },
     problems: {
       get model() { return diagnostics.model; },
@@ -744,25 +928,60 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
       openProblem: (problem) => problemsFeature.openProblem(problem),
     },
   });
+  return { inputRouter, pointerRouter };
+}
+
+/** Constructs BufferHost, SaveCoordinator, HostCommands, InputRouter, PointerRouter and every
+ * picker/explorer/search/problems/directory/sidebar controller in dependency order by calling
+ * the feature-grouped helpers above in sequence, resolving the genuinely-circular ones
+ * (`host` <-> `workbench`/`saveCoordinator`/`hostCommands`/`inputRouter`, and a few feature
+ * controllers referenced by `optionalServices`/`pickerModel` before they exist) through the
+ * shared `forward` record instead of same-function `let` forward declarations. */
+export async function createControllers(deps: ControllersDeps): Promise<Controllers> {
+  const { fileUri, workspacePathFromUri, workspaceRelativePathFromUri } = deps.coreServices;
+  const { filesystem, clock, persistence, marker } = deps;
+  const forward = {} as ForwardRefs;
+  const mouseMode = createMouseModeToggle();
+  const jobControlDisposables: Disposable[] = [];
+
+  const { syntaxAssetsCancellation, syntaxTracker } = createSyntaxTracker(filesystem);
+  const settings = await loadStartupSettings(deps);
+  const ctx: BuildContext = { deps, filesystem, clock, persistence, marker, ...settings };
+
+  const workbench = createWorkbenchCore(ctx, forward, syntaxTracker);
+  const diagnostics = new ctx.deps.coreServices.DiagnosticStore();
+  const contextMenuStore = new deps.ContextMenuStore();
+  const { languageWiring, taskWiring, syntaxResultSubscription } = createLanguageAndTaskWiring(ctx, forward, workbench, syntaxTracker, diagnostics, fileUri);
+  const { fileIndex, commandRegistry, contributionRegistry } = await createRegistries(ctx);
+  const pickerModel = createPickerModel(ctx, forward, workbench, fileIndex);
+  const host = createHostController(ctx, forward, workbench, syntaxTracker);
+  const { optionalServices, picker } = createOptionalServicesAndPicker(ctx, forward, host, pickerModel, mouseMode, fileUri);
+  const { explorerFeature, directoryDraftController } = createExplorerAndDirectory(ctx, forward, host, workbench);
+  const { searchFeature, problemsFeature, overlayFeature, sidebarController } = createSearchProblemsOverlaySidebar(ctx, forward, host, workbench, diagnostics, taskWiring, fileUri, workspacePathFromUri);
+  const { completionFeature, workspaceEditsFeature } = createCompletionAndWorkspaceEdits(ctx, forward, host, workbench, diagnostics, overlayFeature, fileUri, workspaceRelativePathFromUri);
+  const pointerCapture = createPointerCapture(ctx, host, workbench);
+  createSaveAndHostCommands(ctx, forward, host, workbench, workspaceEditsFeature, problemsFeature, workspacePathFromUri);
+  const { inputRouter, pointerRouter } = createInputAndPointerRouters(ctx, forward, host, workbench, commandRegistry, picker, problemsFeature, overlayFeature, workspaceEditsFeature, sidebarController, pointerCapture, contextMenuStore, pickerModel, diagnostics, mouseMode, directoryDraftController);
 
   // Deferred until every controller `onPrefixStateChange`/`onCommandLineChange` delegates to
   // (`inputRouter`, constructed above) exists: `createSession`'s initial state publish can
   // invoke those callbacks synchronously.
-  host.createSession(document, id<ViewId>('xi-launch-view'));
+  host.createSession(deps.document, id<ViewId>('xi-launch-view'));
 
+  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, () => host.notifySurfaceChange());
+  forward.startFileIndexPopulation = startFileIndexPopulation;
   const fileIndexStarter = createDeferredStart(1000, () => { void startFileIndexPopulation(); });
-  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, workspaceRoot, () => host.notifySurfaceChange());
   async function ensureGitAndOpenPicker(): Promise<void> {
-    await optionalServices.ensure();
-    void optionalServices.gitStatusService?.refresh();
+    const resolved = await optionalServices.ensure();
+    void resolved.gitStatusService.refresh();
     picker.open('git');
   }
 
   return {
     workbench,
     host,
-    saveCoordinator,
-    hostCommands,
+    saveCoordinator: forward.saveCoordinator,
+    hostCommands: forward.hostCommands,
     inputRouter,
     pointerRouter,
     pointerCapture,

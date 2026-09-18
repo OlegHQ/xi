@@ -5,6 +5,7 @@ import { CancellationSource, asIdentifier, asUtf16Offset, type DocumentId } from
 import { encodeTextFile, openTextDocumentChunks, TextFileDocument } from '../../packages/document/src/index';
 import { NodeFilesystemPort } from '../../packages/platform/src/index';
 import { PersistenceService } from '../../packages/services/persistence/index';
+import { testDocumentFactory } from './document-factory';
 
 class CancellingWriter extends NodeFilesystemPort {
   constructor(private readonly source: CancellationSource) { super(); }
@@ -35,7 +36,7 @@ const created = TextFileDocument.create(idResult.value, 'alpha\nbeta\ngamma', ['
 assert.equal(created.ok, true, 'T113-STREAM-SAVE-01 document opens with mixed EOL and BOM');
 if (!created.ok) throw new Error('T113-document');
 
-const service = new PersistenceService(new NodeFilesystemPort());
+const service = new PersistenceService(new NodeFilesystemPort(), undefined, testDocumentFactory);
 const cancellationSource = new CancellationSource();
 const cancellation = cancellationSource.token;
 const saved = await service.saveFile(created.value, path, cancellation, { expectedDisk: null });
@@ -49,7 +50,7 @@ assert.equal(edited.ok, true, 'T113-STREAM-IO-01 edit is published before the ca
 const partialSource = new CancellationSource();
 const partialPath = join(root, 'partial.txt');
 await Bun.write(partialPath, 'original');
-const partialService = new PersistenceService(new CancellingWriter(partialSource));
+const partialService = new PersistenceService(new CancellingWriter(partialSource), undefined, testDocumentFactory);
 const partialOpenedId = documentId('T113-partial-open');
 const partialOpened = await partialService.openFile(partialPath, partialOpenedId, partialSource.token);
 assert.equal(partialOpened.ok, true, 'T113-STREAM-IO-01b cancellation harness reads the original target');

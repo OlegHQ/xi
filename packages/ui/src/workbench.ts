@@ -140,17 +140,28 @@ function syntaxFallbackRowsFor(current: CurrentSyntaxSnapshot | undefined, synta
   return current !== undefined && syntaxRead !== undefined && current.read === syntaxRead ? current.rows : undefined;
 }
 
-function snapshotSyntaxRowsIfCurrent(frame: VisibleFrame, syntaxRead: SyntaxRead | undefined): CurrentSyntaxSnapshot | undefined {
+function snapshotSyntaxRowsIfCurrent(
+  frame: VisibleFrame,
+  syntaxRead: SyntaxRead | undefined,
+  previous: CurrentSyntaxSnapshot | undefined,
+): CurrentSyntaxSnapshot | undefined {
   if (syntaxRead === undefined || (syntaxRead.documentVersion as unknown as number) !== (frame.identity.documentVersion as unknown as number)) return undefined;
-  return {
-    read: syntaxRead,
-    rows: frame.rows.map((row) => ({ startOffset: row.startOffset as number | null, endOffset: row.endOffset as number | null, text: row.text })),
-    spans: frame.rows.map((row) => {
-      const start = row.startOffset as number | null;
-      const end = row.endOffset as number | null;
-      return start === null || end === null || end <= start ? [] : syntaxRead.spansInRange(start, end).slice();
-    }),
-  };
+  // Reused only when it's a snapshot of this exact read: `spansInRange` is called again
+  // for any row whose own start/end/text shifted, but an unchanged row's already-sliced
+  // spans are reused by reference instead of re-querying the read every render (this ran
+  // for every visible row on every frame regardless of whether anything changed).
+  const reusable = previous?.read === syntaxRead ? previous : undefined;
+  const rows = frame.rows.map((row) => ({ startOffset: row.startOffset as number | null, endOffset: row.endOffset as number | null, text: row.text }));
+  const spans = frame.rows.map((row, index) => {
+    const start = row.startOffset as number | null;
+    const end = row.endOffset as number | null;
+    const previousRow = reusable?.rows[index];
+    if (previousRow !== undefined && previousRow.startOffset === start && previousRow.endOffset === end && previousRow.text === row.text) {
+      return reusable?.spans[index] ?? [];
+    }
+    return start === null || end === null || end <= start ? [] : syntaxRead.spansInRange(start, end).slice();
+  });
+  return { read: syntaxRead, rows, spans };
 }
 
 interface PaneRect {
@@ -180,7 +191,19 @@ interface SplitterRect {
  * when supplied (clamped to leave the editor at least 20 cells); omitting it keeps the old
  * terminal-width-derived default for callers with no sidebar controller (tests, `[No Name]`
  * launches before one exists). */
+// terminal.ts's per-key visibility sync (`syncSidebarSurfaceBounds`/`explorerShouldBeVisible`/
+// `outlineShouldBeVisible`/`getExplorerBounds`/`getSidebarOutlineBounds`) each independently
+// call this with the same (width, height, sidebar) for one keystroke -- roughly 8 calls per
+// key. A single-entry memo on the exact same arguments (the common case: nothing about the
+// shell moved between those calls) turns the repeats into a cache hit instead of threading one
+// geometry value through every call site.
+let lastWorkbenchLayout: { readonly width: number; readonly height: number; readonly showBottomPanel: boolean; readonly sidebarWidthOverride: number | undefined; readonly value: WorkbenchLayout } | undefined;
+
 export function calculateWorkbenchLayout(width: number, height: number, showBottomPanel = false, sidebarWidthOverride?: number): WorkbenchLayout {
+  if (lastWorkbenchLayout !== undefined && lastWorkbenchLayout.width === width && lastWorkbenchLayout.height === height
+    && lastWorkbenchLayout.showBottomPanel === showBottomPanel && lastWorkbenchLayout.sidebarWidthOverride === sidebarWidthOverride) {
+    return lastWorkbenchLayout.value;
+  }
   const safeWidth = Math.max(0, Math.trunc(width));
   const safeHeight = Math.max(0, Math.trunc(height));
   const compact = safeWidth < 40 || safeHeight < 10;
@@ -197,7 +220,9 @@ export function calculateWorkbenchLayout(width: number, height: number, showBott
   const bottomTop = Math.max(0, statusRow - bottomHeight);
   const editorTop = compact ? 0 : 1;
   const editorHeight = Math.max(1, bottomTop - editorTop);
-  return Object.freeze({ compact, sidebarVisible, sidebarWidth, editorX, editorWidth, editorTop, editorHeight, bottomTop, bottomHeight, statusRow });
+  const value = Object.freeze({ compact, sidebarVisible, sidebarWidth, editorX, editorWidth, editorTop, editorHeight, bottomTop, bottomHeight, statusRow });
+  lastWorkbenchLayout = { width, height, showBottomPanel, sidebarWidthOverride, value };
+  return value;
 }
 
 export interface SidebarSectionLayout {
@@ -505,6 +530,10 @@ export class WorkbenchRenderable extends Renderable {
     this.#lastSyntaxRead = undefined;
     this.#lastCurrentSyntax = undefined;
     this.#resolvedAnchors.clear();
+    // Re-resolve (and report through `onViewportAnchorChange`) anchors for the new
+    // dimensions here, as part of OpenTUI's pre-paint layout pass, so `renderSelf`
+    // never has to -- see its doc comment and `syncAnchors`'s doc comment.
+    this.syncAnchors();
     // See `refresh()`'s comment: terminal.ts's resize handler always performs one
     // explicit synchronous render right after a resize, so this only marks dirty.
     this.markDirty();
@@ -634,10 +663,11 @@ export class WorkbenchRenderable extends Renderable {
   protected override renderSelf(buffer: OptimizedBuffer): void {
     const geometry = this.layout;
     const fullRepaint = this.#lastShellSize?.width !== this.width || this.#lastShellSize?.height !== this.height || this.#lastShellSize?.sidebarWidth !== geometry.sidebarWidth;
-    // The renderable only learns its size from the first layout pass (and resizes), so the
-    // pre-render `syncAnchors()` an embedder ran before that pass saw a 0x0 shell. Re-resolve
-    // once per geometry change here; ordinary frames keep anchors read-only in paint.
-    if (fullRepaint) this.syncAnchors();
+    // Anchors for a width/height change are re-resolved by `onResize` (OpenTUI's own
+    // pre-paint layout hook, which fires before this method with the new dimensions
+    // already applied), not here -- renderSelf only reads `#resolvedAnchors`, never
+    // resolves or reports them, so painting never triggers the `onViewportAnchorChange`
+    // business action as a side effect of rendering.
     if (fullRepaint) {
       buffer.fillRect(0, 0, this.width, this.height, this.#background);
       this.#lastShellSize = Object.freeze({ width: this.width, height: this.height, sidebarWidth: geometry.sidebarWidth });
@@ -706,7 +736,7 @@ export class WorkbenchRenderable extends Renderable {
         });
       }
       this.#lastPaintStats = paintStats ?? this.#lastPaintStats;
-      this.#lastCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead) ?? this.#lastCurrentSyntax;
+      this.#lastCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead, this.#lastCurrentSyntax) ?? this.#lastCurrentSyntax;
       const primary = frame.selections.find((selection) => selection.primary);
       const point = primary?.head.position;
       if (point !== null && point !== undefined) {
@@ -817,7 +847,7 @@ export class WorkbenchRenderable extends Renderable {
       this.#paneLastFrames.set(pane.viewId, Object.freeze({ layout: geometry, frame, view }));
       this.#paneLastPresentations.set(pane.viewId, presentation);
       this.#paneLastSyntaxReads.set(pane.viewId, syntaxRead);
-      const paneCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead);
+      const paneCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead, previousPaneCurrentSyntax);
       if (paneCurrentSyntax !== undefined) this.#paneLastCurrentSyntax.set(pane.viewId, paneCurrentSyntax);
       if (String(this.#workbench.activeViewId) === pane.viewId) {
         activeFrame = frame;

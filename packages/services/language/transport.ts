@@ -223,8 +223,16 @@ class ProcessMessageReader extends AbstractMessageReader {
     try {
       for await (const chunk of this.stdout) {
         this.decoder.feedEach(chunk, (message) => {
-          this.tracker.incoming(message);
-          this.callback?.(message);
+          // A single malformed/unexpected message (e.g. a duplicate or unknown-id response) is
+          // a protocol issue, not a transport failure: record it via onFailure (fail() filters
+          // these specific kinds so the connection stays up) without letting the throw escape
+          // feedEach and abort the read loop for every future message (F1-4).
+          try {
+            this.tracker.incoming(message);
+            this.callback?.(message);
+          } catch (error) {
+            this.onFailure(error);
+          }
         });
       }
       this.decoder.finish();
@@ -545,7 +553,8 @@ export class LanguageTransport implements Disposable {
     // fires (vscode-jsonrpc wires it to the writer's error event unconditionally), so this is
     // the single place that must not tear down the rest of the connection for these kinds.
     if (error instanceof LanguageProtocolError
-      && (error.kind === 'pending-request-limit' || error.kind === 'outgoing-body-too-large')) return;
+      && (error.kind === 'pending-request-limit' || error.kind === 'outgoing-body-too-large'
+        || error.kind === 'invalid-response-id' || error.kind === 'duplicate-response' || error.kind === 'unknown-response')) return;
     const previous = this.currentState;
     this.failureValue = asErrorMessage(error);
     this.currentState = 'failed';

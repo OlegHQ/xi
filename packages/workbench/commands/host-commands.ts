@@ -89,6 +89,11 @@ export class WorkbenchHostCommands {
     this.#options = options;
   }
 
+  /** No persistent timers/subscriptions are held (every `CancellationSource` above is scoped
+   * to, and disposed within, its own method call) -- present so the composition root's
+   * teardown can dispose every controller uniformly without special-casing this one. */
+  dispose(): void {}
+
   async formatCurrentDocument(viewId: ViewId): Promise<boolean> {
     return this.#options.saveCoordinator.formatView(viewId);
   }

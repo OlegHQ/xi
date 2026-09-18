@@ -82,6 +82,7 @@ const Segmenter = (Intl as typeof Intl & {
     segment(input: string): Iterable<{ readonly segment: string; readonly index: number }>;
   };
 }).Segmenter;
+const GRAPHEME_SEGMENTER = Segmenter !== undefined ? new Segmenter('und', { granularity: 'grapheme' }) : undefined;
 
 /**
  * Resolve display-line and viewport row motions against the immutable rows shown by Xi's
@@ -158,10 +159,20 @@ export function resolveVimViewportMotion(
       kind = 'linewise';
       const height = frame.heightCells;
       const scrolloff = effectiveScrolloff(options.scrolloff ?? 0, height);
+      // C6: when the buffer has fewer visible lines than the window, M/L
+      // must target the last real text row, not a filler row past EOF.
+      // (:help L, :help M — "less lines than window height" / "middle of
+      // the shown text" when the buffer's last line is above the middle.)
+      let lastTextRowIndex = -1;
+      for (let index = 0; index < frame.rows.length; index += 1) {
+        if (frame.rows[index]?.kind === 'text') lastTextRowIndex = index;
+      }
+      if (lastTextRowIndex < 0) return viewportFailure('destination-not-visible');
+      const bottomBound = Math.min(height - 1, lastTextRowIndex);
       const screenRow = invocation.key === 'H' ? count - 1
-        : invocation.key === 'L' ? height - count
-          : Math.floor((height - 1) / 2);
-      rowIndex = clamp(screenRow, scrolloff, Math.max(scrolloff, height - 1 - scrolloff));
+        : invocation.key === 'L' ? bottomBound - count + 1
+          : Math.floor(bottomBound / 2);
+      rowIndex = clamp(screenRow, scrolloff, Math.max(scrolloff, bottomBound - scrolloff));
       const row = frame.rows[rowIndex];
       if (row === undefined || row.kind === 'filler' || row.kind === 'diff-filler') return viewportFailure('destination-not-visible');
       const desired = state.cursor.desiredDisplayCellColumn === null
@@ -277,7 +288,20 @@ function resolveScroll(
     const desiredRow = key === 'zt' ? scrolloff
       : key === 'zb' ? frame.heightCells - 1 - scrolloff
         : clamp(Math.floor((frame.heightCells - 1) / 2), scrolloff, frame.heightCells - 1 - scrolloff);
-    anchor = anchorAtRelativeRow(snapshot, frame, located.point.row - desiredRow, options);
+    // C6: `{count}zt/zz/zb` first moves the cursor to line [count] (keeping
+    // its column), then that becomes the line placed at top/middle/bottom.
+    // nvim: :call setline(1,['l1','l2',...,'l10']) | normal! 5zt -> line('.')==5, line('w0')==5
+    if (invocation.count === undefined) {
+      anchor = anchorAtRelativeRow(snapshot, frame, located.point.row - desiredRow, options);
+    } else {
+      const targetLine = clamp(count - 1, 0, Math.max(0, snapshot.lineCount - 1));
+      const moved = cursorAtLine(snapshot, targetLine, state, options);
+      if (moved === null) return viewportFailure('destination-not-visible');
+      cursor = moved.cursor;
+      desiredScreenCellColumn = moved.desiredScreenCellColumn;
+      viewportOnly = false;
+      anchor = anchorForLine(snapshot, Math.max(0, targetLine - desiredRow), 0, options);
+    }
   } else if (key === '<C-E>' || key === '<C-Y>') {
     const delta = key === '<C-E>' ? amount : -amount;
     anchor = shiftedAnchor(snapshot, frame, delta, options);
@@ -736,7 +760,7 @@ function readLineMetrics(snapshot: DocumentSnapshot, line: number, tabSize: numb
       return { text: '', starts: cells, cellToOffset: cells };
     }
   }
-  if (Segmenter === undefined) return null;
+  if (GRAPHEME_SEGMENTER === undefined) return null;
   let windowUnits = LINE_METRICS_WINDOW_BASE;
   for (;;) {
     const windowEnd = Math.min(lineEnd, lineStart + windowUnits);
@@ -753,7 +777,7 @@ function readLineMetrics(snapshot: DocumentSnapshot, line: number, tabSize: numb
     let priorCellLength = 0;
     let sawAny = false;
     try {
-      for (const segment of new Segmenter('und', { granularity: 'grapheme' }).segment(content.value)) {
+      for (const segment of GRAPHEME_SEGMENTER.segment(content.value)) {
         priorDisplayCell = displayCell;
         priorStartsLength = starts.length;
         priorCellLength = cellToOffset.length;

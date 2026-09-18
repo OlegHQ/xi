@@ -1,6 +1,31 @@
-import type { DocumentId, DocumentVersion, Result, Utf16Offset } from '../../contracts/src/index.ts';
+import type { DocumentVersion, Result, Utf16Offset } from '../../contracts/src/index.ts';
 import { asUtf16Offset } from '../../contracts/src/index';
-import { openTextDocument, TextFileDocument, type DocumentEdit } from '../../document/src/index';
+import type {
+  CommittedDocumentChange,
+  DocumentEdit,
+  DocumentTransactionFailure,
+  UndoOperationFailure,
+  UndoOutcome,
+} from '../../document/src/index';
+
+/**
+ * Narrow structural slice of `TextFileDocument` this draft needs. Services never own or
+ * construct documents (docs/plan/01-architecture.md ownership table): the workbench/app
+ * opens the real document and hands it in through `DirectoryDraftDocumentOpener` below.
+ */
+export interface DirectoryDraftDocumentPort {
+  readonly version: DocumentVersion;
+  applyBatch(edits: readonly DocumentEdit[], expectedVersion: DocumentVersion): Result<DocumentVersion, DocumentTransactionFailure>;
+  undo(): Result<UndoOutcome, UndoOperationFailure>;
+  redo(): Result<UndoOutcome, UndoOperationFailure>;
+  subscribeChanges(listener: (change: CommittedDocumentChange) => void): { dispose(): void };
+}
+
+/** Opens (or reuses) the document backing this draft's text, already containing `text`. */
+export type DirectoryDraftDocumentOpener = (
+  documentId: string,
+  text: string,
+) => { readonly ok: true; readonly value: DirectoryDraftDocumentPort } | { readonly ok: false; readonly error: string };
 
 /** Public contract for the in-memory editable directory buffer. */
 export const DIRECTORY_DRAFT_CONTRACT_VERSION = 1 as const;
@@ -129,6 +154,24 @@ interface MutableRow {
   rawName: string | undefined;
   origin: DirectoryDraftRowOrigin;
   metadata: DirectoryDraftMetadata | undefined;
+  /**
+   * Bumped whenever this row's own fields are mutated in place (the
+   * `remapRowsWithinSingleRow` fast path below mutates rows by reference rather than
+   * reallocating them). `buildModel`'s per-row cache keys on `(id, rev, line)`, not just
+   * object identity, because identity alone would miss an in-place mutation.
+   */
+  rev: number;
+}
+
+interface CachedPublicRow {
+  /** Guards against a row reordering into this array slot (delete/paste/refresh/undo can
+   * rebind which row sits at a given index) without a matching identity. */
+  readonly id: string;
+  readonly rev: number;
+  /** The pending shift baked into this cached row's offset, so a later change to the pending
+   * shift (without any change to the row itself) still invalidates the cache entry. */
+  readonly shiftedBy: number;
+  readonly frozen: DirectoryDraftRow;
 }
 
 /**
@@ -142,9 +185,27 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
   readonly #caseSensitive: boolean;
   readonly #base = new Map<string, DirectoryDraftSourceEntry>();
   readonly #listeners = new Set<(model: DirectoryDraftReadModel) => void>();
-  readonly #document: TextFileDocument;
+  readonly #document: DirectoryDraftDocumentPort;
   #initialVersion: DocumentVersion;
   #rows: MutableRow[];
+  /** Indexed by line (array position), not id: a `Map<string, ...>` keyed by row id measured
+   * ~2ms of pure hashing/lookup overhead alone at 10k rows on this engine, which already blew
+   * the 1ms keystroke budget before any row work. Plain array indexing is effectively free. */
+  #rowCache: readonly (CachedPublicRow | undefined)[] = [];
+  /**
+   * Rows with array index > `#shiftPivotIndex` carry `#shiftDelta` unapplied in their stored
+   * `anchorOffset`: `effectiveAnchorOffset` adds it back in on read. This lets repeated
+   * single-row keystrokes into the *same* row (the common case while typing a name) update
+   * that one row and one shared counter in O(1), instead of rewriting every trailing row's
+   * offset on every keystroke. A keystroke that targets a different row than the current
+   * pivot folds the pending delta into the raw offsets first (`flushPendingShift`), which is
+   * O(rows after the old pivot); ponytail: that fold is the documented ceiling -- a workload
+   * that alternates single-character edits between rows on opposite ends of a large draft
+   * every keystroke would hit it every time. Revisit with a Fenwick tree if that shape proves
+   * real (docs/plan/15-keystroke-latency.md).
+   */
+  #shiftPivotIndex = -1;
+  #shiftDelta = 0;
   #text: string;
   #generation = 0;
   #nextId = 1;
@@ -157,6 +218,7 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
   static create(
     directoryPath: string,
     entries: readonly DirectoryDraftSourceEntry[],
+    openDocument: DirectoryDraftDocumentOpener,
     options: DirectoryDraftOptions = {},
   ): Result<DirectoryDraft, DirectoryDraftValidationFailure> {
     if (!isDirectoryPath(directoryPath)) {
@@ -174,12 +236,13 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
       }
       seen.add(id);
     }
-    return { ok: true, value: new DirectoryDraft(directoryPath, entries, options, seen) };
+    return { ok: true, value: new DirectoryDraft(directoryPath, entries, openDocument, options, seen) };
   }
 
   private constructor(
     directoryPath: string,
     entries: readonly DirectoryDraftSourceEntry[],
+    openDocument: DirectoryDraftDocumentOpener,
     options: DirectoryDraftOptions,
     ids: ReadonlySet<string>,
   ) {
@@ -210,6 +273,7 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
         rawName: entry.name,
         origin: 'base',
         metadata,
+        rev: 0,
       });
       offset += escapedName.length + 1;
     }
@@ -218,10 +282,10 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     if (ids.size !== this.#base.size) throw new Error('directory-draft-id-invariant');
     this.#rows = rows;
     this.#text = rows.map((row) => row.escapedName).join('\n');
-    const documentId = toDocumentId(options.documentId ?? 'directory-draft');
-    const opened = openTextDocument(documentId, new TextEncoder().encode(this.#text), 41027, { fileFormat: 'unix' });
-    if (opened.kind !== 'editable') throw new Error('directory-draft-document-open-failed');
-    this.#document = opened.document;
+    const documentId = options.documentId ?? 'directory-draft';
+    const opened = openDocument(documentId, this.#text);
+    if (!opened.ok) throw new Error(`directory-draft-document-open-failed: ${opened.error}`);
+    this.#document = opened.value;
     this.#initialVersion = this.#document.version;
     // Native Vim edits (dd/yy/p/u/macros) land on `#document` directly through a normal
     // Vim session opened against it, never through this class's own methods below --
@@ -240,7 +304,7 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
   get isDirty(): boolean { return this.#document.version !== this.#initialVersion; }
   /** The buffer a normal Vim session edits directly; row tracking follows it via
    * `subscribeChanges` above regardless of which session or method committed the edit. */
-  get document(): TextFileDocument { return this.#document; }
+  get document(): DirectoryDraftDocumentPort { return this.#document; }
 
   subscribe(listener: (model: DirectoryDraftReadModel) => void): { dispose(): void } {
     if (this.#disposed) throw new Error('directory-draft-disposed');
@@ -263,7 +327,7 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     const committed = this.#document.applyBatch([edit], this.#document.version);
     this.#syncing = false;
     if (!committed.ok) return this.failUnknown('', 0, `directory draft edit was rejected: ${committed.error.kind}`);
-    this.#text = this.currentDocumentText();
+    this.#text = applyEditsToText(this.#text, [edit]);
     this.#rows = this.remapRows(this.#rows, [edit]);
     this.#review = undefined;
     this.#focus = 'edit';
@@ -274,9 +338,12 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
 
   /** Convenience for a Vim-style replacement of one escaped row. */
   setRowText(rowId: string, escapedName: string): Result<void, DirectoryDraftValidationFailure> {
-    const row = this.#rows.find((candidate) => candidate.id === rowId);
+    const index = this.#rows.findIndex((candidate) => candidate.id === rowId);
+    if (index < 0) return this.failUnknown(rowId, 0, 'row identity is not present in this draft');
+    const row = this.#rows[index];
     if (row === undefined) return this.failUnknown(rowId, 0, 'row identity is not present in this draft');
-    return this.applyEdit(row.anchorOffset, row.anchorOffset + row.escapedName.length, escapedName);
+    const offset = this.effectiveAnchorOffset(row, index);
+    return this.applyEdit(offset, offset + row.escapedName.length, escapedName);
   }
 
   rename(rowId: string, rawName: string): Result<void, DirectoryDraftValidationFailure> {
@@ -294,6 +361,8 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     const committed = this.commitFullText(nextRows.map((row) => row.escapedName).join('\n'));
     if (!committed.ok) return committed;
     this.#rows = this.recomputeOffsets(nextRows);
+    this.#shiftPivotIndex = -1;
+    this.#shiftDelta = 0;
     this.#review = undefined;
     this.#focus = 'edit';
     this.#error = undefined;
@@ -304,7 +373,15 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
   yank(rowIds: readonly string[]): Result<DirectoryYankBuffer, DirectoryDraftValidationFailure> {
     const selected = this.rowsForIds(rowIds);
     if (!selected.ok) return selected;
-    return { ok: true, value: Object.freeze({ rows: Object.freeze(selected.value.map((row, line) => this.publicRow(row, line))) }) };
+    // `line` here is the row's position within the yanked subset, not its real index in
+    // `#rows` -- pass the real index separately so `effectiveAnchorOffset` (inside
+    // `publicRow`) compares against the correct pending-shift pivot.
+    return {
+      ok: true,
+      value: Object.freeze({
+        rows: Object.freeze(selected.value.map((row, line) => this.publicRow(row, line, this.#rows.indexOf(row)))),
+      }),
+    };
   }
 
   /** Paste as explicit copies with fresh IDs; originals remain untouched. */
@@ -335,6 +412,7 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
         rawName: source.rawName,
         metadata: source.metadata,
         origin: 'copy',
+        rev: 0,
       };
     });
     const nextRows = [...this.#rows];
@@ -342,6 +420,8 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     const committed = this.commitFullText(nextRows.map((row) => row.escapedName).join('\n'));
     if (!committed.ok) return committed;
     this.#rows = this.recomputeOffsets(nextRows);
+    this.#shiftPivotIndex = -1;
+    this.#shiftDelta = 0;
     this.#review = undefined;
     this.#focus = 'edit';
     this.#error = undefined;
@@ -442,13 +522,15 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
       });
       const escapedName = escapeDirectoryName(entry.name);
       this.#base.set(id, Object.freeze({ ...entry, id }));
-      rows.push({ id, sourceId: id, anchorId: `anchor-${id}`, anchorOffset: offset, escapedName, rawName: entry.name, origin: 'base', metadata });
+      rows.push({ id, sourceId: id, anchorId: `anchor-${id}`, anchorOffset: offset, escapedName, rawName: entry.name, origin: 'base', metadata, rev: 0 });
       offset += escapedName.length + 1;
     }
     const newText = rows.map((row) => row.escapedName).join('\n');
     const committed = this.commitFullText(newText);
     if (!committed.ok) return committed;
     this.#rows = rows;
+    this.#shiftPivotIndex = -1;
+    this.#shiftDelta = 0;
     this.#initialVersion = this.#document.version;
     this.#review = undefined;
     this.#error = undefined;
@@ -542,11 +624,11 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
       const row = byOffset.get(start);
       if (row === undefined) {
         const id = this.nextOpaqueId();
-        bound.push({ id, sourceId: undefined, anchorId: `anchor-${id}`, anchorOffset: start, escapedName: this.#text.slice(start, end), rawName: undefined, origin: 'unbound', metadata: undefined });
+        bound.push({ id, sourceId: undefined, anchorId: `anchor-${id}`, anchorOffset: start, escapedName: this.#text.slice(start, end), rawName: undefined, origin: 'unbound', metadata: undefined, rev: 0 });
       } else {
         const escapedName = this.#text.slice(start, end);
         const decoded = decodeDirectoryName(escapedName);
-        bound.push({ ...row, anchorOffset: start, escapedName, rawName: decoded.ok ? decoded.value : undefined });
+        bound.push({ ...row, anchorOffset: start, escapedName, rawName: decoded.ok ? decoded.value : undefined, rev: row.rev + 1 });
       }
     }
     return bound;
@@ -556,7 +638,7 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
   private recomputeOffsets(rows: readonly MutableRow[]): MutableRow[] {
     let offset = 0;
     return rows.map((row) => {
-      const next = { ...row, anchorOffset: offset };
+      const next = { ...row, anchorOffset: offset, rev: row.anchorOffset === offset ? row.rev : row.rev + 1 };
       offset += row.escapedName.length + 1;
       return next;
     });
@@ -575,27 +657,89 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     return { ok: true, value: undefined };
   }
 
-  private currentDocumentText(): string {
-    const snapshot = this.#document.snapshot();
-    const sliced = snapshot.slice(utf16(0), utf16(snapshot.lengthUtf16));
-    return sliced.ok ? sliced.value : this.#text;
-  }
-
   /** Remap existing row anchors through a batch of ordered, non-overlapping document edits. */
   private remapRows(rows: readonly MutableRow[], edits: readonly DocumentEdit[]): MutableRow[] {
     const ordered = [...edits].sort((left, right) => (left.start as number) - (right.start as number));
+    const fast = this.remapRowsWithinSingleRow(rows, ordered);
+    if (fast !== undefined) return fast;
+    // The general path reads/writes raw `anchorOffset`s directly (`mapOffsetThroughEdits`,
+    // `bindRowsToText`'s by-offset lookup), so any pending single-row shift must be baked in
+    // first or those raw values would be stale.
+    this.flushPendingShift();
     const nextRows: MutableRow[] = [];
     for (const row of rows) {
       const mapped = mapOffsetThroughEdits(row.anchorOffset, ordered);
       if (mapped === undefined) continue;
-      nextRows.push({ ...row, anchorOffset: mapped });
+      nextRows.push({ ...row, anchorOffset: mapped, rev: mapped === row.anchorOffset ? row.rev : row.rev + 1 });
     }
     return this.bindRowsToText(nextRows);
   }
 
+  /** The current true offset of `row` at array index `index`, folding in the pending shift
+   * (see `#shiftPivotIndex`/`#shiftDelta`) when `index` falls after the pivot. */
+  private effectiveAnchorOffset(row: MutableRow, index: number): number {
+    return index > this.#shiftPivotIndex ? row.anchorOffset + this.#shiftDelta : row.anchorOffset;
+  }
+
+  /** Bake the pending shift into every affected row's raw `anchorOffset` and clear it. */
+  private flushPendingShift(): void {
+    if (this.#shiftDelta !== 0) {
+      for (let index = this.#shiftPivotIndex + 1; index < this.#rows.length; index += 1) {
+        const row = this.#rows[index];
+        if (row === undefined) continue;
+        row.anchorOffset += this.#shiftDelta;
+        row.rev += 1;
+      }
+    }
+    this.#shiftPivotIndex = -1;
+    this.#shiftDelta = 0;
+  }
+
+  /**
+   * Fast path for the common per-keystroke case: one edit, no newline in the replacement,
+   * fully contained inside a single existing row's escaped-name span. Line structure is then
+   * unchanged, so only that row's own text changes -- trailing rows' offsets are tracked via
+   * the shared `#shiftPivotIndex`/`#shiftDelta` accumulator instead of being rewritten one by
+   * one (see the field comment). Returns `undefined` when the fast precondition does not hold
+   * so the caller falls back to the general (still-correct) full rebind.
+   */
+  private remapRowsWithinSingleRow(rows: readonly MutableRow[], edits: readonly DocumentEdit[]): MutableRow[] | undefined {
+    if (edits.length !== 1) return undefined;
+    const edit = edits[0];
+    if (edit === undefined || edit.text.includes('\n')) return undefined;
+    const start = edit.start as number;
+    const end = edit.end as number;
+    const rowIndex = rows.findIndex((row, index) => {
+      const offset = this.effectiveAnchorOffset(row, index);
+      return start >= offset && end <= offset + row.escapedName.length;
+    });
+    if (rowIndex < 0) return undefined;
+    const mutable = rows as MutableRow[];
+    const row = mutable[rowIndex];
+    if (row === undefined) return undefined;
+    // A keystroke on a different row than the currently pending shift's pivot must fold that
+    // pending shift into raw offsets first, since this row's own effective offset depends on
+    // whether it currently sits before or after the pivot.
+    if (rowIndex !== this.#shiftPivotIndex) this.flushPendingShift();
+    const offset = row.anchorOffset;
+    const localStart = start - offset;
+    const localEnd = end - offset;
+    const escapedName = row.escapedName.slice(0, localStart) + edit.text + row.escapedName.slice(localEnd);
+    const decoded = decodeDirectoryName(escapedName);
+    const delta = edit.text.length - (end - start);
+    row.escapedName = escapedName;
+    row.rawName = decoded.ok ? decoded.value : undefined;
+    row.rev += 1;
+    if (delta !== 0) {
+      this.#shiftPivotIndex = rowIndex;
+      this.#shiftDelta += delta;
+    }
+    return mutable;
+  }
+
   private applyHistoryOutcome(edits: readonly DocumentEdit[]): void {
     const oldRows = this.#rows;
-    this.#text = this.currentDocumentText();
+    this.#text = applyEditsToText(this.#text, edits);
     this.#rows = this.remapRows(oldRows, edits);
     this.#error = undefined;
   }
@@ -611,11 +755,11 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     return index < 0 ? 0 : index;
   }
 
-  private publicRow(row: MutableRow, line: number): DirectoryDraftRow {
+  private publicRow(row: MutableRow, line: number, actualIndex: number = line): DirectoryDraftRow {
     return Object.freeze({
       id: row.id,
       sourceId: row.sourceId,
-      anchor: Object.freeze({ id: row.anchorId, offsetUtf16: row.anchorOffset }),
+      anchor: Object.freeze({ id: row.anchorId, offsetUtf16: this.effectiveAnchorOffset(row, actualIndex) }),
       line,
       escapedName: row.escapedName,
       rawName: row.rawName,
@@ -624,22 +768,41 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
     });
   }
 
+  /**
+   * Committed keystrokes on a draft buffer land here once per key (via `publish`). Rebuilding
+   * and re-freezing every row unconditionally was O(rows) per keystroke (~4-6 ms at 10k rows),
+   * blowing the ≤1 ms engine-step budget. `#rowCache` keeps the previously frozen row object
+   * for any row whose `(id, rev, line, shiftedBy)` didn't change since the last publish, so an
+   * edit to one row only allocates/freezes that row (plus any rows whose line number shifted
+   * or whose effective offset moved with the pending shift -- see `#shiftPivotIndex`).
+   */
   private buildModel(): DirectoryDraftReadModel {
+    const previousCache = this.#rowCache;
+    const nextCache: (CachedPublicRow | undefined)[] = new Array(this.#rows.length);
+    const pivot = this.#shiftPivotIndex;
+    const delta = this.#shiftDelta;
+    const rows = this.#rows.map((row, line) => {
+      const shiftedBy = line > pivot ? delta : 0;
+      const cached = previousCache[line];
+      const frozen = cached !== undefined && cached.id === row.id && cached.rev === row.rev && cached.shiftedBy === shiftedBy
+        ? cached.frozen
+        : this.publicRow(row, line);
+      nextCache[line] = { id: row.id, rev: row.rev, shiftedBy, frozen };
+      return frozen;
+    });
+    this.#rowCache = nextCache;
+    // `rows` is exposed as `readonly DirectoryDraftRow[]` (TS-enforced) and each row object is
+    // itself frozen above; skip freezing the *array* itself -- ponytail: measured, freezing a
+    // 10k-element array costs ~3 ms on its own on this engine (JSC/bun converts it out of fast
+    // elements storage), independent of how many rows actually changed. That single call was
+    // the dominant remaining cost after the per-row cache above; nothing in this codebase
+    // relies on `Object.isFrozen(model.rows)`.
     return Object.freeze({
       contractVersion: DIRECTORY_DRAFT_CONTRACT_VERSION,
       generation: this.#generation,
       directoryPath: this.#directoryPath,
       text: this.#text,
-      rows: Object.freeze(this.#rows.map((row, line) => Object.freeze({
-        id: row.id,
-        sourceId: row.sourceId,
-        anchor: Object.freeze({ id: row.anchorId, offsetUtf16: row.anchorOffset }),
-        line,
-        escapedName: row.escapedName,
-        rawName: row.rawName,
-        origin: row.origin,
-        metadata: row.metadata,
-      }))),
+      rows,
       dirty: this.isDirty,
       focus: this.#focus,
       review: this.#review,
@@ -665,9 +828,10 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
 export function createDirectoryDraft(
   directoryPath: string,
   entries: readonly DirectoryDraftSourceEntry[],
+  openDocument: DirectoryDraftDocumentOpener,
   options: DirectoryDraftOptions = {},
 ): Result<DirectoryDraft, DirectoryDraftValidationFailure> {
-  return DirectoryDraft.create(directoryPath, entries, options);
+  return DirectoryDraft.create(directoryPath, entries, openDocument, options);
 }
 
 export function escapeDirectoryName(name: string): string {
@@ -718,6 +882,23 @@ function toReadError(error: DirectoryDraftValidationFailure): DirectoryDraftErro
   return { rowId: undefined, line: undefined, column: undefined, kind: error.kind, message: error.message };
 }
 
+/** Splice a batch of ordered, non-overlapping edits directly into the draft's own text mirror.
+ * This never touches the document's rope/piece-tree snapshot -- the mirror is a plain JS
+ * string, so this is a native string copy instead of an O(document) piece-tree slice. */
+function applyEditsToText(text: string, edits: readonly DocumentEdit[]): string {
+  const ordered = [...edits].sort((left, right) => (left.start as number) - (right.start as number));
+  let result = '';
+  let cursor = 0;
+  for (const edit of ordered) {
+    const start = edit.start as number;
+    const end = edit.end as number;
+    result += text.slice(cursor, start) + edit.text;
+    cursor = end;
+  }
+  result += text.slice(cursor);
+  return result;
+}
+
 /** Map an offset in the pre-edit text through a batch of ordered, non-overlapping edits; `undefined` if the offset fell inside a replaced span. */
 function mapOffsetThroughEdits(offset: number, edits: readonly DocumentEdit[]): number | undefined {
   let delta = 0;
@@ -732,7 +913,6 @@ function mapOffsetThroughEdits(offset: number, edits: readonly DocumentEdit[]): 
 }
 
 function utf16(value: number): Utf16Offset { return value as Utf16Offset; }
-function toDocumentId(value: string): DocumentId { return value as DocumentId; }
 
 function lineStarts(text: string): number[] {
   if (text.length === 0) return [];

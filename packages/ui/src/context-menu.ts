@@ -108,6 +108,15 @@ export class ContextMenuStore {
   #notify(): void {
     for (const listener of this.#listeners) listener();
   }
+
+  /** H2-5 follow-up: dismisses any open menu (so a disposed store never hands out a stale
+   * open state) and drops every subscriber, so a renderable that never explicitly
+   * unsubscribed cannot keep this store reachable from `main.ts`'s teardown. Idempotent. */
+  dispose(): void {
+    this.#state = undefined;
+    this.#onActivate = undefined;
+    this.#listeners.clear();
+  }
 }
 
 export interface ContextMenuTheme {
@@ -179,10 +188,10 @@ export class ContextMenuRenderable extends Renderable {
       const selected = row === state.selectedIndex;
       const rowBackground = selected ? selectedBackground : background;
       buffer.fillRect(0, row, this.width, 1, rowBackground);
-      const label = ` ${item.label}`.slice(0, this.width);
+      const label = [...` ${item.label}`.slice(0, this.width)];
       const color = !item.enabled ? muted : foreground;
-      for (let index = 0; index < [...label].length; index += 1) {
-        const character = [...label][index];
+      for (let index = 0; index < label.length; index += 1) {
+        const character = label[index];
         if (character !== undefined) buffer.setCell(index, row, character, color, rowBackground);
       }
     }

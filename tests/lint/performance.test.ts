@@ -91,6 +91,16 @@ test('native suppressions cannot suppress their own audit; strings are not direc
   expect(directiveFailures('function broken( {', 'fixture.ts').length).toBeGreaterThan(0);
 });
 
+test('I2: Intl.Segmenter and granularity constructors must be module-level, not per call', () => {
+  expect(lint('function f(text: string) { return new Intl.Segmenter("en", { granularity: "word" }).segment(text); }', 'C')).toContain('[segmenter]');
+  expect(lint('const f = (text: string) => new Intl.Segmenter("en", { granularity: "word" }).segment(text);', 'C')).toContain('[segmenter]');
+  expect(lint('class C { m(text: string) { return new Intl.Segmenter("en", { granularity: "grapheme" }).segment(text); } }', 'C')).toContain('[segmenter]');
+  expect(lint('function f() { return new Thing({ granularity: "word" }); }', 'C')).toContain('[segmenter]');
+  expect(lint('const segmenter = new Intl.Segmenter("en", { granularity: "word" });\nfunction f(text: string) { return segmenter.segment(text); }', 'C')).toBe('');
+  expect(lint('function f() { return new Intl.Segmenter("en"); }', 'C')).toContain('[segmenter]');
+  expect(lint('function f() { return new Map(); }', 'C')).toBe('');
+});
+
 test('H0 implicit collection loops are covered', () => {
   expect(lint('function f(xs) { return xs.map(x => x + 1); }')).toContain('[allocation]');
   expect(lint('function f(xs) { xs.forEach(x => consume({ x })); }')).toContain('[allocation]');

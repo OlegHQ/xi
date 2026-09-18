@@ -194,25 +194,24 @@ export class RealtimeSearchService implements Disposable {
   async #run(query: SearchQuery, generation: number, cancellation: CancellationSource, resolve: (result: Result<SearchReadModel, SearchFailure>) => void): Promise<void> {
     this.#timer = undefined;
     const bufferSources = this.#bufferSourceProvider?.() ?? this.#bufferSources;
-    // Dirty-buffer text does not change while a single search run is in
-    // flight, so scan it once instead of on every ripgrep batch.
-    const bufferMatches = computeBufferMatches(query, bufferSources, generation);
+    const limit = query.maxResults ?? this.#defaultLimit;
     const ownedPaths = bufferOwnedPaths(bufferSources);
     const streamed: SearchMatch[] = [];
-    // Accumulate disk + buffer matches into one array by appending in place
-    // instead of re-spreading `[...streamed, ...bufferMatches]` on every
-    // batch, which was an O(n^2 / batchSize) copy over a long search.
-    // `bufferMatches` is copied into it once, up front.
-    const combined: SearchMatch[] = [...bufferMatches];
-    const onBatch = (batch: readonly SearchMatch[]): void => {
-      if (batch.length === 0 || this.#disposed || generation !== this.#generation || cancellation.token.isCancelled) return;
-      for (const match of batch) {
-        if (ownedPaths.has(bufferPathKey(match.rootId, match.path))) continue;
-        streamed.push(match);
-        combined.push(match);
-      }
-      // Cheap, unsorted intermediate publish; the final publish below sorts once.
-      const limit = query.maxResults ?? this.#defaultLimit;
+    // Accumulate disk + buffer matches into one array by appending in place instead of
+    // re-spreading `[...streamed, ...bufferMatches]` on every batch, which was an
+    // O(n^2 / batchSize) copy over a long search.
+    const combined: SearchMatch[] = [];
+    // Publishes are coalesced to at most one per macrotask instead of once per rg batch: a
+    // burst of same-tick batches used to each pay a full `combined.slice(0, limit)` copy and
+    // freeze; now every batch in that burst shares one scheduled publish. The very first
+    // publish of a run bypasses the setTimeout(0) coalescing hop entirely and goes out
+    // synchronously with the first batch that arrives (buffer scan or first rg batch,
+    // whichever is first), since there is nothing yet to coalesce it with.
+    let publishTimer: ReturnType<typeof setTimeout> | undefined;
+    let firstPublishSent = false;
+    const publishNow = (): void => {
+      if (this.#disposed || generation !== this.#generation || cancellation.token.isCancelled) return;
+      firstPublishSent = true;
       this.#publish(Object.freeze({
         contractVersion: 1,
         query,
@@ -224,7 +223,40 @@ export class RealtimeSearchService implements Disposable {
         message: undefined,
       }));
     };
-    const disk = await this.#backend.search(query, cancellation.token, generation, onBatch);
+    const schedulePublish = (): void => {
+      if (!firstPublishSent) { publishNow(); return; }
+      if (publishTimer !== undefined) return;
+      publishTimer = setTimeout(() => {
+        publishTimer = undefined;
+        publishNow();
+      }, 0);
+    };
+    const onBatch = (batch: readonly SearchMatch[]): void => {
+      if (batch.length === 0 || this.#disposed || generation !== this.#generation || cancellation.token.isCancelled) return;
+      for (const match of batch) {
+        if (ownedPaths.has(bufferPathKey(match.rootId, match.path))) continue;
+        streamed.push(match);
+        combined.push(match);
+      }
+      // Cheap, unsorted intermediate publish; the final publish below sorts once.
+      schedulePublish();
+    };
+    // Dirty-buffer text does not change while a single search run is in flight, so scan it
+    // once instead of on every ripgrep batch. Run concurrently with the disk search: the
+    // buffer scan must never delay starting rg (previously `await`ed before spawning it).
+    const bufferPromise = computeBufferMatches(query, bufferSources, generation, limit, cancellation.token).then((result) => {
+      if (!(this.#disposed || generation !== this.#generation || cancellation.token.isCancelled) && result.matches.length > 0) {
+        for (const match of result.matches) combined.push(match);
+        schedulePublish();
+      }
+      return result;
+    });
+    const diskPromise = this.#backend.search(query, cancellation.token, generation, onBatch);
+    const [bufferResult, disk] = await Promise.all([bufferPromise, diskPromise]);
+    const bufferMatches = bufferResult.matches;
+    // A coalesced intermediate publish must never land after the final model below, or a
+    // 'ready' result flips back to 'loading' and replace refuses to run.
+    if (publishTimer !== undefined) { clearTimeout(publishTimer); publishTimer = undefined; }
     if (this.#pendingResolve === resolve) this.#pendingResolve = undefined;
     if (this.#disposed || generation !== this.#generation || cancellation.token.isCancelled) {
       resolve({ ok: false, error: { kind: 'stale', generation } });
@@ -238,7 +270,6 @@ export class RealtimeSearchService implements Disposable {
       return;
     }
     const filteredDisk = disk.value.filter((match) => !ownedPaths.has(bufferPathKey(match.rootId, match.path)));
-    const limit = query.maxResults ?? this.#defaultLimit;
     // Bounded top-N insertion (mirrors packages/services/navigation's picker index): keeps a
     // sorted, capped-at-`limit` array instead of concatenating every disk+buffer match and
     // sorting/slicing the whole thing, so a query with far more matches than `limit` only ever
@@ -246,7 +277,8 @@ export class RealtimeSearchService implements Disposable {
     const merged: SearchMatch[] = [];
     let totalMatches = 0;
     for (const match of filteredDisk) { totalMatches += 1; insertTopN(merged, match, limit); }
-    for (const match of bufferMatches) { totalMatches += 1; insertTopN(merged, match, limit); }
+    totalMatches += bufferResult.total;
+    for (const match of bufferMatches) insertTopN(merged, match, limit);
     const matches = merged;
     const model: SearchReadModel = Object.freeze({
       contractVersion: 1,
@@ -575,7 +607,7 @@ function compileExpression(query: SearchQuery): Result<RegExp, SearchFailure> {
 }
 
 /** Key used to identify a dirty buffer's disk-owned path, avoiding an O(matches * buffers) scan. */
-function bufferPathKey(rootId: string, path: string): string { return `${rootId} ${path}`; }
+function bufferPathKey(rootId: string, path: string): string { return `${rootId}\0${path}`; }
 
 function bufferOwnedPaths(buffers: readonly SearchBufferSource[]): Set<string> {
   const owned = new Set<string>();
@@ -583,19 +615,53 @@ function bufferOwnedPaths(buffers: readonly SearchBufferSource[]): Set<string> {
   return owned;
 }
 
-/** Scans dirty-buffer text for matches. Call once per query run, not per batch: buffer text is fixed for the run's duration. */
-function computeBufferMatches(query: SearchQuery, buffers: readonly SearchBufferSource[], generation: number): SearchMatch[] {
+// Kept well under the repository's 8ms ordinary-stall budget (docs/plan/15-keystroke-latency.md)
+// so a run of lines between yields, plus `setTimeout(resolve, 0)` scheduling jitter, still lands
+// inside that budget rather than merely under the old, looser 15ms test tolerance.
+const BUFFER_SCAN_YIELD_BUDGET_MS = 2;
+
+function yieldToMacrotask(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Scans dirty-buffer text for matches. Call once per query run, not per batch: buffer text is
+ * fixed for the run's duration.
+ *
+ * Walks lines with an `indexOf('\n', cursor)` cursor instead of `text.split('\n')`: a single
+ * `split` on an up-to-8-MiB buffer materializes every line up front as one synchronous
+ * main-thread step with no opportunity to cancel or yield mid-scan. The cursor walk yields to a
+ * macrotask (and re-checks cancellation) whenever a run of lines has consumed more than
+ * `BUFFER_SCAN_YIELD_BUDGET_MS`, and keeps only the best `limit` matches via `insertTopN` as it
+ * goes rather than accumulating every match in an unbounded array; `total` still counts every
+ * match found so truncation is reported accurately.
+ */
+async function computeBufferMatches(
+  query: SearchQuery,
+  buffers: readonly SearchBufferSource[],
+  generation: number,
+  limit: number,
+  cancellation: CancellationToken,
+): Promise<{ readonly matches: readonly SearchMatch[]; readonly total: number }> {
   const expression = compileExpression(query);
-  if (!expression.ok) return [];
-  const source: SearchMatch[] = [];
+  if (!expression.ok) return { matches: [], total: 0 };
+  const matches: SearchMatch[] = [];
+  let total = 0;
+  let sliceStart = performance.now();
   for (const buffer of buffers) {
     if (buffer.rootId !== query.rootId) continue;
-    const lines = buffer.text.split('\n');
-    for (let line = 0; line < lines.length; line += 1) {
-      const lineText = lines[line] ?? '';
+    const text = buffer.text;
+    let cursor = 0;
+    let line = 0;
+    while (cursor <= text.length) {
+      if (cancellation.isCancelled) return { matches, total };
+      const newline = text.indexOf('\n', cursor);
+      const lineEnd = newline === -1 ? text.length : newline;
+      const lineText = text.slice(cursor, lineEnd);
       expression.value.lastIndex = 0;
       let execMatch: RegExpExecArray | null;
       while ((execMatch = expression.value.exec(lineText)) !== null) {
+        total += 1;
         const resultMatch: SearchMatch = {
           id: `${buffer.rootId}:${buffer.path}:${line}:${execMatch.index}:buffer:${buffer.version}`,
           rootId: buffer.rootId,
@@ -609,12 +675,20 @@ function computeBufferMatches(query: SearchQuery, buffers: readonly SearchBuffer
           generation,
           ...(buffer.diskHash === undefined ? {} : { diskHash: buffer.diskHash }),
         };
-        source.push(Object.freeze(resultMatch));
+        insertTopN(matches, Object.freeze(resultMatch), limit);
         if (execMatch[0].length === 0) expression.value.lastIndex += 1;
+      }
+      if (newline === -1) break;
+      cursor = lineEnd + 1;
+      line += 1;
+      if (performance.now() - sliceStart > BUFFER_SCAN_YIELD_BUDGET_MS) {
+        await yieldToMacrotask();
+        if (cancellation.isCancelled) return { matches, total };
+        sliceStart = performance.now();
       }
     }
   }
-  return source;
+  return { matches, total };
 }
 
 function compareSearchMatches(a: SearchMatch, b: SearchMatch): number {

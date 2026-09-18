@@ -180,15 +180,15 @@ export class JournaledFilesystemOperations {
 
     for (let index = 0; index < steps.length; index += 1) {
       if (cancellation.isCancelled) {
-        journal = await this.markFailure(journal, 'operation cancelled', cancellation);
-        return { ok: false, error: { kind: 'partial', path: journal.journalPath, message: 'operation cancelled; retry or restore from the journal', journal } };
+        const marked = await this.markFailure(journal, 'operation cancelled', cancellation);
+        return { ok: false, error: { kind: 'partial', path: marked.journal.journalPath, message: marked.persisted ? 'operation cancelled; retry or restore from the journal' : 'operation cancelled and the journal could not be updated; retry or restore from the journal', journal: marked.journal } };
       }
       const step = journal.steps[index];
       if (step === undefined || step.completed) continue;
       const executed = await this.executeStep(step, cancellation);
       if (!executed.ok) {
-        journal = await this.markFailure(journal, executed.error.message, cancellation);
-        return { ok: false, error: { kind: 'partial', path: executed.error.path, message: executed.error.message, journal } };
+        const marked = await this.markFailure(journal, executed.error.message, cancellation);
+        return { ok: false, error: { kind: 'partial', path: executed.error.path, message: executed.error.message, journal: marked.journal } };
       }
       const completed: InternalStep = {
         ...step,
@@ -199,11 +199,18 @@ export class JournaledFilesystemOperations {
       journal = freezeJournal({ ...journal, steps: replaceStep(journal.steps, index, completed) });
       const persisted = await this.writeJournal(journal, cancellation);
       if (!persisted.ok) {
-        journal = await this.markFailure(journal, persisted.error.kind === 'journal' ? persisted.error.message : 'journal write failed', cancellation);
-        return { ok: false, error: { kind: 'partial', path: journal.journalPath, message: 'disk step completed but its journal could not be committed', journal } };
+        const marked = await this.markFailure(journal, persisted.error.kind === 'journal' ? persisted.error.message : 'journal write failed', cancellation);
+        return { ok: false, error: { kind: 'partial', path: journal.journalPath, message: 'disk step completed but its journal could not be committed', journal: marked.journal } };
       }
     }
-    journal = await this.updateStatus(journal, 'applied', undefined, cancellation);
+    const finalized = await this.updateStatus(journal, 'applied', undefined, cancellation);
+    if (!finalized.persisted) {
+      // Every step completed on disk, but the journal itself could not be marked 'applied' --
+      // reporting success here would tell the caller the operation is done while the on-disk
+      // journal (what recovery reads after a crash) still says otherwise.
+      return { ok: false, error: { kind: 'partial', path: finalized.journal.journalPath, message: 'all operation steps completed but the journal could not be marked applied; retry or restore from the journal', journal: finalized.journal } };
+    }
+    journal = finalized.journal;
     const result: FileOperationResult = Object.freeze({
       operationId: journal.operationId,
       status: 'applied',
@@ -304,15 +311,18 @@ export class JournaledFilesystemOperations {
       if (step === undefined || step.completed) continue;
       const reconciled = await this.reconcileStep(step, cancellation);
       if (!reconciled.ok) {
-        current = await this.markFailure(current, reconciled.error.message, cancellation);
-        return { ok: false, error: { kind: 'partial', path: reconciled.error.path, message: reconciled.error.message, journal: current } };
+        const marked = await this.markFailure(current, reconciled.error.message, cancellation);
+        return { ok: false, error: { kind: 'partial', path: reconciled.error.path, message: reconciled.error.message, journal: marked.journal } };
       }
       current = freezeJournal({ ...current, steps: replaceStep(current.steps, index, { ...step, completed: true, method: reconciled.value.method, after: reconciled.value.after }) });
       const saved = await this.writeJournal(current, cancellation);
       if (!saved.ok) return saved;
     }
-    current = await this.updateStatus(current, 'applied', undefined, cancellation);
-    return { ok: true, value: recoveryResult(current, 'retried') };
+    const finalized = await this.updateStatus(current, 'applied', undefined, cancellation);
+    if (!finalized.persisted) {
+      return { ok: false, error: { kind: 'partial', path: finalized.journal.journalPath, message: 'all steps completed but the journal could not be marked applied; retry or restore from the journal', journal: finalized.journal } };
+    }
+    return { ok: true, value: recoveryResult(finalized.journal, 'retried') };
   }
 
   /** Restore an applied operation after rechecking every affected path. */
@@ -329,16 +339,19 @@ export class JournaledFilesystemOperations {
       if (step === undefined || step.after === undefined) continue;
       const restored = await this.restoreStep(step, cancellation);
       if (!restored.ok) {
-        current = await this.updateStatus(current, 'restore-failed', restored.error.message, cancellation);
-        return { ok: false, error: { kind: 'partial', path: restored.error.path, message: restored.error.message, journal: current } };
+        const marked = await this.updateStatus(current, 'restore-failed', restored.error.message, cancellation);
+        return { ok: false, error: { kind: 'partial', path: restored.error.path, message: restored.error.message, journal: marked.journal } };
       }
       const absoluteIndex = current.steps.findIndex((candidate) => candidate.id === step.id);
       if (absoluteIndex >= 0) current = freezeJournal({ ...current, steps: replaceStep(current.steps, absoluteIndex, { ...step, completed: false }) });
       const saved = await this.writeJournal(current, cancellation);
       if (!saved.ok) return saved;
     }
-    current = await this.updateStatus(current, 'restored', undefined, cancellation);
-    return { ok: true, value: recoveryResult(current, 'restored') };
+    const finalized = await this.updateStatus(current, 'restored', undefined, cancellation);
+    if (!finalized.persisted) {
+      return { ok: false, error: { kind: 'partial', path: finalized.journal.journalPath, message: 'all steps restored but the journal could not be marked restored', journal: finalized.journal } };
+    }
+    return { ok: true, value: recoveryResult(finalized.journal, 'restored') };
   }
 
   private async executeStep(step: FileOperationStep, cancellation: CancellationToken): Promise<Result<{ readonly method: FileOperationStep['method']; readonly after: FileFingerprint }, { readonly path: string; readonly message: string }>> {
@@ -472,19 +485,23 @@ export class JournaledFilesystemOperations {
     return written.ok ? written : journalFailure(journal.journalPath, platformMessage(written.error));
   }
 
-  private async markFailure(journal: FileOperationJournal, message: string, cancellation: CancellationToken): Promise<FileOperationJournal> {
+  private async markFailure(journal: FileOperationJournal, message: string, cancellation: CancellationToken): Promise<{ readonly journal: FileOperationJournal; readonly persisted: boolean }> {
     return this.updateStatus(journal, 'partial', message, cancellation);
   }
 
+  /** Returns `persisted: false` (with the unchanged, still-on-disk `journal`) when the status
+   * write itself fails, instead of silently returning as if the update succeeded -- a caller
+   * that ignored this could report success/failure for a status that was never committed to
+   * the journal a crash-recovery read would see. */
   private async updateStatus(
     journal: FileOperationJournal,
     status: FileOperationJournal['status'],
     failure: string | undefined,
     cancellation: CancellationToken,
-  ): Promise<FileOperationJournal> {
+  ): Promise<{ readonly journal: FileOperationJournal; readonly persisted: boolean }> {
     const updated = freezeJournal({ ...journal, status, ...(failure === undefined ? {} : { failure }) });
     const written = await this.writeJournal(updated, cancellation);
-    return written.ok ? updated : journal;
+    return written.ok ? { journal: updated, persisted: true } : { journal, persisted: false };
   }
 }
 
@@ -550,7 +567,7 @@ function step(id: string, kind: FileOperationStep['kind'], operationKind: Direct
 }
 
 function validatePlan(plan: DirectoryOperationPlan): Result<void, FileOperationFailure> {
-  if (plan.contractVersion !== 1 || !isSafePath(plan.directoryPath)) return invalidPlan('operation plan has an invalid contract or directory path');
+  if (plan.contractVersion !== 1 || !isSafePath(plan.directoryPath) || !plan.directoryPath.startsWith('/')) return invalidPlan('operation plan has an invalid contract or directory path');
   const ids = new Set<string>();
   for (const operation of plan.operations) {
     const rowId = operation.rowId;
@@ -665,7 +682,14 @@ function isWithin(root: string, path: string): boolean {
   const canonical = canonicalPath(path);
   return canonical === canonicalRoot || canonical.startsWith(`${canonicalRoot}/`);
 }
-function joinPath(first: string, ...rest: string[]): string { return [first, ...rest].map((part) => part.replace(/^\/+|\/+$/gu, '')).filter(Boolean).join('/').replace(/^([^/])/, '/$1'); }
+// `first` (a plan's directoryPath, an explicit trashRoot/journalPath option, or a path already
+// built by this function) is always absolute -- validatePlan requires it -- so the join only
+// needs to preserve that leading slash, not force one onto a relative path (which used to
+// silently rewrite a relative directoryPath into a path rooted at "/", outside the workspace).
+function joinPath(first: string, ...rest: string[]): string {
+  const leading = first.startsWith('/') ? '/' : '';
+  return leading + [first, ...rest].map((part) => part.replace(/^\/+|\/+$/gu, '')).filter(Boolean).join('/');
+}
 function parentPath(path: string): string {
   const canonical = canonicalPath(path);
   const index = canonical.lastIndexOf('/');

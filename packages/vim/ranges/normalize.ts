@@ -90,6 +90,7 @@ const SEGMENTER = (Intl as typeof Intl & {
   };
 }).Segmenter;
 const MAX_TAB_SIZE = 1000;
+const GRAPHEME_SEGMENTER = SEGMENTER !== undefined ? new SEGMENTER(undefined, { granularity: 'grapheme' }) : undefined;
 
 /**
  * Convert an operator motion into one canonical half-open UTF-16 selection.
@@ -144,6 +145,27 @@ function normalizeCharacterwise(
     if (!targetLine.ok) return targetLine;
     if (target === targetLine.value.start && targetLine.value.index > 0) {
       end = Math.max(start, target - 1);
+      // :help exclusive-linewise rule 2: if the start was at or before the
+      // first non-blank of its line, the motion becomes linewise (not just
+      // an adjusted charwise end), pulling in leading blanks too.
+      // nvim: :call setline(1,['foo','','bar']) | normal! d} -> deletes line 1 linewise, leaving ['', 'bar']
+      // Word motions ('w'/'W') never reach this upgrade: :help word's earlier
+      // special case ("the end of that word becomes the end of the operated
+      // text, not the first word in the next line") already fixes the end at
+      // the previous line, so the linewise check never sees column 0 there.
+      // nvim: printf 'first\nsecond tail\n' | nvim --headless --clean -u NONE -
+      //   -c 'call cursor(1,1)' -c 'normal! dw' -c '%p' -c 'q!' -> '', 'second tail'
+      if (input.motionKey !== 'w' && input.motionKey !== 'W') {
+        const startLine = lineBoundsAt(snapshot, asOffset(start));
+        if (!startLine.ok) return startLine;
+        const firstNonBlank = firstNonBlankOffset(snapshot, startLine.value);
+        if (!firstNonBlank.ok) return firstNonBlank;
+        if (start <= firstNonBlank.value) {
+          const endLine = lineBoundsAt(snapshot, asOffset(end));
+          if (!endLine.ok) return endLine;
+          return buildLinewiseRange(snapshot, input, startLine.value.index, endLine.value.index);
+        }
+      }
     }
   }
 
@@ -198,6 +220,22 @@ function normalizeLinewise(
   if (!targetLine.ok) return targetLine;
   const first = Math.min(originLine.value.index, targetLine.value.index);
   const last = Math.max(originLine.value.index, targetLine.value.index, first + count - 1);
+  return buildLinewiseRange(snapshot, input, first, last);
+}
+
+function firstNonBlankOffset(snapshot: DocumentSnapshot, line: LineBounds): Result<number, VimOperatorRangeFailure> {
+  const text = readText(snapshot, line.start, line.end);
+  if (!text.ok) return text;
+  const match = /[^\t ]/u.exec(text.value);
+  return { ok: true, value: match ? line.start + match.index : line.end };
+}
+
+function buildLinewiseRange(
+  snapshot: DocumentSnapshot,
+  input: VimOperatorRangeInput,
+  first: number,
+  last: number,
+): Result<VimNormalizedOperatorRange, VimOperatorRangeFailure> {
   const firstStart = lineStart(snapshot, first);
   if (!firstStart.ok) return firstStart;
   const afterLine = lineStart(snapshot, last + 1);
@@ -487,8 +525,8 @@ function graphemeParts(
 }
 
 function* graphemes(text: string): Iterable<{ readonly segment: string; readonly index: number }> {
-  if (SEGMENTER !== undefined) {
-    for (const part of new SEGMENTER(undefined, { granularity: 'grapheme' }).segment(text)) yield part;
+  if (GRAPHEME_SEGMENTER !== undefined) {
+    for (const part of GRAPHEME_SEGMENTER.segment(text)) yield part;
     return;
   }
   let index = 0;

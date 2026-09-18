@@ -74,14 +74,28 @@ const joined = expectOk(prepareVimTextTransform({
 }));
 assert.equal(applyEdits(text(joinSource), joined.transaction?.edits ?? []), 'Hello.  world\nnext',
   'T103-JOIN-01 J uses joinspaces and trims only the joining edges');
+// Oracle: nvim --headless --clean -u NONE -c 'set nojoinspaces' -c 'normal J' on
+// "Hello.  \n  world\nnext" -> "Hello.  world\nnext" (unchanged by joinspaces because the
+// left line already ends with whitespace, so no separator is inserted either way).
 const singleSpace = expectOk(prepareVimTextTransform({
   snapshot: joinSource, range: joinRange, operator: 'J', options: { joinspaces: false },
 }));
-assert.equal(applyEdits(text(joinSource), singleSpace.transaction?.edits ?? []), 'Hello. world\nnext',
-  'T103-JOIN-02 J supports the one-space option');
+assert.equal(applyEdits(text(joinSource), singleSpace.transaction?.edits ?? []), 'Hello.  world\nnext',
+  'T103-JOIN-02 J keeps the left line\'s existing trailing whitespace regardless of joinspaces');
+// The joinspaces option only matters when the left line has no trailing whitespace.
+const sentenceSource = open('Hello.\nworld', 'T103-sentence');
+const sentenceRange = lineRangeFor(sentenceSource, 0, 1);
+const sentenceJoined = expectOk(prepareVimTextTransform({
+  snapshot: sentenceSource, range: sentenceRange, operator: 'J', options: { joinspaces: false },
+}));
+assert.equal(applyEdits(text(sentenceSource), sentenceJoined.transaction?.edits ?? []), 'Hello. world',
+  'T103-JOIN-02B nojoinspaces inserts a single space after a sentence');
+// Oracle: nvim --headless --clean -u NONE -c 'normal gJ' on the same source ->
+// "Hello.    world\nnext" -- gJ never strips whitespace on either side, it only
+// concatenates the lines.
 const noSpace = expectOk(prepareVimTextTransform({ snapshot: joinSource, range: joinRange, operator: 'gJ' }));
-assert.equal(applyEdits(text(joinSource), noSpace.transaction?.edits ?? []), 'Hello.world\nnext',
-  'T103-JOIN-03 gJ joins without a separator');
+assert.equal(applyEdits(text(joinSource), noSpace.transaction?.edits ?? []), 'Hello.    world\nnext',
+  'T103-JOIN-03 gJ joins without stripping either side\'s whitespace');
 assert.deepEqual(oracleFinalLines.get('T103-ORACLE-J-JOINSPACES-01'), ['Hello.  world', 'next'],
   'T103-JOIN-04 J result remains pinned to Neovim');
 

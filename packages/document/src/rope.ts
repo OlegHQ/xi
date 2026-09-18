@@ -27,6 +27,7 @@ export interface DocumentEdit {
 export type DocumentMutationFailure = DocumentReadFailure
   | { readonly kind: 'invalid-text' }
   | { readonly kind: 'overlapping-edits' }
+  | { readonly kind: 'ambiguous-insertion-boundary' }
   | { readonly kind: 'version-overflow' };
 
 export interface RopeStorageMetrics {
@@ -383,6 +384,19 @@ export class RopeDocument {
       if (!isValidEditText(edit)) return { ok: false, error: { kind: 'invalid-text' } };
       if (previous !== undefined && (edit.start < previous.end || edit.start === previous.start)) {
         return { ok: false, error: { kind: 'overlapping-edits' } };
+      }
+      // Match transactions.ts validateEdits: an insertion touching a
+      // neighboring edit's boundary has no well-defined ordering relative to
+      // that edit, whichever side it touches (A5).
+      if (previous !== undefined) {
+        const previousStart = previous.start as number;
+        const previousEnd = previous.end as number;
+        const start = edit.start as number;
+        const currentIsInsertion = start === (edit.end as number);
+        const previousIsInsertion = previousStart === previousEnd;
+        if ((currentIsInsertion && start === previousEnd) || (previousIsInsertion && previousStart === start)) {
+          return { ok: false, error: { kind: 'ambiguous-insertion-boundary' } };
+        }
       }
       previous = edit;
     }
@@ -995,7 +1009,10 @@ function isNormalizedText(text: string): boolean {
 }
 
 function isLiteralControlText(text: string): boolean {
-  return text.includes('\r') && isWellFormedUtf16(text);
+  // textIntent:'literal-control' means "skip CR normalization", not "must
+  // contain CR" -- any well-formed text (e.g. a bare "\x07") is valid here
+  // (A6).
+  return isWellFormedUtf16(text);
 }
 
 function isValidEditText(edit: DocumentEdit): boolean {

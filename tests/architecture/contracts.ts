@@ -109,17 +109,16 @@ async function verifyWiringModulesCompose(failures: string[]): Promise<void> {
     }),
   });
   const [first, second] = await Promise.all([optionalServices.ensure(), optionalServices.ensure()]);
-  void first; void second;
-  if (optionalServices.gitStatusService === undefined || optionalServices.explorerTree === undefined || optionalServices.searchService === undefined) {
+  if (first.gitStatusService === undefined || first.explorerTree === undefined || first.searchService === undefined || first !== second) {
     failures.push('ARCH-WIRING-COMPOSE-01: optional-services wiring did not construct git/explorer/search under a single ensure()');
   }
   try {
-    optionalServices.explorerSubscription?.dispose();
-    optionalServices.searchService?.dispose();
-    optionalServices.replaceService?.dispose();
-    optionalServices.hostNavigation?.dispose();
-    optionalServices.explorerController?.dispose();
-    optionalServices.explorerTree?.dispose();
+    first.explorerSubscription.dispose();
+    first.searchService.dispose();
+    first.replaceService.dispose();
+    first.hostNavigation.dispose();
+    first.explorerController.dispose();
+    first.explorerTree.dispose();
   } catch (error: unknown) {
     failures.push(`ARCH-WIRING-COMPOSE-01: optional-services disposables threw on dispose: ${error instanceof Error ? error.message : String(error)}`);
   }

@@ -84,6 +84,33 @@ export interface RouterWorkspaceEditsPort {
   requestCodeActions(): Promise<boolean>;
 }
 
+/** H1-7: the ordered focus-stack entries `packages/ui/src/terminal.ts` used to walk itself
+ * (see `dispatchKey`'s doc comment) -- one UI-owned overlay surface's own keyboard routing,
+ * structurally typed here (workbench cannot import `packages/ui`) exactly as
+ * `OpenTuiWorkbenchOptions` already declares each port, so `apps/xi/src/wiring/*.ts` can pass
+ * the very same controller references to both this router and the UI's read/render options. */
+export interface RouterOverlayKeypressPort {
+  readonly isOpen: () => boolean;
+  readonly onKeypress: (event: OwnedVimKeyEvent) => boolean | void | Promise<boolean | void>;
+}
+
+export interface RouterVoidOverlayKeypressPort {
+  readonly isOpen: () => boolean;
+  readonly onKeypress: (event: OwnedVimKeyEvent) => void | Promise<void>;
+}
+
+export interface RouterContextMenuOverlayPort {
+  readonly open: boolean;
+  handleKey(event: OwnedVimKeyEvent): boolean;
+}
+
+export interface RouterDirectoryReviewOverlayPort {
+  readonly isOpen: () => boolean;
+  readonly onKeypress: (event: OwnedVimKeyEvent) => 'handled' | 'unhandled';
+}
+
+export type RouterDispatchOutcome = 'consumed' | 'pending' | 'unhandled' | 'quit';
+
 export interface WorkbenchInputRouterOptions {
   readonly host: BufferHost;
   readonly session: WorkbenchSession;
@@ -114,6 +141,28 @@ export interface WorkbenchInputRouterOptions {
   /** Drives `PrefixHelpController`'s schedule/cancel timer through the shared platform port
    * instead of a raw `setTimeout`, so fake clocks can drive it in tests. */
   readonly clock: ClockPort;
+  /**
+   * H1-7: the ordered overlay-focus stack `dispatchKey` walks, in precedence order, before
+   * ever reaching this router's own `handleKeypress` fallthrough. Every entry is optional so
+   * a caller that never wires a given overlay (e.g. no `overlayHierarchy` controller exists
+   * yet) simply never matches it -- `dispatchKey` treats a missing port exactly like a closed
+   * one. `overlayCommandLine` is intentionally absent: the router already owns that state via
+   * `isCommandLineActive()`/`handleCommandLineKeypress()`.
+   */
+  readonly overlayContextMenu?: RouterContextMenuOverlayPort;
+  readonly overlayCompletion?: RouterOverlayKeypressPort;
+  readonly overlayPicker?: RouterVoidOverlayKeypressPort;
+  readonly overlayExplorer?: RouterOverlayKeypressPort;
+  readonly overlaySearch?: RouterOverlayKeypressPort;
+  readonly overlayProblems?: RouterOverlayKeypressPort;
+  readonly overlayOutput?: RouterOverlayKeypressPort;
+  readonly overlayOutline?: RouterOverlayKeypressPort;
+  readonly overlayHierarchy?: RouterOverlayKeypressPort;
+  readonly overlayHover?: RouterOverlayKeypressPort;
+  /** `onKeypress` reports whether it consumed the key ('handled') or wants it to fall through
+   * to the rest of the stack ('unhandled') -- the one entry in this stack that can decline. */
+  readonly overlayDirectoryReview?: RouterDirectoryReviewOverlayPort;
+  readonly overlaySignature?: RouterOverlayKeypressPort;
 }
 
 /**
@@ -240,6 +289,56 @@ export class WorkbenchInputRouter implements Disposable {
    * (loading the explorer/search services on first use), and every other branch returns its
    * callee's result -- synchronous or not -- directly, so the vim-session fast path
    * (`canHandleSynchronously`) reaches the caller without an added `await`. */
+  /**
+   * Typed wrapper for the eventual ordered-focus-stack contract (H1-7,
+   * docs/plan/01-architecture.md's UI/workbench boundary): today this only covers what
+   * this router actually owns -- its own fallthrough key handling (`handleKeypress`) --
+   * because the higher-priority overlay ports (context menu, command line, completion,
+   * picker, explorer, search, problems, output, outline, hierarchy, hover, directory
+   * review, signature) are constructed and injected into `packages/ui/src/terminal.ts`'s
+   * `OpenTuiTerminalAdapterOptions` by `apps/xi/src/wiring/*.ts`, not into this router, so
+   * `terminal.ts`'s own ordered focus stack still decides which surface a key goes to
+   * before ever reaching here (see its doc comment). Once that wiring hands this router
+   * the same port instances, `dispatch()` is where their ordered precedence moves to, and
+   * `terminal.ts` calls this one method instead of walking its own list. `'pending'` is
+   * reserved for that future leader/chord-in-progress case; `handleKeypress` itself never
+   * produces it today.
+   */
+  dispatch(event: OwnedVimKeyEvent): 'consumed' | 'unhandled' | 'quit' | Promise<'consumed' | 'unhandled' | 'quit'> {
+    const result = this.handleKeypress(event);
+    const finish = (value: boolean | 'quit'): 'consumed' | 'unhandled' | 'quit' => value === 'quit' ? 'quit' : value ? 'consumed' : 'unhandled';
+    return typeof result === 'object' ? result.then(finish) : finish(result);
+  }
+
+  /**
+   * H1-7: the single entry point `packages/ui/src/terminal.ts` calls for every keypress --
+   * the ordered overlay-focus stack (context menu, command line, completion popup, picker,
+   * explorer, search, problems, output, outline, hierarchy, hover, directory review,
+   * signature help) that used to be a 13-branch array walked inside `terminal.ts` itself,
+   * followed by this router's own `handleKeypress` fallthrough. Each stack entry is
+   * mutually exclusive by construction: the loop returns on the first surface that reports
+   * itself open, so a key that reaches an open surface never also reaches a later one or the
+   * fallthrough. Only `overlayDirectoryReview` may decline ('unhandled') and let the key
+   * continue down the stack; every other overlay entry treats "open" as "this key is mine".
+   */
+  dispatchKey(event: OwnedVimKeyEvent): RouterDispatchOutcome | Promise<RouterDispatchOutcome> {
+    const o = this.#options;
+    if (o.overlayContextMenu?.open === true) return finishOverlay(o.overlayContextMenu.handleKey(event));
+    if (this.isCommandLineActive()) return finishOverlay(this.handleCommandLineKeypress(event));
+    if (o.overlayCompletion?.isOpen() === true) return finishOverlay(o.overlayCompletion.onKeypress(event));
+    if (o.overlayPicker?.isOpen() === true) return finishOverlay(o.overlayPicker.onKeypress(event));
+    if (o.overlayExplorer?.isOpen() === true) return finishOverlay(o.overlayExplorer.onKeypress(event));
+    if (o.overlaySearch?.isOpen() === true) return finishOverlay(o.overlaySearch.onKeypress(event));
+    if (o.overlayProblems?.isOpen() === true) return finishOverlay(o.overlayProblems.onKeypress(event));
+    if (o.overlayOutput?.isOpen() === true) return finishOverlay(o.overlayOutput.onKeypress(event));
+    if (o.overlayOutline?.isOpen() === true) return finishOverlay(o.overlayOutline.onKeypress(event));
+    if (o.overlayHierarchy?.isOpen() === true) return finishOverlay(o.overlayHierarchy.onKeypress(event));
+    if (o.overlayHover?.isOpen() === true) return finishOverlay(o.overlayHover.onKeypress(event));
+    if (o.overlayDirectoryReview?.isOpen() === true && o.overlayDirectoryReview.onKeypress(event) === 'handled') return 'consumed';
+    if (o.overlaySignature?.isOpen() === true) return finishOverlay(o.overlaySignature.onKeypress(event));
+    return this.dispatch(event);
+  }
+
   handleKeypress(event: OwnedVimKeyEvent): boolean | 'quit' | Promise<boolean | 'quit'> {
     const { explorer, search, host, session, completion } = this.#options;
     // Preserve focus and queued keys while the first panel's services load.
@@ -437,6 +536,15 @@ export class WorkbenchInputRouter implements Disposable {
     this.#exCommandLineSession?.dispose();
     this.#commandLineListeners.clear();
   }
+}
+
+/** An overlay stack entry that reports itself open always consumes the key it's handed --
+ * `terminal.ts`'s original `finishFocusedKey` never inspected the per-panel boolean/void
+ * result either, only whether the panel asked to quit. Preserves the synchronous-result fast
+ * path (no `await`/microtask hop) when the panel's own handler answers synchronously. */
+function finishOverlay(result: void | boolean | 'quit' | Promise<void | boolean | 'quit'>): RouterDispatchOutcome | Promise<RouterDispatchOutcome> {
+  const finish = (value: void | boolean | 'quit'): RouterDispatchOutcome => value === 'quit' ? 'quit' : 'consumed';
+  return typeof result === 'object' ? result.then(finish) : finish(result);
 }
 
 function isNormalSpace(event: { readonly name: string; readonly raw: string }, mode: string | undefined): boolean {

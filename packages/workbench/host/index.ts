@@ -10,6 +10,17 @@ export type { OwnedVimKeyEvent };
 
 export type HostCommandPort = (command: VimHostCommand, viewId: ViewId) => void | Promise<void>;
 
+/** H2-8: `notifySurfaceChange()`'s previously zero-payload broadcast (11 call sites across the
+ * composition root/controllers, all telling every subscriber "something changed, re-read your
+ * model" with no further detail). `kind` is a free-form tag (e.g. 'git-status', 'buffer-opened')
+ * -- consumers that only need "repaint now" keep working unchanged since every existing
+ * listener registered as `() => void` still matches this wider callback shape. */
+export interface SurfaceChangePayload {
+  readonly kind: string;
+  readonly documentId?: DocumentId;
+  readonly generation?: number;
+}
+
 export interface BufferHostOptions {
   /** Opens (or creates) the document for a workspace path, including persistence/recovery
    * and stderr reporting; owned by the composition root, not this module. */
@@ -78,9 +89,10 @@ export class BufferHost {
   // independent histories. Keyed by workspace-relative path; the second caller awaits the
   // first's in-flight open and then re-checks "already open" itself.
   readonly #openingByPath = new Map<string, Promise<OpenBufferAtPathResult | undefined>>();
-  readonly #surfaceChangeListeners = new Set<() => void>();
+  readonly #surfaceChangeListeners = new Set<(payloads: readonly SurfaceChangePayload[]) => void>();
   readonly #bufferClosedListeners = new Set<(bufferId: DocumentId) => void>();
-  #surfaceChangePending = false;
+  #pendingSurfaceChanges: SurfaceChangePayload[] = [];
+  #surfaceChangeScheduled = false;
   #documentSequence = 0;
 
   constructor(session: WorkbenchSession, launchDocument: TextFileDocument, options: BufferHostOptions) {
@@ -302,18 +314,30 @@ export class BufferHost {
 
   // On-demand rendering only paints after a keypress/resize/pointer event requests a frame.
   // Every service/model subscription that can change what a surface reads must notify here
-  // so the next tick's frame reflects it even without further input.
-  notifySurfaceChange(): void {
-    if (this.#surfaceChangePending) return;
-    this.#surfaceChangePending = true;
-    // @xi-perf-allow microtask OUTPUT -- Coalesces many surface-change notifications into one listener pass in the same tick; listeners only request a frame, no CPU work is deferred here.
-    queueMicrotask(() => {
-      this.#surfaceChangePending = false;
-      for (const listener of this.#surfaceChangeListeners) listener();
+  // so a later frame reflects it even without further input. `payload` defaults to an
+  // 'unspecified' kind so every pre-H2-8 zero-arg call site keeps compiling and behaving the
+  // same as a bare "something changed" signal.
+  notifySurfaceChange(payload: SurfaceChangePayload = { kind: 'unspecified' }): void {
+    this.#pendingSurfaceChanges.push(payload);
+    if (this.#surfaceChangeScheduled) return;
+    this.#surfaceChangeScheduled = true;
+    // Coalesces every surface-change notification raised within one macrotask (e.g. a burst
+    // of git/explorer/search updates from the same filesystem event) into a single listener
+    // pass carrying all of their payloads; listeners only request a frame/re-read a model, no
+    // CPU work is deferred here. setImmediate (not setTimeout) keeps this the very next
+    // macrotask, not delayed by the timer queue.
+    setImmediate(() => {
+      this.#surfaceChangeScheduled = false;
+      const payloads = this.#pendingSurfaceChanges;
+      this.#pendingSurfaceChanges = [];
+      for (const listener of this.#surfaceChangeListeners) listener(payloads);
     });
   }
 
-  onSurfaceChange(listener: () => void): Disposable {
+  /** `listener` may ignore the payload (`() => void`, every call site before H2-8) or read it
+   * (`(payloads: readonly SurfaceChangePayload[]) => void`); both are valid JS/TS callback
+   * shapes for this signature. */
+  onSurfaceChange(listener: (payloads: readonly SurfaceChangePayload[]) => void): Disposable {
     this.#surfaceChangeListeners.add(listener);
     return Object.freeze({ dispose: () => { this.#surfaceChangeListeners.delete(listener); } });
   }

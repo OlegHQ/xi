@@ -147,11 +147,12 @@ const DEFAULT_PARAGRAPHS = 'IPLPPPQPP TPHPLIPpLpItpplpipbp';
 const DEFAULT_SCAN_UTF16 = 65_536;
 const MAX_SCAN_UTF16 = 1_000_000;
 const MAX_OBJECT_COUNT = 10_000;
-const GRAPHEME_SEGMENTER = (Intl as typeof Intl & {
+const GRAPHEME_SEGMENTER_CTOR = (Intl as typeof Intl & {
   readonly Segmenter?: new (locales?: string | readonly string[], options?: { readonly granularity: 'grapheme' }) => {
     segment(input: string): Iterable<{ readonly segment: string; readonly index: number }>;
   };
 }).Segmenter;
+const GRAPHEME_SEGMENTER = GRAPHEME_SEGMENTER_CTOR !== undefined ? new GRAPHEME_SEGMENTER_CTOR('und', { granularity: 'grapheme' }) : undefined;
 
 /** Resolve an inner/around built-in object to a versioned half-open range. */
 export function resolveVimTextObject(
@@ -470,9 +471,34 @@ function resolveWord(
     if (!word.ok) return word;
     start = word.value.start;
     end = word.value.end;
-    const selectedWordCount = parsed.around ? count : Math.floor((count + 1) / 2);
-    if (selectedWordCount > 1) {
-      const next = wordMotion(context.snapshot, start, bigWord ? 'W' : 'w', selectedWordCount - 1, context.options.isKeyword);
+    if (!parsed.around) {
+      // nvim (`.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE
+      // -c 'normal 0d{N}iw'` on "a.b c"): `iw` counts N consecutive class-runs (word,
+      // punctuation, or whitespace each count as one unit) forward from the cursor's own
+      // run -- it does not alternate word/space units like `aw`'s count does.
+      let searchFrom = end;
+      for (let unit = 1; unit < count; unit += 1) {
+        const nextChar = scalarAt(context.snapshot, searchFrom);
+        if (!nextChar.ok) break;
+        if (/^\s$/u.test(nextChar.value) && nextChar.value !== '\n') {
+          const trailing = scanLineWhitespace(context.snapshot, searchFrom, 'forward');
+          if (!trailing.ok) return trailing;
+          if (trailing.value === searchFrom) break;
+          end = trailing.value;
+          searchFrom = trailing.value;
+        } else {
+          const next = wordRunAtOrAfter(context, searchFrom, wordOptions);
+          if (!next.ok) {
+            if (next.error.kind === 'object-not-found') break;
+            return next;
+          }
+          if (next.value.start !== searchFrom) break;
+          end = next.value.end;
+          searchFrom = next.value.end;
+        }
+      }
+    } else if (count > 1) {
+      const next = wordMotion(context.snapshot, start, bigWord ? 'W' : 'w', count - 1, context.options.isKeyword);
       if (!next.ok) return next;
       const nextWord = wordRunAt(context, next.value.offset as number, wordOptions);
       if (!nextWord.ok) return nextWord;
@@ -493,10 +519,6 @@ function resolveWord(
         // whitespace" to grab: only interior gaps between words qualify.
         if (leading.value > lineStartResult.value) start = leading.value;
       }
-    } else if (count > 1 && count % 2 === 0) {
-      const trailing = scanLineWhitespace(context.snapshot, end, 'forward');
-      if (!trailing.ok) return trailing;
-      if (trailing.value > end) end = trailing.value;
     }
   }
 
@@ -901,11 +923,13 @@ function resolveQuote(
   let start = line.value.start + (includeDelimiters ? pair.openStart : pair.openEnd);
   let end = line.value.start + (includeDelimiters ? pair.closeEnd : pair.closeStart);
   if (parsed.around) {
-    const trailing = scanWhitespace(context.snapshot, end, 'forward', context.options.maxScanUtf16);
+    // a" only grabs whitespace within the same line (Vim: :h a"). A document-wide
+    // scanWhitespace would swallow the newline and the following line's indent.
+    const trailing = scanLineWhitespace(context.snapshot, end, 'forward');
     if (!trailing.ok) return trailing;
     if (trailing.value > end) end = trailing.value;
     else {
-      const leading = scanWhitespace(context.snapshot, start, 'backward', context.options.maxScanUtf16);
+      const leading = scanLineWhitespace(context.snapshot, start, 'backward');
       if (!leading.ok) return leading;
       start = leading.value;
     }
@@ -947,18 +971,25 @@ function resolveBracket(
   }
   let start = window.value.start + (parsed.around ? pair.openStart : pair.openEnd);
   let end = window.value.start + (parsed.around ? pair.closeEnd : pair.closeStart);
+  // nvim (`.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE
+  // -c 'normal jyi{'` on "if (x) {\n  foo\n  bar\n}\n"): getregtype("\"") === 'V' --
+  // an `i{`/`i(`/... interior that spans whole lines (open immediately followed by a
+  // newline, close preceded only by indentation) is promoted to linewise, not left as
+  // 'characterwise' like a same-line interior.
+  let kind: VimTextObjectRangeKind = 'characterwise';
   if (!parsed.around && start !== end) {
     const multiline = multilineBracketInterior(context.snapshot, start, end);
     if (!multiline.ok) return multiline;
     if (multiline.value !== null) {
       start = multiline.value.start;
       end = multiline.value.end;
+      kind = 'linewise';
     }
   }
   if (!parsed.around && start === end) return failure('empty-object');
   if (window.value.truncatedLeft && start === window.value.start) return failure('scan-limit-exceeded');
   if (window.value.truncatedRight && end === window.value.end) return failure('scan-limit-exceeded');
-  return { ok: true, value: { start, end, kind: 'characterwise' } };
+  return { ok: true, value: { start, end, kind } };
 }
 
 /**
@@ -1331,7 +1362,7 @@ function nextGraphemeBoundary(snapshot: DocumentSnapshot, offset: number): Resul
   if (!text.ok) return text;
   try {
     if (GRAPHEME_SEGMENTER !== undefined) {
-      const first = new GRAPHEME_SEGMENTER('und', { granularity: 'grapheme' }).segment(text.value)[Symbol.iterator]().next();
+      const first = GRAPHEME_SEGMENTER.segment(text.value)[Symbol.iterator]().next();
       if (!first.done) return { ok: true, value: offset + first.value.segment.length };
     }
   } catch { return failure('invalid-option'); }
@@ -1351,7 +1382,7 @@ function previousGraphemeStart(snapshot: DocumentSnapshot, end: number): Utf16Of
   try {
     if (GRAPHEME_SEGMENTER !== undefined) {
       let last = 0;
-      for (const part of new GRAPHEME_SEGMENTER('und', { granularity: 'grapheme' }).segment(text.value)) last = part.index;
+      for (const part of GRAPHEME_SEGMENTER.segment(text.value)) last = part.index;
       return asOffset(start + last);
     }
   } catch { return null; }

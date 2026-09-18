@@ -64,6 +64,10 @@ export interface SaveCoordinatorOptions {
 export class SaveCoordinator implements Disposable {
   readonly #options: SaveCoordinatorOptions;
   readonly #pendingSaves = new Map<string, Promise<boolean>>();
+  // The document version each in-flight (or just-settled, until cleanup runs) save was
+  // requested for; lets a concurrent request tell "identical to the in-flight save" (piggyback,
+  // no extra write) apart from "a newer version was committed since" (needs a follow-up write).
+  readonly #pendingSaveVersions = new Map<string, unknown>();
   readonly #checkpointTimers = new Map<string, Disposable>();
   // Tracks a checkpoint write already in flight (its debounce timer already fired) so a save
   // started while it is running can await it instead of racing it to disk.
@@ -90,8 +94,16 @@ export class SaveCoordinator implements Disposable {
 
   requestSave(sessionDocument: TextFileDocument, path: string, viewId: ViewId | undefined): Promise<boolean> {
     const key = String(sessionDocument.id);
+    const requestedVersion = sessionDocument.version;
     const existing = this.#pendingSaves.get(key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      // A save requested for the same version already in flight can piggyback on it. But a
+      // newer version (a keystroke committed after the in-flight save captured its bytes, e.g.
+      // `:w`, type, `:w`) must not silently resolve to that save's result: chain a follow-up
+      // save once it settles so the newest bytes actually get written.
+      if (this.#pendingSaveVersions.get(key) === requestedVersion) return existing;
+      return existing.then(() => this.requestSave(sessionDocument, path, viewId));
+    }
     // A save must not race a crash-recovery checkpoint for the same document: cancel any
     // still-debouncing checkpoint outright, and await one already writing so the save's own
     // write (and its clearRecovery) always lands after it, never concurrently with it. No
@@ -105,10 +117,11 @@ export class SaveCoordinator implements Disposable {
       return this.#saveWithConfiguredFormatter(sessionDocument, path, viewId);
     };
     const pending = this.#options.formatOnSave ? this.ensureFormatting().then(save) : save();
+    this.#pendingSaveVersions.set(key, requestedVersion);
     this.#pendingSaves.set(key, pending);
     void pending.then(
-      () => { if (this.#pendingSaves.get(key) === pending) this.#pendingSaves.delete(key); },
-      () => { if (this.#pendingSaves.get(key) === pending) this.#pendingSaves.delete(key); },
+      () => { if (this.#pendingSaves.get(key) === pending) { this.#pendingSaves.delete(key); this.#pendingSaveVersions.delete(key); } },
+      () => { if (this.#pendingSaves.get(key) === pending) { this.#pendingSaves.delete(key); this.#pendingSaveVersions.delete(key); } },
     );
     return pending;
   }
@@ -217,6 +230,16 @@ export class SaveCoordinator implements Disposable {
         return false;
       }
       if (!result.value.changed) return true;
+      // The edit below is built from `snapshot`'s length; if the document changed while the
+      // formatter ran (a keystroke committed mid-format), applying it would clobber those
+      // newer bytes with a whole-document replace sized to the stale snapshot. Re-check the
+      // version immediately before applying (no await between here and the call) and retry
+      // with a fresh snapshot instead.
+      if ((document.version as number) !== (snapshot.version as number)) {
+        if (attempt < 3) continue;
+        this.#reportFormatterFailure('stale', 'document changed while formatting');
+        return false;
+      }
       const start = asUtf16Offset(0);
       const end = asUtf16Offset(snapshot.lengthUtf16 as number);
       if (!start.ok || !end.ok) {

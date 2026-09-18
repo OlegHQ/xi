@@ -20,3 +20,5 @@ export type {
   GitHistoryEntry,
   GitConflictState,
 } from '../../git/index';
+export { toExplorerGitDecoration, createGitDecorationPort } from '../../git/decorations';
+export type { ExplorerGitDecoration, ExplorerGitDecorationFailure, GitDecorationPort } from '../../git/decorations';

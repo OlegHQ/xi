@@ -206,6 +206,89 @@ assert.equal(multiPlan.ok, true);
 if (!multiPlan.ok) throw new Error('T028-MULTI');
 assert.deepEqual(multiPlan.value.execution, { kind: 'document-once', primaryRange: true, selectionCount: 4 }, 'T028-MULTI-01 Ex edits execute once for the primary document range');
 
+// E1-5: `:g/^/m0` reorders lines sequentially, not against the stale original snapshot.
+// nvim (.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE
+//   -c "call setline(1,['a','b','c'])" -c 'g/^/m0' -c 'w! /tmp/out.txt' -c 'q!'): c\nb\na
+const globalMoveDocument = open('t028-global-move', 'a\nb\nc');
+const globalMovePlan = prepareVimEx(globalMoveDocument.snapshot(), parse(':g/^/m0'), context(0));
+assert.equal(globalMovePlan.ok, true, 'T028-GLOBAL-MOVE-01 prepares a reordering global move');
+if (!globalMovePlan.ok) throw new Error('T028-GLOBAL-MOVE-01');
+assert.equal(applyEdits('a\nb\nc', globalMovePlan.value.edits), 'c\nb\na', 'T028-GLOBAL-MOVE-01 matches the pinned Neovim per-iteration mark order');
+
+// nvim (-c "call setline(1,['a','b','c'])" -c '1,2t2' -c 'w! ...'): a\nb\na\nb\nc
+const copyEndDocument = open('t028-copy-end', 'a\nb\nc');
+const copyEndPlan = prepareVimEx(copyEndDocument.snapshot(), parse(':1,2t2'), context(0));
+assert.equal(copyEndPlan.ok, true, 'T028-COPY-END-01 prepares a copy to the end of its own range');
+if (!copyEndPlan.ok) throw new Error('T028-COPY-END-01');
+assert.equal(applyEdits('a\nb\nc', copyEndPlan.value.edits), 'a\nb\na\nb\nc', 'T028-COPY-END-01 :copy duplicates instead of the :move no-op');
+// nvim (-c "call setline(1,['a','b','c'])" -c '1,2m2' -c 'w! ...'): a\nb\nc (unchanged)
+const moveEndDocument = open('t028-move-end', 'a\nb\nc');
+const moveEndPlan = prepareVimEx(moveEndDocument.snapshot(), parse(':1,2m2'), context(0));
+assert.equal(moveEndPlan.ok, true, 'T028-MOVE-END-01 prepares a move to the end of its own range');
+if (!moveEndPlan.ok) throw new Error('T028-MOVE-END-01');
+assert.equal(moveEndPlan.value.edits.length, 0, 'T028-MOVE-END-01 :move to right after itself is a no-op');
+
+// E1-6: a missing trailing delimiter and a bare `:s` both work.
+// nvim (-c "call setline(1,'aaa')" -c 's/a/b' -c 'w! ...'): baa
+const missingDelimDocument = open('t028-missing-delim', 'aaa');
+const missingDelimCommand = parse(':s/a/b');
+assert.equal(missingDelimCommand.arguments.kind, 'substitute', 'T028-SUBSTITUTE-MISSING-DELIM-01 parses without a closing delimiter');
+if (missingDelimCommand.arguments.kind === 'substitute') assert.equal(missingDelimCommand.arguments.replacement, 'b');
+const missingDelimPlan = prepareVimEx(missingDelimDocument.snapshot(), missingDelimCommand, context(0));
+assert.equal(missingDelimPlan.ok, true, 'T028-SUBSTITUTE-MISSING-DELIM-02 prepares the substitute');
+if (!missingDelimPlan.ok) throw new Error('T028-SUBSTITUTE-MISSING-DELIM-02');
+assert.equal(applyEdits('aaa', missingDelimPlan.value.edits), 'baa');
+// nvim (-c "call setline(1,'aaa')" -c 's/a/b' -c "call setline(2,'aaa')" -c '2' -c 's' -c 'w! ...'): baa / baa
+const bareSDocument = open('t028-bare-s', 'aaa');
+const bareSPlan = prepareVimEx(bareSDocument.snapshot(), parse(':s'), context(0, { lastSubstitute: { pattern: 'a', replacement: 'b', flags: '' } }));
+assert.equal(bareSPlan.ok, true, 'T028-SUBSTITUTE-BARE-01 bare :s repeats the last substitute');
+if (!bareSPlan.ok) throw new Error('T028-SUBSTITUTE-BARE-01');
+assert.equal(applyEdits('aaa', bareSPlan.value.edits), 'baa');
+const bareSNoHistory = prepareVimEx(bareSDocument.snapshot(), parse(':s'), context(0));
+assert.equal(bareSNoHistory.ok, false, 'T028-SUBSTITUTE-BARE-02 bare :s with no prior substitute fails cleanly');
+if (bareSNoHistory.ok) throw new Error('T028-SUBSTITUTE-BARE-02');
+assert.equal(bareSNoHistory.error.kind, 'no-previous-substitute');
+
+// E1-7: `:&` drops the previous flags, `:&&` keeps them.
+// nvim (-c "call setline(1,'aXaXa')" -c 's/X/Y/g' -c "call setline(2,'aXaXa')" -c '2' -c '&' -c 'w! ...'): aYaYa / aYaXa
+const ampDocument = open('t028-amp-flags', 'aXaXa');
+const ampContext = context(0, { lastSubstitute: { pattern: 'X', replacement: 'Y', flags: 'g' } });
+const ampPlan = prepareVimEx(ampDocument.snapshot(), parse(':&'), ampContext);
+assert.equal(ampPlan.ok, true, 'T028-AMP-01 prepares :&');
+if (!ampPlan.ok) throw new Error('T028-AMP-01');
+assert.equal(applyEdits('aXaXa', ampPlan.value.edits), 'aYaXa', 'T028-AMP-01 :& drops the g flag, replacing only the first match');
+const ampAmpPlan = prepareVimEx(ampDocument.snapshot(), parse(':&&'), ampContext);
+assert.equal(ampAmpPlan.ok, true, 'T028-AMP-02 prepares :&&');
+if (!ampAmpPlan.ok) throw new Error('T028-AMP-02');
+assert.equal(applyEdits('aXaXa', ampAmpPlan.value.edits), 'aYaYa', 'T028-AMP-02 :&& keeps the g flag, replacing every match');
+
+// E1-7: `:,$d` defaults its omitted first address to the current line.
+// nvim (-c "call setline(1,['a','b','c','d'])" -c '3' -c ',$d' -c 'w! ...'): a\nb
+const omittedFirstDocument = open('t028-omitted-first', 'a\nb\nc\nd');
+const omittedFirstCommand = parse(':,$d');
+assert.equal(omittedFirstCommand.range?.start.address.kind, 'current', 'T028-OMITTED-FIRST-01 omitted first address defaults to current');
+const omittedFirstPlan = prepareVimEx(omittedFirstDocument.snapshot(), omittedFirstCommand, context(2));
+assert.equal(omittedFirstPlan.ok, true, 'T028-OMITTED-FIRST-02 prepares the range');
+if (!omittedFirstPlan.ok) throw new Error('T028-OMITTED-FIRST-02');
+assert.equal(applyEdits('a\nb\nc\nd', omittedFirstPlan.value.edits), 'a\nb');
+
+// E1-7: `:normal` never treats `|` as a command separator, top-level or inside `:g`.
+// nvim (-c "call setline(1,'abc')" -c 'normal x|x' -c 'w! ...'): c (both x's and
+// the | motion run as one literal key sequence; single-key :normal execution
+// beyond the reviewed x/X/D/~/J/dd set stays out of this ticket's scope).
+const normalPipeCommand = parse(':normal x|x');
+assert.equal(normalPipeCommand.arguments.kind, 'normal');
+if (normalPipeCommand.arguments.kind === 'normal') assert.equal(normalPipeCommand.arguments.keys, 'x|x', 'T028-NORMAL-PIPE-01 keeps the pipe as a literal key, not a truncated argument');
+const normalPipeSequence = parseVimExSequence(':normal x|x');
+assert.equal(normalPipeSequence.ok, true);
+if (!normalPipeSequence.ok) throw new Error('T028-NORMAL-PIPE-02');
+assert.equal(normalPipeSequence.value.length, 1, 'T028-NORMAL-PIPE-02 : | inside :normal never starts a second top-level command');
+const globalNormalPipeCommand = parse(':g/a/normal x|x');
+assert.equal(globalNormalPipeCommand.arguments.kind, 'global');
+if (globalNormalPipeCommand.arguments.kind === 'global' && globalNormalPipeCommand.arguments.body.arguments.kind === 'normal') {
+  assert.equal(globalNormalPipeCommand.arguments.body.arguments.keys, 'x|x', 'T028-NORMAL-PIPE-03 :normal keeps the literal pipe inside a :g body too');
+}
+
 const oracle = await verifyOracleBundle();
 const deleteOracleFixture: OracleFixture = {
   id: 'T028-EX-DELETE-ORACLE',

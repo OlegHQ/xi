@@ -6,6 +6,7 @@ import { createSelectionSet } from '../../packages/selections/src/index';
 import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../../packages/workbench/src/index';
 import { WorkbenchRenderable, runOpenTuiWorkbench } from '../../packages/ui/src/index';
 import type { CliRenderer } from '@opentui/core/renderer';
+import { dispatchKeyFromOnKeypress } from './router-test-helpers';
 
 const VIEW_ID = id<ViewId>('T111-view');
 const DOCUMENT_ID = id<DocumentId>('T111-document');
@@ -205,11 +206,11 @@ async function testKeyBurstRendersOnce(): Promise<void> {
   const run = runOpenTuiWorkbench(workbench, 'editor.ts', {
     renderer: Promise.resolve(setup.renderer as unknown as CliRenderer),
     onFrame: () => { frames += 1; },
-    onKeypress: () => {
+    dispatchKey: dispatchKeyFromOnKeypress(() => {
       nextOffset += 1;
       moveCursor(nextOffset);
       return true;
-    },
+    }),
   });
   // Let `runOpenTuiWorkbench`'s synchronous setup (including its own initial
   // `renderer.intermediateRender()`) finish before measuring key-driven frames.

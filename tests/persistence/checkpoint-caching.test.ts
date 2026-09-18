@@ -14,6 +14,7 @@ import {
 import { asIdentifier, asUtf16Offset, type DocumentId } from '../../packages/primitives/src/index';
 import { TextFileDocument } from '../../packages/document/src/index';
 import { PersistenceService } from '../../packages/services/persistence/index';
+import { testDocumentFactory } from './document-factory';
 
 const cancellation = new CancellationSource().token;
 
@@ -57,7 +58,7 @@ function offset(value: number) { const result = asUtf16Offset(value); if (!resul
 async function secondCheckpointDoesNotReparseJournal(): Promise<void> {
   const fs = new CountingFilesystem();
   fs.seed('/tmp/cache-checkpoint.txt', new TextEncoder().encode('one\n'));
-  const service = new PersistenceService(fs);
+  const service = new PersistenceService(fs, undefined, testDocumentFactory);
   const opened = await service.openFile('/tmp/cache-checkpoint.txt', id('cache-checkpoint'), cancellation);
   assert.equal(opened.ok, true);
   if (!opened.ok || opened.value.kind !== 'editable') return;
@@ -76,7 +77,7 @@ async function secondCheckpointDoesNotReparseJournal(): Promise<void> {
 
   // The document's checkpoint entry is replaced in place on each call (same documentId), so
   // recovery still finds the latest content rather than a stale first checkpoint.
-  const recovered = await new PersistenceService(fs).recover('/tmp/cache-checkpoint.txt', id('cache-checkpoint'), cancellation);
+  const recovered = await new PersistenceService(fs, undefined, testDocumentFactory).recover('/tmp/cache-checkpoint.txt', id('cache-checkpoint'), cancellation);
   assert.equal(recovered.ok, true);
   if (recovered.ok) assert.equal(recovered.value.kind === 'recovered' || recovered.value.kind === 'disk-diverged', true, 'journal round-trips through the cache');
 }
@@ -84,7 +85,7 @@ async function secondCheckpointDoesNotReparseJournal(): Promise<void> {
 async function saveDoesNotRereadUnchangedFile(): Promise<void> {
   const fs = new CountingFilesystem();
   fs.seed('/tmp/cache-save.txt', new TextEncoder().encode('hello'));
-  const service = new PersistenceService(fs);
+  const service = new PersistenceService(fs, undefined, testDocumentFactory);
   const opened = await service.openFile('/tmp/cache-save.txt', id('cache-save'), cancellation);
   assert.equal(opened.ok, true);
   if (!opened.ok || opened.value.kind !== 'editable') return;
@@ -103,7 +104,7 @@ async function saveDoesNotRereadUnchangedFile(): Promise<void> {
 async function checkpointOfOversizedDocumentBailsQuickly(): Promise<void> {
   const fs = new CountingFilesystem();
   fs.seed('/tmp/cache-oversized.txt', new TextEncoder().encode('x'));
-  const service = new PersistenceService(fs);
+  const service = new PersistenceService(fs, undefined, testDocumentFactory);
   const opened = await service.openFile('/tmp/cache-oversized.txt', id('cache-oversized'), cancellation);
   assert.equal(opened.ok, true);
   if (!opened.ok || opened.value.kind !== 'editable') return;
@@ -126,7 +127,7 @@ async function checkpointOfOversizedDocumentBailsQuickly(): Promise<void> {
 async function repeatedCheckpointsOfSameDocumentDoNotGrowTheJournal(): Promise<void> {
   const fs = new CountingFilesystem();
   fs.seed('/tmp/cache-bounded.txt', new TextEncoder().encode('one\n'));
-  const service = new PersistenceService(fs);
+  const service = new PersistenceService(fs, undefined, testDocumentFactory);
   const opened = await service.openFile('/tmp/cache-bounded.txt', id('cache-bounded'), cancellation);
   assert.equal(opened.ok, true);
   if (!opened.ok || opened.value.kind !== 'editable') return;
@@ -146,7 +147,7 @@ async function repeatedCheckpointsOfSameDocumentDoNotGrowTheJournal(): Promise<v
     assert.ok(bytes < journalBytesAfterFirst + 200, `T-PERSIST-CHECKPOINT-BOUND-01 journal size stays close to one entry's size at round ${round} (was ${journalBytesAfterFirst}, now ${bytes})`);
   }
 
-  const recovered = await new PersistenceService(fs).recover('/tmp/cache-bounded.txt', id('cache-bounded'), cancellation);
+  const recovered = await new PersistenceService(fs, undefined, testDocumentFactory).recover('/tmp/cache-bounded.txt', id('cache-bounded'), cancellation);
   assert.equal(recovered.ok, true);
   if (recovered.ok && recovered.value.kind === 'recovered') {
     assert.equal(recovered.value.checkpoint.normalizedText, `one\n${'x'.repeat(20)}`, 'T-PERSIST-CHECKPOINT-BOUND-02 recovery still returns the latest content after in-place replacement');

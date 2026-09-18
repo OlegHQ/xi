@@ -140,13 +140,19 @@ assert.equal(operatorSearch.ok, true, 'T027-SEARCH-OPERATOR-01 resolves a search
 if (!operatorSearch.ok) throw new Error('T027-SEARCH-OPERATOR-01');
 assert.equal(operatorSearch.value.range.start, 0);
 assert.equal(operatorSearch.value.range.target, 6);
-assert.equal(operatorSearch.value.range.end, 7, 'T027-SEARCH-OPERATOR-02 uses an inclusive grapheme endpoint');
+// E2-5 fix: a plain search motion is exclusive (nvim `d/def<CR>` on "abc def"
+// leaves "def", it does not consume the match's first character); an /e offset
+// is what makes it inclusive (see the offset-search case in the same file).
+assert.equal(operatorSearch.value.range.end, 6, 'T027-SEARCH-OPERATOR-02 uses an exclusive endpoint by default');
 const backwardOperatorSearch = searchVimOperator(snapshot, { ...view, cursor: 12 as Utf16Offset }, EMPTY_VIM_SEARCH_STATE, { command: 'search', pattern: 'foo', direction: 'backward', wrapscan: false });
 assert.equal(backwardOperatorSearch.ok, true, 'T027-SEARCH-OPERATOR-03 resolves a backward target for operator composition');
 if (!backwardOperatorSearch.ok) throw new Error('T027-SEARCH-OPERATOR-03');
 assert.equal(backwardOperatorSearch.value.range.target, 6);
 assert.equal(backwardOperatorSearch.value.range.start, 6);
-assert.equal(backwardOperatorSearch.value.range.end, 13, 'T027-SEARCH-OPERATOR-04 includes the origin when the target is backward');
+// Oracle: printf 'foo x foo\nx foo\n' > t.txt; nvim ... 'call cursor(2,3)' then
+// 'd?foo\<CR>' -> "foo x foo\n" (only "foo\nx " is removed: exclusive of the
+// cursor's own position 12, same as the forward case above).
+assert.equal(backwardOperatorSearch.value.range.end, 12, 'T027-SEARCH-OPERATOR-04 excludes the origin\'s own character by default');
 
 const parsed = parseVimSubstituteCommand(':s/foo/\\u&/g');
 assert.equal(parsed.ok, true, 'T027-SUBSTITUTE-PARSE-01 parses escaped delimiter payloads');

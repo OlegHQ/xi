@@ -78,6 +78,7 @@ export interface WorkbenchReplaceTarget {
 /** Mirrors `packages/services/search/replace`'s `ReplacementEdit`. */
 export interface WorkbenchReplacementEdit {
   readonly path: string;
+  readonly rootId: string;
   readonly startUtf16: number;
   readonly endUtf16: number;
   readonly replacement: string;
@@ -176,6 +177,7 @@ export interface SearchFilesystemPort {
   workspaceAbsolutePath(root: string, path: string): string | undefined;
   readFile(path: string, cancellation: CancellationToken): Promise<Result<Uint8Array, PlatformFailure>>;
   writeFileAtomic(path: string, contents: Uint8Array, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
+  makeDirectory(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
 }
 
 export interface SearchControllerOptions {
@@ -309,10 +311,27 @@ export class SearchController {
               return { ok: false, error: { kind: 'conflict', message: `replace target changed: ${target.path}`, path: target.path } };
             }
           }
+          const operationId = `xi-replace-${Date.now()}-${this.#replaceOperationNumber += 1}`;
+          // Durable pre-mutation record: a crash after mutating file k must still be able to
+          // restore files 1..k-1 from their captured "before" text, so this is written before
+          // the first disk mutation below, the same as JournaledFilesystemOperations. Only
+          // disk targets need this -- a dirty buffer is mutated through the document/edit
+          // coordinator (in memory, undo-backed), never written to disk here, so it has
+          // nothing for a crash to lose and must never touch the filesystem port.
+          const hasDiskTarget = plan.targets.some((target) => target.source === 'disk');
+          const journalRecord = { schemaVersion: 1 as const, operationId, generation: plan.generation, targets: plan.targets.map((target) => ({ path: target.path, rootId: target.rootId, source: target.source, before: target.text })) };
+          const journalDirectory = hasDiskTarget ? this.#options.filesystem.workspaceAbsolutePath(this.#options.workspaceRoot, '.xi/replace') : undefined;
+          const journalPath = journalDirectory === undefined ? undefined : this.#options.filesystem.workspaceAbsolutePath(this.#options.workspaceRoot, `.xi/replace/${operationId}.json`);
+          if (journalDirectory !== undefined && journalPath !== undefined) {
+            const madeDirectory = await this.#options.filesystem.makeDirectory(journalDirectory, cancellation.token);
+            if (!madeDirectory.ok) return { ok: false, error: { kind: 'failed', message: `replace journal directory failed: ${madeDirectory.error.message}`, path: journalPath } };
+            const wroteJournal = await this.#options.filesystem.writeFileAtomic(journalPath, new TextEncoder().encode(JSON.stringify(journalRecord)), cancellation.token);
+            if (!wroteJournal.ok) return { ok: false, error: { kind: 'failed', message: `replace journal write failed: ${wroteJournal.error.message}`, path: journalPath } };
+          }
           const byPath = new Map<string, WorkbenchReplacementEdit[]>();
-          for (const edit of plan.edits) (byPath.get(edit.path) ?? (byPath.set(edit.path, []), byPath.get(edit.path)!)).push(edit);
+          for (const edit of plan.edits) { const key = `${edit.rootId}\0${edit.path}`; (byPath.get(key) ?? (byPath.set(key, []), byPath.get(key)!)).push(edit); }
           for (const target of plan.targets) {
-            const edits = byPath.get(target.path) ?? [];
+            const edits = byPath.get(`${target.rootId}\0${target.path}`) ?? [];
             const after = applyEdits(target.text, edits);
             if (!after.ok) return { ok: false, error: after.error };
             const buffer = this.#options.session.buffers().find((candidate) => candidate.path !== undefined && this.#options.filesystem.workspaceRelativePath(this.#options.workspaceRoot, candidate.path) === target.path);
@@ -338,7 +357,8 @@ export class SearchController {
             }
             entries.push(Object.freeze({ path: target.path, source: target.source, before: target.text, after: after.value, applied: true }));
           }
-          const journal: WorkbenchReplaceJournal = Object.freeze({ schemaVersion: 1, operationId: `xi-replace-${Date.now()}-${this.#replaceOperationNumber += 1}`, generation: plan.generation, entries: Object.freeze(entries), status: 'applied' });
+          if (journalPath !== undefined) await this.#options.filesystem.writeFileAtomic(journalPath, new TextEncoder().encode(JSON.stringify({ ...journalRecord, status: 'applied' })), cancellation.token);
+          const journal: WorkbenchReplaceJournal = Object.freeze({ schemaVersion: 1, operationId, generation: plan.generation, entries: Object.freeze(entries), status: 'applied' });
           return { ok: true, value: { journal, restored: false } };
         } finally {
           cancellation.dispose();
@@ -385,7 +405,10 @@ export class SearchController {
     this.#open = true;
     this.#selectedIndex = 0;
     if (this.#search === undefined) {
-      void this.#options.ensureServices().then(() => { if (this.#open) this.open(); });
+      void this.#options.ensureServices().then(() => { if (this.#open) this.open(); }).catch((error: unknown) => {
+        this.#open = false;
+        this.#options.onError(`xi: search failed to load: ${error instanceof Error ? error.message : String(error)}\n`);
+      });
       return;
     }
     this.#openGeneration = this.#search.model.generation;
@@ -529,7 +552,9 @@ export class SearchController {
   #runQuery(): void {
     const service = this.#search;
     if (service === undefined) {
-      void this.#options.ensureServices().then(() => { if (this.#open) this.#runQuery(); });
+      void this.#options.ensureServices().then(() => { if (this.#open) this.#runQuery(); }).catch((error: unknown) => {
+        this.#options.onError(`xi: search failed to load: ${error instanceof Error ? error.message : String(error)}\n`);
+      });
       return;
     }
     void service.query({

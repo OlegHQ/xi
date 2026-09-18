@@ -189,6 +189,11 @@ export class WorkbenchSession implements VimSessionReader {
   readonly #views = new Map<ViewId, ViewRecord>();
   #root: SplitNode | undefined;
   #layoutReadCache: WorkbenchLayoutRead | undefined;
+  // readTabs() is rebuilt (incl. a path.split per buffer) many times per keystroke by tab-strip
+  // rendering; memoize by a cheap key of the fields it reads so unchanged state returns the
+  // same frozen array instead of reallocating one every call.
+  #tabsReadCache: readonly WorkbenchTabSnapshot[] | undefined;
+  #tabsReadCacheKey = '';
   /** Per-view read cache, self-validating on the coordinator state/document identity that produced it. */
   readonly #readViewCache = new Map<ViewId, { readonly state: AtomicWorkbenchState; readonly document: DocumentSnapshot; readonly scrollTop: number; readonly scrollLeft: number; readonly result: WorkbenchReadView }>();
   readonly #viewSnapshotCache = new Map<ViewId, { readonly read: WorkbenchReadView; readonly paneId: string; readonly scrollTop: number; readonly scrollLeft: number; readonly result: WorkbenchViewStateSnapshot }>();
@@ -196,6 +201,10 @@ export class WorkbenchSession implements VimSessionReader {
   #activeViewId: ViewId | undefined;
   #nextNode = 1;
   #nextView = 1;
+  // Monotonic, not wall-clock: two edits applied within the same millisecond must still get
+  // distinct default undo groups. Per-instance so unrelated sessions (e.g. in tests) never
+  // share or collide on sequence numbers.
+  #nextUndoGroupSequence = 0;
   #disposed = false;
   readonly #selectionPersistence = new ViewSelectionPersistence();
 
@@ -327,7 +336,11 @@ export class WorkbenchSession implements VimSessionReader {
   /** Ordered read model for a tab strip; another agent's UI renders it. */
   readTabs(): readonly WorkbenchTabSnapshot[] {
     const activeBufferId = this.#activeViewId === undefined ? undefined : this.#views.get(this.#activeViewId)?.bufferId;
-    return Object.freeze([...this.#buffers.values()].map((buffer) => Object.freeze({
+    const buffers = [...this.#buffers.values()];
+    let key = String(activeBufferId);
+    for (const buffer of buffers) key += `|${buffer.bufferId}:${buffer.path ?? ''}:${buffer.document.isDirty}:${buffer.preview}:${buffer.pinned}`;
+    if (this.#tabsReadCache !== undefined && this.#tabsReadCacheKey === key) return this.#tabsReadCache;
+    const tabs = Object.freeze(buffers.map((buffer) => Object.freeze({
       id: buffer.bufferId,
       label: buffer.path === undefined ? '[No Name]' : (buffer.path.split('/').pop() ?? buffer.path),
       dirty: buffer.document.isDirty,
@@ -335,6 +348,9 @@ export class WorkbenchSession implements VimSessionReader {
       pinned: buffer.pinned,
       active: buffer.bufferId === activeBufferId,
     })));
+    this.#tabsReadCache = tabs;
+    this.#tabsReadCacheKey = key;
+    return tabs;
   }
 
   /** Update an open buffer's display/save path after a coordinated file rename. */
@@ -508,6 +524,9 @@ export class WorkbenchSession implements VimSessionReader {
     if (this.#saveBuffer === undefined) return { ok: false, error: { kind: 'save-unavailable', bufferId: buffer.bufferId } };
     const saved = await this.#saveBuffer(this.bufferSnapshot(buffer));
     if (!saved.ok) return { ok: false, error: { kind: 'save-failed', bufferId: buffer.bufferId, message: saved.error } };
+    // An edit may have committed while the save above was in flight; discarding unconditionally
+    // here would drop it. Re-check dirtiness and fail (letting the caller re-prompt) instead.
+    if (buffer.document.isDirty) return { ok: false, error: { kind: 'dirty-buffer', bufferId: buffer.bufferId, choices: ['save', 'keep-open', 'discard'] } };
     return this.closeView(viewId, 'discard');
   }
 
@@ -541,11 +560,14 @@ export class WorkbenchSession implements VimSessionReader {
     if (this.#saveBuffer === undefined) return { ok: false, error: { kind: 'save-unavailable', bufferId } };
     const saved = await this.#saveBuffer(this.bufferSnapshot(buffer));
     if (!saved.ok) return { ok: false, error: { kind: 'save-failed', bufferId, message: saved.error } };
+    // An edit may have committed while the save above was in flight; discarding unconditionally
+    // here would drop it. Re-check dirtiness and fail (letting the caller re-prompt) instead.
+    if (buffer.document.isDirty) return { ok: false, error: { kind: 'dirty-buffer', bufferId, choices: ['save', 'keep-open', 'discard'] } };
     return this.closeBuffer(bufferId, 'discard');
   }
 
   /** Apply one versioned batch through the owned coordinator. Every view maps through the same change map. */
-  async applyTextEdits(viewId: ViewId, edits: readonly DocumentEdit[], undoGroup: UndoGroupId = defaultUndoGroup(), origin: EditOrigin = 'vim', focus = true): Promise<Result<{ readonly version: DocumentVersion; readonly editCount: number }, WorkbenchSessionFailure>> {
+  async applyTextEdits(viewId: ViewId, edits: readonly DocumentEdit[], undoGroup: UndoGroupId = this.defaultUndoGroup(), origin: EditOrigin = 'vim', focus = true): Promise<Result<{ readonly version: DocumentVersion; readonly editCount: number }, WorkbenchSessionFailure>> {
     const view = this.#views.get(viewId);
     if (view === undefined) return { ok: false, error: { kind: 'view-not-found', viewId } };
     const buffer = this.#buffers.get(view.bufferId);
@@ -594,7 +616,7 @@ export class WorkbenchSession implements VimSessionReader {
   }
 
   /** Apply a service proposal to an open buffer without stealing editor focus. */
-  async applyDocumentEdits(documentId: DocumentId, edits: readonly DocumentEdit[], undoGroup: UndoGroupId = defaultUndoGroup(), origin: EditOrigin = 'lsp'): Promise<Result<{ readonly version: DocumentVersion; readonly editCount: number }, WorkbenchSessionFailure>> {
+  async applyDocumentEdits(documentId: DocumentId, edits: readonly DocumentEdit[], undoGroup: UndoGroupId = this.defaultUndoGroup(), origin: EditOrigin = 'lsp'): Promise<Result<{ readonly version: DocumentVersion; readonly editCount: number }, WorkbenchSessionFailure>> {
     const buffer = this.#buffers.get(documentId);
     if (buffer === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId: documentId } };
     const viewId = buffer.viewIds.values().next().value;
@@ -883,18 +905,16 @@ export class WorkbenchSession implements VimSessionReader {
   }
 
   private newNodeId(prefix: string): string { return `${prefix}-${this.#nextNode++}`; }
+
+  private defaultUndoGroup(): UndoGroupId {
+    this.#nextUndoGroupSequence += 1;
+    return `workbench-${this.#nextUndoGroupSequence}` as UndoGroupId;
+  }
 }
 
 /** Buffer registry name used by integrations that do not need split methods. */
 export { WorkbenchSession as BufferRegistry };
 
-// Monotonic, not wall-clock: two edits applied within the same millisecond must still get
-// distinct default undo groups.
-let nextUndoGroupSequence = 0;
-function defaultUndoGroup(): UndoGroupId {
-  nextUndoGroupSequence += 1;
-  return `workbench-${nextUndoGroupSequence}` as UndoGroupId;
-}
 
 function createInitialSelection(snapshot: DocumentSnapshot, viewId: ViewId): Result<SelectionSet, { readonly kind: string }> {
   const id = `${viewId}:primary` as SelectionId;

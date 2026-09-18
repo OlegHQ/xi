@@ -5,15 +5,25 @@
 // own convenience methods). This guards the `subscribeChanges`-based sync added for that wiring.
 import { strict as assert } from 'node:assert';
 import { DirectoryDraft, type DirectoryDraftSourceEntry } from '../../packages/services/files/index';
-import type { Utf16Offset } from '../../packages/contracts/src/index';
+import type { DirectoryDraftDocumentOpener } from '../../packages/services/files/directory-draft';
+import { openTextDocument } from '../../packages/document/src/index';
+import type { DocumentId, Utf16Offset } from '../../packages/contracts/src/index';
 
 const entries: readonly DirectoryDraftSourceEntry[] = [
   { id: 'source-alpha', name: 'alpha.txt', path: '/workspace/alpha.txt' },
   { id: 'source-beta', name: 'beta.txt', path: '/workspace/beta.txt' },
 ];
 
+// DirectoryDraft (a service) never opens documents itself; this test stands in for the
+// workbench/composition root that owns the real document (docs/plan/01-architecture.md).
+const openDraftDocument: DirectoryDraftDocumentOpener = (id, text) => {
+  const opened = openTextDocument(id as DocumentId, new TextEncoder().encode(text), 41027, { fileFormat: 'unix' });
+  if (opened.kind !== 'editable') return { ok: false, error: `document open failed: ${opened.kind}` };
+  return { ok: true, value: opened.document };
+};
+
 function main(): void {
-  const created = DirectoryDraft.create('/workspace', entries);
+  const created = DirectoryDraft.create('/workspace', entries, openDraftDocument);
   assert.equal(created.ok, true);
   if (!created.ok) return;
   const draftInstance = created.value;

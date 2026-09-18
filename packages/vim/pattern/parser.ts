@@ -332,6 +332,14 @@ class Parser {
     }
     if (value === '\\') return this.parseEscapedLiteral(atBranchStart);
 
+    // Very-magic makes the position-atom prefix active without a backslash (nvim
+    // `\v%d65` on "ABC" matches "A"; `\va%[bc]` on "abc a" matches [0,3] and [4,5]).
+    // `%(` (non-capturing group) is intercepted above before reaching here.
+    if (value === '%' && this.magic === 'very-magic') {
+      this.index += 1;
+      return this.parsePositionAtom(start);
+    }
+
     if (value === '^' && this.magic !== 'very-nomagic' && (atBranchStart || this.magic === 'very-magic')) {
       this.index += 1;
       this.containsLineBoundary = true;
@@ -442,6 +450,10 @@ class Parser {
       return { kind: 'anchor', anchor: 'line-start', source: { start, end: this.index } };
     }
     if (escaped === '[' && (this.magic === 'nomagic' || this.magic === 'very-nomagic')) return this.parseCharacterClass(true, start);
+    // `/` has no special regex meaning in any magic mode, so `\/` is always literal
+    // `/` (nvim: `searchpos('a\/b')` matches literally regardless of delimiter); this
+    // also fixes `:s/a\/b/x/`, where the ex splitter passes `a\/b` through unchanged.
+    if (escaped === '/') return { kind: 'literal', value: '/', caseMode: this.caseMode, source: { start, end: this.index } };
     if (escaped === '^' || escaped === '$' || escaped === '.' || escaped === '[' || escaped === ']' || escaped === '*' || escaped === '+' || escaped === '?' || escaped === '=' || escaped === '{' || escaped === '}' || escaped === '(' || escaped === ')' || escaped === '|' || escaped === '~') {
       if (escaped === '~' && (this.magic === 'nomagic' || this.magic === 'very-nomagic')) {
         return this.tildeNode(start);

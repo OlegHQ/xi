@@ -1,6 +1,6 @@
 import type { Disposable, Result } from '../../../../packages/primitives/src/entrypoints/launch';
 import type { NodeFilesystemPort, NodeProcessPort } from '../../../../packages/platform/src/entrypoints/launch';
-import type { ExplorerFilesystemPort, ExplorerFailure } from '../../../../packages/services/src/entrypoints/launch';
+import type { ExplorerFilesystemPort, ExplorerFailure, ExplorerGitDecoration } from '../../../../packages/services/src/entrypoints/launch';
 import type { ApplyReplacementEditsFn, ReplaceServicePort, SearchServicePort, WorkbenchReplaceApplyPort, WorkbenchSearchBufferSource } from '../../../../packages/workbench/src/entrypoints/launch';
 import type { LaunchServices, GitServices } from './types';
 
@@ -20,7 +20,7 @@ export interface OptionalServicesWiringDeps {
   readonly processEnvironment: () => Readonly<Record<string, string>>;
   readonly notifySurfaceChange: () => void;
   readonly createExplorerFilesystem: (filesystem: NodeFilesystemPort, root: string, onChanged: () => void) => ExplorerFilesystemPort;
-  readonly createGitDecorationPort: (service: GitStatusService, root: string) => { read(path: string): Promise<Result<{ readonly state: 'modified' | 'staged' | 'untracked' | 'ignored' | 'conflicted'; readonly label: string; readonly colorToken: string } | undefined, ExplorerFailure>> };
+  readonly createGitDecorationPort: (service: GitStatusService, root: string, filesystem: { workspaceRelativePath(root: string, path: string): string | undefined }) => { read(path: string): Promise<Result<ExplorerGitDecoration | undefined, ExplorerFailure>> };
   readonly getExplorerFeature: () => {
     openNode(node: { readonly path: string; readonly kind: string }): void;
     attachTree(tree: ExplorerTree, controller: ExplorerNavigationController): Disposable;
@@ -32,21 +32,38 @@ export interface OptionalServicesWiringDeps {
   };
 }
 
+/** H2-4: the bundle `ensure()` resolves to. Every field is populated unconditionally inside
+ * `ensure()`'s async block, so once it resolves every field is genuinely present -- consumers
+ * that need these services take the whole resolved object (push injection, e.g. via
+ * `attachTree`/`attachServices`) instead of reading any field back through an independent
+ * nullable getter. */
+export interface OptionalServices {
+  readonly hostNavigation: HostNavigationController;
+  readonly explorerTree: ExplorerTree;
+  readonly explorerController: ExplorerNavigationController;
+  readonly explorerSubscription: Disposable;
+  readonly gitStatusService: GitStatusService;
+  readonly gitMutationCoordinator: GitMutationCoordinator;
+  readonly searchService: RealtimeSearchService;
+  readonly replaceService: WorkspaceReplaceService;
+  readonly expandSnippet: LaunchServices['expandSnippet'];
+  readonly SnippetSession: LaunchServices['SnippetSession'];
+  readonly executeLanguageCodeAction: LaunchServices['executeLanguageCodeAction'];
+}
+
 export interface OptionalServicesWiring {
-  ensure(): Promise<void>;
-  awaitPending(): Promise<void>;
+  ensure(): Promise<OptionalServices>;
+  awaitPending(): Promise<OptionalServices | undefined>;
   scheduleGitRefresh(delayMilliseconds?: number): void;
-  readonly hostNavigation: HostNavigationController | undefined;
-  readonly explorerTree: ExplorerTree | undefined;
-  readonly explorerController: ExplorerNavigationController | undefined;
-  readonly explorerSubscription: Disposable | undefined;
-  readonly gitStatusService: GitStatusService | undefined;
-  readonly gitMutationCoordinator: GitMutationCoordinator | undefined;
-  readonly searchService: RealtimeSearchService | undefined;
-  readonly replaceService: WorkspaceReplaceService | undefined;
-  readonly expandSnippet: LaunchServices['expandSnippet'] | undefined;
-  readonly SnippetSession: LaunchServices['SnippetSession'] | undefined;
-  readonly executeLanguageCodeAction: LaunchServices['executeLanguageCodeAction'] | undefined;
+  /** Clears the coalesced git-refresh timer, unsubscribes from git status changes and disposes
+   * gitStatusService/gitMutationCoordinator -- none of which main.ts's teardown previously
+   * touched. Safe to call whether or not `ensure()` ever resolved. */
+  dispose(): void;
+  /** The resolved bundle once `ensure()` has completed at least once; `undefined` until then.
+   * One typed object pushed atomically on load, in place of the twelve independently-updated
+   * nullable getters this replaced -- a field is never individually stale relative to the
+   * others because the whole object only exists once every field does. */
+  readonly current: OptionalServices | undefined;
 }
 
 /** Git status + Explorer tree + realtime search all become reachable through one lazy dynamic
@@ -65,13 +82,15 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
   let explorerSubscription: Disposable | undefined;
   let gitStatusService: GitStatusService | undefined;
   let gitMutationCoordinator: GitMutationCoordinator | undefined;
+  let gitStatusSubscription: Disposable | undefined;
   let gitWatchRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let searchService: RealtimeSearchService | undefined;
   let replaceService: WorkspaceReplaceService | undefined;
   let expandSnippet: LaunchServices['expandSnippet'] | undefined;
   let SnippetSession: LaunchServices['SnippetSession'] | undefined;
   let executeLanguageCodeAction: LaunchServices['executeLanguageCodeAction'] | undefined;
-  let initialization: Promise<void> | undefined;
+  let current: OptionalServices | undefined;
+  let initialization: Promise<OptionalServices> | undefined;
 
   function scheduleGitRefresh(delayMilliseconds = 500): void {
     if (gitStatusService === undefined || gitWatchRefreshTimer !== undefined) return;
@@ -91,7 +110,7 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
     explorerTree?.redecorate();
   }
 
-  function ensure(): Promise<void> {
+  function ensure(): Promise<OptionalServices> {
     if (initialization !== undefined) return initialization;
     initialization = (async () => {
       const [services, git] = await Promise.all([
@@ -109,7 +128,7 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
       } = services;
       hostNavigation = new HostNavigationController(createCtagsNavigationHost({ filesystem: deps.filesystem, workspaceRoot: deps.workspaceRoot, fileUri: deps.fileUri }));
       const nextGitStatus = new git.GitStatusService({ process: new deps.ProcessPort(), root: deps.workspaceRoot, env: deps.processEnvironment() });
-      nextGitStatus.subscribe(() => {
+      gitStatusSubscription = nextGitStatus.subscribe(() => {
         refreshExplorerGitDecorations();
         deps.notifySurfaceChange();
       });
@@ -118,7 +137,7 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
       void nextGitStatus.refresh();
       const nextExplorer = new ExplorerTree(
         deps.createExplorerFilesystem(deps.filesystem, deps.workspaceRoot, () => scheduleGitRefresh()),
-        { git: deps.createGitDecorationPort(nextGitStatus, deps.workspaceRoot) },
+        { git: deps.createGitDecorationPort(nextGitStatus, deps.workspaceRoot, deps.filesystem) },
       );
       const explorerRoot = nextExplorer.addRoot({ id: 'workspace', label: deps.workspaceRoot, path: deps.workspaceRoot });
       if (!explorerRoot.ok) throw new Error(`xi-explorer-root:${explorerRoot.error.kind}`);
@@ -140,24 +159,29 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
       SnippetSession = services.SnippetSession;
       executeLanguageCodeAction = services.executeLanguageCodeAction;
       deps.notifySurfaceChange();
+      // Every field above is assigned unconditionally in this block, so by the time `ensure()`
+      // resolves the bundle is fully populated; this is the one value pushed to consumers.
+      current = {
+        hostNavigation, explorerTree, explorerController, explorerSubscription,
+        gitStatusService, gitMutationCoordinator, searchService, replaceService,
+        expandSnippet, SnippetSession, executeLanguageCodeAction,
+      };
+      return current;
     })();
     return initialization;
   }
 
   return {
     ensure,
-    awaitPending: () => initialization ?? Promise.resolve(),
+    awaitPending: () => initialization ?? Promise.resolve(undefined),
     scheduleGitRefresh,
-    get hostNavigation() { return hostNavigation; },
-    get explorerTree() { return explorerTree; },
-    get explorerController() { return explorerController; },
-    get explorerSubscription() { return explorerSubscription; },
-    get gitStatusService() { return gitStatusService; },
-    get gitMutationCoordinator() { return gitMutationCoordinator; },
-    get searchService() { return searchService; },
-    get replaceService() { return replaceService; },
-    get expandSnippet() { return expandSnippet; },
-    get SnippetSession() { return SnippetSession; },
-    get executeLanguageCodeAction() { return executeLanguageCodeAction; },
+    dispose(): void {
+      if (gitWatchRefreshTimer !== undefined) { clearTimeout(gitWatchRefreshTimer); gitWatchRefreshTimer = undefined; }
+      gitStatusSubscription?.dispose();
+      gitStatusSubscription = undefined;
+      gitMutationCoordinator?.dispose();
+      gitStatusService?.dispose();
+    },
+    get current() { return current; },
   };
 }

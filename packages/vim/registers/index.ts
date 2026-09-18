@@ -486,12 +486,28 @@ function appendVectorToExisting(
   return { ok: true, value: Object.freeze({ fragments: Object.freeze(fragments), primaryIndex: incoming.primaryIndex }) };
 }
 
+// nvim (`.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE`):
+//   `"ayiw` "foo" + `"Ayiw` "baz" -> getreg('a') === 'foobaz', type 'v' (charwise append
+//     merges onto the same logical line, it does not become two lines).
+//   `"ayiw` "foo" + `"Ayy` "baz qux\n" -> getreg('a') === "foo\nbaz qux\n", type 'V'
+//     (mixed charwise/linewise append always promotes the result to linewise).
+//   `"ayy` "foo bar\n" + `"Ayiw` "baz" -> getreg('a') === "foo bar\nbaz\n", type 'V'.
 function appendValues(left: VimRegisterValue, right: VimRegisterValue): VimRegisterValue {
-  if (left.type === right.type && left.type === 'blockwise') {
+  if (left.type === 'blockwise' && right.type === 'blockwise') {
     return Object.freeze({ lines: Object.freeze([...left.lines, ...right.lines]), type: 'blockwise', blockWidth: Math.max(left.blockWidth ?? 1, right.blockWidth ?? 1) });
   }
-  if (left.type === right.type) return Object.freeze({ lines: Object.freeze([...left.lines, ...right.lines]), type: left.type });
-  return Object.freeze({ lines: Object.freeze([...left.lines, ...right.lines]), type: 'characterwise' });
+  if (left.type === 'linewise' && right.type === 'linewise') {
+    return Object.freeze({ lines: Object.freeze([...left.lines, ...right.lines]), type: 'linewise' });
+  }
+  if (left.type === 'characterwise' && right.type === 'characterwise') {
+    const leftLines = left.lines.length === 0 ? [''] : left.lines;
+    const rightLines = right.lines.length === 0 ? [''] : right.lines;
+    const joinedEdge = (leftLines[leftLines.length - 1] ?? '') + (rightLines[0] ?? '');
+    const merged = [...leftLines.slice(0, -1), joinedEdge, ...rightLines.slice(1)];
+    return Object.freeze({ lines: Object.freeze(merged), type: 'characterwise' });
+  }
+  // Any charwise/linewise mix (or a mismatched blockwise side) promotes to linewise.
+  return Object.freeze({ lines: Object.freeze([...left.lines, ...right.lines]), type: 'linewise' });
 }
 
 export type VimPutCommand = 'p' | 'P' | 'gp' | 'gP';
@@ -694,7 +710,7 @@ function prepareCharacterPut(context: VimPutContext, value: VimRegisterValue): R
   const insertedEnd = before + text.length;
   const targetCursor = context.command === 'gp' || context.command === 'gP'
     ? insertedEnd
-    : Math.max(insertedStart, insertedEnd - 1);
+    : Math.max(insertedStart, insertedEnd - lastCodePointWidth(text));
   return { ok: true, value: Object.freeze({ edits: Object.freeze([edit]), cursor: targetCursor as Utf16Offset, insertedStart: insertedStart as Utf16Offset, insertedEnd: insertedEnd as Utf16Offset, register: value }) };
 }
 
@@ -731,6 +747,7 @@ function prepareBlockPut(context: VimPutContext, value: VimRegisterValue): Resul
   const edits: DocumentEdit[] = [];
   let firstStart = logicalColumn;
   let lastEnd = logicalColumn;
+  let lastText = '';
   for (let index = 0; index < lines.length; index += 1) {
     const targetLine = (line.value as number) + index;
     const targetStart = context.snapshot.lineStartOffset(targetLine as LineIndex);
@@ -745,8 +762,9 @@ function prepareBlockPut(context: VimPutContext, value: VimRegisterValue): Resul
     edits.push(Object.freeze({ start: at as Utf16Offset, end: at as Utf16Offset, text: `${padding}${text}` }));
     if (index === 0) firstStart = at;
     lastEnd = at + text.length;
+    lastText = text;
   }
-  const targetCursor = context.command === 'gp' || context.command === 'gP' ? lastEnd : Math.max(firstStart, lastEnd - 1);
+  const targetCursor = context.command === 'gp' || context.command === 'gP' ? lastEnd : Math.max(firstStart, lastEnd - lastCodePointWidth(lastText));
   return { ok: true, value: Object.freeze({ edits: Object.freeze(edits), cursor: targetCursor as Utf16Offset, insertedStart: firstStart as Utf16Offset, insertedEnd: lastEnd as Utf16Offset, register: value }) };
 }
 
@@ -765,6 +783,7 @@ function prepareVisualPut(context: VimPutContext, value: VimRegisterValue): Resu
       const edits: DocumentEdit[] = [];
       let insertedStart = Number.MAX_SAFE_INTEGER;
       let insertedEnd = 0;
+      let lastReplacement = '';
       const width = selection.lastColumn - selection.firstColumn + 1;
       for (let lineIndex = selection.firstLine; lineIndex <= selection.lastLine; lineIndex += 1) {
         const start = context.snapshot.lineStartOffset(lineIndex as LineIndex);
@@ -779,18 +798,46 @@ function prepareVisualPut(context: VimPutContext, value: VimRegisterValue): Resu
         edits.push(Object.freeze({ start: at as Utf16Offset, end: end as Utf16Offset, text: replacement }));
         insertedStart = Math.min(insertedStart, at);
         insertedEnd = Math.max(insertedEnd, at + replacement.length);
+        lastReplacement = replacement;
       }
-      const targetCursor = context.command === 'gp' || context.command === 'gP' ? insertedEnd : Math.max(insertedStart, insertedEnd - 1);
+      const targetCursor = context.command === 'gp' || context.command === 'gP' ? insertedEnd : Math.max(insertedStart, insertedEnd - lastCodePointWidth(lastReplacement));
       return { ok: true, value: Object.freeze({ edits: Object.freeze(edits), cursor: targetCursor as Utf16Offset, insertedStart: insertedStart as Utf16Offset, insertedEnd: insertedEnd as Utf16Offset, register: value }) };
     }
-    const replacement = value.lines.join('\n');
+    const replacement = visualPutPayload(value);
     const edit = Object.freeze({ start: selection.start, end: selection.end, text: replacement });
     const end = (selection.start as number) + replacement.length;
-    return { ok: true, value: Object.freeze({ edits: Object.freeze([edit]), cursor: (context.command === 'gp' || context.command === 'gP' ? end : Math.max(selection.start as number, end - 1)) as Utf16Offset, insertedStart: selection.start, insertedEnd: end as Utf16Offset, register: value }) };
+    return { ok: true, value: Object.freeze({ edits: Object.freeze([edit]), cursor: (context.command === 'gp' || context.command === 'gP' ? end : Math.max(selection.start as number, end - visualPutCursorBack(replacement))) as Utf16Offset, insertedStart: selection.start, insertedEnd: end as Utf16Offset, register: value }) };
   }
-  const text = value.lines.join('\n');
+  // nvim (`.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE
+  // -c 'normal jyyk0vep'` on "hello world\nLINE\n"): pasting a linewise register over a
+  // characterwise visual selection splits the surrounding text onto its own lines --
+  // "hello" -> "\nLINE\n" -- it never inlines the register text into the selected line.
+  const text = visualPutPayload(value);
   const end = (selection.start as number) + text.length;
-  return { ok: true, value: Object.freeze({ edits: Object.freeze([{ start: selection.start, end: selection.end, text }]), cursor: (context.command === 'gp' || context.command === 'gP' ? end : Math.max(selection.start as number, end - 1)) as Utf16Offset, insertedStart: selection.start, insertedEnd: end as Utf16Offset, register: value }) };
+  return { ok: true, value: Object.freeze({ edits: Object.freeze([{ start: selection.start, end: selection.end, text }]), cursor: (context.command === 'gp' || context.command === 'gP' ? end : Math.max(selection.start as number, end - visualPutCursorBack(text))) as Utf16Offset, insertedStart: selection.start, insertedEnd: end as Utf16Offset, register: value }) };
+}
+
+function visualPutPayload(value: VimRegisterValue): string {
+  const text = value.lines.join('\n');
+  return value.type === 'linewise' ? `\n${text}\n` : text;
+}
+
+/** How many UTF-16 units to step back from the end of `text` to land on the start of its
+ * last code point, without splitting a surrogate pair. Zero-length text stays put. */
+function lastCodePointWidth(text: string): number {
+  if (text.length === 0) return 0;
+  const last = text.charCodeAt(text.length - 1);
+  const prev = text.length >= 2 ? text.charCodeAt(text.length - 2) : 0;
+  return last >= 0xdc00 && last <= 0xdfff && prev >= 0xd800 && prev <= 0xdbff ? 2 : 1;
+}
+
+/** Like `lastCodePointWidth`, but a trailing linewise newline is skipped first so the
+ * cursor lands on the register text's last code point, not the newline itself. */
+function visualPutCursorBack(payload: string): number {
+  if (payload.length === 0) return 0;
+  const end = payload.endsWith('\n') ? payload.length - 1 : payload.length;
+  if (end === 0) return payload.length;
+  return (payload.length - end) + lastCodePointWidth(payload.slice(0, end));
 }
 
 function nextCharacterBoundary(snapshot: DocumentSnapshot, offset: number): number {
@@ -806,12 +853,13 @@ function nextCharacterBoundary(snapshot: DocumentSnapshot, offset: number): numb
   return offset + (scalar !== undefined && scalar > 0xffff ? 2 : 1);
 }
 
+// D12: a fresh Intl.Segmenter per call is expensive; hoist it once at module scope.
+const GRAPHEME_CLUSTER_SEGMENTER = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('und', { granularity: 'grapheme' }) : null;
+
 function firstGraphemeCluster(text: string): string | null {
-  if (typeof Intl.Segmenter === 'function') {
-    const first = [...new Intl.Segmenter('und', { granularity: 'grapheme' }).segment(text)][0];
-    return first?.segment ?? null;
-  }
-  return null;
+  if (GRAPHEME_CLUSTER_SEGMENTER === null) return null;
+  const first = [...GRAPHEME_CLUSTER_SEGMENTER.segment(text)][0];
+  return first?.segment ?? null;
 }
 
 function lineEndOffset(snapshot: DocumentSnapshot, line: number): Result<number, DocumentReadFailure> {

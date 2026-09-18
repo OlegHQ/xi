@@ -10,6 +10,14 @@ import { defaultCellWidthPolicy, type CellWidthPolicy } from '../../layout/src/i
 
 export type VimWordMotionKey = 'w' | 'W' | 'b' | 'B' | 'e' | 'E' | 'ge' | 'gE';
 
+/** C2: exclude the document model's phantom trailing-newline "line" — see motions/index.ts. */
+function wordVimLineCount(snapshot: DocumentSnapshot): number {
+  const length = snapshot.lengthUtf16 as number;
+  if (length === 0) return snapshot.lineCount;
+  const last = snapshot.slice((length - 1) as Utf16Offset, length as Utf16Offset);
+  return last.ok && last.value === '\n' ? snapshot.lineCount - 1 : snapshot.lineCount;
+}
+
 export interface VimWordMotionCursor {
   readonly documentVersion: DocumentVersion;
   readonly offset: Utf16Offset;
@@ -354,17 +362,17 @@ function nextNonblank(
 function nextUnit(context: WordContext, current: WordUnit): Result<WordUnit | null, VimWordMotionFailure> {
   if (current.kind === 'newline') {
     const followingLine = current.line.index + 1;
-    if (followingLine >= context.snapshot.lineCount) return { ok: true, value: null };
+    if (followingLine >= wordVimLineCount(context.snapshot)) return { ok: true, value: null };
     const bounds = getLineBounds(context, followingLine);
     if (!bounds.ok) return bounds;
     return firstUnit(context, bounds.value);
   }
   if (current.kind === 'empty') {
-    if (current.line.index + 1 >= context.snapshot.lineCount) return { ok: true, value: null };
+    if (current.line.index + 1 >= wordVimLineCount(context.snapshot)) return { ok: true, value: null };
     return newlineUnit(context, current.line);
   }
   if (current.end < current.line.end) return unitAt(context, current.line, current.end);
-  if (current.line.index + 1 >= context.snapshot.lineCount) return { ok: true, value: null };
+  if (current.line.index + 1 >= wordVimLineCount(context.snapshot)) return { ok: true, value: null };
   return newlineUnit(context, current.line);
 }
 
@@ -403,7 +411,7 @@ function lastUnit(context: WordContext, line: LineBounds): Result<WordUnit, VimW
 }
 
 function newlineUnit(context: WordContext, line: LineBounds): Result<WordUnit | null, VimWordMotionFailure> {
-  if (line.index + 1 >= context.snapshot.lineCount) return { ok: true, value: null };
+  if (line.index + 1 >= wordVimLineCount(context.snapshot)) return { ok: true, value: null };
   return {
     ok: true,
     value: { kind: 'newline', line, start: line.end, end: line.end + 1, wordClass: 'blank' },

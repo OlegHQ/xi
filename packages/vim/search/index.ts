@@ -96,7 +96,8 @@ export type VimSearchFailure =
   | { readonly kind: 'invalid-substitute-command'; readonly reason: string; readonly sourceOffset: number }
   | { readonly kind: 'unsupported-replacement'; readonly sourceOffset: number; readonly escape: string }
   | { readonly kind: 'trailing-replacement-backslash'; readonly sourceOffset: number }
-  | { readonly kind: 'confirmation-required' };
+  | { readonly kind: 'confirmation-required' }
+  | { readonly kind: 'cancelled' };
 
 export type VimSearchOutcome =
   | { readonly kind: 'found'; readonly match: VimSearchMatch; readonly view: VimSearchView; readonly state: VimSearchState }
@@ -123,7 +124,15 @@ export interface VimOperatorSearchRange {
   readonly end: Utf16Offset;
   readonly target: Utf16Offset;
   readonly direction: VimSearchDirection;
-  readonly inclusive: true;
+  /** A plain `/pat<CR>` is exclusive; only an `/e` search-offset (matched end) is
+   * inclusive (nvim: `d/def<CR>` on "abc def" leaves "def"; `d/def/e<CR>` deletes it too). */
+  readonly inclusive: boolean;
+  /** A numeric line search-offset (`/pat/+1`) makes the operator motion linewise
+   * (nvim: `d/two/+1<CR>` on "one\ntwo\nthree" from line 1 deletes all three lines).
+   * The caller's range normalizer (packages/vim/ranges, packages/vim/multi) must
+   * expand `start`/`end` to whole lines when this is true; `start`/`end` here are
+   * still plain offsets within the origin/target lines. */
+  readonly linewise: boolean;
 }
 
 export interface VimOperatorSearchCommit {
@@ -251,7 +260,16 @@ export function beginVimSearch(
   }
 }
 
-/** Synchronous convenience for short searches. */
+/**
+ * Synchronous convenience for short searches only. An adversarial pattern (catastrophic
+ * backtracking, e.g. `\v(x)@<=(a+)+b`) can still burn its whole step budget in one
+ * uninterrupted call even though it is bounded (250,000 steps measured at ~170ms on
+ * this budget); that is far past an interactive keystroke's latency budget. The
+ * interactive `/`, `?`, `n`, `N` path must use {@link searchVimBufferInteractive}
+ * instead, which caps each synchronous slice via {@link interactiveSearchStepSlice}
+ * and yields the event loop between slices using the resumable preview this
+ * function skips past.
+ */
 export function searchVimBuffer(
   snapshot: DocumentSnapshot,
   view: VimSearchView,
@@ -262,6 +280,40 @@ export function searchVimBuffer(
   if (!preview.ok) return preview;
   const progress = preview.value.resume(Number.MAX_SAFE_INTEGER);
   if (!progress.ok) return progress;
+  return preview.value.commit(snapshot);
+}
+
+/** Steps per synchronous {@link VimSearchPreview.resume} slice for the interactive
+ * search path. A pattern engine "step" is not uniform O(1) work (captures/backtrack
+ * state scale with match depth), so this is calibrated conservatively against the
+ * adversarial `\v(x)@<=(a+)+b` pattern rather than against the cheap common case;
+ * see the perf test for measured slice latency. */
+export const interactiveSearchStepSlice = 300;
+
+/**
+ * Bounded, yielding equivalent of {@link searchVimBuffer} for the interactive search
+ * path: resumes the pattern evaluation in {@link interactiveSearchStepSlice}-sized
+ * synchronous slices, yielding the event loop (via a microtask) between slices so no
+ * single synchronous stretch of regex stepping can stall input, however pathological
+ * the pattern. `signal.aborted` lets the caller cancel (e.g. the user typed another
+ * key) without waiting for the current slice's search to finish.
+ */
+export async function searchVimBufferInteractive(
+  snapshot: DocumentSnapshot,
+  view: VimSearchView,
+  state: VimSearchState,
+  request: VimSearchRequest,
+  signal?: { readonly aborted: boolean },
+): Promise<Result<VimSearchCommit, VimSearchFailure>> {
+  const preview = beginVimSearch(snapshot, view, state, request);
+  if (!preview.ok) return preview;
+  for (;;) {
+    if (signal?.aborted === true) return { ok: false, error: { kind: 'cancelled' } };
+    const progress = preview.value.resume(interactiveSearchStepSlice);
+    if (!progress.ok) return progress;
+    if (progress.value.kind === 'complete') break;
+    await Promise.resolve();
+  }
   return preview.value.commit(snapshot);
 }
 
@@ -281,16 +333,27 @@ export function searchVimOperator(
   }
   const resolved = searchVimBuffer(snapshot, view, state, request);
   if (!resolved.ok) return resolved;
-  if (resolved.value.outcome.kind !== 'found') return { ok: true, value: { search: resolved.value, range: { start: view.cursor, end: view.cursor, target: view.cursor, direction: request.direction ?? 'forward', inclusive: true } } };
+  if (resolved.value.outcome.kind !== 'found') {
+    return { ok: true, value: { search: resolved.value, range: { start: view.cursor, end: view.cursor, target: view.cursor, direction: request.direction ?? 'forward', inclusive: false, linewise: false } } };
+  }
   const target = resolved.value.outcome.match.cursor as number;
   const origin = view.cursor as number;
+  const offsetKind = resolved.value.state.offset?.kind;
+  // A plain search (no offset, or a start/line-start/line-end offset) is exclusive
+  // charwise; only an `/e` (matched-end) offset is inclusive; a numeric line offset
+  // makes the motion linewise (see VimOperatorSearchRange). nvim: `d/def<CR>` on
+  // "abc def" leaves "def" (exclusive); `d/def/e<CR>` deletes it too (inclusive);
+  // `d/two/+1<CR>` on "one\ntwo\nthree" deletes all three lines (linewise).
+  const linewise = offsetKind === 'line';
+  const inclusive = offsetKind === 'end';
   const start = Math.min(origin, target);
-  const end = Math.min(snapshot.lengthUtf16, nextBoundary(snapshot, Math.max(origin, target)));
+  const rawEnd = Math.max(origin, target);
+  const end = inclusive ? Math.min(snapshot.lengthUtf16, nextBoundary(snapshot, rawEnd)) : rawEnd;
   return {
     ok: true,
     value: Object.freeze({
       search: resolved.value,
-      range: Object.freeze({ start: start as Utf16Offset, end: Math.max(start, end) as Utf16Offset, target: target as Utf16Offset, direction: resolved.value.outcome.match.direction, inclusive: true }),
+      range: Object.freeze({ start: start as Utf16Offset, end: Math.max(start, end) as Utf16Offset, target: target as Utf16Offset, direction: resolved.value.outcome.match.direction, inclusive, linewise }),
     }),
   };
 }
@@ -349,7 +412,7 @@ export function parseVimSubstituteCommand(
   if (!replacementPart.ok) return replacementPart;
   index = replacementPart.value.next;
   const flags = command.slice(index);
-  const allowed = new Set(['g', 'c', 'e', 'n', 'p', '#', 'l', 'i', 'I']);
+  const allowed = new Set(['g', 'c', 'e', 'n', 'p', '#', 'l', 'i', 'I', 'r', '&']);
   const seen = new Set<string>();
   for (let flagIndex = 0; flagIndex < flags.length; flagIndex += 1) {
     const flag = flags[flagIndex];
@@ -374,8 +437,13 @@ export function prepareVimSubstitute(
   }
   const flags = request.flags ?? '';
   const flagSet = new Set(flags);
+  // `r` (reuse last *search* pattern) and `&` (keep previous :s flags) are
+  // resolved by the ex-command layer (packages/vim/ex/index.ts prepareSubstitute),
+  // which tracks the separate last-substitute {pattern,replacement,flags} needed
+  // to distinguish them from a plain empty-pattern `:s`; here they are simply
+  // accepted as valid flag letters with no further effect of their own.
   for (const flag of flagSet) {
-    if (!'gce n p#liI'.replace(' ', '').includes(flag)) return { ok: false, error: { kind: 'invalid-substitute-command', reason: `invalid-flag:${flag}`, sourceOffset: 0 } };
+    if (!'gcenp#liIr&'.includes(flag)) return { ok: false, error: { kind: 'invalid-substitute-command', reason: `invalid-flag:${flag}`, sourceOffset: 0 } };
   }
   if (flagSet.has('c') && request.confirm === undefined) return { ok: false, error: { kind: 'confirmation-required' } };
   const pattern = request.pattern.length === 0 ? state.pattern : request.pattern;
@@ -445,7 +513,10 @@ export function prepareVimSubstitute(
     direction: 'forward',
     lastMatch: selected.at(-1) ?? state.lastMatch,
     previousReplacement: request.replacement,
-    fullWord: state.fullWord,
+    // `:s` never carries a `\<...\>` whole-word constraint (nvim's `:s` pattern
+    // is used as-is by a later `n`/`N`); a prior `*`/`#` must not leak its
+    // fullWord flag onto this unrelated pattern.
+    fullWord: false,
   });
   return {
     ok: true,
@@ -482,6 +553,12 @@ function resolveRequest(
   switch (request.command) {
     case 'search':
       if (pattern.length === 0) { pattern = state.pattern ?? ''; fullWord = state.fullWord; }
+      // The `?` command's own delimiter is `?`; nvim's command-line reader strips a
+      // backslash-escaped delimiter to a literal char before the regex engine ever
+      // sees it (`\?` there never means "0-or-1", unlike a `?` search offset already
+      // stripped by nvim: :s?a\?b?X? -> literal 'a?b'). `/` needs no such handling: a
+      // bare `\/` is always literal in the engine, fixed once in the pattern parser.
+      if (pattern.length > 0 && direction === 'backward') pattern = stripDelimiterEscape(pattern, '?');
       break;
     case 'next':
       pattern = state.pattern ?? '';
@@ -540,6 +617,10 @@ function selectOutcome(
   const count = request.count ?? 1;
   const candidates = matches.filter((match) => !fullWord || isWholeWordMatch(snapshot, match));
   let position = initialView.cursor as number;
+  // Per-iteration, not global: a `{count}n` where the file has exactly one match
+  // wraps around and lands on it again for every one of `count` iterations (nvim
+  // `?a\?b?`-style repeated wrap). Scoping `wrapped` to the whole loop would make
+  // the second iteration's wrap look like "we already wrapped" and fail the search.
   let wrapped = false;
   let chosen: PatternMatch | undefined;
   // Rebuilt from scratch (not `{ ...initialState }`) so a resolved `offset` of
@@ -554,12 +635,13 @@ function selectOutcome(
     ...(offset === undefined ? {} : { offset }),
   });
   for (let iteration = 0; iteration < count; iteration += 1) {
+    let iterationWrapped = false;
     const found = nextCandidate(candidates, position, direction);
     if (found === undefined) {
-      if (request.wrapscan === false || wrapped) {
-        return { ok: true, value: { kind: 'no-match', reason: request.wrapscan === false ? 'no-wrap' : 'target-not-found', view: initialView, state: noMatchState() } };
+      if (request.wrapscan === false) {
+        return { ok: true, value: { kind: 'no-match', reason: 'no-wrap', view: initialView, state: noMatchState() } };
       }
-      wrapped = true;
+      iterationWrapped = true;
       position = direction === 'forward' ? -1 : snapshot.lengthUtf16 + 1;
       const wrappedFound = nextCandidate(candidates, position, direction);
       if (wrappedFound === undefined) {
@@ -567,6 +649,7 @@ function selectOutcome(
       }
       chosen = wrappedFound;
     } else chosen = found;
+    wrapped = iterationWrapped;
     position = direction === 'forward'
       ? advanceAfterMatch(snapshot, chosen, direction)
       : (chosen.start as number);
@@ -670,6 +753,22 @@ function isWholeWordMatch(snapshot: DocumentSnapshot, match: PatternMatch): bool
   const before = beforeText.length > 0 ? previousCodePoint(beforeText, beforeText.length)?.codePoint : undefined;
   const after = afterText.length > 0 ? afterText.codePointAt(0) : undefined;
   return (before === undefined || !isWordCodePoint(before)) && (after === undefined || !isWordCodePoint(after));
+}
+
+/** Converts a backslash-escaped occurrence of `delimiter` to the bare literal
+ * character, the same unescaping nvim's command-line reader does for the
+ * delimiter of a `/`/`?`/`:s` command before the pattern reaches the regex engine. */
+function stripDelimiterEscape(pattern: string, delimiter: string): string {
+  let output = '';
+  for (let index = 0; index < pattern.length; index += 1) {
+    if (pattern[index] === '\\' && pattern[index + 1] === delimiter) {
+      output += delimiter;
+      index += 1;
+      continue;
+    }
+    output += pattern[index];
+  }
+  return output;
 }
 
 /** Build a `\V` (very-nomagic) literal pattern matching `value` verbatim, for `*`/`#`

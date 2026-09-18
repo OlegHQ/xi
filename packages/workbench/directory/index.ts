@@ -181,6 +181,13 @@ export class DirectoryDraftController {
     this.#options.notifySurfaceChange();
   }
 
+  /** Releases every open draft. Callers close review focus and stop tracking documents;
+   * this does not touch the workbench-owned session/document lifecycle itself. */
+  dispose(): void {
+    this.#activeReview = undefined;
+    this.#drafts.clear();
+  }
+
   async #applyActiveReview(documentId: DocumentId): Promise<void> {
     const { applyPlan, filesystem, onError, marker, notifySurfaceChange } = this.#options;
     const draft = this.#drafts.get(documentId);

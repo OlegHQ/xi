@@ -401,6 +401,8 @@ const GRAPHEME_BOUNDARY_SEGMENTER = (Intl as typeof Intl & {
     _options?: { readonly granularity: 'grapheme' },
   ) => { segment(value: string): Iterable<{ readonly index: number; readonly segment: string }> };
 }).Segmenter;
+const GRAPHEME_BOUNDARY_SEGMENTER_INSTANCE = typeof GRAPHEME_BOUNDARY_SEGMENTER === 'function'
+  ? new GRAPHEME_BOUNDARY_SEGMENTER(undefined, { granularity: 'grapheme' }) : undefined;
 
 const GRAPHEME_WINDOW_BASE = 64;
 
@@ -439,8 +441,8 @@ function graphemeBoundariesOnLine(
     for (let index = from; index < to; index += 1) result.push({ start: index, end: index + 1 });
     return success(Object.freeze(result));
   }
-  const segmenter = GRAPHEME_BOUNDARY_SEGMENTER;
-  if (typeof segmenter !== 'function') return failure({ kind: 'document-read-failed' });
+  const segmenter = GRAPHEME_BOUNDARY_SEGMENTER_INSTANCE;
+  if (segmenter === undefined) return failure({ kind: 'document-read-failed' });
   let backwardWindow = backwardNeed === 0 ? 0 : GRAPHEME_WINDOW_BASE;
   let forwardWindow = forwardNeed === 0 ? 0 : GRAPHEME_WINDOW_BASE;
   for (;;) {
@@ -449,7 +451,7 @@ function graphemeBoundariesOnLine(
     const text = snapshot.slice(windowStart as Utf16Offset, windowEnd as Utf16Offset);
     if (!text.ok) return failure({ kind: 'document-read-failed' });
     const result: GraphemeBoundary[] = [];
-    for (const part of new segmenter(undefined, { granularity: 'grapheme' }).segment(text.value)) {
+    for (const part of segmenter.segment(text.value)) {
       const start = windowStart + part.index;
       result.push({ start, end: start + part.segment.length });
     }
@@ -463,11 +465,29 @@ function graphemeBoundariesOnLine(
   }
 }
 
+// nvim (`.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE -c
+// 'normal g~~'` on "straße"): "STRAẞE" -- ß maps to U+1E9E (a single code point), never
+// JS's full-mapping "SS", which would desync per-code-point offsets in the rest of the
+// transformed range.
+const UPPER_CASE_OVERRIDES: Readonly<Record<string, string>> = Object.freeze({ ß: 'ẞ' });
+
+function simpleUpperCase(character: string): string {
+  const overridden = UPPER_CASE_OVERRIDES[character];
+  if (overridden !== undefined) return overridden;
+  const upper = character.toLocaleUpperCase('en-US');
+  return [...upper].length === 1 ? upper : character;
+}
+
+function simpleLowerCase(character: string): string {
+  const lower = character.toLocaleLowerCase('en-US');
+  return [...lower].length === 1 ? lower : character;
+}
+
 function swapCase(value: string): string {
   const parts: string[] = [];
   for (const character of value) {
-    const lower = character.toLocaleLowerCase('en-US');
-    const upper = character.toLocaleUpperCase('en-US');
+    const lower = simpleLowerCase(character);
+    const upper = simpleUpperCase(character);
     parts.push(character === lower && character !== upper ? upper
       : character === upper && character !== lower ? lower
         : character);
@@ -501,10 +521,9 @@ function isSafeOffset(snapshot: DocumentSnapshot, offset: number): boolean {
 }
 
 function isOneGrapheme(value: string): boolean {
-  const segmenter = (Intl as typeof Intl & { readonly Segmenter?: new (_locales?: string | readonly string[], _options?: { readonly granularity: 'grapheme' }) => { segment(value: string): Iterable<unknown> } }).Segmenter;
-  if (typeof segmenter !== 'function' || value.length === 0) return false;
+  if (GRAPHEME_BOUNDARY_SEGMENTER_INSTANCE === undefined || value.length === 0) return false;
   let count = 0;
-  for (const _part of new segmenter(undefined, { granularity: 'grapheme' }).segment(value)) count += 1;
+  for (const _part of GRAPHEME_BOUNDARY_SEGMENTER_INSTANCE.segment(value)) count += 1;
   return count === 1;
 }
 

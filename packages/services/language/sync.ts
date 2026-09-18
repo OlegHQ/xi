@@ -409,8 +409,15 @@ export class LanguageDocumentSync {
       }
       return ok();
     } catch (error: unknown) {
+      // Restore the edits this attempt dropped from state.pending/pendingBytes above and force
+      // a resync so the server catches back up on the next flush instead of staying silently
+      // stale until an unrelated future edit happens to re-trigger a flush (F1-3).
+      state.pending = [...pending, ...state.pending];
+      state.pendingBytes = pendingBytes + state.pendingBytes;
+      state.resyncNeeded = true;
       const result: Result<void, LanguageSyncFailure> = this.transportFailure(error);
       if (!result.ok) this.#lastFailure = result.error;
+      this.scheduleResyncRetry(state);
       return result;
     }
   }
@@ -609,9 +616,10 @@ function isWellFormed(text: string): boolean {
 }
 
 function editPayloadBytes(edits: readonly DocumentEdit[]): number {
-  const encoder = new TextEncoder();
+  // Buffer.byteLength measures UTF-8 length without allocating an encoder + throwaway
+  // Uint8Array per edit in this synchronous commit-frame path (F1-8).
   let bytes = 0;
-  for (const edit of edits) bytes += encoder.encode(edit.text).byteLength;
+  for (const edit of edits) bytes += Buffer.byteLength(edit.text, 'utf8');
   return bytes;
 }
 

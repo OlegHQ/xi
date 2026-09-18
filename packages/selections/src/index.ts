@@ -400,7 +400,12 @@ function createMember(
     : undefined;
   if (anchorDesired !== undefined && !anchorDesired.ok) return anchorDesired;
   const anchor = createEndpoint(snapshot, input.anchor);
-  const head = createEndpoint(snapshot, input.head);
+  // A normal-cursor/insert-caret member always requires anchor === head (enforced by
+  // validateMember's sameEndpoint check below); skip recomputing an identical endpoint,
+  // halving createEndpoint's document reads/allocations for the common single-cursor case.
+  const head = (input.kind === 'normal-cursor' || input.kind === 'insert-caret') && input.anchor === input.head
+    ? anchor
+    : createEndpoint(snapshot, input.head);
   if (!anchor.ok || !head.ok) return failure('invalid-endpoint');
   const base = {
     id: input.id,
@@ -964,21 +969,36 @@ function semanticEndpointAt(
     }
     start = previousScalarStart(snapshot, span.contentEnd as number, span.contentStart as number);
   }
-  const first = snapshot.slice(start as Utf16Offset, (start + 1) as Utf16Offset);
-  if (!first.ok) return failure('invalid-change-map');
-  const firstUnit = first.value.charCodeAt(0);
-  const end = start + (firstUnit >= 0xd800 && firstUnit <= 0xdbff ? 2 : 1);
+  const width = scalarWidthAt(snapshot, start);
+  if (!width.ok) return failure('invalid-change-map');
+  const end = start + width.value;
   const at = createDocumentAnchor(snapshot, start as Utf16Offset, original.affinity);
   const after = createDocumentAnchor(snapshot, end as Utf16Offset, 'right');
   if (!at.ok || !after.ok) return failure('invalid-change-map');
   return success(Object.freeze({ kind: 'character', at: at.value, after: after.value }));
 }
 
+// A single-unit slice ending or starting mid surrogate-pair is rejected by the
+// rope (rope.ts boundaryFailureAt), so a 1-unit probe cannot itself tell us
+// whether `start` holds a high surrogate: try the 1-unit width first, and
+// only widen to 2 units (always safe once the 1-unit probe proves `start`
+// begins a pair) on failure (A2).
+function scalarWidthAt(snapshot: DocumentSnapshot, start: number): { readonly ok: true; readonly value: number } | { readonly ok: false; readonly error: SelectionFailure } {
+  const one = snapshot.slice(start as Utf16Offset, (start + 1) as Utf16Offset);
+  if (one.ok) return success(1);
+  const two = snapshot.slice(start as Utf16Offset, (start + 2) as Utf16Offset);
+  if (!two.ok) return failure('invalid-change-map');
+  return success(2);
+}
+
 function previousScalarStart(snapshot: DocumentSnapshot, exclusiveEnd: number, minimum: number): number {
-  let candidate = Math.max(minimum, exclusiveEnd - 1);
+  const candidate = Math.max(minimum, exclusiveEnd - 1);
   if (candidate > minimum) {
-    const previous = snapshot.slice((candidate - 1) as Utf16Offset, candidate as Utf16Offset);
-    if (previous.ok && previous.value.charCodeAt(0) >= 0xdc00 && previous.value.charCodeAt(0) <= 0xdfff) candidate -= 1;
+    // A zero-length slice at `candidate` fails iff `candidate` sits between a
+    // surrogate pair, i.e. iff the unit just before it is a low surrogate
+    // paired with the high surrogate one unit further back (A2).
+    const probe = snapshot.slice(candidate as Utf16Offset, candidate as Utf16Offset);
+    if (!probe.ok) return candidate - 1;
   }
   return candidate;
 }

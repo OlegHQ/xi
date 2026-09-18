@@ -12,8 +12,8 @@ index.markReady();
 const samples: number[] = [];
 for (let sample = 0; sample < 20; sample += 1) {
   const start = performance.now();
-  const result = index.query('module-050', { limit: 100 });
-  if ('kind' in result) throw new Error(result.kind);
+  const result = await index.queryAsync('module-050', { limit: 100 });
+  if (!result.ok) throw new Error(result.error.kind);
   samples.push(performance.now() - start);
 }
 samples.sort((left, right) => left - right);

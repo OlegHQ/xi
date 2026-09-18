@@ -1082,8 +1082,12 @@ export async function* encodeTextFileChunks(
   while (start < snapshot.lengthUtf16) {
     let end = Math.min(snapshot.lengthUtf16, start + windowUtf16);
     let content = snapshot.slice(utf16Offset(start), utf16Offset(end));
-    while (!content.ok && content.error.kind === 'surrogate-split' && end > start) {
-      end -= 1;
+    // A window boundary can only split a surrogate pair by landing between its
+    // two units; shrinking never escapes that (it can reach end===start and
+    // stall forever, A3). Grow past the pair instead: it is always safe,
+    // since consuming both units can't itself land on another split.
+    if (!content.ok && content.error.kind === 'surrogate-split' && end < snapshot.lengthUtf16) {
+      end += 1;
       content = snapshot.slice(utf16Offset(start), utf16Offset(end));
     }
     if (!content.ok) throw new Error(`snapshot-slice:${content.error.kind}`);
@@ -1126,6 +1130,10 @@ function prepareUndoStep(
   const inverseLineEndings: InverseLineEndingPatch[] = [];
   let retainedUtf16 = 0;
   let retainedRootUtf16 = 0;
+  // All source-backed inverses in one step share the same `before` snapshot
+  // object; UndoTree.addSources dedupes retention by snapshot identity, so
+  // charge it once per step here too, not once per source edit (A7).
+  let chargedRootSnapshot = false;
   for (let index = 0; index < forwardEdits.length; index += 1) {
     const edit = forwardEdits[index];
     const span = changedSpans[index];
@@ -1153,8 +1161,11 @@ function prepareUndoStep(
       ...(removedText?.includes('\r') ? { textIntent: 'literal-control' as const } : {}),
     }));
     if (useSource) {
-      inverseSources.push(Object.freeze({ editIndex: index, snapshot: before, start: edit.start, end: edit.end, lineEndings }));
-      retainedRootUtf16 += before.lengthUtf16;
+      inverseSources.push(Object.freeze({ editIndex: index, snapshot: before, start: edit.start, end: edit.end, lineEndings, insertOffset: 0 }));
+      if (!chargedRootSnapshot) {
+        chargedRootSnapshot = true;
+        retainedRootUtf16 += before.lengthUtf16;
+      }
     }
     const insertedBreaks = countLineFeeds(edit.text);
     if (insertedBreaks !== 0 || removedCount !== 0) {
@@ -1182,7 +1193,7 @@ function prepareUndoStep(
     retainedUtf16 += edit.text.length + (removedText?.length ?? 0);
   }
   if (!Number.isSafeInteger(retainedUtf16)) return { ok: false, error: { kind: 'undo-history-limit' } };
-  const normalizedInverse = combineAmbiguousInverseEdits(inverseEdits, inverseLineEndings);
+  const normalizedInverse = combineAmbiguousInverseEdits(inverseEdits, inverseLineEndings, inverseSources);
   const coalescibleInsert = isCoalescibleInsert(forwardEdits, normalizedInverse.edits, normalizedInverse.lineEndings);
   return {
     ok: true,
@@ -1190,7 +1201,7 @@ function prepareUndoStep(
       forwardEdits: Object.freeze(forwardEdits.map((edit) => Object.freeze({ ...edit }))),
       forwardTextRuns: Object.freeze([]),
       inverseEdits: normalizedInverse.edits,
-      inverseSources: Object.freeze(inverseSources),
+      inverseSources: normalizedInverse.sources,
       inverseLineEndings: normalizedInverse.lineEndings,
       retainedUtf16,
       retainedRootUtf16,
@@ -1215,14 +1226,23 @@ function isCoalescibleInsert(
 function combineAmbiguousInverseEdits(
   edits: readonly DocumentEdit[],
   lineEndings: readonly InverseLineEndingPatch[],
-): { readonly edits: readonly DocumentEdit[]; readonly lineEndings: readonly InverseLineEndingPatch[] } {
-  // A source-backed inverse has persistent coordinates and metadata. Keep its
-  // canonical edit index stable; the large-delete path uses one source edit.
+  sources: readonly import('./undo').UndoTextSource[],
+): {
+  readonly edits: readonly DocumentEdit[];
+  readonly lineEndings: readonly InverseLineEndingPatch[];
+  readonly sources: readonly import('./undo').UndoTextSource[];
+} {
   if (lineEndings.some((patch) => patch.insertSequence !== undefined)) {
-    return { edits: Object.freeze([...edits]), lineEndings: Object.freeze([...lineEndings]) };
+    return { edits: Object.freeze([...edits]), lineEndings: Object.freeze([...lineEndings]), sources: Object.freeze([...sources]) };
   }
+  const sourceByOriginalIndex = new Map(sources.map((source) => [source.editIndex, source] as const));
   const endingByEdit = new Map(lineEndings.map((patch) => [patch.editIndex, patch] as const));
-  const combined: { edit: DocumentEdit; removeCount: number; insert: LineEnding[]; hasPatch: boolean }[] = [];
+  // `parts` records, for a merged entry, every original source-backed edit
+  // folded into it along with its offset within the entry's assembled
+  // (placeholder-for-sources) text at merge time -- so the source can later
+  // be read lazily and spliced back at the right spot instead of a single
+  // source silently replacing the whole merged text (A1).
+  const combined: { edit: DocumentEdit; removeCount: number; insert: LineEnding[]; hasPatch: boolean; parts: { readonly originalIndex: number; readonly offset: number }[] }[] = [];
   for (let index = 0; index < edits.length; index += 1) {
     const edit = edits[index];
     if (edit === undefined) continue;
@@ -1232,6 +1252,7 @@ function combineAmbiguousInverseEdits(
       removeCount: patch?.removeCount ?? 0,
       insert: [...(patch?.insert ?? [])],
       hasPatch: patch !== undefined,
+      parts: sourceByOriginalIndex.has(index) ? [{ originalIndex: index, offset: 0 }] : [],
     };
     const previous = combined[combined.length - 1];
     if (previous === undefined) {
@@ -1249,6 +1270,7 @@ function combineAmbiguousInverseEdits(
       combined.push(current);
       continue;
     }
+    const offsetBase = previous.edit.text.length;
     previous.edit = Object.freeze({
       start: previous.edit.start,
       end: (Math.max(previousEnd, current.edit.end as number)) as DocumentEdit['end'],
@@ -1257,9 +1279,11 @@ function combineAmbiguousInverseEdits(
     previous.removeCount += current.removeCount;
     previous.insert.push(...current.insert);
     previous.hasPatch ||= current.hasPatch;
+    for (const part of current.parts) previous.parts.push({ originalIndex: part.originalIndex, offset: offsetBase + part.offset });
   }
   const normalizedEdits: DocumentEdit[] = [];
   const normalizedLineEndings: InverseLineEndingPatch[] = [];
+  const normalizedSources: import('./undo').UndoTextSource[] = [];
   for (const entry of combined) {
     const editIndex = normalizedEdits.length;
     normalizedEdits.push(entry.edit);
@@ -1270,10 +1294,16 @@ function combineAmbiguousInverseEdits(
         insert: Object.freeze(entry.insert),
       }));
     }
+    for (const part of entry.parts) {
+      const source = sourceByOriginalIndex.get(part.originalIndex);
+      if (source === undefined) continue;
+      normalizedSources.push(Object.freeze({ ...source, editIndex, insertOffset: part.offset }));
+    }
   }
   return Object.freeze({
     edits: Object.freeze(normalizedEdits),
     lineEndings: Object.freeze(normalizedLineEndings),
+    sources: Object.freeze(normalizedSources),
   });
 }
 
@@ -1384,15 +1414,6 @@ function resolveFileFormat(options: OpenTextDocumentOptions): TextFileFormat | u
   } catch {
     return undefined;
   }
-}
-
-function chooseDefaultEnding(endings: readonly LineEnding[]): LineEnding {
-  if (endings.length === 0) return 'lf';
-  const counts: Record<LineEnding, number> = { lf: 0, crlf: 0, cr: 0 };
-  for (const ending of endings) counts[ending] += 1;
-  let selected = endings[0] ?? 'lf';
-  for (const ending of endings) if (counts[ending] > counts[selected]) selected = ending;
-  return selected;
 }
 
 function isLineEnding(value: unknown): value is LineEnding {

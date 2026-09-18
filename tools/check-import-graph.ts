@@ -101,9 +101,194 @@ export function analyzePackageSources(units: readonly SourceUnit[]): string[] {
   return failures;
 }
 
+// H2-7: static rules beyond the owner DAG above, wired into the same `checkImportGraph()` that
+// `bun run check:public-boundary` already runs. Each function below must FAIL today wherever a
+// real violation exists (never weaken the rule to make it pass) -- callers report the returned
+// list rather than treating an empty allowlist as "add the violating file to the allowlist".
+
+/**
+ * (a) Services may only see a read-only document surface. `openTextDocument`/
+ * `TextFileDocument`/`applyBatch` are the mutating/constructing document APIs
+ * (docs/plan/01-architecture.md: "Services never mutate buffers directly"); importing any of
+ * them as a *value* (not `import type`) from `packages/services/**` is forbidden except through
+ * this explicit allowlist, which must end empty once every violation is fixed.
+ */
+const SERVICES_DOCUMENT_SURFACE_ALLOWLIST: ReadonlySet<string> = new Set([]);
+const FORBIDDEN_SERVICES_DOCUMENT_IMPORTS = ['openTextDocument', 'TextFileDocument', 'applyBatch'];
+
+function checkServicesDocumentSurface(units: readonly SourceUnit[]): string[] {
+  const failures: string[] = [];
+  for (const unit of units) {
+    const normalized = normalizeSourcePath(unit.path);
+    if (!normalized.startsWith('packages/services/')) continue;
+    if (SERVICES_DOCUMENT_SURFACE_ALLOWLIST.has(normalized)) continue;
+    for (const match of unit.text.matchAll(/import\s+(type\s+)?\{([^}]*)\}\s*from\s*['"][^'"]+['"]/gu)) {
+      if (match[1] !== undefined) continue; // `import type { ... }`: erased at runtime, not a value import.
+      const names = (match[2] ?? '').split(',').map((entry) => entry.trim().split(/\s+as\s+/u)[0]?.trim()).filter((name): name is string => !!name);
+      for (const forbidden of FORBIDDEN_SERVICES_DOCUMENT_IMPORTS) {
+        if (names.includes(forbidden)) {
+          const line = unit.text.slice(0, match.index ?? 0).split('\n').length;
+          failures.push(`${unit.path}:${line}: ARCH-SERVICES-DOCUMENT-SURFACE-01 packages/services/** may not import ${forbidden} as a value (read-only document surface only)`);
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+/** True when the token at `openBraceIndex` (a `{`) opens a function/method/arrow body rather
+ * than a control-flow block (`if`/`for`/`while`/`switch`/`catch`/`with`) or a plain object
+ * literal. Used by both (b) (apps/xi function length) and (d) (module-level segmenter).
+ * Walks back past an optional `: ReturnType` annotation to find the parameter list's closing
+ * `)` -- a return type that is itself an inline object-literal type (`(): { a: number } {`)
+ * defeats this heuristic (rare enough in this codebase to accept as a known gap). */
+function isFunctionBodyOpenBrace(tokens: readonly LexToken[], openBraceIndex: number): boolean {
+  let index = openBraceIndex - 1;
+  while (index >= 0) {
+    const token = tokens[index];
+    if (token === undefined) return false;
+    if (token.text === '=>') return true;
+    if (token.text === ')') break;
+    if (token.text === ';' || token.text === '{' || token.text === '}') return false;
+    index -= 1;
+  }
+  if (index < 0) return false;
+  let depth = 0;
+  for (; index >= 0; index -= 1) {
+    const token = tokens[index];
+    if (token === undefined) continue;
+    if (token.text === ')') depth += 1;
+    else if (token.text === '(') {
+      depth -= 1;
+      if (depth === 0) {
+        const beforeParen = tokens[index - 1];
+        if (beforeParen === undefined) return false;
+        return !['if', 'for', 'while', 'switch', 'catch', 'with'].includes(beforeParen.text);
+      }
+    }
+  }
+  return false;
+}
+
+interface FunctionBodyRange { readonly openIndex: number; readonly closeIndex: number; readonly startLine: number; readonly endLine: number; }
+
+/** Every function/method/arrow body in `tokens`, including nested ones, as token-index and
+ * source-line ranges. */
+function functionBodyRanges(tokens: readonly LexToken[]): FunctionBodyRange[] {
+  const ranges: FunctionBodyRange[] = [];
+  const openStack: number[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) continue;
+    if (token.text === '{') {
+      openStack.push(isFunctionBodyOpenBrace(tokens, index) ? index : -1);
+    } else if (token.text === '}') {
+      const openIndex = openStack.pop();
+      if (openIndex !== undefined && openIndex >= 0) {
+        const openToken = tokens[openIndex];
+        if (openToken !== undefined) ranges.push({ openIndex, closeIndex: index, startLine: openToken.line, endLine: token.line });
+      }
+    }
+  }
+  return ranges;
+}
+
+/** (b) apps/xi may not define a function/method/arrow body longer than this many source lines
+ * -- ARCH-COMPOSITION-ROOT-01's "small, reviewable wiring" intent, enforced mechanically
+ * instead of left to review. (apps/xi importing packages/vim internals beyond its entrypoints
+ * is already caught by the generic deep-cross-owner-import rule above.) */
+const MAX_APP_FUNCTION_LINES = 150;
+
+function checkAppFunctionLength(units: readonly SourceUnit[]): string[] {
+  const failures: string[] = [];
+  for (const unit of units) {
+    if (!normalizeSourcePath(unit.path).startsWith('apps/xi/')) continue;
+    const tokens = lexSource(unit.text);
+    for (const range of functionBodyRanges(tokens)) {
+      const length = range.endLine - range.startLine + 1;
+      if (length > MAX_APP_FUNCTION_LINES) {
+        failures.push(`${unit.path}:${range.startLine}: ARCH-APP-FUNCTION-LENGTH-01 function body spans ${length} lines (max ${MAX_APP_FUNCTION_LINES})`);
+      }
+    }
+  }
+  return failures;
+}
+
+/** (c) `packages/ui` render callbacks (`renderSelf`) must stay read-only: OpenTUI is confined
+ * to rendering, never mutating workbench state from inside a paint callback
+ * (docs/plan/01-architecture.md: "UI never implements motion/range/edit semantics"). This
+ * flags calls that reach a workbench/session/host port -- `this.#workbench.foo(`,
+ * `workbench.foo(`, `session.foo(`, `.setViewScroll(`, `.applyXxx(`, `.dispatch(`,
+ * `.commit(`, or an `on<X>Change?.(` callback invocation -- but not an OpenTUI render-context
+ * call like `this.ctx.setCursorPosition(` or `buffer.setCell(`, which never touch workbench
+ * state and are how a render callback is expected to paint. */
+function checkUiRenderSelfIsReadOnly(units: readonly SourceUnit[]): string[] {
+  const failures: string[] = [];
+  const setterCall =
+    /(?:this\.#workbench\.|this\.#session\.|this\.#host\.|this\.workbench\.|this\.session\.|this\.host\.|(?<![.\w])workbench\.|(?<![.\w])session\.|(?<![.\w])host\.)(?:set|apply|dispatch|commit)\w*\s*\(|\.setViewScroll\s*\(|\.dispatch\s*\(|\.commit\s*\(|\bon[A-Z]\w*Change\??\.\s*\(/u;
+  for (const unit of units) {
+    const normalized = normalizeSourcePath(unit.path);
+    if (!normalized.startsWith('packages/ui/')) continue;
+    const tokens = lexSource(unit.text);
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token?.kind !== 'identifier' || token.text !== 'renderSelf') continue;
+      const openBrace = tokens.slice(index).findIndex((candidate) => candidate.text === '{');
+      if (openBrace < 0) continue;
+      const openIndex = index + openBrace;
+      const range = functionBodyRanges(tokens).find((candidate) => candidate.openIndex === openIndex);
+      if (range === undefined) continue;
+      const bodyLines = unit.text.split('\n').slice(range.startLine - 1, range.endLine);
+      for (let lineOffset = 0; lineOffset < bodyLines.length; lineOffset += 1) {
+        const lineText = bodyLines[lineOffset] ?? '';
+        if (setterCall.test(lineText)) {
+          failures.push(`${unit.path}:${range.startLine + lineOffset}: ARCH-UI-RENDER-READONLY-01 renderSelf body calls a workbench setter (${lineText.trim()})`);
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+/** (d) `new Intl.Segmenter(...)`/`new GRAPHEME_SEGMENTER(...)` must be a module-level `const`,
+ * never constructed inside a function body -- docs/plan/15-keystroke-latency.md's keystroke
+ * budget cannot afford re-allocating a segmenter per keystroke/render. */
+function checkModuleLevelSegmenterConstruction(units: readonly SourceUnit[]): string[] {
+  const failures: string[] = [];
+  for (const unit of units) {
+    if (!normalizeSourcePath(unit.path).startsWith('packages/')) continue;
+    const tokens = lexSource(unit.text);
+    const ranges = functionBodyRanges(tokens);
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token?.text !== 'new') continue;
+      const next = tokens[index + 1];
+      const isIntlSegmenter = next?.text === 'Intl' && tokens[index + 2]?.text === '.' && tokens[index + 3]?.text === 'Segmenter' && tokens[index + 4]?.text === '(';
+      const isGraphemeSegmenter = next?.text === 'GRAPHEME_SEGMENTER' && tokens[index + 2]?.text === '(';
+      if (!isIntlSegmenter && !isGraphemeSegmenter) continue;
+      const insideFunction = ranges.some((range) => index > range.openIndex && index < range.closeIndex);
+      if (insideFunction) {
+        failures.push(`${unit.path}:${token.line}: ARCH-MODULE-LEVEL-SEGMENTER-01 segmenter constructed inside a function body (must be a module-level const)`);
+      }
+    }
+  }
+  return failures;
+}
+
+export function checkStaticRules(units: readonly SourceUnit[]): string[] {
+  return [
+    ...checkServicesDocumentSurface(units),
+    ...checkAppFunctionLength(units),
+    ...checkUiRenderSelfIsReadOnly(units),
+    ...checkModuleLevelSegmenterConstruction(units),
+  ];
+}
+
 /** CI's negative fixtures prove the checker rejects a reverse import and a cycle. */
 export function checkImportGraph(repositoryRoot: string): string[] {
-  const failures = analyzePackageSources(collectPackageSources(repositoryRoot));
+  const sourceUnits = collectPackageSources(repositoryRoot);
+  const failures = analyzePackageSources(sourceUnits);
+  failures.push(...checkStaticRules(sourceUnits));
   const reverseImport = analyzePackageSources([
     { path: 'packages/vim/src/index.ts', text: "import type {} from '../../ui/src/index.ts';\n" },
     { path: 'packages/ui/src/index.ts', text: 'export {};\n' },
@@ -141,6 +326,57 @@ export function checkImportGraph(repositoryRoot: string): string[] {
     { path: 'packages/document/src/index.ts', text: "import type { Marker } from '../../primitives/src/index.ts';\nexport type Read = Marker;\n" },
   ]);
   if (allowed.length > 0) failures.push(`ARCH-ALLOWLIST-01: allowed public dependency rejected (${allowed.join('; ')})`);
+
+  // H2-7 static-rule sentinels: each proves the checker actually rejects the violation it
+  // claims to (and, for the type-only case, that an `import type` of the same identifier is
+  // never mistaken for the value import the rule forbids).
+  const servicesDocumentSurfaceViolation = checkStaticRules([
+    { path: 'packages/services/files/sentinel.ts', text: "import { openTextDocument } from '../../document/src/index.ts';\n" },
+  ]);
+  if (!servicesDocumentSurfaceViolation.some((failure) => failure.includes('ARCH-SERVICES-DOCUMENT-SURFACE-01'))) {
+    failures.push('ARCH-STATIC-RULE-SENTINEL-01: graph checker accepted a services value import of openTextDocument');
+  }
+  const servicesDocumentSurfaceTypeOnly = checkStaticRules([
+    { path: 'packages/services/files/sentinel-type.ts', text: "import type { TextFileDocument } from '../../document/src/index.ts';\n" },
+  ]);
+  if (servicesDocumentSurfaceTypeOnly.some((failure) => failure.includes('ARCH-SERVICES-DOCUMENT-SURFACE-01'))) {
+    failures.push('ARCH-STATIC-RULE-SENTINEL-02: graph checker rejected a type-only TextFileDocument import');
+  }
+
+  const longAppFunction = checkStaticRules([
+    { path: 'apps/xi/src/sentinel.ts', text: `function tooLong() {\n${'  const x = 1;\n'.repeat(160)}}\n` },
+  ]);
+  if (!longAppFunction.some((failure) => failure.includes('ARCH-APP-FUNCTION-LENGTH-01'))) {
+    failures.push('ARCH-STATIC-RULE-SENTINEL-03: graph checker accepted an over-length apps/xi function body');
+  }
+
+  const uiRenderSelfMutation = checkStaticRules([
+    { path: 'packages/ui/sentinel.ts', text: 'class X { renderSelf() { this.#workbench.setViewScroll(1); } }\n' },
+  ]);
+  if (!uiRenderSelfMutation.some((failure) => failure.includes('ARCH-UI-RENDER-READONLY-01'))) {
+    failures.push('ARCH-STATIC-RULE-SENTINEL-04: graph checker accepted a renderSelf body calling a workbench setter');
+  }
+
+  const uiRenderSelfReadOnly = checkStaticRules([
+    { path: 'packages/ui/sentinel-ok.ts', text: 'class X { renderSelf() { this.ctx.setCursorPosition(1, 2); buffer.setCell(0, 0, "a"); } }\n' },
+  ]);
+  if (uiRenderSelfReadOnly.some((failure) => failure.includes('ARCH-UI-RENDER-READONLY-01'))) {
+    failures.push('ARCH-STATIC-RULE-SENTINEL-07: graph checker rejected read-only OpenTUI render-context calls in renderSelf');
+  }
+
+  const segmenterInFunction = checkStaticRules([
+    { path: 'packages/vim/sentinel.ts', text: 'function f() { const s = new Intl.Segmenter("en", { granularity: "word" }); return s; }\n' },
+  ]);
+  if (!segmenterInFunction.some((failure) => failure.includes('ARCH-MODULE-LEVEL-SEGMENTER-01'))) {
+    failures.push('ARCH-STATIC-RULE-SENTINEL-05: graph checker accepted a per-call Intl.Segmenter construction');
+  }
+  const segmenterAtModuleLevel = checkStaticRules([
+    { path: 'packages/vim/sentinel-ok.ts', text: 'const s = new Intl.Segmenter("en", { granularity: "word" });\nfunction f() { return s; }\n' },
+  ]);
+  if (segmenterAtModuleLevel.some((failure) => failure.includes('ARCH-MODULE-LEVEL-SEGMENTER-01'))) {
+    failures.push('ARCH-STATIC-RULE-SENTINEL-06: graph checker rejected a module-level Intl.Segmenter const');
+  }
+
   return failures;
 }
 

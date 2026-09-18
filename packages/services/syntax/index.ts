@@ -21,7 +21,7 @@ import {
   type TreeSitterRuntimeOptions,
 } from './tree-sitter';
 
-export { initializeTreeSitterRuntime, loadTreeSitterGrammar, TREE_SITTER_RUNTIME_VERSION } from './tree-sitter';
+export { initializeTreeSitterRuntime, loadTreeSitterGrammar, resetTreeSitterRuntimeForTesting, TREE_SITTER_RUNTIME_VERSION } from './tree-sitter';
 export type { LoadedTreeSitterGrammar, TreeSitterFailure, TreeSitterRuntime, TreeSitterRuntimeOptions } from './tree-sitter';
 export type { SyntaxSpan, SyntaxTokenKind } from '../../contracts/src/index';
 
@@ -44,6 +44,15 @@ export interface SyntaxParseRequest {
   /** Immutable read replica from exactly documentVersion. Never materialized whole. */
   readonly snapshot: DocumentSnapshot;
   readonly delta?: SyntaxDelta;
+  /** Every changed span for this commit, in reverse document order (highest `start` first), so
+   * each can be applied with `tree.edit()` against the still-valid pre-edit coordinate space of
+   * the spans after it. Preferred over `delta` when present (e.g. a multi-cursor edit); `delta`
+   * remains for single-span callers (F1-5). Each entry's `newEnd` must be that span's own LOCAL
+   * replacement end (`start + insertedLength`, in `start`'s unshifted base-document coordinate
+   * space) -- never a cumulative final-document position -- because `tree.edit()` calls compound
+   * automatically across the batch; a cumulative value double-counts already-compounded shift
+   * and corrupts the tree. */
+  readonly deltas?: readonly SyntaxDelta[];
   /** Language identity selects a Tree-sitter grammar; absent/unknown falls back to plain text. */
   readonly languageId?: string;
 }
@@ -166,6 +175,9 @@ function freezeSyntaxRequest(request: SyntaxParseRequest): SyntaxParseRequest {
       oldEnd: request.delta.oldEnd,
       newEnd: request.delta.newEnd,
     }) }),
+    // F1-5: this allowlist used to drop `deltas` entirely, silently downgrading every
+    // multi-span (multi-cursor) submission back into a forced full resync.
+    ...(request.deltas === undefined ? {} : { deltas: Object.freeze(request.deltas.map((delta) => Object.freeze({ start: delta.start, oldEnd: delta.oldEnd, newEnd: delta.newEnd }))) }),
     ...(request.languageId === undefined ? {} : { languageId: request.languageId }),
   });
 }
@@ -855,20 +867,35 @@ export class IncrementalSyntaxHighlighter {
     }
     this.#activeUtf16Units = request.snapshot.lengthUtf16;
     const documentState = this.#documents.get(request.documentId);
-    const contiguousDelta = request.delta !== undefined && documentState !== undefined
+    const deltas = request.deltas ?? (request.delta === undefined ? undefined : [request.delta]);
+    const contiguousDelta = deltas !== undefined && deltas.length > 0 && documentState !== undefined
       && (request.documentVersion as number) === (documentState.documentVersion as number) + 1
       && documentState.tree !== null && documentState.languageId === request.languageId;
     let oldTree: TSTree | null = null;
     if (contiguousDelta && documentState !== undefined && documentState.tree !== null) {
-      const delta = request.delta as SyntaxDelta;
-      documentState.tree.edit({
-        startIndex: delta.start,
-        oldEndIndex: delta.oldEnd,
-        newEndIndex: delta.newEnd,
-        startPosition: pointAt(documentState.snapshot, delta.start),
-        oldEndPosition: pointAt(documentState.snapshot, delta.oldEnd),
-        newEndPosition: pointAt(request.snapshot, delta.newEnd),
-      });
+      // Every span is applied against `documentState.tree`, whose coordinate space is only
+      // disturbed by spans already applied. Callers hand these in reverse document order
+      // (highest `start` first) so an earlier (lower-start) span's indices, still read from
+      // the original before/after snapshots, stay correct when its turn comes (F1-5).
+      for (const delta of deltas) {
+        // startIndex/oldEndIndex/startPosition/oldEndPosition are the pre-edit (unshifted) base
+        // offset -- correct as-is, since nothing before this span's own position has been
+        // touched yet at this point in the reverse pass. newEndIndex is this span's own LOCAL
+        // replacement end (see the `deltas` field doc); web-tree-sitter only uses
+        // newEndPosition/oldEndPosition for node.startPosition()/endPosition() bookkeeping, not
+        // for deciding what to re-lex (that is byte-index-driven), so looking its row/col up in
+        // `request.snapshot` -- a real position, just not always exactly this span's local one
+        // for a multi-span batch -- is an accepted, tested-correct (F1-5) approximation rather
+        // than plumbing the actual inserted text through SyntaxDelta.
+        documentState.tree.edit({
+          startIndex: delta.start,
+          oldEndIndex: delta.oldEnd,
+          newEndIndex: delta.newEnd,
+          startPosition: pointAt(documentState.snapshot, delta.start),
+          oldEndPosition: pointAt(documentState.snapshot, delta.oldEnd),
+          newEndPosition: pointAt(request.snapshot, delta.newEnd),
+        });
+      }
       oldTree = documentState.tree;
     } else if (documentState !== undefined) {
       this.#diagnostics = Object.freeze({ ...this.#diagnostics, resyncs: this.#diagnostics.resyncs + 1 });

@@ -1,4 +1,5 @@
-import type { CancellationToken, Disposable, Result } from '../../contracts/src/index.ts';
+import { CancellationSource } from '../../contracts/src/index';
+import type { CancellationToken, Disposable, Result } from '../../contracts/src/index';
 
 /** Public contract version for workspace file tree read models. */
 export const EXPLORER_CONTRACT_VERSION = 1 as const;
@@ -186,6 +187,8 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
   #includeIgnored: boolean;
   #focused = false;
   #disposed = false;
+  #redecorateGeneration = 0;
+  #redecorateCancellation: CancellationSource | undefined;
 
   constructor(filesystem: ExplorerFilesystemPort, options: ExplorerOptions = {}) {
     this.#filesystem = filesystem;
@@ -274,7 +277,7 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     const watched = await this.#filesystem.watchDirectory(root.path, (event) => {
       if (this.#disposed) return;
       if (event.kind === 'changed' && event.entry === undefined) {
-        pendingRefresh.set(`${event.rootId} ${event.relativePath}`, event);
+        pendingRefresh.set(`${event.rootId}\0${event.relativePath}`, event);
         flushTimer ??= setTimeout(flush, 50);
         return;
       }
@@ -524,6 +527,8 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     this.#disposed = true;
     if (this.#decorationPublishTimer !== undefined) clearTimeout(this.#decorationPublishTimer);
     this.#decorationPublishTimer = undefined;
+    this.#redecorateCancellation?.cancel();
+    this.#redecorateCancellation = undefined;
     for (const watcher of this.#watchers.values()) watcher.dispose();
     this.#watchers.clear();
     this.#inFlightWatch.clear();
@@ -598,16 +603,38 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
 
   /** Re-read Git decorations for every loaded node without touching load state or
    * re-enumerating directories (a forced `expand` would supersede in-flight loads and
-   * break `reveal`). Publishes once, coalesced, when the reads settle. */
+   * break `reveal`). Publishes once, coalesced, when the reads settle. A superseding call
+   * (or dispose) cancels the previous generation's reads instead of leaving them to keep
+   * running unbounded and uncancelled against a never-cancelled token. */
   redecorate(): void {
     if (this.#disposed || this.#git === undefined) return;
-    for (const node of this.#nodes.values()) {
-      if (node.kind !== 'root' && node.kind !== 'state') void this.refreshGitDecoration(node);
-    }
+    this.#redecorateCancellation?.cancel();
+    const cancellation = new CancellationSource();
+    this.#redecorateCancellation = cancellation;
+    const generation = ++this.#redecorateGeneration;
+    const nodes = [...this.#nodes.values()].filter((node) => node.kind !== 'root' && node.kind !== 'state');
+    void this.#runRedecoration(nodes, generation, cancellation.token);
   }
 
-  private async refreshGitDecoration(node: MutableNode): Promise<void> {
-    const result = await (this.#git as ExplorerGitDecorationPort).read(node.path, neverCancelledToken);
+  async #runRedecoration(nodes: readonly MutableNode[], generation: number, token: CancellationToken): Promise<void> {
+    const REDECORATE_MAX_CONCURRENT = 32;
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        if (this.#disposed || token.isCancelled || generation !== this.#redecorateGeneration) return;
+        const node = nodes[cursor];
+        cursor += 1;
+        if (node === undefined) return;
+        await this.refreshGitDecoration(node, token, generation);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(REDECORATE_MAX_CONCURRENT, nodes.length) }, worker));
+    if (this.#redecorateCancellation?.token === token) this.#redecorateCancellation = undefined;
+  }
+
+  private async refreshGitDecoration(node: MutableNode, token: CancellationToken, generation: number): Promise<void> {
+    const result = await (this.#git as ExplorerGitDecorationPort).read(node.path, token);
+    if (this.#disposed || token.isCancelled || generation !== this.#redecorateGeneration) return;
     if (result.ok && this.#nodes.has(node.id)) node.git = result.value;
     this.scheduleDecorationPublish();
   }

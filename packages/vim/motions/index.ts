@@ -135,11 +135,26 @@ interface LocalGraphemeStep {
 }
 
 const MAX_TAB_SIZE = 1000;
+
+/**
+ * C2: `snapshot.lineCount` includes the phantom empty "line" the document
+ * model reports after a trailing final newline; Vim does not count it as a
+ * line. This is an O(1) check of the last UTF-16 unit.
+ * nvim: :call setline(1,['abc','defgh']) | write! | :$  -> line 2, not line 3
+ */
+function vimLineCount(snapshot: DocumentSnapshot): number {
+  const length = snapshot.lengthUtf16 as number;
+  if (length === 0) return snapshot.lineCount;
+  const last = snapshot.slice((length - 1) as Utf16Offset, length as Utf16Offset);
+  return last.ok && last.value === '\n' ? snapshot.lineCount - 1 : snapshot.lineCount;
+}
 const GRAPHEME_SEGMENTER = (Intl as typeof Intl & {
   readonly Segmenter?: new (locales?: string | readonly string[], options?: { readonly granularity: 'grapheme' }) => {
     segment(input: string): Iterable<{ readonly segment: string; readonly index: number }>;
   };
 }).Segmenter;
+/** One reusable instance instead of constructing a new Intl.Segmenter on every call (C10). */
+const GRAPHEME_SEGMENTER_INSTANCE = GRAPHEME_SEGMENTER === undefined ? undefined : new GRAPHEME_SEGMENTER('und', { granularity: 'grapheme' });
 
 /**
  * Create an initial motion cursor for an immutable document snapshot. The cursor is at a
@@ -291,7 +306,7 @@ export function resolveVimMotion(
     return makeOutcome(snapshot, cursor, currentLine, target, requestedCell, 'characterwise', localOffset !== target);
   }
   if (key === 'g_') {
-    const targetLineIndex = clampLineIndex(currentLine.index + count - 1, snapshot.lineCount);
+    const targetLineIndex = clampLineIndex(currentLine.index + count - 1, vimLineCount(snapshot));
     const targetLineResult = readLine(snapshot, targetLineIndex, resolvedOptions.value);
     if (!targetLineResult.ok) return targetLineResult;
     const targetLine = targetLineResult.value;
@@ -305,23 +320,23 @@ export function resolveVimMotion(
     return makeOutcome(snapshot, cursor, targetLine, target.value, desiredColumn, 'characterwise', targetLineIndex !== currentLine.index || localOffset !== target.value);
   }
   if (key === '+' || key === '<CR>' || key === '<C-M>') {
-    const targetLineIndex = clampLineIndex(currentLine.index + count, snapshot.lineCount);
+    const targetLineIndex = clampLineIndex(currentLine.index + count, vimLineCount(snapshot));
     return toFirstNonblank(snapshot, cursor, targetLineIndex, resolvedOptions.value, 'linewise');
   }
   if (key === '-' ) {
-    const targetLineIndex = clampLineIndex(currentLine.index - count, snapshot.lineCount);
+    const targetLineIndex = clampLineIndex(currentLine.index - count, vimLineCount(snapshot));
     return toFirstNonblank(snapshot, cursor, targetLineIndex, resolvedOptions.value, 'linewise');
   }
   if (key === '_') {
-    const targetLineIndex = clampLineIndex(currentLine.index + count - 1, snapshot.lineCount);
+    const targetLineIndex = clampLineIndex(currentLine.index + count - 1, vimLineCount(snapshot));
     return toFirstNonblank(snapshot, cursor, targetLineIndex, resolvedOptions.value, 'linewise');
   }
   if (key === 'gg' || key === '<C-Home>') {
-    const targetLineIndex = invocation.count === undefined ? 0 : clampLineIndex(count - 1, snapshot.lineCount);
+    const targetLineIndex = invocation.count === undefined ? 0 : clampLineIndex(count - 1, vimLineCount(snapshot));
     return toFileLine(snapshot, cursor, targetLineIndex, resolvedOptions.value, resolvedOptions.value.startOfLine);
   }
   if (key === '<C-End>') {
-    const targetLineIndex = invocation.count === undefined ? snapshot.lineCount - 1 : clampLineIndex(count - 1, snapshot.lineCount);
+    const targetLineIndex = invocation.count === undefined ? vimLineCount(snapshot) - 1 : clampLineIndex(count - 1, vimLineCount(snapshot));
     const targetLine = readLine(snapshot, targetLineIndex, resolvedOptions.value, false);
     if (!targetLine.ok) return targetLine;
     const targetOffset = lastGraphemeOffset(targetLine.value);
@@ -329,18 +344,18 @@ export function resolveVimMotion(
       targetLineIndex !== currentLine.index || targetOffset !== localOffset);
   }
   if (key === 'G') {
-    const targetLineIndex = invocation.count === undefined ? snapshot.lineCount - 1 : clampLineIndex(count - 1, snapshot.lineCount);
+    const targetLineIndex = invocation.count === undefined ? vimLineCount(snapshot) - 1 : clampLineIndex(count - 1, vimLineCount(snapshot));
     return toFileLine(snapshot, cursor, targetLineIndex, resolvedOptions.value, resolvedOptions.value.startOfLine);
   }
   if (key === 'H' || key === 'M' || key === 'L') {
-    const viewport = options.viewport ?? { topLine: 0, bottomLine: snapshot.lineCount - 1 };
-    const topLine = clampLineIndex(viewport.topLine, snapshot.lineCount);
-    const bottomLine = clampLineIndex(viewport.bottomLine, snapshot.lineCount);
+    const viewport = options.viewport ?? { topLine: 0, bottomLine: vimLineCount(snapshot) - 1 };
+    const topLine = clampLineIndex(viewport.topLine, vimLineCount(snapshot));
+    const bottomLine = clampLineIndex(viewport.bottomLine, vimLineCount(snapshot));
     let targetLineIndex: number;
     if (key === 'H') targetLineIndex = topLine + count - 1;
     else if (key === 'L') targetLineIndex = bottomLine - count + 1;
     else targetLineIndex = Math.floor((topLine + bottomLine) / 2);
-    return toFileLine(snapshot, cursor, clampLineIndex(targetLineIndex, snapshot.lineCount), resolvedOptions.value, true);
+    return toFileLine(snapshot, cursor, clampLineIndex(targetLineIndex, vimLineCount(snapshot)), resolvedOptions.value, true);
   }
   return motionFailure('invalid-option');
 }
@@ -357,7 +372,7 @@ function resolveByteMotion(
   const totalBytes = length.value as number;
   const requested = count - 1;
   if (requested >= totalBytes) {
-    return resolveLineEnd(snapshot, cursor, snapshot.lineCount - 1, 1, options);
+    return resolveLineEnd(snapshot, cursor, vimLineCount(snapshot) - 1, 1, options);
   }
 
   // A byte count may point into a UTF-8 scalar. Vim lands on that scalar's
@@ -444,7 +459,7 @@ function tryResolveSimpleHorizontal(
   // benchmark corpus, stays constant-allocation on this path.
   if ((targetLocalOffset < 0 || targetLocalOffset >= lineLength) && mayWrap) {
     const adjacent = lineIndex + direction;
-    if (adjacent < 0 || adjacent >= snapshot.lineCount) {
+    if (adjacent < 0 || adjacent >= vimLineCount(snapshot)) {
       return makeOutcome(snapshot, cursor, line, localOffset, localOffset, 'characterwise', false);
     }
     const adjacentReference = readLineReference(snapshot, adjacent);
@@ -588,8 +603,8 @@ function resolveLineEnd(
   count: number,
   options: ResolvedOptions,
 ): Result<VimMotionOutcome, VimMotionFailure> {
-  const targetLineIndex = count >= snapshot.lineCount - currentLineIndex
-    ? snapshot.lineCount - 1
+  const targetLineIndex = count >= vimLineCount(snapshot) - currentLineIndex
+    ? vimLineCount(snapshot) - 1
     : currentLineIndex + count - 1;
   const bounds = readLineReference(snapshot, targetLineIndex);
   if (!bounds.ok) return bounds;
@@ -648,7 +663,7 @@ function nextGraphemeStart(
   line: MotionLineReference,
   localOffset: number,
 ): Result<LocalGraphemeStep | { readonly fallback: true } | null, VimMotionFailure> {
-  const segmenter = GRAPHEME_SEGMENTER;
+  const segmenter = GRAPHEME_SEGMENTER_INSTANCE;
   if (segmenter === undefined) return motionFailure('invalid-width-policy');
   const lineLength = line.end - line.start;
   if (localOffset >= lineLength) return { ok: true, value: null };
@@ -656,7 +671,7 @@ function nextGraphemeStart(
     let readOffset = line.start + localOffset;
     let windowSize = 8;
     let text = '';
-    const graphemes = new segmenter('und', { granularity: 'grapheme' });
+    const graphemes = segmenter;
     while (readOffset < line.end) {
       const targetEnd = Math.min(line.end, line.start + localOffset + windowSize);
       const parts: string[] = [text];
@@ -695,7 +710,7 @@ function previousGraphemeStart(
   line: MotionLineReference,
   localOffset: number,
 ): Result<LocalGraphemeStep | null, VimMotionFailure> {
-  const segmenter = GRAPHEME_SEGMENTER;
+  const segmenter = GRAPHEME_SEGMENTER_INSTANCE;
   if (segmenter === undefined) return motionFailure('invalid-width-policy');
   if (localOffset <= 0) return { ok: true, value: null };
   const absoluteEnd = line.start + localOffset;
@@ -703,7 +718,7 @@ function previousGraphemeStart(
   let windowSize = 8;
   let text = '';
   try {
-    const graphemes = new segmenter('und', { granularity: 'grapheme' });
+    const graphemes = segmenter;
     while (readOffset > line.start) {
       const targetStart = Math.max(line.start, absoluteEnd - windowSize);
       const parts: string[] = [];
@@ -798,11 +813,11 @@ function scalarAt(
 
 function continuesPreviousGrapheme(previousCluster: string, scalar: string): boolean {
   if (previousCluster.length === 0) return false;
-  const segmenter = GRAPHEME_SEGMENTER;
+  const segmenter = GRAPHEME_SEGMENTER_INSTANCE;
   if (segmenter === undefined) return true;
   const boundary = previousCluster.length;
   try {
-    for (const cluster of new segmenter('und', { granularity: 'grapheme' }).segment(previousCluster + scalar)) {
+    for (const cluster of segmenter.segment(previousCluster + scalar)) {
       if (cluster.index === boundary) return false;
       if (cluster.index > boundary) return true;
     }
@@ -821,7 +836,7 @@ function measureDisplayPrefix(
   widthPolicy: CellWidthPolicy,
 ): Result<{ readonly width: number; readonly lastCluster: string }, VimMotionFailure> {
   if (start < 0 || end < start) return motionFailure('document-read-failed');
-  const segmenter = GRAPHEME_SEGMENTER;
+  const segmenter = GRAPHEME_SEGMENTER_INSTANCE;
   if (segmenter === undefined) return motionFailure('invalid-width-policy');
   let offset = start;
   let pending = '';
@@ -843,7 +858,7 @@ function measureDisplayPrefix(
       const chunk = readMotionChunk(snapshot, offset, Math.min(end, offset + MOTION_READ_WINDOW));
       if (!chunk.ok) return chunk;
       let nextPending = '';
-      for (const entry of new segmenter('und', { granularity: 'grapheme' }).segment(pending + chunk.value.text)) {
+      for (const entry of segmenter.segment(pending + chunk.value.text)) {
         if (nextPending !== '') {
           const consumed = consume(nextPending);
           if (!consumed.ok) return consumed;
@@ -941,7 +956,7 @@ function stepHorizontal(
     }
     if (!mayWrap) return { ok: true, value: { line, offset, moved: false } };
     const adjacent = line.index + direction;
-    if (adjacent < 0 || adjacent >= snapshot.lineCount) return { ok: true, value: { line, offset, moved: false } };
+    if (adjacent < 0 || adjacent >= vimLineCount(snapshot)) return { ok: true, value: { line, offset, moved: false } };
     const nextLine = readLine(snapshot, adjacent, options, false);
     if (!nextLine.ok) return nextLine;
     const nextOffset = direction < 0 ? lastGraphemeOffset(nextLine.value) : firstGraphemeOffset(nextLine.value);
@@ -951,7 +966,7 @@ function stepHorizontal(
   if (line.graphemeStarts.length === 0) {
     if (!mayWrap) return { ok: true, value: { line, offset, moved: false } };
     const adjacent = line.index + direction;
-    if (adjacent < 0 || adjacent >= snapshot.lineCount) return { ok: true, value: { line, offset, moved: false } };
+    if (adjacent < 0 || adjacent >= vimLineCount(snapshot)) return { ok: true, value: { line, offset, moved: false } };
     const nextLine = readLine(snapshot, adjacent, options);
     if (!nextLine.ok) return nextLine;
     const nextOffset = direction < 0 ? lastGraphemeOffset(nextLine.value) : firstGraphemeOffset(nextLine.value);
@@ -964,7 +979,7 @@ function stepHorizontal(
   }
   if (!mayWrap) return { ok: true, value: { line, offset, moved: false } };
   const adjacent = line.index + direction;
-  if (adjacent < 0 || adjacent >= snapshot.lineCount) return { ok: true, value: { line, offset, moved: false } };
+  if (adjacent < 0 || adjacent >= vimLineCount(snapshot)) return { ok: true, value: { line, offset, moved: false } };
   const nextLine = readLine(snapshot, adjacent, options);
   if (!nextLine.ok) return nextLine;
   const nextOffset = direction < 0 ? lastGraphemeOffset(nextLine.value) : firstGraphemeOffset(nextLine.value);
@@ -1091,25 +1106,47 @@ function readLine(
       },
     };
   }
+  // C11: the non-ASCII measurement below (grapheme starts, index map, cell
+  // map, tab map) is expensive and j/k read it for two lines on every
+  // keystroke; cache the finished MotionLine per (document, version, line,
+  // width options) so holding j/k on a long non-ASCII line only pays once.
+  const cacheKey = motionLineCacheKey(snapshot, index, options);
+  const cached = motionLineCache.get(cacheKey);
+  if (cached !== undefined) return { ok: true, value: cached };
   const textResult = snapshot.slice(sliceStart, sliceEnd);
   if (!textResult.ok || textResult.value.includes('\n')) return motionFailure('document-read-failed');
   const cellMap = measureDisplayCells(textResult.value, options.tabSize, options.widthPolicy);
   if (!cellMap.ok) return cellMap;
-  return {
-    ok: true,
-    value: {
-      index,
-      start,
-      length: textResult.value.length,
-      printableAscii: false,
-      text: textResult.value,
-      graphemeStarts: cellMap.value.graphemeStarts,
-      graphemeIndexByOffset: new Map(cellMap.value.graphemeStarts.map((cell, clusterIndex) => [cell, clusterIndex])),
-      cellToUtf16: cellMap.value.cells,
-      tabEndCellByOffset: cellMap.value.tabEndCellByOffset,
-      displayWidth: cellMap.value.width,
-    },
+  const line: MotionLine = {
+    index,
+    start,
+    length: textResult.value.length,
+    printableAscii: false,
+    text: textResult.value,
+    graphemeStarts: cellMap.value.graphemeStarts,
+    graphemeIndexByOffset: new Map(cellMap.value.graphemeStarts.map((cell, clusterIndex) => [cell, clusterIndex])),
+    cellToUtf16: cellMap.value.cells,
+    tabEndCellByOffset: cellMap.value.tabEndCellByOffset,
+    displayWidth: cellMap.value.width,
   };
+  setMotionLineCache(cacheKey, line);
+  return { ok: true, value: line };
+}
+
+const MOTION_LINE_CACHE_CAPACITY = 8;
+const motionLineCache = new Map<string, MotionLine>();
+
+function motionLineCacheKey(snapshot: DocumentSnapshot, index: number, options: ResolvedOptions): string {
+  return `${snapshot.id}|${snapshot.version}|${index}|${options.tabSize}|${options.widthPolicy.id}|${options.widthPolicy.generation}`;
+}
+
+function setMotionLineCache(key: string, line: MotionLine): void {
+  motionLineCache.delete(key);
+  motionLineCache.set(key, line);
+  if (motionLineCache.size > MOTION_LINE_CACHE_CAPACITY) {
+    const oldest = motionLineCache.keys().next().value;
+    if (oldest !== undefined) motionLineCache.delete(oldest);
+  }
 }
 
 function measureDisplayCells(
@@ -1147,7 +1184,7 @@ function measureDisplayCells(
       },
     };
   }
-  const segmenter = GRAPHEME_SEGMENTER;
+  const segmenter = GRAPHEME_SEGMENTER_INSTANCE;
   if (segmenter === undefined) return motionFailure('invalid-width-policy');
   const cells: number[] = [];
   const graphemeStarts: number[] = [];
@@ -1155,7 +1192,7 @@ function measureDisplayCells(
   let displayWidth = 0;
   let lastCluster = '';
   try {
-    for (const cluster of new segmenter('und', { granularity: 'grapheme' }).segment(text)) {
+    for (const cluster of segmenter.segment(text)) {
       lastCluster = cluster.segment;
       graphemeStarts.push(cluster.index);
       const width = cluster.segment === '\t'
@@ -1329,13 +1366,13 @@ function stepVisibleLine(
   }
   let line = startLine;
   for (let step = 0; step < count; step += 1) {
-    const target = clampLineIndex(line + direction, snapshot.lineCount);
+    const target = clampLineIndex(line + direction, vimLineCount(snapshot));
     if (target === line) break;
     const hiddenFold = folds.find((fold) => (fold.startLine as number) < target && target < (fold.endLineExclusive as number));
     line = hiddenFold === undefined
       ? target
       : direction > 0
-        ? clampLineIndex(hiddenFold.endLineExclusive as number, snapshot.lineCount)
+        ? clampLineIndex(hiddenFold.endLineExclusive as number, vimLineCount(snapshot))
         : hiddenFold.startLine as number;
   }
   return line;

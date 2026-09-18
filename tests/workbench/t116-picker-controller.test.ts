@@ -156,7 +156,7 @@ await flush();
 model.selectedId = 'c.txt';
 await picker.handleKeypress({ name: 's', raw: 's', shift: false, option: false, ctrl: false, meta: false });
 await picker.handleKeypress({ name: 'u', raw: 'u', shift: false, option: false, ctrl: false, meta: false });
-assert.deepEqual(secondaryActions, [{ entryId: 'c.txt', key: 's' }, { entryId: 'c.txt', key: 'u' }], 'T116-PICKER-05a stage/unstage keys reach onSecondaryAction with the selected entry');
+assert.deepEqual(secondaryActions, [{ entryId: 'c.txt', key: 'stage' }, { entryId: 'c.txt', key: 'unstage' }], 'T116-PICKER-05a stage/unstage keys reach onSecondaryAction with the selected entry');
 await picker.close(true);
 
 model.entries = [{ id: 'd', mode: 'file', value: '/workspace/a.txt' }];

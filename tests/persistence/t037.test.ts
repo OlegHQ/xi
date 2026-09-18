@@ -11,6 +11,7 @@ import {
 import { asIdentifier, asUtf16Offset, type DocumentId } from '../../packages/primitives/src/index';
 import { TextFileDocument } from '../../packages/document/src/index';
 import { PersistenceService, decodeSession, encodeSession, type SessionSnapshot } from '../../packages/services/persistence/index';
+import { testDocumentFactory } from './document-factory';
 
 const cancellation = new CancellationSource().token;
 
@@ -26,7 +27,7 @@ async function testExactRoundTripAndSafeBinaryFallback(): Promise<void> {
   const bytes = Uint8Array.from([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('first\r\nsecond\nthird')]);
   const fs = new FakeFilesystem();
   fs.seed('/tmp/T037-roundtrip.txt', bytes);
-  const service = new PersistenceService(fs);
+  const service = new PersistenceService(fs, undefined, testDocumentFactory);
   const opened = await service.openFile('/tmp/T037-roundtrip.txt', id('T037-roundtrip'), cancellation);
   assert.equal(opened.ok, true, 'T037-OPEN-01 mixed EOL UTF-8 opens editable');
   if (!opened.ok || opened.value.kind !== 'editable') return;
@@ -42,7 +43,7 @@ async function testExactRoundTripAndSafeBinaryFallback(): Promise<void> {
 
   const invalid = new FakeFilesystem();
   invalid.seed('/tmp/T037-invalid', Uint8Array.from([0xff, 0xfe]));
-  const invalidOpened = await new PersistenceService(invalid).openFile('/tmp/T037-invalid', id('T037-invalid'), cancellation);
+  const invalidOpened = await new PersistenceService(invalid, undefined, testDocumentFactory).openFile('/tmp/T037-invalid', id('T037-invalid'), cancellation);
   assert.equal(invalidOpened.ok, true, 'T037-BINARY-01 invalid bytes remain openable as read-only');
   if (invalidOpened.ok) {
     assert.equal(invalidOpened.value.kind, 'read-only');
@@ -51,7 +52,7 @@ async function testExactRoundTripAndSafeBinaryFallback(): Promise<void> {
   }
   const nul = new FakeFilesystem();
   nul.seed('/tmp/T037-nul', Uint8Array.from([0x61, 0x00, 0x62]));
-  const nulOpened = await new PersistenceService(nul).openFile('/tmp/T037-nul', id('T037-nul'), cancellation);
+  const nulOpened = await new PersistenceService(nul, undefined, testDocumentFactory).openFile('/tmp/T037-nul', id('T037-nul'), cancellation);
   assert.equal(nulOpened.ok, true);
   if (nulOpened.ok) assert.equal(nulOpened.value.kind, 'read-only', 'T037-BINARY-03 NUL input is read-only');
 }
@@ -59,7 +60,7 @@ async function testExactRoundTripAndSafeBinaryFallback(): Promise<void> {
 async function testFaultRecoveryAndDivergence(): Promise<void> {
   const fs = new FakeFilesystem();
   fs.seed('/tmp/T037-recover', new TextEncoder().encode('before\n'));
-  const service = new PersistenceService(fs);
+  const service = new PersistenceService(fs, undefined, testDocumentFactory);
   const opened = await service.openFile('/tmp/T037-recover', id('T037-recover'), cancellation);
   assert.equal(opened.ok, true);
   if (!opened.ok || opened.value.kind !== 'editable') return;
@@ -75,7 +76,7 @@ async function testFaultRecoveryAndDivergence(): Promise<void> {
   assert.equal(document.isDirty, true, 'T037-FAULT-02 failed save preserves modified state');
   assert.deepEqual(fs.bytes('/tmp/T037-recover'), new TextEncoder().encode('before\n'), 'T037-FAULT-03 failed atomic write leaves disk bytes');
 
-  const restarted = new PersistenceService(fs);
+  const restarted = new PersistenceService(fs, undefined, testDocumentFactory);
   const recovered = await restarted.recover('/tmp/T037-recover', id('T037-recover'), cancellation);
   assert.equal(recovered.ok, true, 'T037-RECOVERY-03 restart reads durable checkpoint');
   if (recovered.ok) {
@@ -85,7 +86,7 @@ async function testFaultRecoveryAndDivergence(): Promise<void> {
 
   fs.allowWrites();
   fs.seed('/tmp/T037-recover', new TextEncoder().encode('external\n'));
-  const divergent = await new PersistenceService(fs).recover('/tmp/T037-recover', id('T037-recover'), cancellation);
+  const divergent = await new PersistenceService(fs, undefined, testDocumentFactory).recover('/tmp/T037-recover', id('T037-recover'), cancellation);
   assert.equal(divergent.ok, true, 'T037-DIVERGENCE-01 restart does not overwrite changed disk');
   if (divergent.ok) {
     assert.equal(divergent.value.kind, 'disk-diverged');
@@ -99,7 +100,7 @@ async function testFaultRecoveryAndDivergence(): Promise<void> {
   // recovery base. Restart must surface that as a reviewable divergence.
   const crashFs = new FakeFilesystem();
   crashFs.seed('/tmp/T037-crash', new TextEncoder().encode('old\n'));
-  const crashService = new PersistenceService(crashFs);
+  const crashService = new PersistenceService(crashFs, undefined, testDocumentFactory);
   const crashOpened = await crashService.openFile('/tmp/T037-crash', id('T037-crash'), cancellation);
   assert.equal(crashOpened.ok && crashOpened.value.kind === 'editable', true);
   if (crashOpened.ok && crashOpened.value.kind === 'editable') {
@@ -110,7 +111,7 @@ async function testFaultRecoveryAndDivergence(): Promise<void> {
     const crashed = await crashService.saveFile(crashDocument, '/tmp/T037-crash', cancellation);
     assert.equal(crashed.ok, false, 'T037-FAIL-RENAME-01 crash between rename acknowledgement is surfaced');
     assert.equal(crashDocument.isDirty, true, 'T037-FAIL-RENAME-02 uncertain save does not clear modified state');
-    const crashRecovery = await new PersistenceService(crashFs).recover('/tmp/T037-crash', id('T037-crash'), cancellation);
+    const crashRecovery = await new PersistenceService(crashFs, undefined, testDocumentFactory).recover('/tmp/T037-crash', id('T037-crash'), cancellation);
     assert.equal(crashRecovery.ok && crashRecovery.value.kind === 'disk-diverged', true, 'T037-FAIL-RENAME-03 restart exposes divergence for review');
   }
 }
@@ -118,7 +119,7 @@ async function testFaultRecoveryAndDivergence(): Promise<void> {
 async function testFailurePolicies(): Promise<void> {
   const fs = new FakeFilesystem();
   fs.seed('/tmp/T037-policy', new TextEncoder().encode('one\n'));
-  const service = new PersistenceService(fs);
+  const service = new PersistenceService(fs, undefined, testDocumentFactory);
   const opened = await service.openFile('/tmp/T037-policy', id('T037-policy'), cancellation);
   assert.equal(opened.ok, true);
   if (!opened.ok || opened.value.kind !== 'editable') return;

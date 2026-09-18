@@ -83,6 +83,7 @@ const SEGMENTER = (Intl as typeof Intl & {
     segment(input: string): Iterable<{ readonly segment: string; readonly index: number }>;
   };
 }).Segmenter;
+const GRAPHEME_SEGMENTER = SEGMENTER !== undefined ? new SEGMENTER('und', { granularity: 'grapheme' }) : undefined;
 
 /**
  * Resolve an f/F/t/T or repeat-find motion without mutating the document or editor state.
@@ -158,20 +159,32 @@ export function resolveVimFind(
   if (!cursorValid.value) return failure('invalid-cursor');
 
   const direction: 1 | -1 = directKey === 'f' || directKey === 't' ? 1 : -1;
-  const previousMatchOffset = nextLastFind.lastMatch?.documentId === snapshot.id
-    && nextLastFind.lastMatch.documentVersion === snapshot.version
-    ? nextLastFind.lastMatch.offset as number
-    : null;
-  // Neovim only skips the immediately-adjacent till-target for a bare `;`/`,`
-  // repeat (count 1); an explicit count finds the Nth match plainly,
-  // including that adjacent one, and fails outright if fewer than N remain.
-  const skipLastTillTarget = (invocation.key === ';' || invocation.key === ',') && count === 1
-    && previousMatchOffset !== null && previousMatchOffset >= lineStart && previousMatchOffset < lineEnd
-    ? previousMatchOffset - lineStart
-    : null;
+  // C5: repeating a till motion (`;`/`,` on `t`/`T`) only skips ahead to the
+  // *next* occurrence when the character immediately adjacent to the cursor
+  // (in the resolved search direction) is itself the target — the "stuck"
+  // case a bare repeat would otherwise re-land on with zero movement. When
+  // that adjacent character is not a match, the repeat finds the nearest
+  // occurrence like any other counted search (no bump). This also applies
+  // after `,` reverses the direction: the adjacency check uses the reversed
+  // direction, not the original find's direction.
+  // nvim: :call setline(1,['azbzczdzez']) | normal! tzll; -> col('.')==5 (adjacent 'z' at cursor+1: bump to 2nd match)
+  // nvim: :call setline(1,['azbzczdzez']) | normal! tzll2; -> col('.')==5 (still capped at 2: max(2,2))
+  // nvim: :call setline(1,['azbzczdzez']) | normal! tzll3; -> col('.')==7 (count exceeds the cap: max(3,2)=3)
+  // nvim: :call setline(1,['a-X--b-X--c-X--d-X--e']) | normal! tX;, -> col('.')==4 (adjacent char before the reversed
+  //   backward search is 'b', not 'X': no bump, and the sole backward match is used directly)
+  const isTillRepeat = (invocation.key === ';' || invocation.key === ',') && (directKey === 't' || directKey === 'T');
+  let adjacentIsMatch = false;
+  if (isTillRepeat) {
+    const nearestResult = direction === 1
+      ? findNthMatchForward(snapshot, lineStart, lineLength, localCursor, target, 1)
+      : findNthMatchBackward(snapshot, lineStart, localCursor, target, 1);
+    if (!nearestResult.ok) return nearestResult;
+    adjacentIsMatch = nearestResult.value !== null && nearestResult.value.offset === localCursor + direction;
+  }
+  const effectiveCount = adjacentIsMatch ? Math.max(count, 2) : count;
   const matchResult = direction === 1
-    ? findNthMatchForward(snapshot, lineStart, lineLength, localCursor, target, skipLastTillTarget, count)
-    : findNthMatchBackward(snapshot, lineStart, localCursor, target, skipLastTillTarget, count);
+    ? findNthMatchForward(snapshot, lineStart, lineLength, localCursor, target, effectiveCount)
+    : findNthMatchBackward(snapshot, lineStart, localCursor, target, effectiveCount);
   if (!matchResult.ok) return matchResult;
   const match = matchResult.value;
   if (match === null) {
@@ -253,9 +266,9 @@ function reverseDirection(key: VimFindDirectKey): VimFindDirectKey {
 
 function isOneGrapheme(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0 || value.includes('\n') || value.includes('\r')
-    || hasUnpairedSurrogate(value) || SEGMENTER === undefined) return false;
+    || hasUnpairedSurrogate(value) || GRAPHEME_SEGMENTER === undefined) return false;
   try {
-    const segments = [...new SEGMENTER('und', { granularity: 'grapheme' }).segment(value)];
+    const segments = [...GRAPHEME_SEGMENTER.segment(value)];
     return segments.length === 1 && segments[0]?.segment === value;
   } catch {
     return false;
@@ -263,9 +276,9 @@ function isOneGrapheme(value: unknown): value is string {
 }
 
 function segment(value: string): readonly Grapheme[] | null {
-  if (SEGMENTER === undefined) return null;
+  if (GRAPHEME_SEGMENTER === undefined) return null;
   try {
-    return [...new SEGMENTER('und', { granularity: 'grapheme' }).segment(value)]
+    return [...GRAPHEME_SEGMENTER.segment(value)]
       .map((entry) => ({ text: entry.segment, offset: entry.index }));
   } catch {
     return null;
@@ -337,7 +350,6 @@ function findNthMatchForward(
   lineLength: number,
   localCursor: number,
   target: string,
-  skipLastTillTarget: number | null,
   count: number,
 ): Result<Grapheme | null, VimFindFailure> {
   const absCursor = lineStart + localCursor;
@@ -349,7 +361,7 @@ function findNthMatchForward(
     if (graphemes === null) return failure('invalid-width-policy');
     const matches = graphemes
       .map((part) => ({ text: part.text, offset: localCursor + part.offset }))
-      .filter((part) => part.offset > localCursor && targetMatches(part.text, target) && part.offset !== skipLastTillTarget);
+      .filter((part) => part.offset > localCursor && targetMatches(part.text, target));
     if (matches.length >= count) return { ok: true, value: matches[count - 1] ?? null };
     if (end >= lineEndAbs) return { ok: true, value: null };
     windowSize *= 2;
@@ -362,7 +374,6 @@ function findNthMatchBackward(
   lineStart: number,
   localCursor: number,
   target: string,
-  skipLastTillTarget: number | null,
   count: number,
 ): Result<Grapheme | null, VimFindFailure> {
   const absCursor = lineStart + localCursor;
@@ -374,7 +385,7 @@ function findNthMatchBackward(
     const startLocal = start - lineStart;
     const matches = graphemes
       .map((part) => ({ text: part.text, offset: startLocal + part.offset }))
-      .filter((part) => part.offset < localCursor && targetMatches(part.text, target) && part.offset !== skipLastTillTarget)
+      .filter((part) => part.offset < localCursor && targetMatches(part.text, target))
       .reverse();
     if (matches.length >= count) return { ok: true, value: matches[count - 1] ?? null };
     if (start <= lineStart) return { ok: true, value: null };

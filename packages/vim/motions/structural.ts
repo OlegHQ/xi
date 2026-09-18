@@ -1,5 +1,17 @@
 import type { DocumentSnapshot, LineIndex, DocumentVersion, Utf16Offset, CellColumn, Result } from '../../document/src/index.ts';
 
+/** One reusable instance instead of constructing a new Intl.Segmenter on every call. */
+const STRUCTURAL_GRAPHEME_SEGMENTER = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('und', { granularity: 'grapheme' }) : undefined;
+
+/** Local offset (within `text`) of the start of its last grapheme; 0 for an empty line. */
+function lastGraphemeStart(text: string): number {
+  if (text.length === 0) return 0;
+  if (STRUCTURAL_GRAPHEME_SEGMENTER === undefined) return Math.max(0, text.length - 1);
+  let lastIndex = 0;
+  for (const part of STRUCTURAL_GRAPHEME_SEGMENTER.segment(text)) lastIndex = part.index;
+  return lastIndex;
+}
+
 export type VimStructuralMotionKey = '%' | '(' | ')' | '{' | '}' | '[[' | ']]' | '[]' | ']['
   | '[(' | '[{' | '])' | ']}';
 
@@ -62,6 +74,8 @@ export function resolveVimStructuralMotion(
   if (!Number.isSafeInteger(maxScan) || maxScan < 1) return failure('scan-limit');
   if (invocation.key === '%' && invocation.count !== undefined) {
     // Vim's N% line: `(count * line-count + 99) / 100`, truncated, 1-indexed.
+    // C7: `{count}%` is declared linewise (not charwise) in Vim's motion table.
+    // nvim: :call setline(1,['one','two','three','four','five']) | normal! d50% -> deletes lines 1-3 linewise ('3 fewer lines'; d, not y, still linewise)
     const line1Indexed = Math.floor((count * snapshot.lineCount + 99) / 100);
     const targetLine = Math.max(0, Math.min(snapshot.lineCount - 1, line1Indexed - 1));
     const target = snapshot.lineStartOffset(targetLine as LineIndex);
@@ -73,7 +87,7 @@ export function resolveVimStructuralMotion(
     });
     return {
       ok: true,
-      value: Object.freeze({ cursor: nextCursor, kind: 'characterwise', moved: target.value !== cursor.offset }),
+      value: Object.freeze({ cursor: nextCursor, kind: 'linewise', moved: target.value !== cursor.offset }),
     };
   }
   // Bracket-depth (`%`, `[(`, `[{`, `])`, `]}`) and paragraph (`{`, `}`) targets are
@@ -116,7 +130,11 @@ export function resolveVimStructuralMotion(
     case ']]':
     case '[]':
     case '][': {
-      kind = 'linewise';
+      // C7: `]]`/`[[`/`[]`/`][` are exclusive charwise motions, not
+      // unconditionally linewise — they read as linewise only when they
+      // land at column 0 from a start at/before the first non-blank
+      // (Vim's exclusive-linewise rule), same as `{`/`}` above.
+      // nvim: :call setline(1,['.SH one','body','','.SH two']) | normal! llly]] -> getregtype('"')=='v' (charwise, yanks " one\nbody\n")
       const source = readSource(snapshot, offset, maxScan);
       if (!source.ok) return source;
       const currentLine = lineAt(source.value.lines, offset);
@@ -157,7 +175,12 @@ export function resolveVimStructuralMotion(
   const nextCursor: VimStructuralMotionCursor = Object.freeze({
     documentVersion: snapshot.version,
     offset: targetOffset as Utf16Offset,
-    desiredDisplayCellColumn: 0 as CellColumn,
+    // C7: hardcoding column 0 here killed the sticky column after `%`
+    // (matching-pair jumps land at arbitrary columns); `null` means "derive
+    // the desired column from the offset", matching VimMotionCursor's
+    // documented convention, so a later j/k lands on the true column.
+    // nvim: :call setline(1,['a (bbbb) c','xxxxxxxxxxxxxxxxxxxx']) | normal! 0f(%j -> col('.')==8
+    desiredDisplayCellColumn: null,
   });
   return {
     ok: true,
@@ -446,9 +469,14 @@ function sentenceTarget(
   for (let index = 0; index < scalars.length; index += 1) {
     const value = scalars[index]?.value;
     if (value !== '.' && value !== '!' && value !== '?') continue;
-    const next = scalars[index + 1]?.value;
-    if (index + 1 >= scalars.length || next === undefined || /\s/u.test(next)) {
-      let target = index + 1;
+    // C7: ":help sentence" — any number of closing ')', ']', '"' and '\''
+    // may follow the '.'/'!'/'?' before the required space/tab/EOL.
+    // nvim: :call setline(1,['He said "Hi." She left.']) | normal! ) -> col('.')==15 ('S' of She)
+    let closerEnd = index + 1;
+    while (closerEnd < scalars.length && /[)\]"']/u.test(scalars[closerEnd]?.value ?? '')) closerEnd += 1;
+    const next = scalars[closerEnd]?.value;
+    if (closerEnd >= scalars.length || next === undefined || /\s/u.test(next)) {
+      let target = closerEnd;
       while (target < scalars.length && /\s/u.test(scalars[target]?.value ?? '')) target += 1;
       if (target < scalars.length) starts.push(scalars[target]?.offset ?? 0);
     }
@@ -487,8 +515,11 @@ function paragraphTarget(
       // buffer's start/end once the scanned window actually reaches it
       // (otherwise the caller must grow the window and rescan).
       if (forward && atDocumentEnd) {
+        // C1: clamp to the last grapheme's start, not one past it — an
+        // offset past the last line's content is not a valid cursor.
+        // nvim: :call setline(1,['aaa','bbb']) | normal! } -> cursor at (2,2) i.e. offset 6, not 7
         const last = lines.at(-1);
-        return last === undefined ? null : last.start + last.text.length;
+        return last === undefined ? null : last.start + lastGraphemeStart(last.text);
       }
       if (!forward && atDocumentStart) return lines[0]?.start ?? null;
       return null;

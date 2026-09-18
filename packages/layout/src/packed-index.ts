@@ -47,12 +47,16 @@ export class PackedPositionIndex {
 
 const PACKED_POINT_STRIDE = 2_048;
 /**
- * Display-column keys can exceed `PACKED_POINT_STRIDE` for long unwrapped lines
- * (bounded by `MAX_SOURCE_PREFIX_UTF16` UTF-16 units at up to 2 display cells each),
- * so this uses a wider, independent stride; both stay far under
- * `Number.MAX_SAFE_INTEGER` for any valid `LineIndex`.
+ * Display-column keys can exceed `PACKED_POINT_STRIDE` for long unwrapped lines.
+ * The worst case is not 2 cells/unit but tab expansion: up to `MAX_SOURCE_PREFIX_UTF16`
+ * (65,536) UTF-16 units, each a tab expandable to the maximum `tabSize` of 32 cells,
+ * plus up to `MAX_LAYOUT_ANNOTATION_TOTAL_UTF16` (65,536) further annotation units at
+ * up to 2 cells each -- a display column can reach ~2,228,224. A stride at or below
+ * that (the previous 1,048,576) lets one line's high display columns collide with the
+ * next line's low ones in the packed key. 4,194,304 (2^22) clears that worst case with
+ * headroom and still stays far under `Number.MAX_SAFE_INTEGER` for any valid `LineIndex`.
  */
-const DISPLAY_KEY_STRIDE = 1_048_576;
+const DISPLAY_KEY_STRIDE = 4_194_304;
 
 function packDisplayKey(line: number, column: number): number {
   return line * DISPLAY_KEY_STRIDE + column;

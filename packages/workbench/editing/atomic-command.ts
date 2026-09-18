@@ -16,7 +16,7 @@ import type {
   SelectionSet,
   SelectionSetInput,
 } from '../../selections/src/index';
-import { asIdentifier, cloneSerializedSelectionValue, type ViewId } from '../../contracts/src/index';
+import { asIdentifier, cloneSerializedSelectionValue, type ValidationIssue, type ViewId } from '../../contracts/src/index';
 import { normalizeAtomicEdits } from '../../vim/src/index';
 import type {
   AtomicEditConflict,
@@ -130,7 +130,7 @@ export function createAtomicWorkbenchState(
     }
     ids.add(view.viewId);
     if (view.viewId === input.activeViewId) hasActive = true;
-    const repeatTarget = cloneSerializedSelectionValue(view.repeatTarget);
+    const repeatTarget = cheapCloneSelectionValue(view.repeatTarget);
     if (!repeatTarget.ok) return { ok: false, error: { kind: 'invalid-state' } };
     views.push(Object.freeze({
       viewId: view.viewId,
@@ -407,6 +407,17 @@ function isSameAtomicState(current: AtomicWorkbenchState, input: AtomicWorkbench
   return true;
 }
 
+/** `cloneSerializedSelectionValue` recursively walks and deep-freezes its output; every
+ * selection-changing keystroke otherwise re-walks every view's repeatTarget and every register
+ * even when unchanged. Its output is always frozen, so an already-frozen (or primitive) input
+ * has necessarily already passed validation and can be reused as-is without re-walking it. */
+function cheapCloneSelectionValue(value: unknown): Result<SerializedSelectionValue, ValidationIssue> {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) {
+    return { ok: true, value: value as SerializedSelectionValue };
+  }
+  return cloneSerializedSelectionValue(value);
+}
+
 function applyRegisterWrites(
   current: readonly AtomicRegisterValue[],
   writes: readonly AtomicRegisterValue[],
@@ -427,7 +438,7 @@ function normalizeRegisterValues(values: readonly AtomicRegisterValue[]): Result
   for (const value of values) {
     if (!isRegisterName(value.name) || seen.has(value.name)) return { ok: false, error: { kind: 'invalid-state' } };
     seen.add(value.name);
-    const cloned = cloneSerializedSelectionValue(value.value);
+    const cloned = cheapCloneSelectionValue(value.value);
     if (!cloned.ok) return { ok: false, error: { kind: 'invalid-state' } };
     normalized.push(Object.freeze({ name: value.name, value: cloned.value }));
   }

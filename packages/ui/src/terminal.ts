@@ -145,8 +145,16 @@ export interface OpenTuiWorkbenchOptions {
   readonly onViewportAnchorChange?: (viewId: string, scrollTop: number, scrollLeft: number) => void;
   /** Forwarded to the main viewport renderable; see `WorkbenchRenderableOptions.onViewportSizeChange`. */
   readonly onViewportSizeChange?: (viewId: string, heightCells: number) => void;
-  /** Return true when the application consumed the key, or `quit` after an application command. */
-  readonly onKeypress?: (event: KeyEvent) => boolean | 'quit' | Promise<boolean | 'quit'>;
+  /**
+   * H1-7: `WorkbenchInputRouter.dispatchKey`, handed in by `apps/xi/src/wiring/ui.ts`. This is
+   * the *only* thing `processKeypress` calls for a keypress -- the router owns the ordered
+   * overlay-focus stack (context menu, command line, completion, picker, explorer, search,
+   * problems, output, outline, hierarchy, hover, directory review, signature) plus its own
+   * fallthrough; `packages/ui` holds no second copy of that precedence policy. Required: a
+   * caller that wants to drive keyboard input through this adapter supplies a router (a real
+   * one, or a test double implementing the same dispatch contract).
+   */
+  readonly dispatchKey: (event: KeyEvent) => 'consumed' | 'pending' | 'unhandled' | 'quit' | Promise<'consumed' | 'pending' | 'unhandled' | 'quit'>;
   /** Bracketed-paste bytes, delivered as one opaque event; never re-parsed as keystrokes. */
   readonly onPaste?: (bytes: Uint8Array) => void;
   /** Optional editor pointer route; semantic placement remains application-owned. */
@@ -161,88 +169,75 @@ export interface OpenTuiWorkbenchOptions {
   readonly prefixHelp?: PrefixHelpReadPort;
   /** Optional right-click context menu state; the application owns items/activation. */
   readonly contextMenu?: ContextMenuStore;
-  /** Optional read-only picker surface and application-owned input behavior. */
+  /** Optional read-only picker surface; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly picker?: {
     readonly read: PickerReadPort;
     readonly isOpen: () => boolean;
-    readonly onKeypress: (event: KeyEvent) => void | Promise<void>;
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
   };
-  /** Optional focused Explorer surface and application-owned navigation. */
+  /** Optional focused Explorer surface; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly explorer?: {
     readonly read: ExplorerReadPort;
     readonly isOpen: () => boolean;
-    readonly onKeypress: (event: KeyEvent) => boolean | void | Promise<boolean | void>;
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
   };
-  /** Optional workspace search surface and application-owned query behavior. */
+  /** Optional workspace search surface; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly search?: {
     readonly read: SearchReadPort;
     readonly isOpen: () => boolean;
     readonly selectedId?: () => string | undefined;
-    readonly onKeypress: (event: KeyEvent) => boolean | void | Promise<boolean | void>;
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
   };
-  /** Optional read-only diagnostics surface and application-owned close behavior. */
+  /** Optional read-only diagnostics surface; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly problems?: {
     readonly read: ProblemsReadPort;
     readonly isOpen: () => boolean;
     readonly selectedId?: () => string | undefined;
-    readonly onKeypress: (event: KeyEvent) => boolean | void | Promise<boolean | void>;
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
   };
-  /** Optional read-only task output surface and application-owned close behavior. */
+  /** Optional read-only task output surface; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly output?: {
     readonly read: TaskOutputReadPort;
     readonly isOpen: () => boolean;
-    readonly onKeypress: (event: KeyEvent) => boolean | void | Promise<boolean | void>;
   };
-  /** Optional read-only language outline and application-owned navigation. */
+  /** Optional read-only language outline; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly outline?: {
     readonly read: OutlineReadPort;
     readonly isOpen: () => boolean;
-    readonly onKeypress: (event: KeyEvent) => boolean | void | Promise<boolean | void>;
   };
   /** Optional lazy hierarchy surface; host owns expansion, cancellation and link actions. */
   readonly hierarchy?: {
     readonly read: HierarchyReadPort;
     readonly isOpen: () => boolean;
-    readonly onKeypress: (event: KeyEvent) => boolean | void | Promise<boolean | void>;
   };
-  /** Optional read-only hover surface and application-owned close behavior. */
+  /** Optional read-only hover surface; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly hover?: {
     readonly read: HoverReadPort;
     readonly isOpen: () => boolean;
-    readonly onKeypress: (event: KeyEvent) => boolean | void | Promise<boolean | void>;
   };
   /**
-   * Optional directory-draft review surface (a rename/move/copy plan before it is
-   * applied). The UI never applies or closes it -- `onKeypress` returns whether the
-   * composition root consumed the key so an unhandled key can still fall through to
-   * the ordinary key path.
+   * Optional directory-draft review surface (a rename/move/copy plan before it is applied).
+   * The UI never applies or closes it; keyboard routing (including the one case where an
+   * unhandled key falls through to a lower-priority surface) lives in `WorkbenchInputRouter`.
    */
   readonly directoryReview?: {
     readonly read: DirectoryDraftReadPort;
     readonly isOpen: () => boolean;
-    readonly onKeypress: (event: KeyEvent) => 'handled' | 'unhandled';
   };
-  /** Optional insert-mode completion popup and application-owned keyboard routing. */
+  /** Optional insert-mode completion popup; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly completion?: {
     readonly read: CompletionReadPort;
     readonly isOpen: () => boolean;
-    readonly onKeypress: (event: KeyEvent) => boolean | void | Promise<boolean | void>;
   };
-  /** Optional signature help popup and application-owned close behavior. */
+  /** Optional signature help popup; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly signature?: {
     readonly read: SignatureReadPort;
     readonly isOpen: () => boolean;
-    readonly onKeypress: (event: KeyEvent) => boolean | void | Promise<boolean | void>;
   };
-  /** Focused Ex command line; parsing and execution remain application-owned. */
+  /** Focused Ex command line; parsing, execution and keyboard routing live in `WorkbenchInputRouter`. */
   readonly commandLine?: {
     readonly read: ExCommandLineReadPort;
     readonly isOpen: () => boolean;
-    readonly onKeypress: (event: KeyEvent) => boolean | 'quit' | void | Promise<boolean | 'quit' | void>;
   };
 }
 
@@ -313,7 +308,7 @@ function panelThemesFromWorkbench(theme: WorkbenchTheme): { readonly picker: Pic
 export async function runOpenTuiWorkbench(
   workbench: WorkbenchReadPort,
   fileLabel = '[No Name]',
-  options: OpenTuiWorkbenchOptions = {},
+  options: OpenTuiWorkbenchOptions,
 ): Promise<void> {
   let finish!: () => void;
   const done = new Promise<void>((resolveDone) => { finish = resolveDone; });
@@ -409,17 +404,27 @@ export async function runOpenTuiWorkbench(
   let contextMenuVisibilitySubscription: Disposable | undefined;
   let contextMenuModule: typeof import('./context-menu') | undefined;
   let optionalSurfacesInstallation: Promise<void> | undefined;
-  const surfaceWakeSubscription = options.subscribeSurfaceChanges?.(() => {
-    if (!renderer.isDestroyed) void installOptionalSurfaces().then(requestFrame);
-  });
+  // Only actually installs (async import + construct) when a surface is open and
+  // missing; otherwise this is a synchronous no-op check plus one coalesced
+  // `requestFrame` (see `requestFrame`/`scheduleFlush`'s microtask coalescing), so
+  // a burst of same-tick surface-change notifications (e.g. one per syntax capture
+  // window during a single keystroke) collapses into one frame instead of one
+  // `installOptionalSurfacesNow` + render pass per notification.
+  const wakeInstall = (): void => {
+    if (renderer.isDestroyed) return;
+    const install = installOpenOptionalSurfaces();
+    if (install !== undefined) void install.then(requestFrame);
+    else requestFrame();
+  };
+  const surfaceWakeSubscription = options.subscribeSurfaceChanges?.(wakeInstall);
   const prefixHelpWakeSubscription = options.prefixHelp?.subscribe(() => {
     if (options.prefixHelp?.model !== undefined && prefixHelpSurface === undefined) {
-      void installOptionalSurfaces().then(requestFrame);
+      wakeInstall();
     }
   });
   const contextMenuWakeSubscription = options.contextMenu?.subscribe(() => {
     if (options.contextMenu?.open === true && contextMenuSurface === undefined) {
-      void installOptionalSurfaces().then(requestFrame);
+      wakeInstall();
       return;
     }
     if (contextMenuSurface === undefined) return;
@@ -574,36 +579,23 @@ export async function runOpenTuiWorkbench(
     drainingKeys = false;
   }
 
+  /**
+   * H1-7: `WorkbenchInputRouter.dispatchKey` owns the ordered overlay-focus stack (context
+   * menu, command line, completion, picker, explorer, search, problems, output, outline,
+   * hierarchy, hover, directory review, signature) and its own fallthrough; this is the one
+   * and only per-key dispatch call `processKeypress` makes. `packages/ui` no longer holds a
+   * second copy of that precedence policy -- the overlay ports below (`options.picker`,
+   * `options.explorer`, ...) stay only for read models/`isOpen`/`onPointer`, which rendering
+   * still needs; their `onKeypress`/`handleKey` methods are no longer read from here.
+   */
+  function finishDispatchOutcome(outcome: 'consumed' | 'pending' | 'unhandled' | 'quit'): void | Promise<void> {
+    if (outcome === 'quit') { renderer.destroy(); return; }
+    if (outcome === 'consumed') return refreshAfterKey();
+  }
+
   function processKeypress(event: KeyEvent): void | Promise<void> {
-    if (options.contextMenu?.open === true) return finishFocusedKey(options.contextMenu.handleKey(event));
-    if (options.commandLine?.isOpen() === true) return finishFocusedKey(options.commandLine.onKeypress(event));
-    if (options.completion?.isOpen() === true) return finishFocusedKey(options.completion.onKeypress(event));
-    if (options.picker?.isOpen() === true) return finishFocusedKey(options.picker.onKeypress(event));
-    if (options.explorer?.isOpen() === true) return finishFocusedKey(options.explorer.onKeypress(event));
-    if (options.search?.isOpen() === true) return finishFocusedKey(options.search.onKeypress(event));
-    if (options.problems?.isOpen() === true) return finishFocusedKey(options.problems.onKeypress(event));
-    if (options.output?.isOpen() === true) return finishFocusedKey(options.output.onKeypress(event));
-    if (options.outline?.isOpen() === true) return finishFocusedKey(options.outline.onKeypress(event));
-    if (options.hierarchy?.isOpen() === true) return finishFocusedKey(options.hierarchy.onKeypress(event));
-    if (options.hover?.isOpen() === true) return finishFocusedKey(options.hover.onKeypress(event));
-    if (options.directoryReview?.isOpen() === true && options.directoryReview.onKeypress(event) === 'handled') return refreshAfterKey();
-    if (options.signature?.isOpen() === true) return finishFocusedKey(options.signature.onKeypress(event));
-    const result = options.onKeypress === undefined ? false : options.onKeypress(event);
-    if (isPromiseLike(result)) return result.then((value) => finishApplicationKey(event, value));
-    return finishApplicationKey(event, result);
-  }
-
-  function finishFocusedKey(result: void | boolean | 'quit' | Promise<void | boolean | 'quit'>): void | Promise<void> {
-    const finish = (value: void | boolean | 'quit'): void | Promise<void> => {
-      if (value === 'quit') renderer.destroy();
-      else return refreshAfterKey();
-    };
-    return isPromiseLike(result) ? result.then(finish) : finish(result);
-  }
-
-  function finishApplicationKey(_event: KeyEvent, result: boolean | 'quit'): void | Promise<void> {
-    if (result === 'quit') { renderer.destroy(); return; }
-    if (result === true) return refreshAfterKey();
+    const outcome = options.dispatchKey(event);
+    return isPromiseLike(outcome) ? outcome.then(finishDispatchOutcome) : finishDispatchOutcome(outcome);
   }
 
   function refreshAfterKey(): void | Promise<void> {
@@ -776,7 +768,7 @@ export async function runOpenTuiWorkbench(
       }
     if (pickerSurface === undefined) {
       viewport.syncAnchors();
-      renderer.intermediateRender();
+      renderOnce(renderer);
       return;
     }
     const width = Math.max(20, Math.min(renderer.width - 2, 100));
@@ -786,7 +778,7 @@ export async function runOpenTuiWorkbench(
     pickerSurface.left = Math.max(0, Math.floor((renderer.width - width) / 2));
     pickerSurface.top = Math.max(0, Math.floor((renderer.height - height) / 2));
     viewport.syncAnchors();
-    renderer.intermediateRender();
+    renderOnce(renderer);
   });
   let ready = false;
   renderer.on('frame', () => {
@@ -798,6 +790,27 @@ export async function runOpenTuiWorkbench(
       try { void Promise.resolve(options.onReady?.()).catch(() => renderer.destroy()); } catch { renderer.destroy(); }
     }, 0);
     // Panels load when opened; prefix help has its own visibility subscription.
+    // `installOptionalSurfacesNow` dynamically `import()`s each overlay module the first
+    // time it opens, which otherwise puts a module-resolution await inside the keystroke
+    // path that first opens it. Warm the module cache in idle time after the first frame
+    // instead, so every overlay's `import()` above is already resolved by the time any key
+    // asks to open one.
+    setTimeout(() => {
+      if (renderer.isDestroyed) return;
+      void Promise.all([
+        import('../explorer/index'),
+        import('../picker/index'),
+        import('../search/index'),
+        import('../problems/index'),
+        import('../output/index'),
+        import('../navigation/index'),
+        import('../directory/index'),
+        import('../completion/index'),
+        import('../commandline/index'),
+        import('../help/index'),
+        import('./context-menu'),
+      ]).catch(() => {});
+    }, 0);
   });
   // Xi renders on demand, not on a permanent frame-rate loop: idle state must
   // not drive continuous work (docs/plan/15-keystroke-latency.md). Every path
@@ -806,7 +819,7 @@ export async function runOpenTuiWorkbench(
   // above) already calls `requestFrame`/`intermediateRender`; a single explicit
   // render here paints the first frame without starting the continuous loop.
   viewport.syncAnchors();
-  renderer.intermediateRender();
+  renderOnce(renderer);
   await done;
   prefixHelpWakeSubscription?.dispose();
   contextMenuWakeSubscription?.dispose();
@@ -1103,7 +1116,7 @@ export async function runOpenTuiWorkbench(
       }
       if (!renderer.isDestroyed) {
         viewport.syncAnchors();
-        renderer.intermediateRender();
+        renderOnce(renderer);
       }
     } catch {
       if (!renderer.isDestroyed) renderer.destroy();

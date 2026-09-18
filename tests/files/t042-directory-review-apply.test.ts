@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { CancellationSource } from '../../packages/contracts/src/index';
 import { DirectoryDraft, type DirectoryDraftSourceEntry } from '../../packages/services/files/index';
 import { JournaledFilesystemOperations } from '../../packages/services/files/index';
+import { openDraftDocument } from './directory-draft-document-factory';
 import { NodeFilesystemPort } from '../../packages/platform/src/index';
 
 const token = new CancellationSource().token;
@@ -39,7 +40,7 @@ async function testCreateRenameDeleteReviewAppliesAndRefreshes(root: string): Pr
     { id: 'row-a', name: 'a.txt', path: a, stableIdentity: 'a' },
     { id: 'row-b', name: 'b.txt', path: b, stableIdentity: 'b' },
   ];
-  const created = DirectoryDraft.create(directory, entries);
+  const created = DirectoryDraft.create(directory, entries, openDraftDocument);
   assert.equal(created.ok, true, 'T042-REVIEW-01 draft initializes');
   if (!created.ok) return;
   const draft = created.value;

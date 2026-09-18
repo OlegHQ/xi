@@ -3,7 +3,7 @@ import type { SearchMatch, SearchQuery } from './index';
 
 /** A target is bound to the exact source used to build the preview. */
 export interface ReplaceTarget { readonly path: string; readonly rootId: string; readonly text: string; readonly version?: number; readonly diskHash?: string; readonly source: 'disk' | 'buffer'; }
-export interface ReplacementEdit { readonly path: string; /** Absolute UTF-16 offsets in the target text. */ readonly startUtf16: number; readonly endUtf16: number; readonly replacement: string; readonly original: string; }
+export interface ReplacementEdit { readonly path: string; readonly rootId: string; /** Absolute UTF-16 offsets in the target text. */ readonly startUtf16: number; readonly endUtf16: number; readonly replacement: string; readonly original: string; }
 export interface ReplacePlan { readonly query: SearchQuery; readonly replacement: string; readonly edits: readonly ReplacementEdit[]; readonly targets: readonly ReplaceTarget[]; readonly generation: number; }
 export interface ReplaceJournalEntry { readonly path: string; readonly source: ReplaceTarget['source']; readonly before: string; readonly after: string; readonly applied: boolean; readonly error?: string; }
 export interface ReplaceJournal { readonly schemaVersion: 1; readonly operationId: string; readonly generation: number; readonly entries: readonly ReplaceJournalEntry[]; readonly status: 'applied' | 'partial' | 'restored'; }
@@ -57,15 +57,16 @@ export class WorkspaceReplaceService implements Disposable {
       const found = expression.value.exec(target.text);
       if (found === null || found.index !== start || found[0].length !== original.length) return failure('stale', `match changed in ${match.path}`, match.path);
       const expanded = expandReplacement(replacement, found); if (!expanded.ok) return expanded;
-      const edit = Object.freeze({ path: match.path, startUtf16: start, endUtf16: end, replacement: expanded.value, original });
-      (byPath.get(match.path) ?? (byPath.set(match.path, []), byPath.get(match.path)!)).push(edit);
+      const key = `${match.rootId}\0${match.path}`;
+      const edit = Object.freeze({ path: match.path, rootId: match.rootId, startUtf16: start, endUtf16: end, replacement: expanded.value, original });
+      (byPath.get(key) ?? (byPath.set(key, []), byPath.get(key)!)).push(edit);
     }
     const edits: ReplacementEdit[] = [];
-    for (const [path, pathEdits] of byPath) {
+    for (const [key, pathEdits] of byPath) {
       pathEdits.sort((left, right) => left.startUtf16 - right.startUtf16 || left.endUtf16 - right.endUtf16);
       for (let index = 1; index < pathEdits.length; index += 1) {
         const prior = pathEdits[index - 1]; const current = pathEdits[index]; if (prior === undefined || current === undefined) continue;
-        if (current.startUtf16 < prior.endUtf16 || current.startUtf16 === prior.startUtf16) return failure('overlap', `replacement edits overlap in ${path}`, path);
+        if (current.startUtf16 < prior.endUtf16 || current.startUtf16 === prior.startUtf16) return failure('overlap', `replacement edits overlap in ${key}`, prior.path);
       }
       edits.push(...pathEdits);
     }
@@ -90,7 +91,8 @@ function expandReplacement(value: string, match: RegExpExecArray): Result<string
     if (character === undefined) continue;
     if (character === '$') {
       const next = value[index + 1];
-      if (next === '$' || next === '&') { output += applyCase(next, transform, nextTransform); nextTransform = undefined; index += 1; continue; }
+      if (next === '$') { output += applyCase('$', transform, nextTransform); nextTransform = undefined; index += 1; continue; }
+      if (next === '&') { output += applyCase(match[0], transform, nextTransform); nextTransform = undefined; index += 1; continue; }
       if (next === '<') { const close = value.indexOf('>', index + 2); if (close < 0) return failure('invalid-replacement', 'unterminated named capture'); const name = value.slice(index + 2, close); if (match.groups === undefined || !(name in match.groups)) return failure('invalid-replacement', `unknown capture: ${name}`); output += applyCase(match.groups[name] ?? '', transform, nextTransform); nextTransform = undefined; index = close; continue; }
       if (next !== undefined && /[0-9]/u.test(next)) { let end = index + 1; while (end < value.length && end < index + 3 && /[0-9]/u.test(value[end] ?? '')) end += 1; const capture = Number(value.slice(index + 1, end)); if (capture > 99) return failure('invalid-replacement', 'numeric capture must be between 1 and 99'); output += applyCase(match[capture] ?? '', transform, nextTransform); nextTransform = undefined; index = end - 1; continue; }
       return failure('invalid-replacement', 'unsupported replacement dollar escape');

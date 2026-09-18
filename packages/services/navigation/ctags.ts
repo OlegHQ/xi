@@ -9,6 +9,7 @@ import type { HostNavigationFailure, HostNavigationProvider, HostLocation } from
 export interface CtagsFilesystemPort extends FilesystemPort {
   resolvePath(base: string, path: string): string;
   directoryPath(path: string): string;
+  workspaceRelativePath(root: string, path: string): string | undefined;
 }
 
 export interface CtagsNavigationHostOptions {
@@ -80,6 +81,10 @@ export function createCtagsNavigationHost(options: CtagsNavigationHostOptions): 
         for (const record of lookupCtags(records, name)) {
           const targetPath = record.path.startsWith('/') ? record.path : filesystem.resolvePath(filesystem.directoryPath(tagsPath), record.path);
           if (targetPath.includes('\0')) continue;
+          // A tags file entry (e.g. `../../../../etc/shadow`) must not be able to navigate
+          // outside the workspace it was found in; reject anything that does not resolve to a
+          // workspace-relative path instead of trusting it as written.
+          if (filesystem.workspaceRelativePath(workspaceRoot, targetPath) === undefined) continue;
           results.push(Object.freeze({ uri: fileUri(targetPath), line: record.line, utf16: 0 }));
         }
       }

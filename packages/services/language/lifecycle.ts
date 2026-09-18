@@ -924,6 +924,11 @@ export class LanguageServerSession implements Disposable {
       if (!document.ok) throw new Error(document.error.message);
       const admitted = await this.#sync?.openDocument(document.value);
       if (admitted !== undefined && !admitted.ok) throw new Error(admitted.error.message);
+      // Yield between documents: on a restart with many open documents this loop would
+      // otherwise materialize/send every one back-to-back with no macrotask boundary in
+      // between, stalling the event loop (and the keystroke path) for the whole batch (F1-7).
+      const slept = await this.#options.clock.sleep(0, this.#lifecycleCancellation.token);
+      if (!slept.ok || this.#lifecycleCancellation.token.isCancelled) return;
     }
   }
 
@@ -992,6 +997,11 @@ export class LanguageServerSession implements Disposable {
   private recordFailure(message: string): void {
     this.#lastFailure = message;
     const readyAt = this.#readyAt;
+    // Consume #readyAt: once used to decide "was healthy long enough to reset the retry
+    // counter", clear it so a later failure in the same crash loop (before the process ever
+    // reaches 'ready' again) can't keep reading this stale timestamp and resetting #retries to
+    // 0 on every attempt -- which previously caused an unbounded respawn loop (F1-2).
+    this.#readyAt = undefined;
     if (readyAt !== undefined && this.#options.clock.monotonicMilliseconds() - readyAt >= this.#retry.healthyWindowMilliseconds) this.#retries = 0;
     this.#retries += 1;
   }

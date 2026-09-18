@@ -163,7 +163,10 @@ export class ExplorerController {
     this.#options.host.closeAllPanels('explorer');
     this.#open = true;
     if (this.#tree === undefined) {
-      void this.#options.ensureServices().then(() => { if (this.#open) this.open(); });
+      void this.#options.ensureServices().then(() => { if (this.#open) this.open(); }).catch((error: unknown) => {
+        this.#open = false;
+        this.#options.onError(`xi: explorer failed to load: ${error instanceof Error ? error.message : String(error)}\n`);
+      });
       return;
     }
     this.#filtering = false;

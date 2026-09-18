@@ -17,14 +17,135 @@
       "id": "T024-ORACLE-INSERT-01",
       "snapshots": [
         {
-          "search": {
-            "forward": 1,
-            "pattern": "",
-            "highlighting": 1
-          },
           "lines": [
             "Xalpha beta"
           ],
+          "geometry": {
+            "lines": 24,
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23
+          },
+          "commandLine": "",
+          "blocking": false,
+          "mode": "n",
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
+          "registers": {
+            "0": {
+              "lines": [],
+              "type": ""
+            },
+            "1": {
+              "lines": [],
+              "type": ""
+            },
+            "2": {
+              "lines": [],
+              "type": ""
+            },
+            "3": {
+              "lines": [],
+              "type": ""
+            },
+            "4": {
+              "lines": [],
+              "type": ""
+            },
+            "5": {
+              "lines": [],
+              "type": ""
+            },
+            "6": {
+              "lines": [],
+              "type": ""
+            },
+            "7": {
+              "lines": [],
+              "type": ""
+            },
+            "8": {
+              "lines": [],
+              "type": ""
+            },
+            "9": {
+              "lines": [],
+              "type": ""
+            },
+            "a": {
+              "lines": [],
+              "type": ""
+            },
+            "z": {
+              "lines": [],
+              "type": ""
+            },
+            "Z": {
+              "lines": [],
+              "type": ""
+            },
+            "+": {
+              "lines": [],
+              "type": "V"
+            },
+            "-": {
+              "lines": [],
+              "type": ""
+            },
+            "*": {
+              "lines": [],
+              "type": "V"
+            },
+            "A": {
+              "lines": [],
+              "type": ""
+            },
+            "\"": {
+              "lines": [],
+              "type": ""
+            }
+          },
+          "options": {
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true
+          },
+          "buffer": {
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "name": "",
+            "bomb": false,
+            "filetype": "",
+            "modifiable": true,
+            "modified": true
+          },
+          "error": "",
+          "label": "insert-X",
           "marks": {
             ".": [
               0,
@@ -32,7 +153,7 @@
               1,
               0
             ],
-            "[": [
+            "\"": [
               0,
               0,
               0,
@@ -44,7 +165,7 @@
               0,
               0
             ],
-            "<": [
+            "]": [
               0,
               0,
               0,
@@ -56,13 +177,13 @@
               0,
               0
             ],
-            "\"": [
+            "[": [
               0,
               0,
               0,
               0
             ],
-            "]": [
+            "<": [
               0,
               0,
               0,
@@ -71,20 +192,13 @@
           },
           "view": {
             "topfill": 0,
+            "leftcol": 0,
+            "col": 0,
             "topline": 1,
             "skipcol": 0,
-            "col": 0,
-            "curswant": 0,
-            "lnum": 1,
             "coladd": 0,
-            "leftcol": 0
-          },
-          "blocking": false,
-          "geometry": {
-            "windowHeight": 23,
-            "lines": 24,
-            "columns": 80,
-            "windowWidth": 80
+            "curswant": 0,
+            "lnum": 1
           },
           "jumpList": {
             "entries": [
@@ -92,325 +206,121 @@
               0
             ]
           },
-          "commandLine": "",
-          "label": "insert-X",
-          "error": "",
-          "registers": {
-            "0": {
-              "type": "",
-              "lines": []
-            },
-            "1": {
-              "type": "",
-              "lines": []
-            },
-            "2": {
-              "type": "",
-              "lines": []
-            },
-            "3": {
-              "type": "",
-              "lines": []
-            },
-            "4": {
-              "type": "",
-              "lines": []
-            },
-            "5": {
-              "type": "",
-              "lines": []
-            },
-            "6": {
-              "type": "",
-              "lines": []
-            },
-            "7": {
-              "type": "",
-              "lines": []
-            },
-            "8": {
-              "type": "",
-              "lines": []
-            },
-            "9": {
-              "type": "",
-              "lines": []
-            },
-            "-": {
-              "type": "",
-              "lines": []
-            },
-            "a": {
-              "type": "",
-              "lines": []
-            },
-            "z": {
-              "type": "",
-              "lines": []
-            },
-            "Z": {
-              "type": "",
-              "lines": []
-            },
-            "+": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
-            },
-            "\"": {
-              "type": "",
-              "lines": []
-            },
-            "*": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
-            },
-            "A": {
-              "type": "",
-              "lines": []
-            }
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "coladd": 0,
+                  "col": 0,
+                  "lnum": 1
+                }
+              ],
+              1
+            ]
           },
-          "buffer": {
-            "name": "",
-            "endOfLine": true,
-            "fileFormat": "unix",
-            "fileEncoding": "utf-8",
-            "modified": true,
-            "bomb": false,
-            "modifiable": true,
-            "filetype": ""
-          },
-          "mode": "n",
           "cursor": {
-            "screenRow": 1,
-            "line": 1,
             "byteColumn": 1,
             "coladd": 0,
             "virtualColumn": 1,
+            "screenColumn": 1,
             "desiredColumn": 0,
-            "screenColumn": 1
-          },
-          "options": {
-            "timeout": true,
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255",
-            "joinspaces": false,
-            "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0,
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "wrapscan": true,
-            "wrap": true
-          },
-          "changeList": {
-            "entries": [
-              [
-                {
-                  "lnum": 1,
-                  "coladd": 0,
-                  "col": 0
-                }
-              ],
-              1
-            ]
+            "line": 1,
+            "screenRow": 1
           }
         },
         {
-          "search": {
-            "forward": 1,
-            "pattern": "",
-            "highlighting": 1
-          },
           "lines": [
             "Xalpha beta"
           ],
-          "marks": {
-            ".": [
-              0,
-              1,
-              8,
-              0
-            ],
-            "[": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "^": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
-              0,
-              0,
-              0,
-              0
-            ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "\"": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "]": [
-              0,
-              0,
-              0,
-              0
-            ]
-          },
-          "view": {
-            "topfill": 0,
-            "topline": 1,
-            "skipcol": 0,
-            "col": 7,
-            "curswant": 7,
-            "lnum": 1,
-            "coladd": 0,
-            "leftcol": 0
-          },
-          "blocking": false,
           "geometry": {
-            "windowHeight": 23,
             "lines": 24,
             "columns": 80,
-            "windowWidth": 80
-          },
-          "jumpList": {
-            "entries": [
-              [],
-              0
-            ]
+            "windowWidth": 80,
+            "windowHeight": 23
           },
           "commandLine": "",
-          "label": "move-to-beta",
-          "error": "",
+          "blocking": false,
+          "mode": "n",
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
           "registers": {
             "0": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "1": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "2": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "3": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "4": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "5": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "6": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "7": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "8": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "9": {
-              "type": "",
-              "lines": []
-            },
-            "-": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "a": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "z": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "Z": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "+": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
+              "lines": [],
+              "type": "V"
             },
-            "\"": {
-              "type": "",
-              "lines": []
+            "-": {
+              "lines": [],
+              "type": ""
             },
             "*": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
+              "lines": [],
+              "type": "V"
             },
             "A": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
+            },
+            "\"": {
+              "lines": [],
+              "type": ""
             }
           },
-          "buffer": {
-            "name": "",
-            "endOfLine": true,
-            "fileFormat": "unix",
-            "fileEncoding": "utf-8",
-            "modified": true,
-            "bomb": false,
-            "modifiable": true,
-            "filetype": ""
-          },
-          "mode": "n",
-          "cursor": {
-            "screenRow": 1,
-            "line": 1,
-            "byteColumn": 8,
-            "coladd": 0,
-            "virtualColumn": 8,
-            "desiredColumn": 7,
-            "screenColumn": 8
-          },
           "options": {
-            "timeout": true,
             "ambiwidth": "single",
             "backspace": "indent,eol,start",
             "cpoptions": "aABceFs_",
@@ -433,200 +343,196 @@
             "virtualedit": "",
             "whichwrap": "b,s",
             "wrapscan": true,
-            "wrap": true
+            "wrap": true,
+            "timeout": true
+          },
+          "buffer": {
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "name": "",
+            "bomb": false,
+            "filetype": "",
+            "modifiable": true,
+            "modified": true
+          },
+          "error": "",
+          "label": "move-to-beta",
+          "marks": {
+            ".": [
+              0,
+              1,
+              8,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "view": {
+            "topfill": 0,
+            "leftcol": 0,
+            "col": 7,
+            "topline": 1,
+            "skipcol": 0,
+            "coladd": 0,
+            "curswant": 7,
+            "lnum": 1
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
           },
           "changeList": {
             "entries": [
               [
                 {
-                  "lnum": 1,
                   "coladd": 0,
-                  "col": 0
+                  "col": 0,
+                  "lnum": 1
                 }
               ],
               1
             ]
+          },
+          "cursor": {
+            "byteColumn": 8,
+            "coladd": 0,
+            "virtualColumn": 8,
+            "screenColumn": 8,
+            "desiredColumn": 7,
+            "line": 1,
+            "screenRow": 1
           }
         },
         {
-          "search": {
-            "forward": 1,
-            "pattern": "",
-            "highlighting": 1
-          },
           "lines": [
             "Xalpha Xbeta"
           ],
-          "marks": {
-            ".": [
-              0,
-              1,
-              8,
-              0
-            ],
-            "[": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "^": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
-              0,
-              0,
-              0,
-              0
-            ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "\"": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "]": [
-              0,
-              0,
-              0,
-              0
-            ]
-          },
-          "view": {
-            "topfill": 0,
-            "topline": 1,
-            "skipcol": 0,
-            "col": 7,
-            "curswant": 7,
-            "lnum": 1,
-            "coladd": 0,
-            "leftcol": 0
-          },
-          "blocking": false,
           "geometry": {
-            "windowHeight": 23,
             "lines": 24,
             "columns": 80,
-            "windowWidth": 80
-          },
-          "jumpList": {
-            "entries": [
-              [],
-              0
-            ]
+            "windowWidth": 80,
+            "windowHeight": 23
           },
           "commandLine": "",
-          "label": "dot-insert",
-          "error": "",
+          "blocking": false,
+          "mode": "n",
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
+          },
           "registers": {
             "0": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "1": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "2": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "3": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "4": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "5": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "6": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "7": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "8": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "9": {
-              "type": "",
-              "lines": []
-            },
-            "-": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "a": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "z": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "Z": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
             },
             "+": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
+              "lines": [],
+              "type": "V"
             },
-            "\"": {
-              "type": "",
-              "lines": []
+            "-": {
+              "lines": [],
+              "type": ""
             },
             "*": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
+              "lines": [],
+              "type": "V"
             },
             "A": {
-              "type": "",
-              "lines": []
+              "lines": [],
+              "type": ""
+            },
+            "\"": {
+              "lines": [],
+              "type": ""
             }
           },
-          "buffer": {
-            "name": "",
-            "endOfLine": true,
-            "fileFormat": "unix",
-            "fileEncoding": "utf-8",
-            "modified": true,
-            "bomb": false,
-            "modifiable": true,
-            "filetype": ""
-          },
-          "mode": "n",
-          "cursor": {
-            "screenRow": 1,
-            "line": 1,
-            "byteColumn": 8,
-            "coladd": 0,
-            "virtualColumn": 8,
-            "desiredColumn": 7,
-            "screenColumn": 8
-          },
           "options": {
-            "timeout": true,
             "ambiwidth": "single",
             "backspace": "indent,eol,start",
             "cpoptions": "aABceFs_",
@@ -649,19 +555,101 @@
             "virtualedit": "",
             "whichwrap": "b,s",
             "wrapscan": true,
-            "wrap": true
+            "wrap": true,
+            "timeout": true
+          },
+          "buffer": {
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "name": "",
+            "bomb": false,
+            "filetype": "",
+            "modifiable": true,
+            "modified": true
+          },
+          "error": "",
+          "label": "dot-insert",
+          "marks": {
+            ".": [
+              0,
+              1,
+              8,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "view": {
+            "topfill": 0,
+            "leftcol": 0,
+            "col": 7,
+            "topline": 1,
+            "skipcol": 0,
+            "coladd": 0,
+            "curswant": 7,
+            "lnum": 1
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
           },
           "changeList": {
             "entries": [
               [
                 {
-                  "lnum": 1,
                   "coladd": 0,
-                  "col": 7
+                  "col": 7,
+                  "lnum": 1
                 }
               ],
               1
             ]
+          },
+          "cursor": {
+            "byteColumn": 8,
+            "coladd": 0,
+            "virtualColumn": 8,
+            "screenColumn": 8,
+            "desiredColumn": 7,
+            "line": 1,
+            "screenRow": 1
           }
         }
       ]
@@ -670,6 +658,8 @@
       "id": "T024-ORACLE-CHANGE-01",
       "snapshots": [
         {
+          "error": "",
+          "commandLine": "",
           "registers": {
             "0": {
               "type": "",
@@ -711,18 +701,6 @@
               "type": "",
               "lines": []
             },
-            "-": {
-              "type": "v",
-              "lines": [
-                "one"
-              ]
-            },
-            "\"": {
-              "type": "v",
-              "lines": [
-                "one"
-              ]
-            },
             "a": {
               "type": "",
               "lines": []
@@ -739,157 +717,165 @@
               "type": "",
               "lines": []
             },
-            "+": {
+            "\"": {
               "type": "v",
               "lines": [
-                "server"
+                "one"
+              ]
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
+            "-": {
+              "type": "v",
+              "lines": [
+                "one"
               ]
             },
             "*": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
+              "type": "V",
+              "lines": []
             }
+          },
+          "options": {
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "coladd": 0,
+                  "lnum": 1
+                }
+              ],
+              1
+            ]
           },
           "label": "change-first-word",
-          "marks": {
-            ".": [
-              0,
-              1,
-              1,
-              0
-            ],
-            "\"": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "^": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "]": [
-              0,
-              0,
-              0,
-              0
-            ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "[": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
-              0,
-              0,
-              0,
-              0
-            ]
+          "search": {
+            "highlighting": 1,
+            "pattern": "",
+            "forward": 1
           },
           "view": {
-            "topfill": 0,
             "topline": 1,
             "col": 0,
-            "curswant": 0,
-            "skipcol": 0,
             "coladd": 0,
             "lnum": 1,
-            "leftcol": 0
+            "skipcol": 0,
+            "curswant": 0,
+            "leftcol": 0,
+            "topfill": 0
           },
-          "mode": "n",
-          "jumpList": {
-            "entries": [
-              [],
+          "marks": {
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
               0
             ]
           },
+          "blocking": false,
           "cursor": {
-            "line": 1,
             "byteColumn": 1,
             "coladd": 0,
-            "virtualColumn": 1,
+            "line": 1,
             "desiredColumn": 0,
             "screenColumn": 1,
-            "screenRow": 1
+            "screenRow": 1,
+            "virtualColumn": 1
+          },
+          "geometry": {
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "lines": 24
           },
           "lines": [
             "X two three"
           ],
-          "commandLine": "",
-          "search": {
-            "forward": 1,
-            "highlighting": 1,
-            "pattern": ""
-          },
+          "mode": "n",
           "buffer": {
-            "endOfLine": true,
             "fileFormat": "unix",
             "fileEncoding": "utf-8",
-            "name": "",
+            "modifiable": true,
             "bomb": false,
             "filetype": "",
+            "name": "",
             "modified": true,
-            "modifiable": true
-          },
-          "blocking": false,
-          "geometry": {
-            "windowHeight": 23,
-            "columns": 80,
-            "windowWidth": 80,
-            "lines": 24
-          },
-          "changeList": {
-            "entries": [
-              [
-                {
-                  "coladd": 0,
-                  "lnum": 1,
-                  "col": 0
-                }
-              ],
-              1
-            ]
-          },
-          "options": {
-            "joinspaces": false,
-            "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0,
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "wrapscan": true,
-            "wrap": true,
-            "timeout": true,
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255"
-          },
-          "error": ""
+            "endOfLine": true
+          }
         },
         {
+          "error": "",
+          "commandLine": "",
           "registers": {
             "0": {
               "type": "",
@@ -931,18 +917,6 @@
               "type": "",
               "lines": []
             },
-            "-": {
-              "type": "v",
-              "lines": [
-                "one"
-              ]
-            },
-            "\"": {
-              "type": "v",
-              "lines": [
-                "one"
-              ]
-            },
             "a": {
               "type": "",
               "lines": []
@@ -959,25 +933,116 @@
               "type": "",
               "lines": []
             },
-            "+": {
+            "\"": {
               "type": "v",
               "lines": [
-                "server"
+                "one"
+              ]
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
+            "-": {
+              "type": "v",
+              "lines": [
+                "one"
               ]
             },
             "*": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
+              "type": "V",
+              "lines": []
             }
+          },
+          "options": {
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 0,
+                  "coladd": 0,
+                  "lnum": 1
+                }
+              ],
+              1
+            ]
           },
           "label": "move-to-second-word",
+          "search": {
+            "highlighting": 1,
+            "pattern": "",
+            "forward": 1
+          },
+          "view": {
+            "topline": 1,
+            "col": 2,
+            "coladd": 0,
+            "lnum": 1,
+            "skipcol": 0,
+            "curswant": 2,
+            "leftcol": 0,
+            "topfill": 0
+          },
           "marks": {
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
             ".": [
               0,
               1,
               3,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
               0
             ],
             "\"": [
@@ -991,125 +1056,42 @@
               0,
               0,
               0
-            ],
-            "]": [
-              0,
-              0,
-              0,
-              0
-            ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "[": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
-              0,
-              0,
-              0,
-              0
             ]
           },
-          "view": {
-            "topfill": 0,
-            "topline": 1,
-            "col": 2,
-            "curswant": 2,
-            "skipcol": 0,
-            "coladd": 0,
-            "lnum": 1,
-            "leftcol": 0
-          },
-          "mode": "n",
-          "jumpList": {
-            "entries": [
-              [],
-              0
-            ]
-          },
+          "blocking": false,
           "cursor": {
-            "line": 1,
             "byteColumn": 3,
             "coladd": 0,
-            "virtualColumn": 3,
+            "line": 1,
             "desiredColumn": 2,
             "screenColumn": 3,
-            "screenRow": 1
+            "screenRow": 1,
+            "virtualColumn": 3
+          },
+          "geometry": {
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "lines": 24
           },
           "lines": [
             "X two three"
           ],
-          "commandLine": "",
-          "search": {
-            "forward": 1,
-            "highlighting": 1,
-            "pattern": ""
-          },
+          "mode": "n",
           "buffer": {
-            "endOfLine": true,
             "fileFormat": "unix",
             "fileEncoding": "utf-8",
-            "name": "",
+            "modifiable": true,
             "bomb": false,
             "filetype": "",
+            "name": "",
             "modified": true,
-            "modifiable": true
-          },
-          "blocking": false,
-          "geometry": {
-            "windowHeight": 23,
-            "columns": 80,
-            "windowWidth": 80,
-            "lines": 24
-          },
-          "changeList": {
-            "entries": [
-              [
-                {
-                  "coladd": 0,
-                  "lnum": 1,
-                  "col": 0
-                }
-              ],
-              1
-            ]
-          },
-          "options": {
-            "joinspaces": false,
-            "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0,
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "wrapscan": true,
-            "wrap": true,
-            "timeout": true,
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255"
-          },
-          "error": ""
+            "endOfLine": true
+          }
         },
         {
+          "error": "",
+          "commandLine": "",
           "registers": {
             "0": {
               "type": "",
@@ -1151,18 +1133,6 @@
               "type": "",
               "lines": []
             },
-            "-": {
-              "type": "v",
-              "lines": [
-                "two"
-              ]
-            },
-            "\"": {
-              "type": "v",
-              "lines": [
-                "two"
-              ]
-            },
             "a": {
               "type": "",
               "lines": []
@@ -1179,25 +1149,116 @@
               "type": "",
               "lines": []
             },
-            "+": {
+            "\"": {
               "type": "v",
               "lines": [
-                "server"
+                "two"
+              ]
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
+            "-": {
+              "type": "v",
+              "lines": [
+                "two"
               ]
             },
             "*": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
+              "type": "V",
+              "lines": []
             }
           },
+          "options": {
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "col": 2,
+                  "coladd": 0,
+                  "lnum": 1
+                }
+              ],
+              1
+            ]
+          },
           "label": "dot-change",
+          "search": {
+            "highlighting": 1,
+            "pattern": "",
+            "forward": 1
+          },
+          "view": {
+            "topline": 1,
+            "col": 2,
+            "coladd": 0,
+            "lnum": 1,
+            "skipcol": 0,
+            "curswant": 2,
+            "leftcol": 0,
+            "topfill": 0
+          },
           "marks": {
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
             ".": [
               0,
               1,
               3,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
               0
             ],
             "\"": [
@@ -1211,123 +1272,38 @@
               0,
               0,
               0
-            ],
-            "]": [
-              0,
-              0,
-              0,
-              0
-            ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "[": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
-              0,
-              0,
-              0,
-              0
             ]
           },
-          "view": {
-            "topfill": 0,
-            "topline": 1,
-            "col": 2,
-            "curswant": 2,
-            "skipcol": 0,
-            "coladd": 0,
-            "lnum": 1,
-            "leftcol": 0
-          },
-          "mode": "n",
-          "jumpList": {
-            "entries": [
-              [],
-              0
-            ]
-          },
+          "blocking": false,
           "cursor": {
-            "line": 1,
             "byteColumn": 3,
             "coladd": 0,
-            "virtualColumn": 3,
+            "line": 1,
             "desiredColumn": 2,
             "screenColumn": 3,
-            "screenRow": 1
+            "screenRow": 1,
+            "virtualColumn": 3
+          },
+          "geometry": {
+            "columns": 80,
+            "windowWidth": 80,
+            "windowHeight": 23,
+            "lines": 24
           },
           "lines": [
             "X X three"
           ],
-          "commandLine": "",
-          "search": {
-            "forward": 1,
-            "highlighting": 1,
-            "pattern": ""
-          },
+          "mode": "n",
           "buffer": {
-            "endOfLine": true,
             "fileFormat": "unix",
             "fileEncoding": "utf-8",
-            "name": "",
+            "modifiable": true,
             "bomb": false,
             "filetype": "",
+            "name": "",
             "modified": true,
-            "modifiable": true
-          },
-          "blocking": false,
-          "geometry": {
-            "windowHeight": 23,
-            "columns": 80,
-            "windowWidth": 80,
-            "lines": 24
-          },
-          "changeList": {
-            "entries": [
-              [
-                {
-                  "coladd": 0,
-                  "lnum": 1,
-                  "col": 2
-                }
-              ],
-              1
-            ]
-          },
-          "options": {
-            "joinspaces": false,
-            "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0,
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "wrapscan": true,
-            "wrap": true,
-            "timeout": true,
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255"
-          },
-          "error": ""
+            "endOfLine": true
+          }
         }
       ]
     },
@@ -1335,38 +1311,33 @@
       "id": "T024-ORACLE-VISUAL-01",
       "snapshots": [
         {
-          "error": "",
-          "label": "replace-first-word",
           "lines": [
             "X two three"
           ],
-          "mode": "n",
+          "error": "",
+          "commandLine": "",
+          "label": "replace-first-word",
           "changeList": {
             "entries": [
               [
                 {
-                  "col": 0,
                   "lnum": 1,
-                  "coladd": 0
+                  "coladd": 0,
+                  "col": 0
                 }
               ],
               1
             ]
           },
-          "search": {
-            "pattern": "",
-            "forward": 1,
-            "highlighting": 1
-          },
-          "commandLine": "",
-          "cursor": {
+          "view": {
+            "topfill": 0,
+            "lnum": 1,
+            "skipcol": 0,
+            "col": 0,
+            "curswant": 0,
             "coladd": 0,
-            "virtualColumn": 1,
-            "desiredColumn": 0,
-            "line": 1,
-            "screenRow": 1,
-            "screenColumn": 1,
-            "byteColumn": 1
+            "topline": 1,
+            "leftcol": 0
           },
           "jumpList": {
             "entries": [
@@ -1374,12 +1345,19 @@
               0
             ]
           },
-          "blocking": false,
-          "geometry": {
-            "windowWidth": 80,
-            "windowHeight": 23,
-            "lines": 24,
-            "columns": 80
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "line": 1,
+            "screenColumn": 1,
+            "desiredColumn": 0,
+            "virtualColumn": 1
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
           },
           "marks": {
             ".": [
@@ -1388,13 +1366,13 @@
               1,
               0
             ],
-            "\"": [
+            ">": [
               0,
               0,
               0,
               0
             ],
-            "]": [
+            "\"": [
               0,
               0,
               0,
@@ -1406,25 +1384,69 @@
               0,
               0
             ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
             "[": [
               0,
               0,
               0,
               0
             ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
+            "]": [
               0,
               0,
               0,
               0
             ]
           },
+          "options": {
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "timeout": true,
+            "wrap": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix"
+          },
+          "buffer": {
+            "modifiable": true,
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "name": "",
+            "bomb": false,
+            "modified": true,
+            "filetype": ""
+          },
+          "mode": "n",
+          "geometry": {
+            "lines": 24,
+            "windowHeight": 23,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "blocking": false,
           "registers": {
             "0": {
               "lines": [],
@@ -1466,11 +1488,15 @@
               "lines": [],
               "type": ""
             },
-            "*": {
+            "-": {
               "lines": [
-                "server"
+                "one"
               ],
               "type": "v"
+            },
+            "+": {
+              "lines": [],
+              "type": "V"
             },
             "\"": {
               "lines": [
@@ -1478,15 +1504,17 @@
               ],
               "type": "v"
             },
+            "*": {
+              "lines": [],
+              "type": "V"
+            },
             "a": {
               "lines": [],
               "type": ""
             },
-            "-": {
-              "lines": [
-                "one"
-              ],
-              "type": "v"
+            "A": {
+              "lines": [],
+              "type": ""
             },
             "z": {
               "lines": [],
@@ -1495,98 +1523,37 @@
             "Z": {
               "lines": [],
               "type": ""
-            },
-            "+": {
-              "lines": [
-                "server"
-              ],
-              "type": "v"
-            },
-            "A": {
-              "lines": [],
-              "type": ""
             }
-          },
-          "buffer": {
-            "fileEncoding": "utf-8",
-            "filetype": "",
-            "name": "",
-            "modifiable": true,
-            "bomb": false,
-            "modified": true,
-            "endOfLine": true,
-            "fileFormat": "unix"
-          },
-          "options": {
-            "joinspaces": false,
-            "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0,
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "wrapscan": true,
-            "wrap": true,
-            "timeout": true,
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255"
-          },
-          "view": {
-            "col": 0,
-            "coladd": 0,
-            "lnum": 1,
-            "skipcol": 0,
-            "curswant": 0,
-            "leftcol": 0,
-            "topfill": 0,
-            "topline": 1
           }
         },
         {
-          "error": "",
-          "label": "move-to-second-word",
           "lines": [
             "X two three"
           ],
-          "mode": "n",
+          "error": "",
+          "commandLine": "",
+          "label": "move-to-second-word",
           "changeList": {
             "entries": [
               [
                 {
-                  "col": 0,
                   "lnum": 1,
-                  "coladd": 0
+                  "coladd": 0,
+                  "col": 0
                 }
               ],
               1
             ]
           },
-          "search": {
-            "pattern": "",
-            "forward": 1,
-            "highlighting": 1
-          },
-          "commandLine": "",
-          "cursor": {
+          "view": {
+            "topfill": 0,
+            "lnum": 1,
+            "skipcol": 0,
+            "col": 2,
+            "curswant": 2,
             "coladd": 0,
-            "virtualColumn": 3,
-            "desiredColumn": 2,
-            "line": 1,
-            "screenRow": 1,
-            "screenColumn": 3,
-            "byteColumn": 3
+            "topline": 1,
+            "leftcol": 0
           },
           "jumpList": {
             "entries": [
@@ -1594,12 +1561,19 @@
               0
             ]
           },
-          "blocking": false,
-          "geometry": {
-            "windowWidth": 80,
-            "windowHeight": 23,
-            "lines": 24,
-            "columns": 80
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 3,
+            "coladd": 0,
+            "line": 1,
+            "screenColumn": 3,
+            "desiredColumn": 2,
+            "virtualColumn": 3
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
           },
           "marks": {
             ".": [
@@ -1608,13 +1582,13 @@
               3,
               0
             ],
-            "\"": [
+            ">": [
               0,
               0,
               0,
               0
             ],
-            "]": [
+            "\"": [
               0,
               0,
               0,
@@ -1626,25 +1600,69 @@
               0,
               0
             ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
             "[": [
               0,
               0,
               0,
               0
             ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
+            "]": [
               0,
               0,
               0,
               0
             ]
           },
+          "options": {
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "timeout": true,
+            "wrap": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix"
+          },
+          "buffer": {
+            "modifiable": true,
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "name": "",
+            "bomb": false,
+            "modified": true,
+            "filetype": ""
+          },
+          "mode": "n",
+          "geometry": {
+            "lines": 24,
+            "windowHeight": 23,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "blocking": false,
           "registers": {
             "0": {
               "lines": [],
@@ -1686,11 +1704,15 @@
               "lines": [],
               "type": ""
             },
-            "*": {
+            "-": {
               "lines": [
-                "server"
+                "one"
               ],
               "type": "v"
+            },
+            "+": {
+              "lines": [],
+              "type": "V"
             },
             "\"": {
               "lines": [
@@ -1698,15 +1720,17 @@
               ],
               "type": "v"
             },
+            "*": {
+              "lines": [],
+              "type": "V"
+            },
             "a": {
               "lines": [],
               "type": ""
             },
-            "-": {
-              "lines": [
-                "one"
-              ],
-              "type": "v"
+            "A": {
+              "lines": [],
+              "type": ""
             },
             "z": {
               "lines": [],
@@ -1715,98 +1739,37 @@
             "Z": {
               "lines": [],
               "type": ""
-            },
-            "+": {
-              "lines": [
-                "server"
-              ],
-              "type": "v"
-            },
-            "A": {
-              "lines": [],
-              "type": ""
             }
-          },
-          "buffer": {
-            "fileEncoding": "utf-8",
-            "filetype": "",
-            "name": "",
-            "modifiable": true,
-            "bomb": false,
-            "modified": true,
-            "endOfLine": true,
-            "fileFormat": "unix"
-          },
-          "options": {
-            "joinspaces": false,
-            "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0,
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "wrapscan": true,
-            "wrap": true,
-            "timeout": true,
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255"
-          },
-          "view": {
-            "col": 2,
-            "coladd": 0,
-            "lnum": 1,
-            "skipcol": 0,
-            "curswant": 2,
-            "leftcol": 0,
-            "topfill": 0,
-            "topline": 1
           }
         },
         {
-          "error": "",
-          "label": "dot-visual-replace",
           "lines": [
             "X X three"
           ],
-          "mode": "n",
+          "error": "",
+          "commandLine": "",
+          "label": "dot-visual-replace",
           "changeList": {
             "entries": [
               [
                 {
-                  "col": 2,
                   "lnum": 1,
-                  "coladd": 0
+                  "coladd": 0,
+                  "col": 2
                 }
               ],
               1
             ]
           },
-          "search": {
-            "pattern": "",
-            "forward": 1,
-            "highlighting": 1
-          },
-          "commandLine": "",
-          "cursor": {
+          "view": {
+            "topfill": 0,
+            "lnum": 1,
+            "skipcol": 0,
+            "col": 2,
+            "curswant": 2,
             "coladd": 0,
-            "virtualColumn": 3,
-            "desiredColumn": 2,
-            "line": 1,
-            "screenRow": 1,
-            "screenColumn": 3,
-            "byteColumn": 3
+            "topline": 1,
+            "leftcol": 0
           },
           "jumpList": {
             "entries": [
@@ -1814,12 +1777,19 @@
               0
             ]
           },
-          "blocking": false,
-          "geometry": {
-            "windowWidth": 80,
-            "windowHeight": 23,
-            "lines": 24,
-            "columns": 80
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 3,
+            "coladd": 0,
+            "line": 1,
+            "screenColumn": 3,
+            "desiredColumn": 2,
+            "virtualColumn": 3
+          },
+          "search": {
+            "forward": 1,
+            "highlighting": 1,
+            "pattern": ""
           },
           "marks": {
             ".": [
@@ -1828,13 +1798,13 @@
               3,
               0
             ],
-            "\"": [
+            ">": [
               0,
               0,
               0,
               0
             ],
-            "]": [
+            "\"": [
               0,
               0,
               0,
@@ -1846,25 +1816,69 @@
               0,
               0
             ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
             "[": [
               0,
               0,
               0,
               0
             ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
+            "]": [
               0,
               0,
               0,
               0
             ]
           },
+          "options": {
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "timeout": true,
+            "wrap": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix"
+          },
+          "buffer": {
+            "modifiable": true,
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "name": "",
+            "bomb": false,
+            "modified": true,
+            "filetype": ""
+          },
+          "mode": "n",
+          "geometry": {
+            "lines": 24,
+            "windowHeight": 23,
+            "columns": 80,
+            "windowWidth": 80
+          },
+          "blocking": false,
           "registers": {
             "0": {
               "lines": [],
@@ -1906,11 +1920,15 @@
               "lines": [],
               "type": ""
             },
-            "*": {
+            "-": {
               "lines": [
-                "server"
+                "two"
               ],
               "type": "v"
+            },
+            "+": {
+              "lines": [],
+              "type": "V"
             },
             "\"": {
               "lines": [
@@ -1918,15 +1936,17 @@
               ],
               "type": "v"
             },
+            "*": {
+              "lines": [],
+              "type": "V"
+            },
             "a": {
               "lines": [],
               "type": ""
             },
-            "-": {
-              "lines": [
-                "two"
-              ],
-              "type": "v"
+            "A": {
+              "lines": [],
+              "type": ""
             },
             "z": {
               "lines": [],
@@ -1935,63 +1955,7 @@
             "Z": {
               "lines": [],
               "type": ""
-            },
-            "+": {
-              "lines": [
-                "server"
-              ],
-              "type": "v"
-            },
-            "A": {
-              "lines": [],
-              "type": ""
             }
-          },
-          "buffer": {
-            "fileEncoding": "utf-8",
-            "filetype": "",
-            "name": "",
-            "modifiable": true,
-            "bomb": false,
-            "modified": true,
-            "endOfLine": true,
-            "fileFormat": "unix"
-          },
-          "options": {
-            "joinspaces": false,
-            "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0,
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "wrapscan": true,
-            "wrap": true,
-            "timeout": true,
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255"
-          },
-          "view": {
-            "col": 2,
-            "coladd": 0,
-            "lnum": 1,
-            "skipcol": 0,
-            "curswant": 2,
-            "leftcol": 0,
-            "topfill": 0,
-            "topline": 1
           }
         }
       ]
@@ -2000,22 +1964,90 @@
       "id": "T024-ORACLE-PUT-01",
       "snapshots": [
         {
-          "jumpList": {
-            "entries": [
-              [],
-              0
-            ]
+          "geometry": {
+            "windowHeight": 23,
+            "columns": 80,
+            "windowWidth": 80,
+            "lines": 24
           },
-          "mode": "n",
-          "buffer": {
-            "name": "",
-            "bomb": false,
-            "filetype": "",
-            "modified": false,
-            "endOfLine": true,
-            "fileFormat": "unix",
-            "fileEncoding": "utf-8",
-            "modifiable": true
+          "error": "",
+          "registers": {
+            "0": {
+              "type": "V",
+              "lines": [
+                "one"
+              ]
+            },
+            "1": {
+              "type": "",
+              "lines": []
+            },
+            "2": {
+              "type": "",
+              "lines": []
+            },
+            "3": {
+              "type": "",
+              "lines": []
+            },
+            "4": {
+              "type": "",
+              "lines": []
+            },
+            "5": {
+              "type": "",
+              "lines": []
+            },
+            "6": {
+              "type": "",
+              "lines": []
+            },
+            "7": {
+              "type": "",
+              "lines": []
+            },
+            "8": {
+              "type": "",
+              "lines": []
+            },
+            "9": {
+              "type": "",
+              "lines": []
+            },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
+            "\"": {
+              "type": "V",
+              "lines": [
+                "one"
+              ]
+            },
+            "-": {
+              "type": "",
+              "lines": []
+            },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
+            "a": {
+              "type": "",
+              "lines": []
+            },
+            "A": {
+              "type": "",
+              "lines": []
+            }
           },
           "lines": [
             "one",
@@ -2023,27 +2055,72 @@
             "three"
           ],
           "commandLine": "",
-          "cursor": {
-            "desiredColumn": 0,
-            "screenColumn": 1,
-            "screenRow": 1,
-            "line": 1,
-            "byteColumn": 1,
-            "coladd": 0,
-            "virtualColumn": 1
-          },
           "search": {
-            "forward": 1,
+            "pattern": "",
             "highlighting": 1,
-            "pattern": ""
+            "forward": 1
           },
-          "blocking": false,
-          "geometry": {
-            "windowHeight": 23,
-            "columns": 80,
-            "windowWidth": 80,
-            "lines": 24
+          "marks": {
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "]": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "[": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "\"": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "^": [
+              0,
+              0,
+              0,
+              0
+            ]
           },
+          "buffer": {
+            "bomb": false,
+            "modifiable": true,
+            "filetype": "",
+            "modified": false,
+            "endOfLine": true,
+            "name": "",
+            "fileEncoding": "utf-8",
+            "fileFormat": "unix"
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "mode": "n",
           "changeList": {
             "entries": [
               [
@@ -2057,6 +2134,7 @@
             ]
           },
           "options": {
+            "scrolloff": 0,
             "selection": "inclusive",
             "shiftwidth": 8,
             "sidescrolloff": 0,
@@ -2079,136 +2157,7 @@
             "iskeyword": "@,48-57,_,192-255",
             "joinspaces": false,
             "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0
-          },
-          "error": "",
-          "registers": {
-            "0": {
-              "type": "V",
-              "lines": [
-                "one"
-              ]
-            },
-            "1": {
-              "type": "",
-              "lines": []
-            },
-            "2": {
-              "type": "",
-              "lines": []
-            },
-            "3": {
-              "type": "",
-              "lines": []
-            },
-            "4": {
-              "type": "",
-              "lines": []
-            },
-            "5": {
-              "type": "",
-              "lines": []
-            },
-            "6": {
-              "type": "",
-              "lines": []
-            },
-            "7": {
-              "type": "",
-              "lines": []
-            },
-            "8": {
-              "type": "",
-              "lines": []
-            },
-            "9": {
-              "type": "",
-              "lines": []
-            },
-            "\"": {
-              "type": "V",
-              "lines": [
-                "one"
-              ]
-            },
-            "-": {
-              "type": "",
-              "lines": []
-            },
-            "a": {
-              "type": "",
-              "lines": []
-            },
-            "Z": {
-              "type": "",
-              "lines": []
-            },
-            "+": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
-            },
-            "*": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
-            },
-            "A": {
-              "type": "",
-              "lines": []
-            },
-            "z": {
-              "type": "",
-              "lines": []
-            }
-          },
-          "label": "yank-line",
-          "marks": {
-            "<": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "]": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "[": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "\"": [
-              0,
-              0,
-              0,
-              0
-            ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
-            ".": [
-              0,
-              1,
-              1,
-              0
-            ],
-            "^": [
-              0,
-              0,
-              0,
-              0
-            ]
+            "nrformats": "bin,hex"
           },
           "view": {
             "coladd": 0,
@@ -2219,96 +2168,25 @@
             "lnum": 1,
             "col": 0,
             "skipcol": 0
-          }
-        },
-        {
-          "jumpList": {
-            "entries": [
-              [],
-              0
-            ]
           },
-          "mode": "n",
-          "buffer": {
-            "name": "",
-            "bomb": false,
-            "filetype": "",
-            "modified": true,
-            "endOfLine": true,
-            "fileFormat": "unix",
-            "fileEncoding": "utf-8",
-            "modifiable": true
-          },
-          "lines": [
-            "one",
-            "one",
-            "two",
-            "three"
-          ],
-          "commandLine": "",
           "cursor": {
             "desiredColumn": 0,
+            "line": 1,
+            "screenRow": 1,
             "screenColumn": 1,
-            "screenRow": 2,
-            "line": 2,
             "byteColumn": 1,
             "coladd": 0,
             "virtualColumn": 1
           },
-          "search": {
-            "forward": 1,
-            "highlighting": 1,
-            "pattern": ""
-          },
-          "blocking": false,
+          "label": "yank-line",
+          "blocking": false
+        },
+        {
           "geometry": {
             "windowHeight": 23,
             "columns": 80,
             "windowWidth": 80,
             "lines": 24
-          },
-          "changeList": {
-            "entries": [
-              [
-                {
-                  "lnum": 1,
-                  "col": 0,
-                  "coladd": 0
-                },
-                {
-                  "lnum": 2,
-                  "col": 0,
-                  "coladd": 0
-                }
-              ],
-              2
-            ]
-          },
-          "options": {
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "wrapscan": true,
-            "wrap": true,
-            "timeout": true,
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255",
-            "joinspaces": false,
-            "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0
           },
           "error": "",
           "registers": {
@@ -2354,6 +2232,18 @@
               "type": "",
               "lines": []
             },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
             "\"": {
               "type": "V",
               "lines": [
@@ -2364,36 +2254,31 @@
               "type": "",
               "lines": []
             },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
             "a": {
               "type": "",
               "lines": []
             },
-            "Z": {
-              "type": "",
-              "lines": []
-            },
-            "+": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
-            },
-            "*": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
-            },
             "A": {
-              "type": "",
-              "lines": []
-            },
-            "z": {
               "type": "",
               "lines": []
             }
           },
-          "label": "put-line",
+          "lines": [
+            "one",
+            "one",
+            "two",
+            "three"
+          ],
+          "commandLine": "",
+          "search": {
+            "pattern": "",
+            "highlighting": 1,
+            "forward": 1
+          },
           "marks": {
             "<": [
               0,
@@ -2438,18 +2323,16 @@
               0
             ]
           },
-          "view": {
-            "coladd": 0,
-            "topfill": 0,
-            "curswant": 0,
-            "topline": 1,
-            "leftcol": 0,
-            "lnum": 2,
-            "col": 0,
-            "skipcol": 0
-          }
-        },
-        {
+          "buffer": {
+            "bomb": false,
+            "modifiable": true,
+            "filetype": "",
+            "modified": true,
+            "endOfLine": true,
+            "name": "",
+            "fileEncoding": "utf-8",
+            "fileFormat": "unix"
+          },
           "jumpList": {
             "entries": [
               [],
@@ -2457,44 +2340,6 @@
             ]
           },
           "mode": "n",
-          "buffer": {
-            "name": "",
-            "bomb": false,
-            "filetype": "",
-            "modified": true,
-            "endOfLine": true,
-            "fileFormat": "unix",
-            "fileEncoding": "utf-8",
-            "modifiable": true
-          },
-          "lines": [
-            "one",
-            "one",
-            "two",
-            "three"
-          ],
-          "commandLine": "",
-          "cursor": {
-            "desiredColumn": 0,
-            "screenColumn": 1,
-            "screenRow": 3,
-            "line": 3,
-            "byteColumn": 1,
-            "coladd": 0,
-            "virtualColumn": 1
-          },
-          "search": {
-            "forward": 1,
-            "highlighting": 1,
-            "pattern": ""
-          },
-          "blocking": false,
-          "geometry": {
-            "windowHeight": 23,
-            "columns": 80,
-            "windowWidth": 80,
-            "lines": 24
-          },
           "changeList": {
             "entries": [
               [
@@ -2513,6 +2358,7 @@
             ]
           },
           "options": {
+            "scrolloff": 0,
             "selection": "inclusive",
             "shiftwidth": 8,
             "sidescrolloff": 0,
@@ -2535,8 +2381,36 @@
             "iskeyword": "@,48-57,_,192-255",
             "joinspaces": false,
             "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0
+            "nrformats": "bin,hex"
+          },
+          "view": {
+            "coladd": 0,
+            "topfill": 0,
+            "curswant": 0,
+            "topline": 1,
+            "leftcol": 0,
+            "lnum": 2,
+            "col": 0,
+            "skipcol": 0
+          },
+          "cursor": {
+            "desiredColumn": 0,
+            "line": 2,
+            "screenRow": 2,
+            "screenColumn": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1
+          },
+          "label": "put-line",
+          "blocking": false
+        },
+        {
+          "geometry": {
+            "windowHeight": 23,
+            "columns": 80,
+            "windowWidth": 80,
+            "lines": 24
           },
           "error": "",
           "registers": {
@@ -2582,6 +2456,18 @@
               "type": "",
               "lines": []
             },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
             "\"": {
               "type": "V",
               "lines": [
@@ -2592,36 +2478,31 @@
               "type": "",
               "lines": []
             },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
             "a": {
               "type": "",
               "lines": []
             },
-            "Z": {
-              "type": "",
-              "lines": []
-            },
-            "+": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
-            },
-            "*": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
-            },
             "A": {
-              "type": "",
-              "lines": []
-            },
-            "z": {
               "type": "",
               "lines": []
             }
           },
-          "label": "move-to-next-line",
+          "lines": [
+            "one",
+            "one",
+            "two",
+            "three"
+          ],
+          "commandLine": "",
+          "search": {
+            "pattern": "",
+            "highlighting": 1,
+            "forward": 1
+          },
           "marks": {
             "<": [
               0,
@@ -2666,18 +2547,16 @@
               0
             ]
           },
-          "view": {
-            "coladd": 0,
-            "topfill": 0,
-            "curswant": 0,
-            "topline": 1,
-            "leftcol": 0,
-            "lnum": 3,
-            "col": 0,
-            "skipcol": 0
-          }
-        },
-        {
+          "buffer": {
+            "bomb": false,
+            "modifiable": true,
+            "filetype": "",
+            "modified": true,
+            "endOfLine": true,
+            "name": "",
+            "fileEncoding": "utf-8",
+            "fileFormat": "unix"
+          },
           "jumpList": {
             "entries": [
               [],
@@ -2685,45 +2564,6 @@
             ]
           },
           "mode": "n",
-          "buffer": {
-            "name": "",
-            "bomb": false,
-            "filetype": "",
-            "modified": true,
-            "endOfLine": true,
-            "fileFormat": "unix",
-            "fileEncoding": "utf-8",
-            "modifiable": true
-          },
-          "lines": [
-            "one",
-            "one",
-            "two",
-            "one",
-            "three"
-          ],
-          "commandLine": "",
-          "cursor": {
-            "desiredColumn": 0,
-            "screenColumn": 1,
-            "screenRow": 4,
-            "line": 4,
-            "byteColumn": 1,
-            "coladd": 0,
-            "virtualColumn": 1
-          },
-          "search": {
-            "forward": 1,
-            "highlighting": 1,
-            "pattern": ""
-          },
-          "blocking": false,
-          "geometry": {
-            "windowHeight": 23,
-            "columns": 80,
-            "windowWidth": 80,
-            "lines": 24
-          },
           "changeList": {
             "entries": [
               [
@@ -2736,17 +2576,13 @@
                   "lnum": 2,
                   "col": 0,
                   "coladd": 0
-                },
-                {
-                  "lnum": 4,
-                  "col": 0,
-                  "coladd": 0
                 }
               ],
-              3
+              2
             ]
           },
           "options": {
+            "scrolloff": 0,
             "selection": "inclusive",
             "shiftwidth": 8,
             "sidescrolloff": 0,
@@ -2769,8 +2605,36 @@
             "iskeyword": "@,48-57,_,192-255",
             "joinspaces": false,
             "magic": true,
-            "nrformats": "bin,hex",
-            "scrolloff": 0
+            "nrformats": "bin,hex"
+          },
+          "view": {
+            "coladd": 0,
+            "topfill": 0,
+            "curswant": 0,
+            "topline": 1,
+            "leftcol": 0,
+            "lnum": 3,
+            "col": 0,
+            "skipcol": 0
+          },
+          "cursor": {
+            "desiredColumn": 0,
+            "line": 3,
+            "screenRow": 3,
+            "screenColumn": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1
+          },
+          "label": "move-to-next-line",
+          "blocking": false
+        },
+        {
+          "geometry": {
+            "windowHeight": 23,
+            "columns": 80,
+            "windowWidth": 80,
+            "lines": 24
           },
           "error": "",
           "registers": {
@@ -2816,6 +2680,18 @@
               "type": "",
               "lines": []
             },
+            "z": {
+              "type": "",
+              "lines": []
+            },
+            "Z": {
+              "type": "",
+              "lines": []
+            },
+            "+": {
+              "type": "V",
+              "lines": []
+            },
             "\"": {
               "type": "V",
               "lines": [
@@ -2826,36 +2702,32 @@
               "type": "",
               "lines": []
             },
+            "*": {
+              "type": "V",
+              "lines": []
+            },
             "a": {
               "type": "",
               "lines": []
             },
-            "Z": {
-              "type": "",
-              "lines": []
-            },
-            "+": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
-            },
-            "*": {
-              "type": "v",
-              "lines": [
-                "server"
-              ]
-            },
             "A": {
-              "type": "",
-              "lines": []
-            },
-            "z": {
               "type": "",
               "lines": []
             }
           },
-          "label": "dot-put",
+          "lines": [
+            "one",
+            "one",
+            "two",
+            "one",
+            "three"
+          ],
+          "commandLine": "",
+          "search": {
+            "pattern": "",
+            "highlighting": 1,
+            "forward": 1
+          },
           "marks": {
             "<": [
               0,
@@ -2900,6 +2772,71 @@
               0
             ]
           },
+          "buffer": {
+            "bomb": false,
+            "modifiable": true,
+            "filetype": "",
+            "modified": true,
+            "endOfLine": true,
+            "name": "",
+            "fileEncoding": "utf-8",
+            "fileFormat": "unix"
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "mode": "n",
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "lnum": 1,
+                  "col": 0,
+                  "coladd": 0
+                },
+                {
+                  "lnum": 2,
+                  "col": 0,
+                  "coladd": 0
+                },
+                {
+                  "lnum": 4,
+                  "col": 0,
+                  "coladd": 0
+                }
+              ],
+              3
+            ]
+          },
+          "options": {
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8,
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex"
+          },
           "view": {
             "coladd": 0,
             "topfill": 0,
@@ -2909,7 +2846,18 @@
             "lnum": 4,
             "col": 0,
             "skipcol": 0
-          }
+          },
+          "cursor": {
+            "desiredColumn": 0,
+            "line": 4,
+            "screenRow": 4,
+            "screenColumn": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1
+          },
+          "label": "dot-put",
+          "blocking": false
         }
       ]
     },
@@ -2919,22 +2867,30 @@
         {
           "search": {
             "forward": 1,
-            "highlighting": 1,
-            "pattern": ""
-          },
-          "view": {
-            "topfill": 0,
-            "topline": 1,
-            "skipcol": 0,
-            "col": 0,
-            "lnum": 1,
-            "curswant": 0,
-            "coladd": 0,
-            "leftcol": 0
+            "pattern": "",
+            "highlighting": 1
           },
           "error": "",
-          "commandLine": "",
-          "mode": "n",
+          "cursor": {
+            "screenRow": 1,
+            "byteColumn": 1,
+            "coladd": 0,
+            "virtualColumn": 1,
+            "screenColumn": 1,
+            "desiredColumn": 0,
+            "line": 1
+          },
+          "buffer": {
+            "modified": true,
+            "endOfLine": true,
+            "fileFormat": "unix",
+            "fileEncoding": "utf-8",
+            "filetype": "",
+            "bomb": false,
+            "name": "",
+            "modifiable": true
+          },
+          "blocking": false,
           "geometry": {
             "windowHeight": 23,
             "lines": 24,
@@ -2944,45 +2900,6 @@
           "lines": [
             "two"
           ],
-          "options": {
-            "nrformats": "bin,hex",
-            "scrolloff": 0,
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "timeout": true,
-            "wrapscan": true,
-            "wrap": true,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255",
-            "joinspaces": false,
-            "magic": true
-          },
-          "changeList": {
-            "entries": [
-              [
-                {
-                  "lnum": 1,
-                  "coladd": 0,
-                  "col": 0
-                }
-              ],
-              1
-            ]
-          },
-          "blocking": false,
           "registers": {
             "0": {
               "lines": [],
@@ -3024,31 +2941,25 @@
               "lines": [],
               "type": ""
             },
+            "+": {
+              "lines": [],
+              "type": "V"
+            },
             "a": {
               "lines": [],
               "type": ""
             },
-            "\"": {
-              "lines": [
-                "one "
-              ],
-              "type": "v"
+            "A": {
+              "lines": [],
+              "type": ""
             },
             "z": {
               "lines": [],
               "type": ""
             },
-            "+": {
-              "lines": [
-                "server"
-              ],
-              "type": "v"
-            },
-            "*": {
-              "lines": [
-                "server"
-              ],
-              "type": "v"
+            "Z": {
+              "lines": [],
+              "type": ""
             },
             "-": {
               "lines": [
@@ -3056,41 +2967,65 @@
               ],
               "type": "v"
             },
-            "Z": {
+            "*": {
               "lines": [],
-              "type": ""
+              "type": "V"
             },
-            "A": {
-              "lines": [],
-              "type": ""
+            "\"": {
+              "lines": [
+                "one "
+              ],
+              "type": "v"
             }
           },
+          "options": {
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8
+          },
+          "commandLine": "",
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "coladd": 0,
+                  "lnum": 1,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "label": "delete-first-word",
           "marks": {
-            ".": [
-              0,
-              1,
-              1,
-              0
-            ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
             "\"": [
               0,
               0,
               0,
               0
             ],
-            "^": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
+            "]": [
               0,
               0,
               0,
@@ -3102,13 +3037,56 @@
               0,
               0
             ],
-            "]": [
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
               0,
               0,
               0,
               0
             ]
           },
+          "view": {
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0,
+            "col": 0,
+            "curswant": 0,
+            "coladd": 0,
+            "lnum": 1,
+            "leftcol": 0
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "mode": "n"
+        },
+        {
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          },
+          "error": "",
           "cursor": {
             "screenRow": 1,
             "byteColumn": 1,
@@ -3123,38 +3101,12 @@
             "endOfLine": true,
             "fileFormat": "unix",
             "fileEncoding": "utf-8",
-            "modifiable": true,
-            "bomb": false,
             "filetype": "",
-            "name": ""
+            "bomb": false,
+            "name": "",
+            "modifiable": true
           },
-          "jumpList": {
-            "entries": [
-              [],
-              0
-            ]
-          },
-          "label": "delete-first-word"
-        },
-        {
-          "search": {
-            "forward": 1,
-            "highlighting": 1,
-            "pattern": ""
-          },
-          "view": {
-            "topfill": 0,
-            "topline": 1,
-            "skipcol": 0,
-            "col": 0,
-            "lnum": 1,
-            "curswant": 0,
-            "coladd": 0,
-            "leftcol": 0
-          },
-          "error": "",
-          "commandLine": "",
-          "mode": "n",
+          "blocking": false,
           "geometry": {
             "windowHeight": 23,
             "lines": 24,
@@ -3164,45 +3116,6 @@
           "lines": [
             "two"
           ],
-          "options": {
-            "nrformats": "bin,hex",
-            "scrolloff": 0,
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "timeout": true,
-            "wrapscan": true,
-            "wrap": true,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255",
-            "joinspaces": false,
-            "magic": true
-          },
-          "changeList": {
-            "entries": [
-              [
-                {
-                  "lnum": 1,
-                  "coladd": 0,
-                  "col": 0
-                }
-              ],
-              1
-            ]
-          },
-          "blocking": false,
           "registers": {
             "0": {
               "lines": [],
@@ -3244,31 +3157,25 @@
               "lines": [],
               "type": ""
             },
+            "+": {
+              "lines": [],
+              "type": "V"
+            },
             "a": {
               "lines": [],
               "type": ""
             },
-            "\"": {
-              "lines": [
-                "one "
-              ],
-              "type": "v"
+            "A": {
+              "lines": [],
+              "type": ""
             },
             "z": {
               "lines": [],
               "type": ""
             },
-            "+": {
-              "lines": [
-                "server"
-              ],
-              "type": "v"
-            },
-            "*": {
-              "lines": [
-                "server"
-              ],
-              "type": "v"
+            "Z": {
+              "lines": [],
+              "type": ""
             },
             "-": {
               "lines": [
@@ -3276,41 +3183,65 @@
               ],
               "type": "v"
             },
-            "Z": {
+            "*": {
               "lines": [],
-              "type": ""
+              "type": "V"
             },
-            "A": {
-              "lines": [],
-              "type": ""
+            "\"": {
+              "lines": [
+                "one "
+              ],
+              "type": "v"
             }
           },
+          "options": {
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8
+          },
+          "commandLine": "",
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "coladd": 0,
+                  "lnum": 1,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "label": "failed-find",
           "marks": {
-            ".": [
-              0,
-              1,
-              1,
-              0
-            ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
             "\"": [
               0,
               0,
               0,
               0
             ],
-            "^": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
+            "]": [
               0,
               0,
               0,
@@ -3322,13 +3253,56 @@
               0,
               0
             ],
-            "]": [
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
               0,
               0,
               0,
               0
             ]
           },
+          "view": {
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0,
+            "col": 0,
+            "curswant": 0,
+            "coladd": 0,
+            "lnum": 1,
+            "leftcol": 0
+          },
+          "jumpList": {
+            "entries": [
+              [],
+              0
+            ]
+          },
+          "mode": "n"
+        },
+        {
+          "search": {
+            "forward": 1,
+            "pattern": "",
+            "highlighting": 1
+          },
+          "error": "",
           "cursor": {
             "screenRow": 1,
             "byteColumn": 1,
@@ -3343,38 +3317,12 @@
             "endOfLine": true,
             "fileFormat": "unix",
             "fileEncoding": "utf-8",
-            "modifiable": true,
-            "bomb": false,
             "filetype": "",
-            "name": ""
+            "bomb": false,
+            "name": "",
+            "modifiable": true
           },
-          "jumpList": {
-            "entries": [
-              [],
-              0
-            ]
-          },
-          "label": "failed-find"
-        },
-        {
-          "search": {
-            "forward": 1,
-            "highlighting": 1,
-            "pattern": ""
-          },
-          "view": {
-            "topfill": 0,
-            "topline": 1,
-            "skipcol": 0,
-            "col": 0,
-            "lnum": 1,
-            "curswant": 0,
-            "coladd": 0,
-            "leftcol": 0
-          },
-          "error": "",
-          "commandLine": "",
-          "mode": "n",
+          "blocking": false,
           "geometry": {
             "windowHeight": 23,
             "lines": 24,
@@ -3384,45 +3332,6 @@
           "lines": [
             ""
           ],
-          "options": {
-            "nrformats": "bin,hex",
-            "scrolloff": 0,
-            "selection": "inclusive",
-            "shiftwidth": 8,
-            "timeout": true,
-            "wrapscan": true,
-            "wrap": true,
-            "sidescrolloff": 0,
-            "smartcase": false,
-            "startofline": false,
-            "tabstop": 8,
-            "timeoutlen": 1000,
-            "virtualedit": "",
-            "whichwrap": "b,s",
-            "ambiwidth": "single",
-            "backspace": "indent,eol,start",
-            "cpoptions": "aABceFs_",
-            "endofline": true,
-            "expandtab": false,
-            "fileformat": "unix",
-            "ignorecase": false,
-            "iskeyword": "@,48-57,_,192-255",
-            "joinspaces": false,
-            "magic": true
-          },
-          "changeList": {
-            "entries": [
-              [
-                {
-                  "lnum": 1,
-                  "coladd": 0,
-                  "col": 0
-                }
-              ],
-              1
-            ]
-          },
-          "blocking": false,
           "registers": {
             "0": {
               "lines": [],
@@ -3464,31 +3373,25 @@
               "lines": [],
               "type": ""
             },
+            "+": {
+              "lines": [],
+              "type": "V"
+            },
             "a": {
               "lines": [],
               "type": ""
             },
-            "\"": {
-              "lines": [
-                "two"
-              ],
-              "type": "v"
+            "A": {
+              "lines": [],
+              "type": ""
             },
             "z": {
               "lines": [],
               "type": ""
             },
-            "+": {
-              "lines": [
-                "server"
-              ],
-              "type": "v"
-            },
-            "*": {
-              "lines": [
-                "server"
-              ],
-              "type": "v"
+            "Z": {
+              "lines": [],
+              "type": ""
             },
             "-": {
               "lines": [
@@ -3496,41 +3399,65 @@
               ],
               "type": "v"
             },
-            "Z": {
+            "*": {
               "lines": [],
-              "type": ""
+              "type": "V"
             },
-            "A": {
-              "lines": [],
-              "type": ""
+            "\"": {
+              "lines": [
+                "two"
+              ],
+              "type": "v"
             }
           },
+          "options": {
+            "sidescrolloff": 0,
+            "smartcase": false,
+            "startofline": false,
+            "tabstop": 8,
+            "timeoutlen": 1000,
+            "virtualedit": "",
+            "whichwrap": "b,s",
+            "wrapscan": true,
+            "wrap": true,
+            "timeout": true,
+            "ambiwidth": "single",
+            "backspace": "indent,eol,start",
+            "cpoptions": "aABceFs_",
+            "endofline": true,
+            "expandtab": false,
+            "fileformat": "unix",
+            "ignorecase": false,
+            "iskeyword": "@,48-57,_,192-255",
+            "joinspaces": false,
+            "magic": true,
+            "nrformats": "bin,hex",
+            "scrolloff": 0,
+            "selection": "inclusive",
+            "shiftwidth": 8
+          },
+          "commandLine": "",
+          "changeList": {
+            "entries": [
+              [
+                {
+                  "coladd": 0,
+                  "lnum": 1,
+                  "col": 0
+                }
+              ],
+              1
+            ]
+          },
+          "label": "dot-prior-delete",
           "marks": {
-            ".": [
-              0,
-              1,
-              1,
-              0
-            ],
-            ">": [
-              0,
-              0,
-              0,
-              0
-            ],
             "\"": [
               0,
               0,
               0,
               0
             ],
-            "^": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "<": [
+            "]": [
               0,
               0,
               0,
@@ -3542,31 +3469,40 @@
               0,
               0
             ],
-            "]": [
+            ".": [
+              0,
+              1,
+              1,
+              0
+            ],
+            "<": [
+              0,
+              0,
+              0,
+              0
+            ],
+            ">": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "^": [
               0,
               0,
               0,
               0
             ]
           },
-          "cursor": {
-            "screenRow": 1,
-            "byteColumn": 1,
+          "view": {
+            "topfill": 0,
+            "topline": 1,
+            "skipcol": 0,
+            "col": 0,
+            "curswant": 0,
             "coladd": 0,
-            "virtualColumn": 1,
-            "screenColumn": 1,
-            "desiredColumn": 0,
-            "line": 1
-          },
-          "buffer": {
-            "modified": true,
-            "endOfLine": true,
-            "fileFormat": "unix",
-            "fileEncoding": "utf-8",
-            "modifiable": true,
-            "bomb": false,
-            "filetype": "",
-            "name": ""
+            "lnum": 1,
+            "leftcol": 0
           },
           "jumpList": {
             "entries": [
@@ -3574,7 +3510,7 @@
               0
             ]
           },
-          "label": "dot-prior-delete"
+          "mode": "n"
         }
       ]
     }

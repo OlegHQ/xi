@@ -175,14 +175,45 @@ export function readVisibleLineText(
   return { ok: true, value: { text: result.value, complete: count >= remaining } };
 }
 
-/** Cheap 32-bit FNV-1a hash; collisions are ruled out by a real text equality check on hit. */
+/**
+ * B7: was a single 32-bit FNV-1a hash over *every* code unit of the visible prefix
+ * (up to `MAX_SOURCE_PREFIX_UTF16` = 65,536 units), recomputed on every `project()`
+ * call for every visible line *before* even checking whether the line cache has an
+ * entry for it -- i.e. paid in full on a cache hit, not just a miss. Bounding the
+ * scan to `HASH_SAMPLE_CAP` (1,024) evenly spaced code units removes that O(length)
+ * cost for pathologically long lines (a 65,536-unit line now costs the same O(1,024)
+ * as a 1,024-unit one) while being *exactly* as strong as before -- a full scan --
+ * for every line at or under the cap, which covers essentially all real source
+ * lines. Combines two independent FNV-1a passes over disjoint samples (odd/even
+ * sample index) into a 64-bit-ish fingerprint, stronger than the previous 32-bit
+ * hash despite sampling, since only `#lineLayouts` verifies a hit against the
+ * retained exact text; `#materializedLines`/`#rebasedRows` trust this key directly
+ * (same pre-existing trust model as before this change, just with a cheaper key).
+ */
+const HASH_SAMPLE_CAP = 1_024;
 function hashLineText(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
+  const length = text.length;
+  let hashA = 0x811c9dc5;
+  let hashB = 0x9e3779b9;
+  if (length <= HASH_SAMPLE_CAP) {
+    for (let index = 0; index < length; index += 1) {
+      const unit = text.charCodeAt(index);
+      hashA ^= unit;
+      hashA = Math.imul(hashA, 0x01000193);
+      hashB ^= unit;
+      hashB = Math.imul(hashB, 0x85ebca6b);
+    }
+  } else {
+    const step = length / HASH_SAMPLE_CAP;
+    for (let sample = 0; sample < HASH_SAMPLE_CAP; sample += 1) {
+      const unit = text.charCodeAt(Math.floor(sample * step));
+      hashA ^= unit;
+      hashA = Math.imul(hashA, 0x01000193);
+      hashB ^= unit;
+      hashB = Math.imul(hashB, 0x85ebca6b);
+    }
   }
-  return (hash >>> 0).toString(36);
+  return `${(hashA >>> 0).toString(36)}${(hashB >>> 0).toString(36)}`;
 }
 
 /**
@@ -250,23 +281,6 @@ export function shapeLine(
     screenColumn = 0;
     currentStartCell = logicalCell;
     currentStartOffset = currentEndOffset;
-    return true;
-  };
-
-  const place = (cell: RelativeCell): boolean => {
-    if (wrap && screenColumn >= width) {
-      if (!pushRow()) return false;
-    }
-    if (wrap) {
-      current.push(cell);
-      screenColumn += 1;
-    } else {
-      const screen = logicalCell - horizontalScroll;
-      if (screen >= 0 && screen < width) current[screen] = cell;
-      screenColumn += 1;
-    }
-    logicalCell += 1;
-    currentEndOffset = cell.offset + (cell.affinity === 'right' ? 0 : 0);
     return true;
   };
 
@@ -537,17 +551,27 @@ export function buildRelativeMaterializedRows(layout: RelativeLineLayout, width:
  * frame) instead of building a throwaway per-line index that `project()` used to
  * copy, cell by cell, into the frame index afterward.
  */
-export function rebaseMaterializedRows(
+/**
+ * Builds the absolute `ScreenRow`s only -- no `positions` writes. Split out of the
+ * former single `rebaseMaterializedRows` so the caller (`ViewportLayout`) can cache
+ * the result by `(contentKey, baseOffset, lineEnd)`: an edit elsewhere in the
+ * document changes `snapshot.version` (part of every frame's `geometryKey`) but
+ * only actually shifts the *absolute offset* of lines after the edit point, not
+ * lines before it or the edited line's own start. Lines whose `(contentKey,
+ * baseOffset, lineEnd)` triple repeats across frames -- the common case for
+ * everything above an edit, or any edit that doesn't change the document's total
+ * length before this line -- now reuse the exact same `ScreenRow`/`ScreenCell`
+ * objects instead of reallocating ~2 objects per cell every keystroke (see
+ * `docs/plan/15-keystroke-latency.md`; profiled cost was ~1 MB/keystroke on a
+ * production-shaped viewport). `indexRebasedRows` below still runs every frame,
+ * cache hit or not, since `positions` is a fresh per-frame index.
+ */
+export function buildRebasedRows(
   template: RelativeMaterializedRows,
   line: LineIndex,
   baseOffset: Utf16Offset,
   lineEnd: Utf16Offset,
-  width: number,
   contentKey: string,
-  positions: PackedPositionIndex,
-  rowBase: number,
-  columnBase: number,
-  needsDisplayIndex: boolean,
 ): readonly ScreenRow[] {
   // @xi-perf H1 RENDER-120 -- Absolute per-cell rebase produces the escaping visible-frame read model, not scratch.
   const output: ScreenRow[] = [];
@@ -599,7 +623,7 @@ export function rebaseMaterializedRows(
     }
     const endOffset = Math.min((baseOffset as number) + source.relativeEndOffset, lineEnd as number);
     const startOffset = Math.min((baseOffset as number) + source.relativeStartOffset, lineEnd as number);
-    const row = {
+    output.push({
       kind: 'text',
       lineIndex: line,
       wrapIndex: source.wrapIndex,
@@ -610,8 +634,31 @@ export function rebaseMaterializedRows(
       cells,
       text: source.text,
       contentKey: `${contentKey}#${index}`,
-    } as ScreenRow;
-    output.push(row);
+    } as ScreenRow);
+  }
+  return output;
+}
+
+/**
+ * Writes this frame's `positions` entries for already-built `rows` (fresh or
+ * reused from `#rebasedRows`). Kept separate from `buildRebasedRows` because
+ * `positions` is a new `PackedPositionIndex` every `project()` call and must be
+ * populated every frame regardless of whether the rows themselves were reused.
+ */
+export function indexRebasedRows(
+  template: RelativeMaterializedRows,
+  rows: readonly ScreenRow[],
+  width: number,
+  positions: PackedPositionIndex,
+  rowBase: number,
+  columnBase: number,
+  needsDisplayIndex: boolean,
+): void {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const source = template.rows[index];
+    if (row === undefined || source === undefined) continue;
+    const cells = row.cells;
     const frameRow = rowBase + index;
     for (let column = 0; column < cells.length; column += 1) {
       const target = cells[column]?.target;
@@ -646,7 +693,6 @@ export function rebaseMaterializedRows(
       }
     }
   }
-  return output;
 }
 
 export function buildFoldRow(

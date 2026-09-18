@@ -52,5 +52,34 @@ if (lookaroundPlan.ok) {
   const rendered = applyReplacementEdits(lookaroundTarget.text, lookaroundPlan.value.edits);
   assert.equal(rendered.ok && rendered.value, 'foo(BAZ)', 'T044-LOOKAROUND-02 lookaround preview applies correctly');
 }
+// F2-1: `$&` must expand to the whole match text, not the literal character `&`.
+const ampersandTarget: ReplaceTarget = { rootId: 'root', path: 'amp.ts', text: 'foo', source: 'disk', diskHash: 'amp' };
+const ampersandMatch: SearchMatch = { id: 'amp', rootId: 'root', path: 'amp.ts', line: 0, range: { startUtf16: 0, endUtf16: 3 }, lineText: 'foo', snippet: 'foo', source: 'disk', diskHash: 'amp', generation: 7 };
+const ampersandPlan = service.preview({ ...query, query: 'foo' }, '[$&]', [ampersandTarget], [ampersandMatch], 7);
+assert.equal(ampersandPlan.ok, true, 'T044-AMPERSAND-01 $& replacement parses');
+if (ampersandPlan.ok) assert.equal(ampersandPlan.value.edits[0]?.replacement, '[foo]', 'F2-1: $& expands to the whole match (match[0]), not the literal character &');
+// `$$` must still expand to a literal `$`, unaffected by the $& fix.
+const dollarPlan = service.preview({ ...query, query: 'foo' }, '$$$&', [ampersandTarget], [ampersandMatch], 7);
+if (dollarPlan.ok) assert.equal(dollarPlan.value.edits[0]?.replacement, '$foo', 'T044-DOLLAR-01 $$ still expands to a literal dollar sign');
+
+// F2-2: two different roots with the SAME relative path must not have their edits grouped
+// together and applied with each other's offsets.
+const rootATarget: ReplaceTarget = { rootId: 'root-a', path: 'shared.ts', text: 'aaa', source: 'disk', diskHash: 'a' };
+const rootBTarget: ReplaceTarget = { rootId: 'root-b', path: 'shared.ts', text: 'bbbbbbbb', source: 'disk', diskHash: 'b' };
+const rootAMatch: SearchMatch = { id: 'root-a-match', rootId: 'root-a', path: 'shared.ts', line: 0, range: { startUtf16: 0, endUtf16: 3 }, lineText: 'aaa', snippet: 'aaa', source: 'disk', diskHash: 'a', generation: 8 };
+const rootBMatch: SearchMatch = { id: 'root-b-match', rootId: 'root-b', path: 'shared.ts', line: 0, range: { startUtf16: 4, endUtf16: 8 }, lineText: 'bbbbbbbb', snippet: 'bbbbbbbb', source: 'disk', diskHash: 'b', generation: 8 };
+const multiRootPlan = service.preview({ ...query, query: '\\w+', regex: true }, 'X', [rootATarget, rootBTarget], [rootAMatch, rootBMatch], 8);
+assert.equal(multiRootPlan.ok, true, 'T044-MULTIROOT-01 same-relative-path matches across two roots preview together');
+if (multiRootPlan.ok) {
+  assert.equal(multiRootPlan.value.edits.every((edit) => edit.rootId !== undefined), true, 'F2-2: every edit carries its rootId');
+  const rootAEdits = multiRootPlan.value.edits.filter((edit) => edit.rootId === 'root-a');
+  const rootBEdits = multiRootPlan.value.edits.filter((edit) => edit.rootId === 'root-b');
+  assert.equal(rootAEdits.length, 1, 'F2-2: root-a keeps only its own edit');
+  assert.equal(rootBEdits.length, 1, 'F2-2: root-b keeps only its own edit');
+  assert.equal(rootAEdits[0]?.endUtf16, 3, "F2-2: root-a's edit keeps root-a's own offsets, not root-b's");
+  const renderedA = applyReplacementEdits(rootATarget.text, rootAEdits);
+  assert.equal(renderedA.ok && renderedA.value, 'X', "F2-2: applying root-a's edits against root-a's text must not use root-b's offsets");
+}
+
 service.dispose(); changed.dispose();
-console.log('T044 workspace replace passed E06 preview/apply equality, stale and overlap refusal, multiline/zero-width matches, captures, preserve-case grammar and lookaround match verification');
+console.log('T044 workspace replace passed E06 preview/apply equality, stale and overlap refusal, multiline/zero-width matches, captures, preserve-case grammar, lookaround match verification, $& expansion (F2-1) and multi-root path keying (F2-2)');

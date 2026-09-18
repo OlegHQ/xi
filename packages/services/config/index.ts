@@ -547,6 +547,47 @@ export function decodeRequiredWorkbenchThemeTokens(tokens: Readonly<Record<strin
   };
 }
 
+/** Structurally identical to `packages/ui`'s `WorkbenchTheme` (minus the `syntax` field, which
+ * theme.toml never sets), without this package depending on `packages/ui` -- the composition
+ * root assigns this straight into that type. */
+export interface WorkbenchThemeTokens extends RequiredWorkbenchThemeTokens {
+  readonly surfaceActive: string;
+  readonly selectionPrimary?: string;
+  readonly selectionSecondary?: string;
+  readonly cursorPrimary?: string;
+  readonly cursorSecondary?: string;
+  readonly motionTrail?: string;
+  readonly operatorPreview?: string;
+}
+
+const OPTIONAL_WORKBENCH_THEME_TOKEN_KEYS = Object.freeze([
+  ['selection.primary', 'selectionPrimary'],
+  ['selection.secondary', 'selectionSecondary'],
+  ['cursor.primary', 'cursorPrimary'],
+  ['cursor.secondary', 'cursorSecondary'],
+  ['motion.trail', 'motionTrail'],
+  ['operator.preview', 'operatorPreview'],
+] as const);
+
+/** Full `WorkbenchTheme`-shaped decode: required base surface tokens plus whichever optional
+ * editor-layer tokens (selection.primary, cursor.primary, ...) are present, never partially
+ * applied -- returns `undefined` (not `error`) for a missing base token so the composition root
+ * can report a file-specific diagnostic instead of a generic validation failure. */
+export function decodeWorkbenchThemeTokens(tokens: Readonly<Record<string, string>>): WorkbenchThemeTokens | undefined {
+  const required = decodeRequiredWorkbenchThemeTokens(tokens);
+  if (!required.ok) return undefined;
+  const { background, surface, foreground, muted, border, accent, error } = required.value;
+  const optional: Record<string, string> = {};
+  for (const [tomlKey, fieldName] of OPTIONAL_WORKBENCH_THEME_TOKEN_KEYS) {
+    const value = tokens[tomlKey];
+    if (value !== undefined) optional[fieldName] = value;
+  }
+  return Object.freeze({
+    background, surface, surfaceActive: required.value['surface.active'], foreground, muted, border, accent, error,
+    ...optional,
+  }) as WorkbenchThemeTokens;
+}
+
 export interface FormatterEnvironmentSelection {
   readonly command: string;
   readonly args: readonly string[];

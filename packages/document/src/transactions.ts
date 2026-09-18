@@ -203,8 +203,6 @@ export class DocumentChangeMap {
         const end = edit.end as number;
         if (position >= start && position < end || start === end && position === start) {
           mappedOffset = start + delta + (anchor.affinity === 'right' ? edit.text.length : 0);
-        } else if (position === start) {
-          mappedOffset = start + delta + (anchor.affinity === 'right' ? edit.text.length : 0);
         }
       }
       mapped.push(Object.freeze({

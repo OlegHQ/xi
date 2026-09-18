@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { CancellationSource, asIdentifier, type DocumentId } from '../../packages/primitives/src/index';
 import { NodeFilesystemPort } from '../../packages/platform/src/index';
 import { PersistenceService } from '../../packages/services/persistence/index';
+import { testDocumentFactory } from '../../tests/persistence/document-factory';
 
 const bytesTarget = 10 * 1024 * 1024;
 const root = await mkdtemp('/tmp/xi-t113-bench-');
@@ -14,7 +15,7 @@ await writeFile(path, Buffer.from(text));
 const idResult = asIdentifier<DocumentId>('T113-production-bench', 'documentId');
 if (!idResult.ok) throw new Error(idResult.error.message);
 const cancellation = new CancellationSource();
-const service = new PersistenceService(new NodeFilesystemPort());
+const service = new PersistenceService(new NodeFilesystemPort(), undefined, testDocumentFactory);
 const rss = (): number => process.memoryUsage().rss;
 const before = rss();
 const openStarted = performance.now();

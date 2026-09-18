@@ -365,6 +365,167 @@ function checkCancellationErrorsAndModes(): void {
   allChecks.push('T013-CANCEL-ESC-01', 'T013-CANCEL-INVALID-01', 'T013-CANCEL-FOCUS-01', 'T013-MODE-INSERT-01', 'T013-MODE-ESCAPE-01', 'T013-MODE-CTRLC-01', 'T013-MODE-PASTE-01', 'T013-MODE-REPLACE-01', 'T013-MODE-VISUAL-01', 'T013-MODE-VALIDATION-01', 'T013-SESSION-GENERATION-01', 'T013-SESSION-GENERATION-02');
 }
 
+function checkAuditFindingsE1(): void {
+  const document = openEditable('e1', 'one two three four five six seven');
+  const normalSelections = selectionSet(document, 'normal');
+
+  // E1-1. nvim (.artifacts/oracle/nvim-linux-arm64/bin/nvim --headless --clean -u NONE
+  //   -c "call setline(1,['1','2','3','4','5','6','7','8'])" -c 'normal 2"a3yy'):
+  //   "6 lines yanked into "a" -- precount and postcount multiply (2*3=6), not concatenate (23).
+  let state = parserState('normal', normalSelections);
+  let result = feed(state, '2');
+  if (result.kind !== 'pending') throw new Error('T013-E1-1-COUNT expected pending count');
+  result = feed(result.state, '"');
+  if (result.kind !== 'pending') throw new Error('T013-E1-1-QUOTE expected pending register-name');
+  result = feed(result.state, 'a');
+  if (result.kind !== 'pending' || result.state.pending.kind !== 'register-command') throw new Error('T013-E1-1-REG expected pending register-command');
+  result = feed(result.state, '3');
+  if (result.kind !== 'pending') throw new Error('T013-E1-1-POSTCOUNT expected pending postcount digit');
+  result = feed(result.state, 'y');
+  if (result.kind !== 'pending') throw new Error('T013-E1-1-Y expected pending operator');
+  result = feed(result.state, 'y');
+  assert.equal(result.kind, 'command', 'T013-E1-1-MULTIPLY yy completes the linewise operator');
+  if (result.kind !== 'command' || result.command.kind !== 'operator-line') throw new Error('T013-E1-1-MULTIPLY expected operator-line');
+  assert.equal(result.command.count.value, 6, 'T013-E1-1-MULTIPLY 2"a3yy multiplies precount*postcount (6), not 23');
+  assert.equal(result.command.register, 'a', 'T013-E1-1-MULTIPLY keeps the selected register');
+
+  // nvim (-c "call setline(1,'abcdef')" -c 'normal 3l2"a0' -c 'echo col(".")'): col 1 --
+  // a leading 0 right after the register is the '0' motion, not a postcount digit,
+  // so the command fires immediately instead of staying pending forever.
+  state = parserState('normal', normalSelections);
+  result = feed(state, '2');
+  if (result.kind !== 'pending') throw new Error('T013-E1-1-ZERO-COUNT expected pending');
+  result = feed(result.state, '"');
+  if (result.kind !== 'pending') throw new Error('T013-E1-1-ZERO-QUOTE expected pending');
+  result = feed(result.state, 'a');
+  if (result.kind !== 'pending') throw new Error('T013-E1-1-ZERO-REG expected pending');
+  result = feed(result.state, '0');
+  assert.equal(result.kind, 'command', 'T013-E1-1-ZERO 2"a0 fires the 0 motion instead of accumulating a count of 20');
+  if (result.kind !== 'command' || result.command.kind !== 'single-key') throw new Error('T013-E1-1-ZERO expected single-key command');
+  assert.equal(result.command.key, '0', 'T013-E1-1-ZERO the key is the 0 motion');
+
+  // E1-2. nvim (-c "call setline(1,'ABC')" -c 'normal vllgu'): "abc" -- Visual gu acts on the
+  // selection immediately, the same as plain d/c/y, instead of opening an operator-pending wait.
+  const visualSelections = selectionSet(document, 'visual-character');
+  result = feed(parserState('visual-character', visualSelections), 'g');
+  if (result.kind !== 'pending') throw new Error('T013-E1-2-G expected pending g-prefix');
+  result = feed(result.state, 'u');
+  assert.equal(result.kind, 'command', 'T013-E1-2-GU Visual gu is immediate, not a pending operator-motion');
+  if (result.kind !== 'command' || result.command.kind !== 'single-key') throw new Error('T013-E1-2-GU expected single-key command');
+  assert.equal(result.command.key, 'gu', 'T013-E1-2-GU dispatches the whole gu key');
+
+  // E1-3. nvim (-c "call setline(1,'abcdef')" -c "normal 0mallld\`a"): "def" -- `` d`a `` deletes
+  // from the cursor to a mark; the literal-argument continuation for a mark jump must be legal
+  // after an operator, not rejected before isMotionKey/isOperatorMotionLiteral get a look.
+  result = feed(parserState('normal', normalSelections), 'd');
+  if (result.kind !== 'pending') throw new Error('T013-E1-3-BACKTICK-D expected pending operator');
+  result = feed(result.state, '`');
+  assert.equal(result.kind, 'pending', 'T013-E1-3-BACKTICK d` waits for the mark name instead of failing');
+  if (result.kind !== 'pending' || result.state.pending.kind !== 'literal-argument') throw new Error('T013-E1-3-BACKTICK expected literal-argument pending');
+  result = feed(result.state, 'a');
+  assert.equal(result.kind, 'command', 'T013-E1-3-BACKTICK completes the mark-jump operator motion');
+  if (result.kind !== 'command' || result.command.kind !== 'operator-motion') throw new Error('T013-E1-3-BACKTICK expected operator-motion');
+  assert.equal(result.command.motion, '`a', 'T013-E1-3-BACKTICK motion is the mark jump `a');
+
+  result = feed(parserState('normal', normalSelections), 'd');
+  if (result.kind !== 'pending') throw new Error("T013-E1-3-QUOTE-D expected pending operator");
+  result = feed(result.state, "'");
+  assert.equal(result.kind, 'pending', "T013-E1-3-QUOTE y'a waits for the mark name instead of failing");
+  if (result.kind !== 'pending' || result.state.pending.kind !== 'literal-argument') throw new Error('T013-E1-3-QUOTE expected literal-argument pending');
+
+  // MOTION_KEYS must include <Space>/<CR> so operators can take them as a motion.
+  result = feed(parserState('normal', normalSelections), 'd');
+  if (result.kind !== 'pending') throw new Error('T013-E1-3-SPACE-D expected pending operator');
+  result = feed(result.state, 'Space');
+  assert.equal(result.kind, 'command', 'T013-E1-3-SPACE d<Space> is a legal operator motion');
+  if (result.kind !== 'command' || result.command.kind !== 'operator-motion') throw new Error('T013-E1-3-SPACE expected operator-motion');
+  assert.equal(result.command.motion, '<Space>', 'T013-E1-3-SPACE motion is <Space>');
+
+  // nvim (-c "call setline(1,['abc','def','ghi'])" -c 'normal 0ldvj'): "aef"/"ghi" (vs. plain
+  // dj's linewise no-op-looking full-line delete) -- v/V/<C-v> right after an operator forces
+  // the following motion's wise-ness; the parser must carry that as a `force` flag on the
+  // eventual operator-motion command. Consumer note: packages/vim/multi must read
+  // VimCommandIntent.force ('v' | 'V' | '<C-v>') on 'operator-motion' commands and apply
+  // characterwise/linewise/blockwise range computation accordingly -- it is not honored yet.
+  for (const [pressed, expectedForce] of [['v', 'v'], ['V', 'V']] as const) {
+    result = feed(parserState('normal', normalSelections), 'd');
+    if (result.kind !== 'pending') throw new Error('T013-E1-3-FORCE-D expected pending operator');
+    result = feed(result.state, pressed);
+    assert.equal(result.kind, 'pending', `T013-E1-3-FORCE-${pressed} force key stays pending, does not fail or start Visual`);
+    if (result.kind !== 'pending' || result.state.pending.kind !== 'operator-motion') throw new Error(`T013-E1-3-FORCE-${pressed} expected operator-motion pending`);
+    assert.equal(result.state.pending.force, expectedForce, `T013-E1-3-FORCE-${pressed} pending records the force key`);
+    result = feed(result.state, 'j');
+    assert.equal(result.kind, 'command', `T013-E1-3-FORCE-${pressed} completes with the forced motion`);
+    if (result.kind !== 'command' || result.command.kind !== 'operator-motion') throw new Error(`T013-E1-3-FORCE-${pressed} expected operator-motion command`);
+    assert.equal(result.command.force, expectedForce, `T013-E1-3-FORCE-${pressed} command carries the force flag`);
+    assert.equal(result.command.motion, 'j', `T013-E1-3-FORCE-${pressed} motion is unchanged`);
+  }
+  result = feed(parserState('normal', normalSelections), 'd');
+  if (result.kind !== 'pending') throw new Error('T013-E1-3-FORCE-CV-D expected pending operator');
+  result = feed(result.state, 'v', { ctrl: true });
+  if (result.kind !== 'pending' || result.state.pending.kind !== 'operator-motion') throw new Error('T013-E1-3-FORCE-CV expected operator-motion pending');
+  assert.equal(result.state.pending.force, '<C-v>', 'T013-E1-3-FORCE-CV d<C-v> records the blockwise force key');
+  result = feed(result.state, 'j');
+  if (result.kind !== 'command' || result.command.kind !== 'operator-motion') throw new Error('T013-E1-3-FORCE-CV expected operator-motion command');
+  assert.equal(result.command.force, '<C-v>', 'T013-E1-3-FORCE-CV command carries the blockwise force flag');
+
+  // E1-4. nvim (-c "call setline(1,'abcdef')" -c 'call feedkeys("3lr\<CR>","x")'):
+  // "abc"/"ef" -- r<CR> replaces a character with a newline; f<Tab> similarly needs a named
+  // single-character key accepted as a literal argument, not just printable characters.
+  result = feed(parserState('normal', normalSelections), 'r');
+  if (result.kind !== 'pending') throw new Error('T013-E1-4-R-D expected pending literal-argument');
+  result = feed(result.state, 'Return');
+  assert.equal(result.kind, 'command', 'T013-E1-4-R-CR r<CR> is a legal literal argument');
+  if (result.kind !== 'command' || result.command.kind !== 'literal-command') throw new Error('T013-E1-4-R-CR expected literal-command');
+  assert.equal(result.command.argument, '\n', 'T013-E1-4-R-CR argument is a real newline character');
+
+  result = feed(parserState('normal', normalSelections), 'f');
+  if (result.kind !== 'pending') throw new Error('T013-E1-4-F-D expected pending literal-argument');
+  result = feed(result.state, 'Tab');
+  assert.equal(result.kind, 'command', 'T013-E1-4-F-TAB f<Tab> is a legal literal argument');
+  if (result.kind !== 'command' || result.command.kind !== 'literal-command') throw new Error('T013-E1-4-F-TAB expected literal-command');
+  assert.equal(result.command.argument, '\t', 'T013-E1-4-F-TAB argument is a real tab character');
+
+  allChecks.push(
+    'T013-E1-1-MULTIPLY', 'T013-E1-1-ZERO', 'T013-E1-2-GU',
+    'T013-E1-3-BACKTICK', 'T013-E1-3-QUOTE', 'T013-E1-3-SPACE', 'T013-E1-3-FORCE-v', 'T013-E1-3-FORCE-V', 'T013-E1-3-FORCE-CV',
+    'T013-E1-4-R-CR', 'T013-E1-4-F-TAB',
+  );
+}
+
+function checkAuditFindingE1_8ContinuationsPerf(): void {
+  const document = openEditable('e1-8', 'one two three four five six seven');
+  const selections = selectionSet(document, 'normal');
+  const state = parserState('normal', selections);
+
+  // continuationsFor's output for a given pending shape (operator identity + force state,
+  // or prefix + hasOperator) is now cached, so re-parsing the same 'd' operator twice
+  // returns the identical frozen continuations array rather than rebuilding/cloning it.
+  const first = feed(state, 'd');
+  const second = feed(state, 'd');
+  if (first.kind !== 'pending' || second.kind !== 'pending') throw new Error('T013-E1-8-IDENTITY expected pending');
+  assert.equal(first.continuations, second.continuations, 'T013-E1-8-IDENTITY same operator/force shape reuses the same frozen continuations array');
+
+  // Engine-step budget (docs/plan/15-keystroke-latency.md, AGENTS.md): ordinary engine
+  // steps must meet p95 <=1ms / p99 <=2ms. Measure parseVimInput producing a 'pending'
+  // continuation list (the path continuationsFor runs on) over many iterations.
+  const samples: number[] = [];
+  const iterations = 2000;
+  for (let index = 0; index < iterations; index += 1) {
+    const started = performance.now();
+    feed(state, 'd');
+    samples.push(performance.now() - started);
+  }
+  samples.sort((left, right) => left - right);
+  const p95 = samples[Math.floor(samples.length * 0.95)] ?? 0;
+  const p99 = samples[Math.floor(samples.length * 0.99)] ?? 0;
+  assert.ok(p95 <= 1, `T013-E1-8-PERF p95 ${p95.toFixed(4)}ms must be <=1ms over ${iterations} iterations`);
+  assert.ok(p99 <= 2, `T013-E1-8-PERF p99 ${p99.toFixed(4)}ms must be <=2ms over ${iterations} iterations`);
+  console.log(`T013-E1-8-PERF p95=${p95.toFixed(4)}ms p99=${p99.toFixed(4)}ms over ${iterations} iterations`);
+
+  allChecks.push('T013-E1-8-IDENTITY', 'T013-E1-8-PERF');
+}
+
 async function checkPinnedOracle(): Promise<void> {
   const oracle = await verifyOracleBundle(process.env.XI_NVIM);
   const fixtures: readonly OracleFixture[] = [
@@ -508,5 +669,7 @@ checkNormalizationAndOpaquePaste();
 checkIncrementalGrammar();
 checkParserStateDeepImmutability();
 checkCancellationErrorsAndModes();
+checkAuditFindingsE1();
+checkAuditFindingE1_8ContinuationsPerf();
 await checkPinnedOracle();
 console.log(`T013 passed ${allChecks.length} focused input/parser fixtures: ${allChecks.join(', ')}`);

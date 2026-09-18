@@ -36,10 +36,10 @@ export interface PickerControllerOptions<TEntry extends WorkbenchPickerEntry, TT
   /** Opens a promoted buffer's file (commit) or a preview (no commit); returns the same
    * result shape as `BufferHost.openBufferAtPath` so preview/promote bookkeeping stays here. */
   readonly openFile: (path: string, preview: boolean) => ReturnType<BufferHost['openBufferAtPath']>;
-  /** Optional per-entry keys other than Enter/Escape/Up/Down/Backspace (e.g. the git picker's
-   * `s`/`u` stage/unstage). When present for the current mode, these keys are consumed instead
-   * of appended to the filter query. */
-  readonly onSecondaryAction?: (entry: TEntry, key: string) => void;
+  /** Git-picker-only secondary action (stage/unstage the selected entry), keyed by `s`/`u` in
+   * `handleKeypress` below -- the key->action mapping is this controller's policy, not the
+   * composition root's; the callback only receives the resolved semantic action. */
+  readonly onSecondaryAction?: (entry: TEntry, action: 'stage' | 'unstage') => void;
 }
 
 /**
@@ -58,6 +58,12 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
 
   constructor(options: PickerControllerOptions<TEntry, TTheme>) {
     this.#options = options;
+  }
+
+  /** Cancels any open picker so its underlying model query/preview state does not keep running
+   * (or leave a stale preview view) after the composition root tears the workbench down. */
+  dispose(): void {
+    if (this.#open) void this.close(true);
   }
 
   get isOpen(): boolean { return this.#open; }
@@ -115,7 +121,7 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
     const raw = event.raw;
     if (this.#mode === 'git' && this.#options.onSecondaryAction !== undefined && (raw === 's' || raw === 'u')) {
       const selected = model.model.entries.find((entry) => entry.id === model.model.selectedId);
-      if (selected !== undefined) this.#options.onSecondaryAction(selected, raw);
+      if (selected !== undefined) this.#options.onSecondaryAction(selected, raw === 's' ? 'stage' : 'unstage');
       return;
     }
     if (raw.length === 1 && raw >= ' ' && raw !== '\u007f') {
