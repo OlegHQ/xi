@@ -24,7 +24,7 @@
     "xi:dev": "bun run dist/dev/main.js",
     "skills:sync": "bun run ./tools/skills-sync.ts",
     "package:audit": "bun run ./tools/package-audit.ts --check",
-    "package:build": "bun build --compile --bytecode --format=esm apps/xi/src/main.ts --outfile dist/xi",
+    "package:build": "bun build --compile --bytecode --format=esm --minify --define 'process.env.NODE_ENV=\"production\"' --define 'process.env.DEV=\"false\"' apps/xi/src/main.ts --outfile dist/xi",
     "xi:install": "bun run package:build && mkdir -p ~/.local/bin && cp dist/xi ~/.local/bin/xi && chmod 755 ~/.local/bin/xi && ~/.local/bin/xi --version",
     "package:release": "bun run ./tools/package-release.ts",
     "package:smoke": "bun run package:audit && python3 tests/distribution/t064-compiled-pty.py && python3 tests/distribution/t064-ex-pty.py",

@@ -108,7 +108,7 @@ def main() -> None:
         empty_path.mkdir()
         source.write_text("first line\nsecond line\n", encoding="utf-8")
         build = subprocess.run(
-            ["bun", "build", "--compile", "--bytecode", "--format=esm", "apps/xi/src/main.ts", "--outfile", str(binary)],
+            ["bun", "build", "--compile", "--bytecode", "--format=esm", "--minify", "--define", 'process.env.NODE_ENV="production"', "--define", 'process.env.DEV="false"', "apps/xi/src/main.ts", "--outfile", str(binary)],
             cwd=ROOT,
             check=False,
             capture_output=True,
