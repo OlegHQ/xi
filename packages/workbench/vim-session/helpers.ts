@@ -195,14 +195,28 @@ export function isMotionKey(key: string): key is VimMotionKey {
 }
 
 export function keyName(event: OwnedVimKeyEvent): string {
-  switch (event.name) {
-    case 'ESC':
-    case 'Escape':
+  switch (event.name.toLowerCase()) {
+    case 'esc':
     case 'escape': return '<Esc>';
+    case 'enter':
     case 'return': return '<CR>';
     case 'linefeed': return '<NL>';
     case 'space': return '<Space>';
     case 'backspace': return '<BS>';
+    case 'tab': return '<Tab>';
+    case 'delete': return '<Del>';
+    case 'arrowleft':
+    case 'left': return '<Left>';
+    case 'arrowright':
+    case 'right': return '<Right>';
+    case 'arrowup':
+    case 'up': return '<Up>';
+    case 'arrowdown':
+    case 'down': return '<Down>';
+    case 'home': return '<Home>';
+    case 'end': return '<End>';
+    case 'pageup': return '<PageUp>';
+    case 'pagedown': return '<PageDown>';
     default: return event.name;
   }
 }
