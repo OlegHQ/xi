@@ -11,6 +11,8 @@ export interface VimCount {
   /** A nonzero, safe integer. Oversized decimal input saturates at this bound. */
   readonly value: number;
   readonly saturated: boolean;
+  /** True when the user typed count digits explicitly; false for an implied default of 1 (bare `G` vs `1G`). */
+  readonly explicit: boolean;
 }
 
 export type VimOperator =
@@ -79,7 +81,7 @@ export type VimCommandIntent =
   | (VimCommandContext & { readonly kind: 'select-key'; readonly key: string; readonly modifiers: InputModifiers; readonly mode: 'select-character' | 'select-line' | 'select-block' })
   | (VimCommandContext & { readonly kind: 'paste'; readonly bytes: Uint8Array; readonly mode: VimMode })
   | (VimCommandContext & { readonly kind: 'begin-command-line'; readonly key: ':'; readonly mode: VimMode })
-  | (VimCommandContext & { readonly kind: 'begin-search'; readonly direction: 'forward' | 'backward'; readonly mode: VimMode });
+  | (VimCommandContext & { readonly kind: 'begin-search'; readonly direction: 'forward' | 'backward'; readonly mode: VimMode; readonly count?: VimCount });
 
 export type VimParseFailure =
   | { readonly kind: 'unknown-key'; readonly key: string }
@@ -104,7 +106,7 @@ const G_KEYS = Object.freeze(['g', 'j', 'k', '0', '^', '$', '_', 'm', 'M', ';', 
 const Z_KEYS = Object.freeze(['z', 't', 'b', '<CR>', '<Space>', '=', 'f', 'F', 'o', 'O', 'H', 'L', 'M', 'w', 'W', 'h', 'l', 'z']);
 const CTRL_W_KEYS = Object.freeze(['h', 'j', 'k', 'l', 't', 'w', 'W', 'b', 'B', 'p', 'P', 'n', 'o', 'O', 'c', 'q', 'v', 'T', 'g', 'f', 'F', ']', '}', '=', '+', '-', '<', '>', '_', '|', 's', 'S', 'x', 'X', 'r', 'R']);
 const CTRL_W_G_KEYS = Object.freeze(['f', 'F', ']', '}', 't', 'T', 'g', 'G', '+', '-', '<', '>', '_', '|']);
-const TEXT_OBJECT_KEYS = Object.freeze(['w', 'W', 's', 'p', '"', "'", '`', '(', '[', '{', '<', ')', 'B', ']', '}', 't']);
+const TEXT_OBJECT_KEYS = Object.freeze(['w', 'W', 's', 'p', '"', "'", '`', '(', '[', '{', '<', '>', ')', 'b', 'B', ']', '}', 't']);
 const BRACKET_HOST_KEYS = Object.freeze(['[', ']', '(', ')', '{', '}', 'd', 'D', '<C-d>', '<C-i>']);
 
 const noContinuations: readonly VimContinuation[] = Object.freeze([]);
@@ -289,8 +291,17 @@ interface CommandContext {
   readonly register?: string;
 }
 
+const VISUAL_IMMEDIATE_KEYS = Object.freeze(['o', 'O', 'd', 'c', 'y', '<', '>', '=']);
+
 function parseRootWithContext(state: VimParserState, atMilliseconds: number, key: string, ctx: CommandContext): VimParseOutcome {
   if (key === '"') return pending(state, { kind: 'register-name', count: ctx.count });
+  if (state.session.mode.startsWith('visual-') && VISUAL_IMMEDIATE_KEYS.includes(key)) {
+    return command(state, NONE, {
+      kind: 'single-key', key, count: ctx.count ?? oneCount(),
+      ...(ctx.register === undefined ? {} : { register: ctx.register }),
+      selections: state.session.selections, atMilliseconds,
+    });
+  }
   const operator = directOperator(key);
   if (operator !== undefined) {
     return pending(state, {
@@ -316,6 +327,7 @@ function parseRootWithContext(state: VimParserState, atMilliseconds: number, key
   });
   if (key === '/' || key === '?') return command(state, NONE, {
     kind: 'begin-search', direction: key === '/' ? 'forward' : 'backward', mode: state.session.mode,
+    ...(ctx.count === undefined ? {} : { count: ctx.count }),
     selections: state.session.selections, atMilliseconds,
   });
 
@@ -631,11 +643,14 @@ function selectionKindForMode(mode: VimMode): SelectionKind { return modeSelecti
 
 function keyToken(input: Extract<NormalizedVimInput, { readonly kind: 'key' }>): string {
   let key = canonicalKeyName(input.key);
+  // A named key is already bracketed ('<Left>'); a modifier wraps its bare name, not the
+  // brackets, so Ctrl+Left is '<C-Left>' rather than '<C-<Left>>'.
+  const bare = key.length > 2 && key.startsWith('<') && key.endsWith('>') ? key.slice(1, -1) : key;
   if (input.modifiers.ctrl) {
     if (key === '[') return '<Esc>';
-    return `<C-${key.length === 1 ? key.toLowerCase() : key}>`;
+    return `<C-${bare.length === 1 ? bare.toLowerCase() : bare}>`;
   }
-  if (input.modifiers.alt || input.modifiers.meta) return `<M-${key}>`;
+  if (input.modifiers.alt || input.modifiers.meta) return `<M-${bare}>`;
   if (input.modifiers.shift && key.length === 1 && key >= 'a' && key <= 'z') key = key.toUpperCase();
   return key;
 }
@@ -860,7 +875,7 @@ function freezeCommand(value: VimCommandIntent): VimCommandIntent {
 }
 
 function freezeCount(value: VimCount): VimCount {
-  return Object.freeze({ value: value.value, saturated: value.saturated });
+  return Object.freeze({ value: value.value, saturated: value.saturated, explicit: value.explicit });
 }
 
 function freezeOptionalCount(value: VimCount | undefined): VimCount | undefined {
@@ -879,20 +894,21 @@ function context(count: VimCount | undefined, register: string): CommandContext 
   return count === undefined ? { register } : { count, register };
 }
 
-function oneCount(): VimCount { return Object.freeze({ value: 1, saturated: false }); }
+function oneCount(): VimCount { return Object.freeze({ value: 1, saturated: false, explicit: false }); }
 
 function appendCount(previous: VimCount | undefined, digit: string): VimCount {
   const base = previous?.value ?? 0;
   const value = Number(digit);
   if (previous?.saturated === true || base > Math.floor((MAX_SAFE_COUNT - value) / 10)) {
-    return Object.freeze({ value: MAX_SAFE_COUNT, saturated: true });
+    return Object.freeze({ value: MAX_SAFE_COUNT, saturated: true, explicit: true });
   }
-  return Object.freeze({ value: base * 10 + value, saturated: false });
+  return Object.freeze({ value: base * 10 + value, saturated: false, explicit: true });
 }
 
 function multiplyCounts(left: VimCount, right: VimCount): VimCount {
-  if (left.saturated || right.saturated || left.value > MAX_SAFE_COUNT / right.value) return Object.freeze({ value: MAX_SAFE_COUNT, saturated: true });
-  return Object.freeze({ value: left.value * right.value, saturated: false });
+  const explicit = left.explicit || right.explicit;
+  if (left.saturated || right.saturated || left.value > MAX_SAFE_COUNT / right.value) return Object.freeze({ value: MAX_SAFE_COUNT, saturated: true, explicit });
+  return Object.freeze({ value: left.value * right.value, saturated: false, explicit });
 }
 
 function isDigit(value: string): boolean { return value.length === 1 && value >= '0' && value <= '9'; }

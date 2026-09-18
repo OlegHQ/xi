@@ -68,17 +68,22 @@ with tempfile.TemporaryDirectory(prefix="xi-t127-panel-pointer-") as temporary:
     captured = bytearray()
     try:
         read_until(master, captured, b"XI_WORKBENCH_READY", 10)
-        # Open the Explorer sidebar section, then wait for the async root expand/watch to settle.
-        os.write(master, mouse(0, 3, 1))
-        os.write(master, mouse(0, 3, 1, True))
+        # Open the Explorer through the same leader shortcut tests/e2e/t040-explorer-pty.py
+        # uses (Files starts already expanded, so clicking its chevron would collapse the
+        # inline tree instead of opening it -- the click toggles the section's own inline
+        # visibility now that Explorer nests under the sidebar's `▾ Files` header).
+        os.write(master, b" vf")
         read_until(master, captured, b"XI_EXPLORER_OPEN", 5)
         read_for(master, captured, 1.0)
         refreshes = [json.loads(match.group(1)) for match in EXPLORER_REFRESH.finditer(captured)]
         if not any(entry.get("selectedPath") is not None or entry.get("state") == "ready" for entry in refreshes):
             raise SystemExit(f"explorer root never became ready: {refreshes!r}")
-        # Row 2 (mouse coords) is the expanded root; children start at row 3. Probe rows until the target file activates.
+        # Row 3 (mouse coords) is the expanded root (row 2 is the panel's own "N items"
+        # header, nested inline under the sidebar's `▾ Files` header at row 1); children
+        # start at row 4. Probe rows until the target file activates -- starting at row 3
+        # would toggle the root directory closed instead of activating a file.
         target_item_id = None
-        for row in range(3, 8):
+        for row in range(4, 9):
             before = len(captured)
             os.write(master, mouse(0, 5, row))
             os.write(master, mouse(0, 5, row, True))

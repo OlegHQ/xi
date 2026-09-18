@@ -1,12 +1,44 @@
-import type { Disposable, ViewId } from '../../contracts/src/index';
+import type { ClockPort, Disposable, ViewId } from '../../contracts/src/index';
 import type { BufferHost } from '../host';
 import type { WorkbenchSession } from '../session';
 import { CommandRegistry } from '../commands/registry';
 import { ExCommandLineSession, type ExCommandLineInput } from '../commands/ex-command-line';
 import { PrefixHelpController, buildPrefixHelpReadModel, type PrefixHelpReadModel, type PrefixHelpRequest } from '../commands/prefix-help';
 import type { OwnedVimKeyEvent, VimPrefixHelpState } from '../vim-session';
+import { canonicalKeyToken } from './key-token';
+import { DEFAULT_VIEW_BINDINGS, executeViewCommand, isViewCommandId } from './view-commands';
 
 export type { OwnedVimKeyEvent as RouterKeyEvent };
+
+/** Mirrors `packages/services/config`'s `BindingConfig` structurally -- workbench cannot
+ * import `packages/services`, not even types. */
+export interface RouterBindingConfig {
+  readonly mode: string;
+  readonly keys: readonly string[];
+  readonly commandId: string;
+}
+
+/** Mirrors `packages/services/config`'s `normalizeCanonicalKey`: a config-authored token is
+ * matched case-insensitively when bracketed (`<C-Up>` == `<c-up>`), case-sensitively as a
+ * bare literal character otherwise (`J` != `j`). */
+function normalizeConfigToken(token: string): string {
+  return token.startsWith('<') ? token.toLowerCase() : token;
+}
+
+/** Single-key (non-chord) mode+key -> commandId bindings, resolved before Vim's own key
+ * handling gets a chance -- `<C-Up>`/`<C-Down>` line-scroll defaults, overridable (and
+ * extensible) by the user's compiled config bindings. Multi-key chord bindings are out of
+ * scope for this fast-path lookup (see AGENTS.md ticket-scope note in the class doc below). */
+function buildBindingMap(bindings: readonly RouterBindingConfig[]): ReadonlyMap<string, string> {
+  const map = new Map<string, string>();
+  for (const binding of DEFAULT_VIEW_BINDINGS) map.set(`${binding.mode}\u0000${binding.token}`, binding.commandId);
+  for (const binding of bindings) {
+    if (binding.keys.length !== 1) continue;
+    const token = normalizeConfigToken(binding.keys[0] as string);
+    map.set(`${binding.mode}\u0000${token}`, binding.commandId);
+  }
+  return map;
+}
 
 /** Mirrors `packages/services/navigation`'s `PickerMode`; workbench cannot import services. */
 export type RouterPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config';
@@ -73,6 +105,15 @@ export interface WorkbenchInputRouterOptions {
   readonly ensureOptionalServices: () => Promise<void>;
   readonly toggleMouseMode: () => boolean;
   readonly launchViewId: ViewId;
+  /** Compiled config key bindings (`compileConfig(...).bindings`); `<C-Up>`/`<C-Down>` line
+   * scroll are always available as defaults and config may override or add to them. */
+  readonly bindings: readonly RouterBindingConfig[];
+  /** Lines per `view.scroll-up`/`view.scroll-down` step; from `editor.mouse.scrollLines`. */
+  readonly scrollLines: number;
+  readonly getViewportHeight: (viewId: ViewId) => number | undefined;
+  /** Drives `PrefixHelpController`'s schedule/cancel timer through the shared platform port
+   * instead of a raw `setTimeout`, so fake clocks can drive it in tests. */
+  readonly clock: ClockPort;
 }
 
 /**
@@ -86,6 +127,7 @@ export interface WorkbenchInputRouterOptions {
 export class WorkbenchInputRouter implements Disposable {
   readonly #options: WorkbenchInputRouterOptions;
   readonly #prefixHelp: PrefixHelpController;
+  readonly #bindings: ReadonlyMap<string, string>;
   #leaderPending = false;
   #leaderPanelPending = false;
   #macroRegisterPending = false;
@@ -98,11 +140,13 @@ export class WorkbenchInputRouter implements Disposable {
   #lastPrefixPendingKeys: readonly string[] | undefined;
   #lastPrefixContinuations: VimPrefixHelpState['parserContinuations'] | undefined;
   #exCommandLineSession: ExCommandLineSession | undefined;
+  #searchPromptModel: ReturnType<ExCommandLineSession['readModel']> | undefined;
   readonly #commandLineListeners = new Set<(model: ReturnType<ExCommandLineSession['readModel']> | undefined) => void>();
   #disposed = false;
 
   constructor(options: WorkbenchInputRouterOptions) {
     this.#options = options;
+    this.#bindings = buildBindingMap(options.bindings);
     this.#prefixHelp = new PrefixHelpController({
       readGenerations: () => ({
         registryGeneration: options.commandRegistry.snapshot.generation,
@@ -114,8 +158,16 @@ export class WorkbenchInputRouter implements Disposable {
         registry: options.commandRegistry,
         registrySnapshot: options.commandRegistry.snapshot,
         focusGeneration: this.#prefixGeneration,
+        // Leader/macro pending-key sequences only; config key bindings are ordinary
+        // mode+key -> commandId mappings (resolved directly in `handleKeypress`), not
+        // pending-sequence discovery hints, so there is nothing config-sourced to add here.
         bindings: [],
       }),
+    }, {
+      clock: {
+        setTimeout: (callback: () => void, milliseconds: number) => options.clock.schedule(milliseconds, callback),
+        clearTimeout: (handle: unknown) => { (handle as Disposable).dispose(); },
+      },
     });
   }
 
@@ -135,16 +187,23 @@ export class WorkbenchInputRouter implements Disposable {
   };
 
   /** Called from `BufferHostOptions.onCommandLineChange`. */
-  handleCommandLineChange(state: { readonly source: string; readonly cursorOffset: number } | undefined): void {
+  handleCommandLineChange(state: { readonly source: string; readonly cursorOffset: number; readonly kind?: 'ex' | 'search-forward' | 'search-backward' } | undefined): void {
+    this.#searchPromptModel = undefined;
     if (state === undefined) {
       this.#exCommandLineSession?.dispose();
       this.#exCommandLineSession = undefined;
+    } else if (state.kind !== undefined && state.kind !== 'ex') {
+      // A '/' or '?' prompt is Vim's own: no Ex discovery, and every key (typing, <BS>,
+      // Enter, Esc) is handled by the session itself in handleCommandLineKeypress.
+      this.#exCommandLineSession?.dispose();
+      this.#exCommandLineSession = undefined;
+      this.#searchPromptModel = searchPromptModel(state.source, state.cursorOffset);
     } else if (this.#exCommandLineSession === undefined) {
       this.#exCommandLineSession = new ExCommandLineSession({ registry: this.#options.commandRegistry, source: state.source, cursorOffset: state.cursorOffset });
     } else {
       this.#exCommandLineSession.setSource(state.source, state.cursorOffset);
     }
-    this.commandLine.read.model = this.#exCommandLineSession?.readModel();
+    this.commandLine.read.model = this.#searchPromptModel ?? this.#exCommandLineSession?.readModel();
     for (const listener of [...this.#commandLineListeners]) listener(this.commandLine.read.model);
     this.#options.marker('XI_EX_COMMANDLINE_STATE', state);
   }
@@ -212,9 +271,31 @@ export class WorkbenchInputRouter implements Disposable {
       return true;
     }
     if (this.#leaderPending) return this.handleLeaderKeypress(event);
+    if (activeViewId !== undefined && activeMode !== undefined) {
+      const commandId = this.#resolveBoundCommand(activeMode, event);
+      if (commandId !== undefined && isViewCommandId(commandId)) {
+        const handled = executeViewCommand(commandId, {
+          workbench: session,
+          getSession: (viewId) => host.sessions.get(viewId),
+          viewId: activeViewId,
+          viewportHeight: this.#options.getViewportHeight(activeViewId),
+          scrollLines: this.#options.scrollLines,
+        });
+        if (handled) { this.#options.marker('XI_VIEW_COMMAND', { commandId, viewId: activeViewId }); return true; }
+      }
+    }
     const active = session.activeViewId === undefined ? undefined : host.sessions.get(session.activeViewId);
     if (active === undefined) return false;
     return active.handleKey(event);
+  }
+
+  /** Config-overridable mode+key -> commandId lookup, consulted before Vim's own key
+   * handling (item DOC-INPUT-BINDINGS). Only single-key (non-chord) bindings resolve here;
+   * multi-key chord config bindings are out of scope for this fast path. */
+  #resolveBoundCommand(mode: string, event: OwnedVimKeyEvent): string | undefined {
+    const token = canonicalKeyToken(event);
+    const lookupToken = token.startsWith('<') ? token.toLowerCase() : token;
+    return this.#bindings.get(`${mode}\u0000${lookupToken}`);
   }
 
   handlePaste(bytes: Uint8Array): void {
@@ -328,8 +409,13 @@ export class WorkbenchInputRouter implements Disposable {
 
   async handleCommandLineKeypress(event: OwnedVimKeyEvent): Promise<boolean | 'quit'> {
     const active = this.#options.host.activeSession();
+    if (active === undefined) return false;
+    if (this.#searchPromptModel !== undefined) {
+      await active.handleKey(event);
+      return true;
+    }
     const line = this.#exCommandLineSession;
-    if (active === undefined || line === undefined) return false;
+    if (line === undefined) return false;
     const input = toExCommandLineInput(event);
     if (input === undefined) return true;
     const result = line.handleInput(input);
@@ -389,4 +475,13 @@ function toExCommandLineInput(event: OwnedVimKeyEvent): ExCommandLineInput | und
     if (text.length === 1) return { kind: 'text', text };
   }
   return undefined;
+}
+
+function searchPromptModel(source: string, cursorOffset: number): ReturnType<ExCommandLineSession['readModel']> {
+  const empty = { source, segmentStart: 0, segmentEnd: source.length, rangeStart: 0, rangeEnd: 0, commandNameStart: 0, commandNameEnd: 0, argumentStart: 1, argumentEnd: source.length, separatorStart: null, typedName: '', typedBang: false };
+  return Object.freeze({
+    source, cursorOffset, registryGeneration: 0, position: empty, parsed: undefined, parseFailure: undefined,
+    candidates: Object.freeze([]), selectedIndex: 0, acceptanceHint: 'Enter: search · Esc: cancel', typedCommandExact: false,
+    canExecute: source.length > 1, execution: undefined,
+  });
 }

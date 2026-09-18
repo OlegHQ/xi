@@ -156,8 +156,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
         os.write(master, b" vf")
         read_for(master, captured, 0.6)
         before_menu = len(captured)
-        os.write(master, mouse(2, 5, 2))
-        os.write(master, mouse(2, 5, 2, release=True))
+        # Row 3: the explorer tree starts under the sidebar's 'Files' section header.
+        os.write(master, mouse(2, 5, 3))
+        os.write(master, mouse(2, 5, 3, release=True))
         read_for(master, captured, 0.5)
         if DARK_SURFACE not in captured[before_menu:]:
             raise SystemExit(f"the context menu did not pick up the committed dark theme: {captured[before_menu:][-2000:]!r}")

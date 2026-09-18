@@ -1,4 +1,4 @@
-export { compilePattern } from './parser';
+export { compilePattern, maximumStepBudget } from './parser';
 export {
   createPatternEvaluation,
   createPatternTextSnapshot,

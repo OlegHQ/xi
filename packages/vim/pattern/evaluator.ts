@@ -230,7 +230,9 @@ export function findAllMatches(program: PatternProgram, snapshot: PatternTextSna
   return progress.result;
 }
 
-// ponytail: test/oracle-only convenience (mirrors findAllMatches above); no production caller
+// ponytail: whole-text materialization; ceiling: test/oracle-only convenience (mirrors
+// findAllMatches above). upgrade: if a production caller ever needs it, route through the
+// sliced substitute path in packages/vim/search instead of calling this. No production caller
 // materializes the pattern text, so it must never be called from an interactive edit path.
 export function substituteAll(
   program: PatternProgram,
@@ -382,9 +384,16 @@ function* evaluateAll(context: EvaluationContext): Generator<void, InternalResul
         captures: matchState.captures,
       });
     }
-    offset = matchState.position > offset
-      ? matchState.position
-      : yield* advanceVimCharacter(context, offset, context.program.root.source);
+    // Resume from the *reported* match end (honoring \ze), not the fully
+    // consumed end, so a trailing \ze tail doesn't hide overlapping matches;
+    // Vim's global scan/substitute advances past what it reports, not what
+    // the atom merely looked at. Fall back to the consumed end, then a
+    // single character step, only to guarantee forward progress.
+    offset = end > offset
+      ? end
+      : matchState.position > offset
+        ? matchState.position
+        : yield* advanceVimCharacter(context, offset, context.program.root.source);
   }
   return { matches, steps: context.budget.steps, engine: 'backtracking' };
 }
@@ -419,9 +428,16 @@ function* evaluateNfaAll(context: EvaluationContext, nfa: NfaProgram): Generator
       }
       matches.push(match);
     }
-    offset = match.consumedEnd > match.consumedStart
-      ? match.consumedEnd
-      : yield* advanceVimCharacter(context, match.consumedStart, context.program.root.source);
+    // Resume from the *reported* match end (honoring \ze), not the fully
+    // consumed end; see the identical rationale on the backtracking loop.
+    // Progress is judged against this match's own start (`consumedStart`),
+    // not the outer scan cursor: `findNextNfaMatch` can skip well past
+    // `offset` to find it.
+    offset = match.end > match.consumedStart
+      ? match.end
+      : match.consumedEnd > match.consumedStart
+        ? match.consumedEnd
+        : yield* advanceVimCharacter(context, match.consumedStart, context.program.root.source);
   }
   return { matches, steps: context.budget.steps, engine: 'nfa' };
 }
@@ -565,9 +581,10 @@ function* characterAtomMatches(
       && equalText(observed, atom.value, caseInsensitive(atom.caseMode, context.program));
   }
   if (atom.kind === 'dot') return (atom.includeNewline || codePoint !== 10) && !isAttachedComposingAt(context.text, position);
-  const oldEngineIgnoreCase = context.program.engineSelector === 1 && caseInsensitive(atom.caseMode, context.program);
-  const classResult = yield* classMatches(atom.parts, codePoint, oldEngineIgnoreCase, context, atom.source);
-  const matches = atom.includeNewline && codePoint === 10 ? true : atom.negated ? !classResult : classResult;
+  const ignoreCase = caseInsensitive(atom.caseMode, context.program);
+  const oldEngineIgnoreCase = context.program.engineSelector === 1 && ignoreCase;
+  const classResult = yield* classMatches(atom.parts, codePoint, oldEngineIgnoreCase, context, atom.source, ignoreCase);
+  const matches = codePoint === 10 ? atom.includeNewline : atom.negated ? !classResult : classResult;
   return matches && !isAttachedComposingAt(context.text, position);
 }
 
@@ -637,9 +654,10 @@ function* evaluate(
       const codePoint = context.text.codePointAt(state.position);
       if (codePoint === undefined) return [];
       if (isAttachedComposingAt(context.text, state.position)) return [];
-      const oldEngineIgnoreCase = context.program.engineSelector === 1 && caseInsensitive(node.caseMode, context.program);
-      const classResult = yield* classMatches(node.parts, codePoint, oldEngineIgnoreCase, context, node.source);
-      const matches = node.includeNewline && codePoint === 10 ? true : (node.negated ? !classResult : classResult);
+      const ignoreCase = caseInsensitive(node.caseMode, context.program);
+      const oldEngineIgnoreCase = context.program.engineSelector === 1 && ignoreCase;
+      const classResult = yield* classMatches(node.parts, codePoint, oldEngineIgnoreCase, context, node.source, ignoreCase);
+      const matches = codePoint === 10 ? node.includeNewline : (node.negated ? !classResult : classResult);
       if (!matches) return [];
       const baseEnd = state.position + width;
       const observedComposing = yield* followingComposing(context, baseEnd, node.source);
@@ -745,7 +763,9 @@ function* evaluate(
       return yield* evaluateRepeat(node, state, context);
     case 'backreference': {
       const capture = state.captures.get(node.group);
-      if (capture === undefined) return [];
+      // A group that never participated (e.g. inside an untaken \(...\)\=)
+      // backreferences as empty, not as a failure to match.
+      if (capture === undefined) return [state];
       let capturedPosition = capture.start;
       let observedPosition = state.position;
       const ignoreCase = caseInsensitive(node.caseMode, context.program);
@@ -1242,14 +1262,17 @@ function* classMatches(
   oldEngineIgnoreCase: boolean,
   context: EvaluationContext,
   source: SourceSpan,
+  ignoreCase = oldEngineIgnoreCase,
 ): Generator<void, boolean, void> {
+  const foldedCodePoint = ignoreCase ? foldCodePoint(codePoint) : codePoint;
   for (const part of parts) {
     let matches = false;
     if (part.kind === 'literal') {
       const value = part.value.codePointAt(0);
-      matches = value === codePoint;
+      matches = value === codePoint || (ignoreCase && value !== undefined && foldCodePoint(value) === foldedCodePoint);
     } else if (part.kind === 'range') {
-      matches = codePoint >= part.first && codePoint <= part.last;
+      matches = (codePoint >= part.first && codePoint <= part.last)
+        || (ignoreCase && rangeMatchesFolded(part.first, part.last, foldedCodePoint));
     } else {
       matches = yield* classNameMatches(part.name, codePoint, oldEngineIgnoreCase, context, source);
       if (part.negated === true) matches = !matches;
@@ -1257,6 +1280,18 @@ function* classMatches(
     if (matches) return true;
   }
   return false;
+}
+
+/** Folds a code point to lowercase for case-insensitive comparisons (mirrors `equalText`). */
+function foldCodePoint(codePoint: number): number {
+  return String.fromCodePoint(codePoint).toLowerCase().codePointAt(0) ?? codePoint;
+}
+
+/** Whether any code point folding to `foldedCodePoint` falls in `[first, last]`. */
+function rangeMatchesFolded(first: number, last: number, foldedCodePoint: number): boolean {
+  if (foldedCodePoint >= first && foldedCodePoint <= last) return true;
+  const upper = String.fromCodePoint(foldedCodePoint).toUpperCase().codePointAt(0) ?? foldedCodePoint;
+  return upper >= first && upper <= last;
 }
 
 function* classNameMatches(

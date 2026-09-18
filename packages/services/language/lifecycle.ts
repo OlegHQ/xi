@@ -320,7 +320,15 @@ export class LanguageServerSession implements Disposable {
   #sync: LanguageDocumentSync | undefined;
   #transportSubscription: Disposable | undefined;
   #attemptCancellation: CancellationSource | undefined;
+  /** Interrupts an in-progress retry backoff sleep; restart() cancels it so restart during
+   * 'starting' or backoff resolves immediately instead of waiting out the full delay. */
+  #backoffCancellation: CancellationSource | undefined;
   #runPromise: Promise<void> | undefined;
+  /** True for the whole lifetime of an in-flight startCycle(), including while it is asleep
+   * in its own retry backoff (state 'failed' but not yet finished). Distinguishes "still
+   * running, about to retry" from "finished and terminally failed" so activate() cannot start
+   * a second concurrent cycle (and leak its process) while the first is backing off. */
+  #cycleRunning = false;
   #disposePromise: Promise<void> | undefined;
   #attempts = 0;
   #retries = 0;
@@ -435,6 +443,7 @@ export class LanguageServerSession implements Disposable {
     if (this.#disposePromise !== undefined || this.#lifecycleCancellation.token.isCancelled) return;
     if (this.#state === 'ready' || this.#state === 'starting' || this.#state === 'initializing') return;
     if (this.#state === 'disabled') return;
+    if (this.#cycleRunning) return;
     this.#runPromise = this.startCycle();
     void this.#runPromise.catch((error: unknown) => {
       this.recordFailure(`language lifecycle failed: ${safeErrorMessage(error)}`);
@@ -448,6 +457,7 @@ export class LanguageServerSession implements Disposable {
     this.#lastFailure = null;
     this.#retries = 0;
     this.#attemptCancellation?.cancel();
+    this.#backoffCancellation?.cancel();
     const transport = this.#transport;
     this.#transport = undefined;
     this.#sync = undefined;
@@ -505,9 +515,15 @@ export class LanguageServerSession implements Disposable {
     if (change.before !== document.version || change.after !== change.before + 1) {
       return { ok: false, error: { kind: 'protocol', message: 'language change version is stale or non-monotonic' } };
     }
-    if (this.#state === 'ready' && this.#sync !== undefined) {
+    if (this.#sync !== undefined) {
+      // Gate on #sync existing, not on #state === 'ready': #sync is created before replay
+      // finishes, and a change admitted while 'initializing' must still advance sync's
+      // tracked version for a document replay has already opened, or its version chain goes
+      // stale forever once the session reaches 'ready'. A document replay has not reached
+      // yet reports 'closed-document' here; that is fine, replay will open it at its
+      // current (already-bumped) version from #documents.
       const admitted = this.#sync.acceptChange(change, uri);
-      if (!admitted.ok) return { ok: false, error: { kind: 'protocol', message: admitted.error.message } };
+      if (!admitted.ok && admitted.error.kind !== 'closed-document') return { ok: false, error: { kind: 'protocol', message: admitted.error.message } };
     }
     this.#documents.set(document.uri, Object.freeze({
       uri: document.uri,
@@ -602,6 +618,15 @@ export class LanguageServerSession implements Disposable {
   }
 
   private async startCycle(): Promise<void> {
+    this.#cycleRunning = true;
+    try {
+      await this.runCycle();
+    } finally {
+      this.#cycleRunning = false;
+    }
+  }
+
+  private async runCycle(): Promise<void> {
     while (!this.#lifecycleCancellation.token.isCancelled) {
       this.#attempts += 1;
       this.transition('starting');
@@ -677,7 +702,11 @@ export class LanguageServerSession implements Disposable {
       }
       this.transition('failed');
       const delay = retryDelay(this.#retries, this.#retry);
-      const slept = await this.#options.clock.sleep(delay, this.#lifecycleCancellation.token);
+      const backoff = new CancellationSource();
+      this.#backoffCancellation = backoff;
+      const slept = await this.#options.clock.sleep(delay, combinedCancellation(this.#lifecycleCancellation.token, backoff.token));
+      this.#backoffCancellation = undefined;
+      if (this.#restartRequested) { this.#restartRequested = false; return; }
       if (!slept.ok || this.#lifecycleCancellation.token.isCancelled) return;
     }
   }
@@ -951,7 +980,11 @@ export class LanguageServerSession implements Disposable {
     }
     this.transition('failed');
     const delay = retryDelay(this.#retries, this.#retry);
-    const slept = await this.#options.clock.sleep(delay, this.#lifecycleCancellation.token);
+    const backoff = new CancellationSource();
+    this.#backoffCancellation = backoff;
+    const slept = await this.#options.clock.sleep(delay, combinedCancellation(this.#lifecycleCancellation.token, backoff.token));
+    this.#backoffCancellation = undefined;
+    if (this.#restartRequested) { this.#restartRequested = false; return false; }
     return slept.ok && !this.#lifecycleCancellation.token.isCancelled;
   }
 
@@ -1069,6 +1102,20 @@ function normalizeRetry(input: LanguageRetryPolicy | undefined): Required<Langua
   }
   if (value.maxDelayMilliseconds < value.baseDelayMilliseconds) throw new TypeError('language retry maximum must be at least its base delay');
   return value;
+}
+
+/** A token cancelled as soon as either input is cancelled, so a retry backoff sleep can be
+ * interrupted by an explicit restart() without also tearing down the whole session (which is
+ * what cancelling #lifecycleCancellation alone would otherwise require). */
+function combinedCancellation(a: CancellationToken, b: CancellationToken): CancellationToken {
+  return {
+    get isCancelled() { return a.isCancelled || b.isCancelled; },
+    onCancel(listener: () => void) {
+      const subA = a.onCancel(listener);
+      const subB = b.onCancel(listener);
+      return { dispose() { subA.dispose(); subB.dispose(); } };
+    },
+  };
 }
 
 function retryDelay(retries: number, retry: Required<LanguageRetryPolicy>): number {

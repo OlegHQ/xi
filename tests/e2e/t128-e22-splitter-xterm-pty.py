@@ -110,12 +110,14 @@ def run() -> str:
             wait_for(stderr_path, offset, b"XI_WORKBENCH_SPLIT", 5)
             time.sleep(0.4)
 
-            # A real, live X11 drag on the separator (found empirically for this geometry:
-            # sidebar 30 cols + two ~44-col panes puts the separator near column 76): press,
-            # several small incremental motion steps, then a real window resize while the
-            # button is still held. The resize must cancel the live drag, restoring the
-            # pre-drag geometry — exactly what t094-splitter-pty.py proves on a synthetic PTY.
-            down_x, down_y = cell(76, 20)
+            # A real, live X11 drag on the separator: at 120x40 with the sidebar's default
+            # 28-cell width, `:vsplit`'s 50/50 root split puts the 1-cell separator at 0-based
+            # column 74 (one-based column 75) -- see tests/e2e/t094-splitter-pty.py's identical
+            # geometry math. Press, several small incremental motion steps, then a real window
+            # resize while the button is still held. The resize must cancel the live drag,
+            # restoring the pre-drag geometry -- exactly what t094-splitter-pty.py proves on a
+            # synthetic PTY.
+            down_x, down_y = cell(75, 20)
             target_x, target_y = cell(50, 20)
             drag_offset = stderr_path.stat().st_size
             subprocess.run(["xdotool", "mousemove", "--window", window_id, str(down_x), str(down_y)], env=environment, check=True)

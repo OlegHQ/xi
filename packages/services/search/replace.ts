@@ -47,9 +47,15 @@ export class WorkspaceReplaceService implements Disposable {
       const start = lineOffset(target.text, match.line, match.range.startUtf16);
       const end = lineOffset(target.text, match.endLine ?? match.line, match.range.endUtf16);
       if (start === undefined || end === undefined || end < start) return failure('stale', `match range is invalid: ${match.path}`, match.path);
-      const original = target.text.slice(start, end); expression.value.lastIndex = 0;
-      const found = expression.value.exec(original);
-      if (found === null || found.index !== 0 || found[0].length !== original.length) return failure('stale', `match changed in ${match.path}`, match.path);
+      const original = target.text.slice(start, end);
+      // Re-run against the full text with lastIndex at the match start, not against the
+      // isolated matched slice: a lookaround (`(?=...)`, `(?<=...)`) depends on context outside
+      // [start, end), so exec-ing just that slice always reports "match changed" even when
+      // nothing changed. `found.index === start` still verifies the match begins exactly here
+      // (the 'g' flag does not anchor lastIndex, so a later match must be rejected).
+      expression.value.lastIndex = start;
+      const found = expression.value.exec(target.text);
+      if (found === null || found.index !== start || found[0].length !== original.length) return failure('stale', `match changed in ${match.path}`, match.path);
       const expanded = expandReplacement(replacement, found); if (!expanded.ok) return expanded;
       const edit = Object.freeze({ path: match.path, startUtf16: start, endUtf16: end, replacement: expanded.value, original });
       (byPath.get(match.path) ?? (byPath.set(match.path, []), byPath.get(match.path)!)).push(edit);

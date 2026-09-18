@@ -102,13 +102,13 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e11-") as temporary:
 
         # After returning to the original size, the split must still be live and
         # interactive -- not silently collapsed by 60x18. A real mouse-drag on the vertical
-        # separator (found empirically for this 160-column layout) must still produce a
+        # separator (column 95 for the 160-column layout with the default 28-cell sidebar: editorX 29 + 131/2) must still produce a
         # real begin/move/commit sequence, exactly as it would on a split that was never
         # resized at all (matching tests/e2e/t094-splitter-pty.py's own drag pattern).
         before_drag = len(captured)
-        os.write(master, mouse(0, 101, 10))
-        os.write(master, mouse(32, 108, 10))
-        os.write(master, mouse(0, 108, 10, True))
+        os.write(master, mouse(0, 95, 10))
+        os.write(master, mouse(32, 102, 10))
+        os.write(master, mouse(0, 102, 10, True))
         read_for(master, captured, 0.4)
         drag_events = [json.loads(m.group(1)) for m in SPLITTER.finditer(captured[before_drag:])]
         drag_actions = {event.get("action") for event in drag_events}

@@ -63,7 +63,12 @@ const classCases: readonly DialectCase[] = [
   ...builtinClassEscapes.map((escape) => ({ id: `builtin-class-${escape}`, pattern: `\\${escape}`, text: classText, magic: true })),
   ...posixClassNames.map((name) => ({ id: `posix-class-${name}`, pattern: `[[:${name}:]]`, text: classText, magic: true })),
   { id: 'posix-space-control-class', pattern: '[[:space:]]', text: ' \t\v\f\rA', magic: true },
-  { id: 'posix-space-eol-class', pattern: '[[:space:]]', text: 'A\nB', magic: true },
+  // No embedded-\n case here: `vim.fn.substitute()` matches a literal \n in a
+  // flat Vimscript string via ordinary classes, but Xi's evaluator (like
+  // real buffer/:s search) must not let an ordinary class cross a line
+  // boundary; see tests/vim/pattern/parity-fixes.test.ts and the verified
+  // `%s/[[:space:]]/X/g` buffer case (Pattern not found, confirming
+  // no cross-line match) documented there.
   { id: 'posix-return-class', pattern: '[[:return:]]', text: '\rA', magic: true },
   { id: 'posix-escape-class', pattern: '[[:escape:]]', text: '\u001bA', magic: true },
   { id: 'posix-backspace-class', pattern: '[[:backspace:]]', text: '\bA', magic: true },

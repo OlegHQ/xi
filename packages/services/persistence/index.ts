@@ -145,10 +145,19 @@ interface JournalCacheEntry {
   readonly encoded: readonly JournalEntryEncoding[];
 }
 
+/** Optional deletion capability some filesystem ports (e.g. NodeFilesystemPort) provide beyond
+ * the base FilesystemPort contract. Duck-typed the same way `readFileChunks` already is. */
+interface RemovableFilesystemPort extends FilesystemPort {
+  removePath?(path: string, recursive: boolean, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
+}
+
 export class PersistenceService {
-  readonly #filesystem: FilesystemPort;
+  readonly #filesystem: RemovableFilesystemPort;
   readonly #opened = new Map<string, FileIdentity>();
   readonly #journalCache = new Map<string, JournalCacheEntry>();
+  /** Journal path -> the in-flight checkpoint write for it, and a way to stop it early.
+   * Bounded by the number of journals with a checkpoint currently in flight (ordinarily 0 or 1). */
+  readonly #pendingCheckpoints = new Map<string, { readonly promise: Promise<Result<RecoveryCheckpoint, PersistenceFailure>>; readonly cancel: () => void }>();
   #disposed = false;
 
   constructor(filesystem: FilesystemPort) {
@@ -161,6 +170,31 @@ export class PersistenceService {
     this.#disposed = true;
     this.#opened.clear();
     this.#journalCache.clear();
+    this.#pendingCheckpoints.clear();
+  }
+
+  /** Release this document's cached disk identity and its journal's cache entry. Callers must
+   * invoke this when a document closes, or #opened/#journalCache grow for every file ever
+   * opened in a long-lived session instead of only currently-open ones. */
+  closeDocument(documentId: DocumentId, journalPath?: string): void {
+    const identity = this.#opened.get(documentId);
+    this.#opened.delete(documentId);
+    const path = journalPath ?? (identity === undefined ? undefined : recoveryJournalPath(identity.path));
+    if (path !== undefined) this.#journalCache.delete(path);
+  }
+
+  /**
+   * A save (or anything else about to make this journal's content stale) must call this first.
+   * It stops any checkpoint currently being written for `path` at its next safe point and
+   * awaits it, so a slow in-flight checkpoint write can never land after -- and silently
+   * reintroduce a stale recovery journal for -- a save that already completed. The workbench
+   * save coordinator (owned elsewhere) is expected to call this before saveFile.
+   */
+  async cancelPendingCheckpoint(path: string, journalPath = recoveryJournalPath(path)): Promise<void> {
+    const pending = this.#pendingCheckpoints.get(journalPath);
+    if (pending === undefined) return;
+    pending.cancel();
+    await pending.promise.catch(() => {});
   }
 
   async openFile(
@@ -306,8 +340,26 @@ export class PersistenceService {
     options: RecoveryOptions = {},
   ): Promise<Result<RecoveryCheckpoint, PersistenceFailure>> {
     if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
-    const snapshot = document.snapshot();
     const journalPath = options.journalPath ?? recoveryJournalPath(path);
+    const cancelFlag = { cancelled: false };
+    const run = this.#runCheckpoint(document, path, cancellation, options, journalPath, cancelFlag);
+    this.#pendingCheckpoints.set(journalPath, { promise: run, cancel: () => { cancelFlag.cancelled = true; } });
+    try {
+      return await run;
+    } finally {
+      if (this.#pendingCheckpoints.get(journalPath)?.promise === run) this.#pendingCheckpoints.delete(journalPath);
+    }
+  }
+
+  async #runCheckpoint(
+    document: TextFileDocument,
+    path: string,
+    cancellation: CancellationToken,
+    options: RecoveryOptions,
+    journalPath: string,
+    cancelFlag: { cancelled: boolean },
+  ): Promise<Result<RecoveryCheckpoint, PersistenceFailure>> {
+    const snapshot = document.snapshot();
     const maxBytes = boundedPositive(options.maxBytes, DEFAULT_MAX_RECOVERY_BYTES);
     // Cheap pre-check: the document's UTF-16 length is a lower bound on the
     // JSON-encoded UTF-8 byte size of the new entry alone. If that already
@@ -316,8 +368,9 @@ export class PersistenceService {
     if (snapshot.lengthUtf16 > maxBytes) {
       return { ok: false, error: { kind: 'journal-too-large', path: journalPath, bytes: snapshot.lengthUtf16 } };
     }
-    const text = snapshot.slice(asOffset(0), asOffset(snapshot.lengthUtf16));
-    if (!text.ok) return { ok: false, error: { kind: 'serialize', message: text.error.kind } };
+    const text = await materializeSnapshotYielding(snapshot);
+    if (!text.ok) return { ok: false, error: text.error };
+    if (cancelFlag.cancelled) return { ok: false, error: { kind: 'cancelled' } };
     const base = this.#opened.get(document.id);
     const checkpoint: RecoveryCheckpoint = Object.freeze({
       schemaVersion: RECOVERY_SCHEMA_VERSION,
@@ -365,7 +418,7 @@ export class PersistenceService {
       totalBytes = journalTotalBytes(encodedEntries);
     }
     if (totalBytes > maxBytes) return { ok: false, error: { kind: 'journal-too-large', path: journalPath, bytes: totalBytes } };
-    if (cancellation.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
+    if (cancellation.isCancelled || cancelFlag.cancelled) return { ok: false, error: { kind: 'cancelled' } };
     const buffer = new TextEncoder().encode(joinJournalEntries(encodedEntries));
     const written = await this.#filesystem.writeFileAtomic(journalPath, buffer, cancellation);
     if (!written.ok) return this.#platform(written.error);
@@ -416,6 +469,16 @@ export class PersistenceService {
     const present = await this.#stat(journalPath, cancellation);
     if (!present.ok) return present;
     if (present.value === undefined) {
+      this.#journalCache.delete(journalPath);
+      return { ok: true, value: undefined };
+    }
+    // A recovery journal that no longer applies should not exist at all, not exist-but-empty:
+    // removing it (when the port supports deletion) leaves no sibling file to find, read or
+    // race a fresh checkpoint against. Falls back to writing `[]` only for a filesystem port
+    // that cannot remove files.
+    if (this.#filesystem.removePath !== undefined) {
+      const removed = await this.#filesystem.removePath(journalPath, false, cancellation);
+      if (!removed.ok) return this.#platform(removed.error);
       this.#journalCache.delete(journalPath);
       return { ok: true, value: undefined };
     }
@@ -751,6 +814,44 @@ function joinJournalEntries(encoded: readonly JournalEntryEncoding[]): string {
 
 function asOffset(value: number): Parameters<TextFileSnapshot['slice']>[0] {
   return value as Parameters<TextFileSnapshot['slice']>[0];
+}
+
+/**
+ * Same text as `snapshot.slice(0, length)`, but joined across bounded chunks and yielding to a
+ * macrotask (setTimeout(0)) whenever a run of chunks has consumed more than maxSliceMilliseconds,
+ * instead of materializing a whole (up to 10+ MiB) document in one synchronous main-thread step.
+ * Backs off one UTF-16 unit at a time on a surrogate split, like the read-side chunking this
+ * mirrors.
+ */
+async function materializeSnapshotYielding(
+  snapshot: TextFileSnapshot,
+  chunkUtf16 = 64 * 1024,
+  maxSliceMilliseconds = 4,
+): Promise<Result<string, { readonly kind: 'serialize'; readonly message: string }>> {
+  const chunks: string[] = [];
+  let start = 0;
+  let sliceStartedAt = performance.now();
+  while (start < snapshot.lengthUtf16) {
+    let end = Math.min(snapshot.lengthUtf16, start + chunkUtf16);
+    let read = false;
+    while (end > start) {
+      const sliced = snapshot.slice(asOffset(start), asOffset(end));
+      if (sliced.ok) {
+        chunks.push(sliced.value);
+        start = end;
+        read = true;
+        break;
+      }
+      if (sliced.error.kind !== 'surrogate-split') return { ok: false, error: { kind: 'serialize', message: sliced.error.kind } };
+      end -= 1;
+    }
+    if (!read) return { ok: false, error: { kind: 'serialize', message: 'no safe UTF-16 chunk boundary found' } };
+    if (performance.now() - sliceStartedAt >= maxSliceMilliseconds) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      sliceStartedAt = performance.now();
+    }
+  }
+  return { ok: true, value: chunks.join('') };
 }
 
 function isNonnegativeSafeInteger(value: unknown): value is number {

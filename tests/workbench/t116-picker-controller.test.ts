@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { asIdentifier, type DocumentId, type ViewId } from '../../packages/primitives/src/index';
-import type { PlatformFailure, Result } from '../../packages/contracts/src/index';
+import type { ClockPort, Disposable, PlatformFailure, Result } from '../../packages/contracts/src/index';
 import { TextFileDocument } from '../../packages/document/src/index';
 import { WorkbenchSession } from '../../packages/workbench/session/index';
 import { BufferHost } from '../../packages/workbench/host/index';
@@ -83,10 +83,20 @@ const model = new FakePickerModel<FixtureEntry>();
 const markers: Array<{ readonly name: string; readonly payload: unknown }> = [];
 const secondaryActions: Array<{ readonly entryId: string; readonly key: string }> = [];
 
+const testClock: ClockPort = {
+  monotonicMilliseconds: () => Date.now(),
+  schedule: (delayMilliseconds: number, callback: () => void): Disposable => {
+    const handle = setTimeout(callback, delayMilliseconds);
+    return Object.freeze({ dispose: () => clearTimeout(handle) });
+  },
+  sleep: async () => ({ ok: true, value: undefined }),
+};
+
 const picker = new PickerController<FixtureEntry, string>({
   host,
   model,
   theme,
+  clock: testClock,
   marker: (name, payload) => { markers.push({ name, payload }); },
   startFileIndexPopulation: async () => {},
   toggleMouseMode: () => true,

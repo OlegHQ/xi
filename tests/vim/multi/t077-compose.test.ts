@@ -182,7 +182,7 @@ const search = resolveVimMultiSearch({
   snapshot: findSnapshot,
   selections: findSelections,
   request: { command: 'search', pattern: 'X', direction: 'forward' },
-  state: { pattern: null, direction: null, lastMatch: null, previousReplacement: null },
+  state: { pattern: null, direction: null, lastMatch: null, previousReplacement: null, fullWord: false },
   failurePolicy: 'reject-command',
 });
 assert.equal(search.ok, true, 'T077-MC04-14 search resolves once per member on one base snapshot');
@@ -194,7 +194,7 @@ const cancelledSearch = resolveVimMultiSearch({
   snapshot: findSnapshot,
   selections: findSelections,
   request: { command: 'search', pattern: 'X', direction: 'forward' },
-  state: { pattern: null, direction: null, lastMatch: null, previousReplacement: null },
+  state: { pattern: null, direction: null, lastMatch: null, previousReplacement: null, fullWord: false },
   isCancelled: () => true,
 });
 assert.equal(cancelledSearch.ok, false, 'T077-MC04-17 cancelled search restores the complete prior set');

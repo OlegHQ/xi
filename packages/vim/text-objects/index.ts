@@ -1,6 +1,7 @@
 import type { CellColumn, DocumentSnapshot, DocumentVersion, LineIndex, Result, Utf16Offset } from '../../document/src/index';
 import { resolveVimWordMotion, type VimWordMotionCursor, type VimWordMotionKey } from '../motions/word';
 import type { VimOperatorRangeInput } from '../ranges/normalize';
+import { compilePatternCharacterClasses, isWideKeywordCharacter, matchesOptionRule, type VimCharacterClassRule } from '../pattern/character-classes';
 
 export type VimTextObjectKey =
   | 'iw' | 'aw' | 'iW' | 'aW' | 'is' | 'as' | 'ip' | 'ap'
@@ -96,6 +97,11 @@ interface TextContext {
   readonly lineCache: Map<number, ParagraphLine>;
 }
 
+interface WordClassOptions {
+  readonly bigWord: boolean;
+  readonly keywordRules: readonly VimCharacterClassRule[];
+}
+
 interface ResolvedOptions {
   readonly isKeyword: string;
   readonly quoteEscape: string;
@@ -169,7 +175,7 @@ export function resolveVimTextObject(
     case 'word': rangeResult = resolveWord(context, cursor.offset as number, parsed, count); break;
     case 'sentence': rangeResult = resolveSentence(context, cursor.offset as number, parsed, count); break;
     case 'paragraph': rangeResult = resolveParagraph(context, cursor.offset as number, parsed, count); break;
-    case 'quote': rangeResult = resolveQuote(context, cursor.offset as number, parsed); break;
+    case 'quote': rangeResult = resolveQuote(context, cursor.offset as number, parsed, count); break;
     case 'bracket': rangeResult = resolveBracket(context, cursor.offset as number, parsed, count); break;
     case 'tag': rangeResult = resolveTag(context, cursor.offset as number, parsed, count); break;
   }
@@ -265,6 +271,53 @@ export function extendVimVisualTextObject(
     if (!leading.ok) return leading;
     start = Math.min(start, leading.value);
   }
+
+  // Neovim grows the Visual selection when re-applying the same text object
+  // would otherwise be a no-op: an inner word already selected reaches into
+  // adjacent whitespace, and a paragraph already selected reaches into an
+  // adjacent blank-line run.
+  if (start === current.value.start && end === current.value.end) {
+    if (parsed.family === 'word' && !parsed.around) {
+      if (selection.direction === 'forward') {
+        const trailing = scanLineWhitespace(snapshot, end, 'forward');
+        if (!trailing.ok) return trailing;
+        end = trailing.value;
+      } else {
+        const leading = scanLineWhitespace(snapshot, start, 'backward');
+        if (!leading.ok) return leading;
+        start = leading.value;
+      }
+    } else if (parsed.family === 'paragraph') {
+      const resolvedOptions = resolveOptions(options);
+      if (!resolvedOptions.ok) return resolvedOptions;
+      const paragraphContext: TextContext = { snapshot, options: resolvedOptions.value, lineCache: new Map() };
+      if (selection.direction === 'forward' && end < snapshot.lengthUtf16) {
+        const lineIndexResult = snapshot.lineIndexAt(asOffset(end) as Utf16Offset);
+        if (!lineIndexResult.ok) return failure('invalid-cursor');
+        const boundary = isBoundaryIndex(paragraphContext, lineIndexResult.value as number);
+        if (!boundary.ok) return boundary;
+        if (boundary.value) {
+          const run = blankLineRunAt(paragraphContext, lineIndexResult.value as number);
+          if (!run.ok) return run;
+          const newEnd = lineStart(snapshot, run.value.lastLine + 1);
+          if (!newEnd.ok) return newEnd;
+          end = newEnd.value;
+        }
+      } else if (selection.direction === 'backward' && start > 0) {
+        const lineIndexResult = snapshot.lineIndexAt(asOffset(start - 1) as Utf16Offset);
+        if (!lineIndexResult.ok) return failure('invalid-cursor');
+        const boundary = isBoundaryIndex(paragraphContext, lineIndexResult.value as number);
+        if (!boundary.ok) return boundary;
+        if (boundary.value) {
+          const run = blankLineRunAt(paragraphContext, lineIndexResult.value as number);
+          if (!run.ok) return run;
+          const newStart = lineStart(snapshot, run.value.firstLine);
+          if (!newStart.ok) return newStart;
+          start = newStart.value;
+        }
+      }
+    }
+  }
   const anchor = selection.anchor;
   const resultKind = object.value.kind === 'linewise' || selection.kind === 'linewise' ? 'linewise' : 'characterwise';
   const head = resultKind === 'linewise'
@@ -346,27 +399,74 @@ function resolveWord(
   const current = scalarAt(context.snapshot, cursor);
   if (!current.ok) return current;
   const bigWord = parsed.big;
+  const wordOptions: WordClassOptions = {
+    bigWord,
+    keywordRules: compilePatternCharacterClasses({
+      version: context.snapshot.version,
+      isKeyword: context.options.isKeyword,
+    }).keyword,
+  };
   const onWhitespace = /^\s$/u.test(current.value);
   let start: number;
   let end: number;
 
   if (onWhitespace) {
+    // A cursor "on" a genuinely empty line has no whitespace to select; Neovim
+    // leaves diw/ciw as a no-op rather than reaching into neighboring lines.
+    if (!parsed.around) {
+      const lineIndexResult = context.snapshot.lineIndexAt(asOffset(cursor) as Utf16Offset);
+      if (!lineIndexResult.ok) return failure('invalid-cursor');
+      const emptyLineBounds = lineBounds(context.snapshot, lineIndexResult.value as number);
+      if (!emptyLineBounds.ok) return emptyLineBounds;
+      if (emptyLineBounds.value.start === emptyLineBounds.value.end) return failure('empty-object');
+    }
     const whitespace = whitespaceRegion(context.snapshot, cursor, context.options.maxScanUtf16);
     if (!whitespace.ok) return whitespace;
     start = whitespace.value.start;
     end = whitespace.value.end;
     if (parsed.around) {
-      const next = wordRunAtOrAfter(context, end, bigWord);
-      if (next.ok) {
-        end = next.value.end;
-      } else if (next.error.kind === 'object-not-found') {
-        const previous = wordRunBefore(context, start, bigWord);
+      let matchedAny = false;
+      let searchFrom = end;
+      for (let unit = 0; unit < count; unit += 1) {
+        const next = wordRunAtOrAfter(context, searchFrom, wordOptions);
+        if (next.ok) {
+          end = next.value.end;
+          searchFrom = next.value.end;
+          matchedAny = true;
+        } else if (next.error.kind === 'object-not-found') {
+          break;
+        } else return next;
+      }
+      if (!matchedAny) {
+        const previous = wordRunBefore(context, start, wordOptions);
         if (!previous.ok) return previous;
         start = previous.value.start;
-      } else return next;
+      }
+    } else if (count > 1) {
+      // Neovim alternates whitespace/word units for `iw` counts: the initial
+      // whitespace run is unit 1, then word/whitespace runs alternate forward.
+      let searchFrom = end;
+      let nextIsWord = true;
+      for (let unit = 1; unit < count; unit += 1) {
+        if (nextIsWord) {
+          const word = wordRunAtOrAfter(context, searchFrom, wordOptions);
+          if (!word.ok) {
+            if (word.error.kind === 'object-not-found') break;
+            return word;
+          }
+          end = word.value.end;
+          searchFrom = word.value.end;
+        } else {
+          const trailing = scanLineWhitespace(context.snapshot, searchFrom, 'forward');
+          if (!trailing.ok) return trailing;
+          end = trailing.value;
+          searchFrom = trailing.value;
+        }
+        nextIsWord = !nextIsWord;
+      }
     }
   } else {
-    const word = wordRunAt(context.snapshot, cursor, bigWord, context.options.isKeyword);
+    const word = wordRunAt(context, cursor, wordOptions);
     if (!word.ok) return word;
     start = word.value.start;
     end = word.value.end;
@@ -374,7 +474,7 @@ function resolveWord(
     if (selectedWordCount > 1) {
       const next = wordMotion(context.snapshot, start, bigWord ? 'W' : 'w', selectedWordCount - 1, context.options.isKeyword);
       if (!next.ok) return next;
-      const nextWord = wordRunAt(context.snapshot, next.value.offset as number, bigWord, context.options.isKeyword);
+      const nextWord = wordRunAt(context, next.value.offset as number, wordOptions);
       if (!nextWord.ok) return nextWord;
       end = nextWord.value.end;
     }
@@ -385,7 +485,13 @@ function resolveWord(
       else {
         const leading = scanLineWhitespace(context.snapshot, start, 'backward');
         if (!leading.ok) return leading;
-        start = leading.value;
+        const lineIndexResult = context.snapshot.lineIndexAt(asOffset(start) as Utf16Offset);
+        if (!lineIndexResult.ok) return failure('invalid-cursor');
+        const lineStartResult = lineStart(context.snapshot, lineIndexResult.value as number);
+        if (!lineStartResult.ok) return lineStartResult;
+        // Neovim never treats a word's own line indentation as "leading
+        // whitespace" to grab: only interior gaps between words qualify.
+        if (leading.value > lineStartResult.value) start = leading.value;
       }
     } else if (count > 1 && count % 2 === 0) {
       const trailing = scanLineWhitespace(context.snapshot, end, 'forward');
@@ -398,38 +504,68 @@ function resolveWord(
   return { ok: true, value: { start, end, kind: 'characterwise' } };
 }
 
+function classifyScalar(scalar: string, options: WordClassOptions): 'blank' | 'keyword' | 'punctuation' {
+  if (/^\s$/u.test(scalar)) return 'blank';
+  if (options.bigWord) return 'keyword';
+  const codePoint = scalar.codePointAt(0) ?? 0;
+  return isKeywordCodePoint(codePoint, options.keywordRules) ? 'keyword' : 'punctuation';
+}
+
+function isKeywordCodePoint(codePoint: number, rules: readonly VimCharacterClassRule[]): boolean {
+  let included = false;
+  for (const rule of rules) {
+    if (matchesOptionRule(rule, codePoint)) included = rule.include;
+  }
+  if (codePoint > 0xff && isWideKeywordCharacter(codePoint)) included = true;
+  return included;
+}
+
+/**
+ * Find the contiguous same-class run of scalars around `offset`, bounded to
+ * the current line. Vim classifies a word directly from character class
+ * (blank/keyword/punctuation); this avoids reusing `e`-motion's "already at
+ * the end, advance to the next word" behavior, which is wrong for measuring
+ * the current word's own extent (e.g. one-character words/punctuation).
+ */
 function wordRunAt(
-  snapshot: DocumentSnapshot,
+  context: TextContext,
   offset: number,
-  bigWord: boolean,
-  isKeyword: string,
+  options: WordClassOptions,
 ): Result<{ readonly start: number; readonly end: number }, VimTextObjectFailure> {
-  const backward = wordMotion(snapshot, offset, bigWord ? 'B' : 'b', 1, isKeyword);
-  if (!backward.ok) return backward;
-  const nextFromCursor = wordMotion(snapshot, offset, bigWord ? 'W' : 'w', 1, isKeyword);
-  if (!nextFromCursor.ok) return nextFromCursor;
-  const nextFromBackward = wordMotion(snapshot, backward.value.offset as number, bigWord ? 'W' : 'w', 1, isKeyword);
-  if (!nextFromBackward.ok) return nextFromBackward;
-  const start = nextFromBackward.value.offset === nextFromCursor.value.offset
-    ? backward.value.offset as number
-    : offset;
-  const ending = wordMotion(snapshot, start, bigWord ? 'E' : 'e', 1, isKeyword);
-  if (!ending.ok) return ending;
-  const end = nextGraphemeBoundary(snapshot, ending.value.offset as number);
-  if (!end.ok) return end;
-  return { ok: true, value: { start, end: end.value } };
+  const lineIndexResult = context.snapshot.lineIndexAt(asOffset(offset) as Utf16Offset);
+  if (!lineIndexResult.ok) return failure('invalid-cursor');
+  const bounds = lineBounds(context.snapshot, lineIndexResult.value as number);
+  if (!bounds.ok) return bounds;
+  const current = scalarAt(context.snapshot, offset);
+  if (!current.ok) return current;
+  const currentClass = classifyScalar(current.value, options);
+  let start = offset;
+  while (start > bounds.value.start) {
+    const prior = scalarBefore(context.snapshot, start);
+    if (!prior.ok) return prior;
+    if (classifyScalar(prior.value.text, options) !== currentClass) break;
+    start = prior.value.start;
+  }
+  let end = offset;
+  while (end < bounds.value.end) {
+    const scalar = scalarAt(context.snapshot, end);
+    if (!scalar.ok) return scalar;
+    if (classifyScalar(scalar.value, options) !== currentClass) break;
+    end += scalar.value.length;
+  }
+  return { ok: true, value: { start, end } };
 }
 
 function wordRunAtOrAfter(
   context: TextContext,
   offset: number,
-  bigWord: boolean,
+  options: WordClassOptions,
 ): Result<{ readonly start: number; readonly end: number }, VimTextObjectFailure> {
   let cursor = offset;
   while (cursor < context.snapshot.lengthUtf16) {
     const scalar = scalarAt(context.snapshot, cursor);
     if (!scalar.ok) return scalar;
-    if (!/^\s$/u.test(scalar.value)) return wordRunAt(context.snapshot, cursor, bigWord, context.options.isKeyword);
+    if (!/^\s$/u.test(scalar.value)) return wordRunAt(context, cursor, options);
     cursor += scalar.value.length;
   }
   return failure('object-not-found');
@@ -438,14 +574,14 @@ function wordRunAtOrAfter(
 function wordRunBefore(
   context: TextContext,
   offset: number,
-  bigWord: boolean,
+  options: WordClassOptions,
 ): Result<{ readonly start: number; readonly end: number }, VimTextObjectFailure> {
   let cursor = offset;
   while (cursor > 0) {
     const scalar = scalarBefore(context.snapshot, cursor);
     if (!scalar.ok) return scalar;
     cursor = scalar.value.start;
-    if (!/^\s$/u.test(scalar.value.text)) return wordRunAt(context.snapshot, cursor, bigWord, context.options.isKeyword);
+    if (!/^\s$/u.test(scalar.value.text)) return wordRunAt(context, cursor, options);
   }
   return failure('object-not-found');
 }
@@ -569,21 +705,13 @@ function resolveParagraph(
   const cursorLineResult = context.snapshot.lineIndexAt(asOffset(cursor) as Utf16Offset);
   if (!cursorLineResult.ok) return failure('invalid-cursor');
   const cursorLine = cursorLineResult.value as number;
-  let candidate = cursorLine;
-  let candidateBoundary = isBoundaryIndex(context, candidate);
+  const candidateBoundary = isBoundaryIndex(context, cursorLine);
   if (!candidateBoundary.ok) return candidateBoundary;
-  if (candidateBoundary.value) {
-    const following = findParagraphStart(context, candidate + 1, 1);
-    if (!following.ok) return following;
-    if (following.value !== null) candidate = following.value;
-    else {
-      const prior = findParagraphStart(context, candidate - 1, -1);
-      if (!prior.ok) return prior;
-      if (prior.value === null) return failure('object-not-found');
-      candidate = prior.value;
-    }
-  }
-  const first = paragraphBoundsAt(context, candidate);
+  // A blank-line run is itself a paragraph-like unit: `ip`/`ap` select the
+  // contiguous blank lines rather than jumping ahead to the next paragraph.
+  const first = candidateBoundary.value
+    ? blankLineRunAt(context, cursorLine)
+    : paragraphBoundsAt(context, cursorLine);
   if (!first.ok) return first;
   let last = first.value;
   for (let step = 1; step < count; step += 1) {
@@ -597,6 +725,19 @@ function resolveParagraph(
   const startLine = first.value.firstLine;
   let endLineExclusive = last.lastLine + 1;
   if (parsed.around) {
+    if (candidateBoundary.value) {
+      if (endLineExclusive < context.snapshot.lineCount) {
+        const bounds = paragraphBoundsAt(context, endLineExclusive);
+        if (bounds.ok) return rangeFromLines(context.snapshot, startLine, bounds.value.lastLine + 1, 'linewise');
+        if (bounds.error.kind !== 'object-not-found') return bounds;
+      }
+      if (startLine > 0) {
+        const bounds = paragraphBoundsAt(context, startLine - 1);
+        if (bounds.ok) return rangeFromLines(context.snapshot, bounds.value.firstLine, endLineExclusive, 'linewise');
+        if (bounds.error.kind !== 'object-not-found') return bounds;
+      }
+      return rangeFromLines(context.snapshot, startLine, endLineExclusive, 'linewise');
+    }
     const followingBoundary = endLineExclusive < context.snapshot.lineCount
       ? isBoundaryIndex(context, endLineExclusive) : { ok: true as const, value: false };
     if (!followingBoundary.ok) return followingBoundary;
@@ -618,6 +759,30 @@ function resolveParagraph(
     }
   }
   return rangeFromLines(context.snapshot, startLine, endLineExclusive, 'linewise');
+}
+
+function blankLineRunAt(context: TextContext, lineIndex: number): Result<ParagraphRange, VimTextObjectFailure> {
+  let firstLine = lineIndex;
+  let lastLine = lineIndex;
+  let scanned = 0;
+  for (let line = lineIndex - 1; line >= 0; line -= 1) {
+    const info = inspectParagraphLine(context, line);
+    if (!info.ok) return info;
+    scanned += Math.max(1, info.value.end - info.value.start) + 1;
+    if (scanned > context.options.maxScanUtf16) return failure('scan-limit-exceeded');
+    if (!info.value.boundary) break;
+    firstLine = line;
+  }
+  scanned = 0;
+  for (let line = lineIndex + 1; line < context.snapshot.lineCount; line += 1) {
+    const info = inspectParagraphLine(context, line);
+    if (!info.ok) return info;
+    scanned += Math.max(1, info.value.end - info.value.start) + 1;
+    if (scanned > context.options.maxScanUtf16) return failure('scan-limit-exceeded');
+    if (!info.value.boundary) break;
+    lastLine = line;
+  }
+  return { ok: true, value: { firstLine, lastLine } };
 }
 
 function isBoundaryIndex(context: TextContext, index: number): Result<boolean, VimTextObjectFailure> {
@@ -696,6 +861,7 @@ function resolveQuote(
   context: TextContext,
   cursor: number,
   parsed: ParsedKey,
+  count: number,
 ): Result<Range, VimTextObjectFailure> {
   const lineIndex = context.snapshot.lineIndexAt(asOffset(cursor) as Utf16Offset);
   if (!lineIndex.ok) return failure('invalid-cursor');
@@ -728,11 +894,13 @@ function resolveQuote(
     at += window.value.length;
   }
   if (pair === null) return failure('object-not-found');
-  let start = line.value.start + pair.openEnd;
-  let end = line.value.start + pair.closeStart;
+  // Neovim doesn't nest quote pairs: `i"` with a count >= 2 widens to include
+  // the delimiters (like `a"`) but skips the surrounding-whitespace grab that
+  // a genuine `a"` performs.
+  const includeDelimiters = parsed.around || count >= 2;
+  let start = line.value.start + (includeDelimiters ? pair.openStart : pair.openEnd);
+  let end = line.value.start + (includeDelimiters ? pair.closeEnd : pair.closeStart);
   if (parsed.around) {
-    start = line.value.start + pair.openStart;
-    end = line.value.start + pair.closeEnd;
     const trailing = scanWhitespace(context.snapshot, end, 'forward', context.options.maxScanUtf16);
     if (!trailing.ok) return trailing;
     if (trailing.value > end) end = trailing.value;
@@ -770,17 +938,54 @@ function resolveBracket(
       const parent = pairs
         .filter((candidate) => candidate.openStart < from.openStart && candidate.closeEnd > from.closeEnd)
         .sort((left, right) => (left.closeEnd - left.openStart) - (right.closeEnd - right.openStart))[0];
-      if (parent === undefined) break;
+      // Neovim beeps and makes no change when the requested nesting depth
+      // isn't available; it never silently falls back to a shallower pair.
+      if (parent === undefined) return failure('object-not-found');
       from = parent;
     }
     pair = from;
   }
-  const start = window.value.start + (parsed.around ? pair.openStart : pair.openEnd);
-  const end = window.value.start + (parsed.around ? pair.closeEnd : pair.closeStart);
+  let start = window.value.start + (parsed.around ? pair.openStart : pair.openEnd);
+  let end = window.value.start + (parsed.around ? pair.closeEnd : pair.closeStart);
+  if (!parsed.around && start !== end) {
+    const multiline = multilineBracketInterior(context.snapshot, start, end);
+    if (!multiline.ok) return multiline;
+    if (multiline.value !== null) {
+      start = multiline.value.start;
+      end = multiline.value.end;
+    }
+  }
   if (!parsed.around && start === end) return failure('empty-object');
   if (window.value.truncatedLeft && start === window.value.start) return failure('scan-limit-exceeded');
   if (window.value.truncatedRight && end === window.value.end) return failure('scan-limit-exceeded');
   return { ok: true, value: { start, end, kind: 'characterwise' } };
+}
+
+/**
+ * When an inner bracket's opening delimiter is the last character on its
+ * line and the closing delimiter is the first non-blank on its line, Neovim
+ * deletes only the interior lines (like `ip`), leaving the opening and
+ * closing delimiters each on their own line rather than joining them.
+ */
+function multilineBracketInterior(
+  snapshot: DocumentSnapshot,
+  start: number,
+  end: number,
+): Result<{ readonly start: number; readonly end: number } | null, VimTextObjectFailure> {
+  const afterOpen = scalarAt(snapshot, start);
+  if (!afterOpen.ok || afterOpen.value !== '\n') return { ok: true, value: null };
+  const closeLineIndex = snapshot.lineIndexAt(asOffset(end) as Utf16Offset);
+  if (!closeLineIndex.ok) return failure('invalid-cursor');
+  const closeLineStartResult = snapshot.lineStartOffset(closeLineIndex.value as LineIndex);
+  if (!closeLineStartResult.ok) return failure('document-read-failed');
+  const closeLineStart = closeLineStartResult.value as number;
+  if (closeLineStart > end) return { ok: true, value: null };
+  const indent = safeSlice(snapshot, closeLineStart, end);
+  if (!indent.ok) return indent;
+  if (!/^[ \t]*$/u.test(indent.value)) return { ok: true, value: null };
+  const newStart = start + 1;
+  if (newStart > closeLineStart) return { ok: true, value: null };
+  return { ok: true, value: { start: newStart, end: closeLineStart } };
 }
 
 function bracketPairs(window: ScanWindow, openChar: string, closeChar: string, honorEscapes: boolean): DelimiterPair[] {
@@ -824,14 +1029,15 @@ function resolveTag(
       const parent = pairs
         .filter((candidate) => candidate.openStart < from.openStart && candidate.closeEnd > from.closeEnd)
         .sort((left, right) => (left.closeEnd - left.openStart) - (right.closeEnd - right.openStart))[0];
-      if (parent === undefined) break;
+      // Neovim beeps and makes no change when the requested nesting depth
+      // isn't available; it never silently falls back to a shallower pair.
+      if (parent === undefined) return failure('object-not-found');
       from = parent;
     }
     pair = from;
   }
-  let start = window.value.start + (parsed.around ? pair.openStart : pair.contentStart);
-  let end = window.value.start + (parsed.around ? pair.closeEnd : pair.closeStart);
-  if (start === end) start = pair.openStart + window.value.start;
+  const start = window.value.start + (parsed.around ? pair.openStart : pair.contentStart);
+  const end = window.value.start + (parsed.around ? pair.closeEnd : pair.closeStart);
   if (window.value.truncatedLeft && start === window.value.start) return failure('scan-limit-exceeded');
   if (window.value.truncatedRight && end === window.value.end) return failure('scan-limit-exceeded');
   return { ok: true, value: { start, end, kind: 'characterwise' } };

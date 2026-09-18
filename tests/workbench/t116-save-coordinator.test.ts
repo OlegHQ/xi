@@ -1,5 +1,15 @@
 import { strict as assert } from 'node:assert';
+import type { ClockPort, Disposable } from '../../packages/contracts/src/index';
 import { SaveCoordinator, type SaveCoordinatorPersistencePort } from '../../packages/workbench/editing/save-coordinator';
+
+const testClock: ClockPort = {
+  monotonicMilliseconds: () => Date.now(),
+  schedule: (delayMilliseconds: number, callback: () => void): Disposable => {
+    const handle = setTimeout(callback, delayMilliseconds);
+    return Object.freeze({ dispose: () => clearTimeout(handle) });
+  },
+  sleep: async () => ({ ok: true, value: undefined }),
+};
 
 function fakeDocument(id: string): { readonly id: string } {
   return { id };
@@ -20,6 +30,7 @@ function fakeDocument(id: string): { readonly id: string } {
     host: host as never,
     session: session as never,
     persistence,
+    clock: testClock,
     marker: () => {},
     onError: () => {},
     formatOnSave: false,
@@ -54,6 +65,7 @@ function fakeDocument(id: string): { readonly id: string } {
     host: host as never,
     session: session as never,
     persistence,
+    clock: testClock,
     marker: () => {},
     onError: () => {},
     formatOnSave: false,

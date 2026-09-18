@@ -1,12 +1,14 @@
 import { strict as assert } from 'node:assert';
 import { asIdentifier, type DocumentId, type ViewId } from '../../packages/primitives/src/index';
-import type { CancellationToken, PlatformFailure, Result } from '../../packages/contracts/src/index';
+import type { CancellationToken, ClockPort, Disposable, PlatformFailure, Result } from '../../packages/contracts/src/index';
 import { TextFileDocument } from '../../packages/document/src/index';
 import { WorkbenchSession } from '../../packages/workbench/session/index';
 import { BufferHost } from '../../packages/workbench/host/index';
 import {
   ExplorerController,
+  type ExplorerDirectoryOperationPlan,
   type ExplorerFileOperationsPort,
+  type ExplorerJournaledOperationsPort,
   type ExplorerNavigationPort,
   type ExplorerTreeModel,
   type ExplorerTreeNode,
@@ -102,6 +104,57 @@ class FakeTree implements ExplorerTreePort {
   }
 }
 
+// -- A fake journaled-operations port: exercises the same apply()/restoreApplied() shape as
+// `JournaledFilesystemOperations` without a real filesystem, recording moves onto the same
+// `FakeFileOperations.calls` log the prior direct-filesystem-call assertions already read. --
+class FakeJournaledOperations implements ExplorerJournaledOperationsPort {
+  #trashCounter = 0;
+  constructor(private readonly fs: FakeFileOperations, private readonly trashDirectory: string) {}
+  async apply(plan: ExplorerDirectoryOperationPlan, _cancellation: CancellationToken): Promise<Result<{ readonly journal: unknown }, { readonly kind: string; readonly message?: string }>> {
+    const operation = plan.operations[0];
+    if (operation === undefined) return { ok: false, error: { kind: 'invalid-plan', message: 'empty plan' } };
+    if (operation.kind === 'rename') {
+      this.fs.calls.push(`rename:${operation.sourcePath}->${operation.destinationPath}`);
+      this.fs.existing.delete(operation.sourcePath);
+      this.fs.existing.add(operation.destinationPath);
+      return { ok: true, value: { journal: { kind: 'rename', from: operation.sourcePath, to: operation.destinationPath } } };
+    }
+    if (operation.kind === 'copy') {
+      this.fs.calls.push(`copy:${operation.sourcePath}->${operation.destinationPath}`);
+      this.fs.existing.add(operation.destinationPath);
+      return { ok: true, value: { journal: { kind: 'copy', from: operation.sourcePath, to: operation.destinationPath } } };
+    }
+    this.fs.calls.push(`mkdir:${this.trashDirectory}`);
+    this.#trashCounter += 1;
+    const to = `${this.trashDirectory}/${this.#trashCounter}-${operation.sourcePath.split('/').pop()}`;
+    this.fs.calls.push(`rename:${operation.sourcePath}->${to}`);
+    this.fs.existing.delete(operation.sourcePath);
+    this.fs.existing.add(to);
+    return { ok: true, value: { journal: { kind: 'trash', from: operation.sourcePath, to } } };
+  }
+  async restoreApplied(journal: unknown, _cancellation: CancellationToken): Promise<Result<unknown, { readonly kind: string; readonly message?: string }>> {
+    const entry = journal as { readonly kind: string; readonly from: string; readonly to: string };
+    if (entry.kind === 'copy') {
+      this.fs.calls.push(`remove:${entry.to}`);
+      this.fs.existing.delete(entry.to);
+    } else {
+      this.fs.calls.push(`rename:${entry.to}->${entry.from}`);
+      this.fs.existing.delete(entry.to);
+      this.fs.existing.add(entry.from);
+    }
+    return { ok: true, value: undefined };
+  }
+}
+
+const testClock: ClockPort = {
+  monotonicMilliseconds: () => Date.now(),
+  schedule: (delayMilliseconds: number, callback: () => void): Disposable => {
+    const handle = setTimeout(callback, delayMilliseconds);
+    return Object.freeze({ dispose: () => clearTimeout(handle) });
+  },
+  sleep: async () => ({ ok: true, value: undefined }),
+};
+
 class FakeNavigation implements ExplorerNavigationPort {
   readonly calls: string[] = [];
   disposed = false;
@@ -130,10 +183,14 @@ const markers: Array<{ readonly name: string; readonly payload: unknown }> = [];
 const errors: string[] = [];
 let ensureServicesCalls = 0;
 
+const fileOperations = new FakeJournaledOperations(filesystem, '/workspace/.xi-trash');
+
 const controller = new ExplorerController({
   host,
   session,
   filesystem,
+  fileOperations,
+  clock: testClock,
   marker: (name, payload) => { markers.push({ name, payload }); },
   onError: (message) => { errors.push(message); },
   workspaceRelativePath: () => undefined,
@@ -198,4 +255,15 @@ assert.equal(controller.isOpen, false, 'T116-EXPLORER-06a close() marks the cont
 assert.ok(tree.calls.includes('blur'), 'T116-EXPLORER-06b close() blurs the tree');
 controller.dispose();
 
-console.log('T116 ExplorerController passed pending-g, rename-commit, delete-confirm and undo-restore fixtures');
+// T116-EXPLORER-07: opening a file from the explorer opens it as a preview buffer (tab-strip
+// semantics: a single-click explorer open replaces the preview slot, not a new pinned tab).
+let capturedOpenOptions: { readonly preview?: boolean } | undefined;
+const originalOpenBufferAtPath = host.openBufferAtPath.bind(host);
+host.openBufferAtPath = ((path: string, options?: { readonly preview?: boolean }) => {
+  capturedOpenOptions = options;
+  return originalOpenBufferAtPath(path, options);
+}) as typeof host.openBufferAtPath;
+await controller.openNode(tree.readNode(fileNode.id) as ExplorerTreeNode);
+assert.equal(capturedOpenOptions?.preview, true, 'T116-EXPLORER-07 explorer opens files as a preview buffer');
+
+console.log('T116 ExplorerController passed pending-g, rename-commit, delete-confirm, undo-restore and preview-open fixtures');

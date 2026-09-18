@@ -106,11 +106,18 @@ export function installPanelPointerHandler(
   currentGeneration: () => number,
   onPointer: ((event: WorkbenchPanelPointerEvent) => boolean) | undefined,
   scroll?: PanelScrollHooks,
+  /** Row under the pointer while it is over this panel without a button held (`'move'`
+   * and the enter/leave-shaped `'over'`/`'out'` types), or `undefined` once it leaves --
+   * lets a panel paint a hover highlight distinct from the click-selected row. */
+  onHover?: (row: number | undefined) => void,
 ): void {
-  if (onPointer === undefined && scroll === undefined) return;
+  if (onPointer === undefined && scroll === undefined && onHover === undefined) return;
   renderable.onMouse = (event: MouseEvent): void => {
     const row = event.y - renderable.screenY;
     const column = event.x - renderable.screenX;
+    if (onHover !== undefined && (event.type === 'move' || event.type === 'over')) onHover(row);
+    else if (onHover !== undefined && event.type === 'out') onHover(undefined);
+    if (event.type === 'move' || event.type === 'over' || event.type === 'out') return;
     if (event.type === 'scroll') {
       if (scroll === undefined) return;
       const delta = event.scroll === undefined ? 0 : Math.max(1, event.scroll.delta) * (event.scroll.direction === 'up' ? -1 : 1);

@@ -27,6 +27,16 @@ export function commitPlan(document: TextFileDocument, plan: VimMultiInsertPlan,
     if (!opened.ok) throw new Error(`xi-undo-open:${opened.error.kind}`);
     setUndoOpen(true);
   }
+  // 'break' (a mid-session `<C-g>u` or an Insert-mode cursor move): closes the
+  // current undo step and immediately opens a fresh one, so the next edit
+  // becomes its own undo entry instead of merging into the one before the
+  // break -- matching nvim's own arrow-key/`<C-g>u` undo-sequence split.
+  if (plan.undoAction === 'break' && undoOpen) {
+    const closed = document.endUndoGroup(INSERT_GROUP);
+    if (!closed.ok) throw new Error(`xi-undo-break-close:${closed.error.kind}`);
+    const reopened = document.beginUndoGroup(INSERT_GROUP, 'vim');
+    if (!reopened.ok) throw new Error(`xi-undo-break-open:${reopened.error.kind}`);
+  }
   if (plan.edits.length > 0) {
     const committed = document.commit({
       documentId: plan.documentId,

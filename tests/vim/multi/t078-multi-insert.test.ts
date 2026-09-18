@@ -122,26 +122,32 @@ function testReplaceStacksAndFailedBackspaceIsolation(): void {
   if (!entered.ok) return;
   let session = entered.value.session;
   let open = apply(document, entered.value.plan, false);
+  // nvim --clean oracle (0.12.4): entering Replace and immediately pressing <BS> with
+  // nothing yet typed never deletes original buffer text, even past the entry column --
+  // it only repositions the cursor (see docs/evidence for T078's repro). member 0 is
+  // additionally blocked outright (already at the buffer start); member 1 moves left one
+  // column with no edit of its own.
   const failedAndSuccessful = planVimMultiInsertInput(document.snapshot(), session, { kind: 'key', key: '<BS>' });
   assert.equal(failedAndSuccessful.ok, true, 'T078-MC05-REPLACE-02 failed member backspace does not fail the batch');
   if (!failedAndSuccessful.ok) return;
-  assert.deepEqual(failedAndSuccessful.value.edits.map(numericEdit), [{ start: 1, end: 2, text: '' }], 'T078-MC05-REPLACE-03 only the member with a valid destructive backspace emits an edit');
-  assert.deepEqual(failedAndSuccessful.value.nextSession?.members.map((member) => member.session.cursorOffset as number), [0, 1], 'T078-MC05-REPLACE-03A failed member state remains unchanged while the other member moves');
+  assert.deepEqual(failedAndSuccessful.value.edits.map(numericEdit), [], 'T078-MC05-REPLACE-03 a Replace backspace past the entry column with no frame to restore never deletes');
+  assert.deepEqual(failedAndSuccessful.value.nextSession?.members.map((member) => member.session.cursorOffset as number), [0, 1], 'T078-MC05-REPLACE-03A the blocked member stays put while the other member still moves left');
   session = failedAndSuccessful.value.nextSession as VimMultiInsertSession;
   open = apply(document, failedAndSuccessful.value, open);
-  assert.equal(read(document), 'acd', 'T078-MC05-REPLACE-04 one failed backspace cannot alter the other member unexpectedly');
+  assert.equal(read(document), 'abcd', 'T078-MC05-REPLACE-04 neither member altered the original buffer text');
 
   const typed = planVimMultiInsertInput(document.snapshot(), session, { kind: 'key', key: 'X' });
   assert.equal(typed.ok, true, 'T078-MC05-REPLACE-05 Replace accepts a Unicode-safe scalar after the isolated failure');
   if (!typed.ok) return;
   session = typed.value.nextSession as VimMultiInsertSession;
   open = apply(document, typed.value, open);
+  assert.equal(read(document), 'XXcd', 'T078-MC05-REPLACE-05A each member overwrites its own (now-adjacent) column');
   const restored = planVimMultiInsertInput(document.snapshot(), session, { kind: 'key', key: '<BS>' });
   assert.equal(restored.ok, true, 'T078-MC05-REPLACE-06 each member retains its own replace stack');
   if (!restored.ok) return;
   assert.equal(restored.value.edits.length, 2, 'T078-MC05-REPLACE-07 restore emits one edit per member');
   open = apply(document, restored.value, open);
-  assert.equal(read(document), 'acd', 'T078-MC05-REPLACE-08 replace backspace restores each overwritten member independently');
+  assert.equal(read(document), 'abcd', 'T078-MC05-REPLACE-08 replace backspace restores each overwritten member independently');
   assert.equal(open, true, 'T078-MC05-REPLACE-09 all edits share one open Vim undo group');
 }
 

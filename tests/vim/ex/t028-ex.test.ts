@@ -174,7 +174,7 @@ assert.equal(nestedGlobal.ok, false, 'T028-GLOBAL-FAIL-02 nested global has no p
 
 const substituteDocument = open('t028-repeat-substitute', 'two\ntwo');
 const substituteCommand = parse(':s/two/T/g');
-const substitutePlan = prepareVimEx(substituteDocument.snapshot(), substituteCommand, context(0, { searchState: { pattern: null, direction: null, lastMatch: null, previousReplacement: null } }));
+const substitutePlan = prepareVimEx(substituteDocument.snapshot(), substituteCommand, context(0, { searchState: { pattern: null, direction: null, lastMatch: null, previousReplacement: null, fullWord: false } }));
 assert.equal(substitutePlan.ok, true, 'T028-SUBSTITUTE-01 prepares the first substitute and state');
 if (!substitutePlan.ok) throw new Error('T028-SUBSTITUTE-01');
 assert.deepEqual(substitutePlan.value.substituteState, { pattern: 'two', replacement: 'T', flags: 'g' });

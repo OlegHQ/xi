@@ -297,6 +297,7 @@ export class JournaledFilesystemOperations {
     if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     if (journal.schemaVersion !== FILE_OPERATION_CONTRACT_VERSION) return journalFailure(journal.journalPath, 'unsupported journal schema');
     if (journal.status === 'applied') return { ok: true, value: recoveryResult(journal, 'retried') };
+    if (journal.status === 'restored') return { ok: true, value: recoveryResult(journal, 'restored') };
     let current = journal;
     for (let index = 0; index < current.steps.length; index += 1) {
       const step = current.steps[index];
@@ -381,6 +382,9 @@ export class JournaledFilesystemOperations {
       return { ok: true, value: { method: step.method ?? 'rename', after: destination.value } };
     }
     if (source.value !== undefined && sameFingerprint(source.value, step.expected) && destination.value !== undefined && sameContent(destination.value, step.expected)) {
+      if (step.kind === 'copy') {
+        return { ok: true, value: { method: step.method ?? 'copy', after: destination.value } };
+      }
       const removed = await this.#filesystem.removePath(step.from, source.value.kind === 'directory', cancellation);
       if (!removed.ok) return localFailure(step.from, platformMessage(removed.error));
       return { ok: true, value: { method: 'copy-delete', after: destination.value } };
@@ -402,7 +406,7 @@ export class JournaledFilesystemOperations {
       }
       return localFailure(step.from, 'copy source changed externally; restore stopped without deleting the copy');
     }
-    if (source.value !== undefined) return localFailure(step.from, 'restore destination is occupied by unrelated content');
+    if (source.value !== undefined) return localFailure(step.from, 'restore destination was recreated externally; restore stopped without clobbering it');
     const moved = await this.#filesystem.renamePath(step.to, step.from, cancellation);
     if (moved.ok) return { ok: true, value: undefined };
     if (moved.error.code !== 'EXDEV') return localFailure(step.to, platformMessage(moved.error));
@@ -519,13 +523,10 @@ function makeSteps(
     const temporary = joinPath(plan.directoryPath, `.xi-operation-${operationId}-${stageIndex}`);
     steps.push(step(`rename-stage-${stageIndex}`, 'move', operation.kind, operation.sourcePath, temporary, expected));
   }
-  for (const operation of renameOperations) {
-    const expected = fingerprints.get(canonicalPath(operation.sourcePath));
-    if (expected === undefined) throw new Error('file-operation-source-fingerprint-missing');
-    const stageIndex = renameOperations.indexOf(operation) + 1;
-    const temporary = joinPath(plan.directoryPath, `.xi-operation-${operationId}-${stageIndex}`);
-    steps.push(step(`rename-commit-${stageIndex}`, 'move', operation.kind, temporary, operation.destinationPath, expected));
-  }
+  // Trash/delete steps must run before any rename-commit that writes to a
+  // destination the trash step frees; otherwise the rename fails against a
+  // path that a later trash step would have vacated, stranding the staged
+  // file under its temporary name.
   for (const operation of plan.operations) {
     if (operation.kind === 'trash') {
       const expected = fingerprints.get(canonicalPath(operation.sourcePath));
@@ -533,6 +534,13 @@ function makeSteps(
       const trashPath = joinPath(trashRoot, operationId, `${number += 1}-${basename(operation.sourcePath)}`);
       steps.push(step(`trash-${number}`, 'move', operation.kind, operation.sourcePath, trashPath, expected));
     }
+  }
+  for (const operation of renameOperations) {
+    const expected = fingerprints.get(canonicalPath(operation.sourcePath));
+    if (expected === undefined) throw new Error('file-operation-source-fingerprint-missing');
+    const stageIndex = renameOperations.indexOf(operation) + 1;
+    const temporary = joinPath(plan.directoryPath, `.xi-operation-${operationId}-${stageIndex}`);
+    steps.push(step(`rename-commit-${stageIndex}`, 'move', operation.kind, temporary, operation.destinationPath, expected));
   }
   return Object.freeze(steps);
 }
@@ -576,12 +584,35 @@ function recoveryResult(journal: FileOperationJournal, status: FileOperationReco
   return Object.freeze({ operationId: journal.operationId, status, journal, completedSteps: journal.steps.filter((step) => step.completed).length });
 }
 
+function isFingerprint(value: unknown): value is FileFingerprint {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.path === 'string' && (record.kind === 'file' || record.kind === 'directory' || record.kind === 'symlink' || record.kind === 'other')
+    && typeof record.sizeBytes === 'number' && typeof record.modifiedMilliseconds === 'number'
+    && (record.device === undefined || typeof record.device === 'string') && (record.inode === undefined || typeof record.inode === 'string')
+    && (record.contentHash === undefined || typeof record.contentHash === 'string');
+}
+
+function isStep(value: unknown): value is FileOperationStep {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.id === 'string' && (record.kind === 'move' || record.kind === 'copy') && typeof record.operationKind === 'string'
+    && typeof record.from === 'string' && typeof record.to === 'string' && typeof record.sourcePath === 'string'
+    && isFingerprint(record.expected) && typeof record.completed === 'boolean'
+    && (record.method === undefined || record.method === 'rename' || record.method === 'copy-delete' || record.method === 'copy')
+    && (record.after === undefined || isFingerprint(record.after));
+}
+
 function isJournal(value: unknown): value is FileOperationJournal {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
-  return record.schemaVersion === FILE_OPERATION_CONTRACT_VERSION && typeof record.operationId === 'string' && typeof record.journalPath === 'string'
-    && typeof record.directoryPath === 'string' && typeof record.trashRoot === 'string' && typeof record.plan === 'object' && Array.isArray(record.steps)
-    && (record.status === 'running' || record.status === 'applied' || record.status === 'partial' || record.status === 'restored' || record.status === 'restore-failed');
+  if (record.schemaVersion !== FILE_OPERATION_CONTRACT_VERSION || typeof record.operationId !== 'string' || typeof record.journalPath !== 'string'
+    || typeof record.directoryPath !== 'string' || typeof record.trashRoot !== 'string' || typeof record.plan !== 'object' || record.plan === null
+    || !Array.isArray(record.steps)
+    || (record.status !== 'running' && record.status !== 'applied' && record.status !== 'partial' && record.status !== 'restored' && record.status !== 'restore-failed')) {
+    return false;
+  }
+  return record.steps.every((candidate) => isStep(candidate));
 }
 
 function invalidPlan(message: string, operation?: string): Result<never, FileOperationFailure> {

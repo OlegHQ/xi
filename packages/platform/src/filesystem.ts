@@ -1,4 +1,4 @@
-import { createReadStream, promises as fs, watch as watchFile } from 'node:fs';
+import { promises as fs, watch as watchFile } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import type {
   CancellationToken,
@@ -76,25 +76,38 @@ export class NodeFilesystemPort implements FilesystemPort {
 
   async readFileChunks(path: string, cancellation: CancellationToken): Promise<Result<AsyncIterable<Uint8Array>, PlatformFailure>> {
     if (cancellation.isCancelled) return cancelled();
+    // Open the file handle up front instead of handing `createReadStream(path, ...)` a bare
+    // path: that opens lazily and reports a missing/unreadable file as an async 'error' event
+    // once the caller starts iterating, which throws out of the returned async generator
+    // instead of surfacing here as a Result -- so a >256KiB open behaved differently (crashed)
+    // than the small-file read path (which returns { ok: false, error: {...} }) for the exact
+    // same missing file.
+    let handle: Awaited<ReturnType<typeof fs.open>>;
     try {
-      const stream = createReadStream(path, { highWaterMark: 64 * 1024 });
-      async function* chunks(): AsyncIterable<Uint8Array> {
-        try {
-          for await (const chunk of stream) {
-            if (cancellation.isCancelled) {
-              stream.destroy();
-              return;
-            }
-            yield new Uint8Array(chunk);
-          }
-        } finally {
-          stream.destroy();
-        }
-      }
-      return { ok: true, value: chunks() };
+      handle = await fs.open(path, 'r');
     } catch (error: unknown) {
       return { ok: false, error: platformFailure(error, 'read-file') };
     }
+    if (cancellation.isCancelled) {
+      await handle.close().catch(() => {});
+      return cancelled();
+    }
+    const stream = handle.createReadStream({ highWaterMark: 64 * 1024 });
+    async function* chunks(): AsyncIterable<Uint8Array> {
+      try {
+        for await (const chunk of stream) {
+          if (cancellation.isCancelled) {
+            stream.destroy();
+            return;
+          }
+          yield new Uint8Array(chunk);
+        }
+      } finally {
+        stream.destroy();
+        await handle.close().catch(() => {});
+      }
+    }
+    return { ok: true, value: chunks() };
   }
 
   async stat(path: string, cancellation: CancellationToken): Promise<Result<FileInfo, PlatformFailure>> {
@@ -351,6 +364,13 @@ export class NodeFilesystemPort implements FilesystemPort {
         return { ok: false, error: { code: 'symlink-save', message: 'refusing to replace a symbolic link', retryable: false } };
       }
       temporaryHandle = await fs.open(temporary, 'wx', existing === undefined ? 0o666 : existing.mode & 0o7777);
+      if (existing !== undefined) {
+        // `fs.open`'s mode argument is masked by the process umask when creating a new file,
+        // so it alone cannot guarantee the temp file ends up with the original file's exact
+        // permissions (e.g. an original mode more permissive than `~umask`). chmod sets the
+        // exact bits, bypassing umask, before the temp file replaces the original.
+        await temporaryHandle.chmod(existing.mode & 0o7777);
+      }
       for await (const chunk of contents) {
         if (cancellation.isCancelled) {
           await temporaryHandle.close();
@@ -368,14 +388,17 @@ export class NodeFilesystemPort implements FilesystemPort {
         return cancelled();
       }
       await fs.rename(temporary, path);
-      // Ensure the directory entry reaches stable storage where the platform
-      // exposes directory fsync. Failure is reported instead of claiming a
-      // stronger durability guarantee than the platform provided.
+      // Best-effort: ensure the directory entry itself reaches stable storage where the
+      // platform exposes directory fsync. The rename that makes the new content visible under
+      // `path` has already completed successfully by this point, so a failure here (e.g. a
+      // platform/filesystem that refuses to open a directory for fsync) must not be reported
+      // as a failed save -- that would tell the caller its content was lost when it was not.
       try {
         const directoryHandle = await fs.open(directory, 'r');
         try { await directoryHandle.sync(); } finally { await directoryHandle.close(); }
-      } catch (error: unknown) {
-        return { ok: false, error: platformFailure(error, 'directory-sync') };
+      } catch {
+        // Ignored: the save itself succeeded; only the directory-entry durability
+        // enhancement could not be confirmed on this platform/filesystem.
       }
       return { ok: true, value: undefined };
     } catch (error: unknown) {

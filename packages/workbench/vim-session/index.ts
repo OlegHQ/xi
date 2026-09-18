@@ -1,11 +1,10 @@
-import { asCellColumn, asIdentifier, asLineIndex, asUtf16Offset, type InputModifiers, type UndoGroupId, type ViewId, type Utf16Offset } from '../../contracts/src/index';
+import { asCellColumn, asLineIndex, asUtf16Offset, type InputModifiers, type UndoGroupId, type ViewId, type Utf16Offset } from '../../contracts/src/index';
 import type { CanonicalInputEvent } from '../../contracts/src/index';
-import type { CommittedDocumentChange, DocumentEdit, DocumentReadPort, DocumentSnapshot, TextFileDocument } from '../../document/src/index';
+import type { DocumentEdit, DocumentReadPort, DocumentSnapshot, TextFileDocument } from '../../document/src/index';
 import { createDocumentAnchor, DocumentChangeMap } from '../../document/src/index';
-import { createSelectionSet, mapSelectionSet, updateSelectionSet, type SelectionSetSnapshot, type SelectionMemberInput } from '../../selections/src/index';
+import { mapSelectionSet, updateSelectionSet, type SelectionSetSnapshot, type SelectionMemberInput } from '../../selections/src/index';
 import {
   beginVimMultiInsert,
-  createVimMotionCursor,
   normalizeVimInput,
   parseVimInput,
   prepareVimDirectChange,
@@ -18,24 +17,21 @@ import {
   beginVimVisualSelection,
   extendVimVisualSelection,
   applyVimSelectionCommand,
+  resolveVimMultiVisualFind,
   resolveVimMultiVisualMotion,
   resolveVimCharacterInfo,
   resolveVimFind,
   prepareVimPutFromBank,
   type VimMode,
-  type VimMultiMotionInvocation,
   type VimCoreOperator,
   type VimOperatorPreparation,
   type VimLastFind,
   type VimVisualKind,
   type VimVisualCursor,
   type VimCommandIntent,
-  type VimDirectChangeKey,
   type VimInsertEntryKey,
   type VimMultiInsertPlan,
   type VimMultiInsertSession,
-  type VimMotionCursor,
-  type VimMotionKey,
   type VimParserState,
   type VimTextObjectKey,
   type VimWordMotionKey,
@@ -49,7 +45,18 @@ import {
   createVimRepeatState,
   recordVimRepeatTarget,
   replayVimDot,
+  resolveVimMultiMotion,
+  resolveVimStructuralMotion,
+  EMPTY_VIM_SEARCH_STATE,
+  literalPattern,
+  normalizeVimOperatorRange,
+  searchVimBuffer,
   type VimRepeatState,
+  type VimSearchCommand,
+  type VimSearchDirection,
+  type VimSearchMatch,
+  type VimSearchOffset,
+  type VimSearchState,
 } from '../../vim/src/index';
 import {
   beginVimMacroRecording,
@@ -57,15 +64,17 @@ import {
   createVimMacroStore,
   executeVimMacro,
   recordVimMacroKey,
+  isRegisterName,
   type VimMacroRecordingSession,
   type VimMacroRegisterName,
   type VimMacroStore,
+  type VimRegisterValue,
 } from '../../vim/src/index';
 import type { PointerCell, PointerSelectionIntent } from '../../vim/src/entrypoints/launch';
 import type { PrefixHelpParserContinuation } from '../commands/prefix-help';
 import { createVimRegisterBank, type VimRegisterBank, type VimRegisterName, type VimRegisterType } from '../../vim/src/entrypoints/launch';
-import type { OwnedVimKeyEvent, OwnedVimSessionOptions, OwnedVimSession, VimPrefixHelpState, VimCommandLineState } from './types';
-export type { OwnedVimKeyEvent, OwnedVimSessionOptions, OwnedVimSession, VimPrefixHelpState, VimCommandLineState } from './types';
+import type { OwnedVimKeyEvent, OwnedVimSessionOptions, OwnedVimSession, VimPrefixHelpState, VimCommandLineState, VimSearchHighlightState } from './types';
+export type { OwnedVimKeyEvent, OwnedVimSessionOptions, OwnedVimSession, VimPrefixHelpState, VimCommandLineState, VimSearchHighlightState } from './types';
 import { hostTarget, hostWindowAction, isHostTokenCharacter } from './host-commands';
 import { parseXiSelectionCommand, selectionModeFor, SELECTION_COMMANDS, PATTERN_SELECTION_COMMANDS, SELECTION_HISTORY_LIMIT, type XiSelectionCommandInput } from './selection-commands';
 import { addPointerCaret, pointerVisualCursor, pointerWordRange } from './pointer';
@@ -78,7 +87,6 @@ import {
   isDirectChangeKey,
   isInsertEntryKey,
   isInsertMode,
-  isMotionKey,
   isMotionLike,
   isVisualMode,
   keyName,
@@ -121,9 +129,73 @@ function internModifiers(shift: boolean, alt: boolean, ctrl: boolean, meta: bool
   return MODIFIER_COMBOS[mask] as InputModifiers;
 }
 
+/** Split a typed `/`/`?` command-line body at its own (possibly backslash-escaped)
+ * delimiter into the pattern and the trailing search-offset text, matching nvim's
+ * `/{pattern}/{offset}` grammar. The pattern keeps any backslash escapes verbatim (the
+ * pattern compiler owns interpreting `\/`), mirroring how `:s{delim}...{delim}` is split
+ * elsewhere in this engine (packages/vim/search/index.ts's own readDelimited). */
+function splitSearchCommandLine(source: string, delimiter: '/' | '?'): { readonly pattern: string; readonly offsetText: string | undefined } {
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === '\\') { index += 2; continue; }
+    if (character === delimiter) break;
+    index += 1;
+  }
+  if (index >= source.length) return { pattern: source, offsetText: undefined };
+  return { pattern: source.slice(0, index), offsetText: source.slice(index + 1) };
+}
+
+function visualCursorAt(snapshot: DocumentSnapshot, at: Utf16Offset): VimVisualCursor | undefined {
+  const cellColumn = asCellColumn(0);
+  if (!cellColumn.ok) return undefined;
+  return { documentVersion: snapshot.version, offset: at, displayCellColumn: cellColumn.value };
+}
+
+/** Parse nvim's `search-offset` suffix: the `e[+-N]`/`s[+-N]`/`b[+-N]` character forms
+ * (end-of-match / start-of-match) plus the bare line-count form (`[+-]N`, or a lone `+`/`-`
+ * for 1) that puts the cursor N lines below/above the match's line, in column 1, and makes
+ * an operator motion using it linewise (`:help search-offset`). An empty suffix (`/pat/`)
+ * means no offset at all, same as `/pat` with no trailing delimiter. */
+function parseSearchOffsetSuffix(text: string): VimSearchOffset | undefined {
+  if (text.length === 0) return undefined;
+  const kindChar = text[0];
+  if (kindChar === 'e' || kindChar === 's' || kindChar === 'b') {
+    const rest = text.slice(1);
+    const amount = rest.length === 0 ? 0 : Number.parseInt(rest, 10);
+    if (!Number.isSafeInteger(amount)) return undefined;
+    return { kind: kindChar === 'e' ? 'end' : 'start', amount };
+  }
+  if (kindChar === '+' || kindChar === '-' || (kindChar !== undefined && kindChar >= '0' && kindChar <= '9')) {
+    const rest = kindChar === '+' || kindChar === '-' ? text.slice(1) : text;
+    const magnitude = rest.length === 0 ? 1 : Number.parseInt(rest, 10);
+    if (!Number.isSafeInteger(magnitude)) return undefined;
+    const amount = kindChar === '-' ? -magnitude : magnitude;
+    return { kind: 'line', amount };
+  }
+  return undefined;
+}
+
+/** Literal text a register contributes to `<C-r>` in Insert mode: a linewise
+ * register carries its trailing newline (`:help i_CTRL-R`), everything else
+ * inserts exactly its stored text. */
+function registerValueText(value: VimRegisterValue): string {
+  if (value.lines.length === 0) return '';
+  const joined = value.lines.join('\n');
+  return value.type === 'linewise' ? `${joined}\n` : joined;
+}
+
 export function createOwnedVimSession(document: TextFileDocument, options: OwnedVimSessionOptions): OwnedVimSession {
   const documentId = document.id;
   const viewId = options.viewId;
+  const clock: { readonly monotonicMilliseconds: () => number } = options.clock ?? MONOTONIC_CLOCK;
+  // H/M/L need the host's visible-line range; snapshot.lineCount is read fresh each call
+  // since the fallback (whole document) must track edits.
+  function viewportMotionOptions(): { readonly viewport: { readonly topLine: number; readonly bottomLine: number } } {
+    const port = options.viewport;
+    if (port === undefined) return { viewport: { topLine: 0, bottomLine: document.snapshot().lineCount - 1 } };
+    return { viewport: { topLine: port.topLine(), bottomLine: port.bottomLine() } };
+  }
   const snapshot = document.snapshot();
   let mode: VimMode = options.initialMode ?? 'normal';
   let selections = options.initialSelections ?? makeSelection(snapshot, options.initialLine);
@@ -141,8 +213,41 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   let undoOpen = false;
   let registers: VimRegisterBank = createVimRegisterBank();
   let lastFind: VimLastFind | null = null;
+  let searchState: VimSearchState = EMPTY_VIM_SEARCH_STATE;
+  // nvim: a search that wraps prints "search hit BOTTOM/TOP, continuing at ..."; one that
+  // finds nothing prints "E486: Pattern not found: {pattern}" (or E35 with no prior pattern
+  // at all). Shared by n/N/*/#/g*/g# and the `/`/`?` prompt below.
+  function reportSearchOutcome(outcome: Extract<ReturnType<typeof searchVimBuffer>, { readonly ok: true }>['value']['outcome']): void {
+    if (outcome.kind === 'found') {
+      if (outcome.match.wrapped) {
+        message(outcome.match.direction === 'forward' ? 'xi: search hit BOTTOM, continuing at TOP\n' : 'xi: search hit TOP, continuing at BOTTOM\n');
+      }
+      return;
+    }
+    const pattern = outcome.state.pattern;
+    message(pattern !== null && pattern.length > 0 ? `xi: E486: Pattern not found: ${pattern}\n` : 'xi: E35: No previous regular expression\n');
+  }
+  function runSearchCommand(command: VimSearchCommand, count: number): boolean {
+    if (motionCursor === undefined) return false;
+    const view = { cursor: motionCursor.offset, desiredDisplayColumn: 0, scrollTop: 0, scrollLeft: 0 };
+    const result = searchVimBuffer(document.snapshot(), view, searchState, { command, count });
+    if (!result.ok) return false;
+    searchState = result.value.state;
+    reportSearchOutcome(result.value.outcome);
+    if (result.value.outcome.kind !== 'found') return false;
+    selections = makeNormalSelection(document.snapshot(), result.value.outcome.match.cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
+    motionCursor = makeMotionCursor(document.snapshot(), selections);
+    parser = makeParser(mode, selections);
+    return true;
+  }
   let commandLine: string | undefined;
   let commandLineCursorOffset = 0;
+  let commandLineKind: 'ex' | 'search-forward' | 'search-backward' = 'ex';
+  // A count typed before `/`/`?` (e.g. `3/foo<CR>`), consumed once the search prompt submits.
+  let pendingSearchCount = 1;
+  // Set only for `d/foo<CR>`-style operator-pending search motions; consumed (and cleared)
+  // by the same submit that consumes pendingSearchCount.
+  let pendingOperatorSearch: { readonly operator: VimCoreOperator; readonly register: string | undefined } | undefined;
   let prefixKeys: readonly string[] = EMPTY_PREFIX_KEYS;
   // `prefixKeys` and `parser.legalContinuations` are already frozen at their
   // source (updatePrefixKeys / freezeContinuations), and both are replaced
@@ -155,7 +260,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   // publishAuxiliaryState only notifies listeners when that reference changed,
   // instead of re-freezing and re-notifying on every keystroke (most of which
   // don't touch the command line at all).
-  let commandLineStateCache: { readonly source: string | undefined; readonly cursorOffset: number; readonly value: VimCommandLineState | undefined } | undefined;
+  let commandLineStateCache: { readonly source: string | undefined; readonly cursorOffset: number; readonly kind: VimCommandLineState['kind']; readonly value: VimCommandLineState | undefined } | undefined;
   let lastPublishedCommandLine: VimCommandLineState | undefined;
   let selectionHistory: SelectionSetSnapshot[] = [];
   // Dot-repeat (T130): a single most-recent semantic target, matching T024's tested
@@ -167,8 +272,14 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   // variant) rather than by extending T024's already oracle-tested module itself.
   let repeatState: VimRepeatState = createVimRepeatState();
   let insertEntryKey: VimInsertEntryKey | undefined;
+  let insertEntryCount = 1;
+  let macroExBuffer: string[] | null = null;
   let insertTypedChars: string[] = [];
   let insertTainted = false;
+  // <C-a> ("insert previously inserted text"): the literal chars typed in the last
+  // completed Insert/Replace session, independent of and alongside dot-repeat's own
+  // (stricter) engine-replay target below.
+  let lastInsertedText = '';
   let pendingChangeOperatorMotion: { readonly motionKey: string; readonly linewise: boolean } | undefined;
   let changeRepeatTarget: { readonly motionKey: string; readonly text: string; readonly linewise: boolean } | undefined;
   let lastRepeatKind: 'engine' | 'change' = 'engine';
@@ -182,6 +293,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   let macroStore: VimMacroStore = createVimMacroStore();
   let macroRecording: VimMacroRecordingSession | null = null;
   let lastMacroRegister: VimMacroRegisterName | undefined;
+  let lastExCommand: string | undefined;
   // No timers or document/prefix-help subscriptions are held by this factory: every
   // handle above is a plain closure variable owned by this session. dispose() only
   // needs to drop pending state and stop publishing further state changes.
@@ -193,6 +305,18 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
   function handleKey(event: OwnedVimKeyEvent): boolean | 'quit' | Promise<boolean | 'quit'> {
     if (disposed) return true;
+    // Neovim `:help i_ALT` / `:help <M-`: an unmapped Alt/Meta chord is processed as <Esc>
+    // followed by the plain key. Xi has no Vim-level <M-...> mappings (config bindings resolve
+    // earlier in the input router), so every chord that reaches here splits. This also makes
+    // an ESC byte that a stalled read coalesced with the next byte behave exactly like the two
+    // keystrokes the user typed, instead of dropping both.
+    if ((event.option || event.meta) && !event.ctrl && event.raw !== '\x1b') {
+      const escape: OwnedVimKeyEvent = { name: 'Escape', raw: '\x1b', shift: false, option: false, ctrl: false, meta: false };
+      const plain: OwnedVimKeyEvent = { ...event, option: false, meta: false };
+      const first = handleKey(escape);
+      if (first instanceof Promise) return first.then((result) => (result === 'quit' ? result : handleKey(plain)));
+      return first === 'quit' ? first : handleKey(plain);
+    }
     const key = keyName(event);
     if (canHandleSynchronously(event, key)) {
       const result = handleSynchronousKey(event, key);
@@ -212,17 +336,22 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     recordMacroKeyIfActive(key);
     if (commandLine !== undefined) {
       if (key === '<Esc>') {
-        commandLine = undefined;
-        commandLineCursorOffset = 0;
+        closeCommandLine();
         return true;
       }
       if (key === '<BS>') {
+        // Backspacing an empty `/`/`?` prompt closes it (nvim leaves the command line the
+        // same way Esc would); an empty `:` prompt keeps its own existing behavior.
+        if (commandLine.length === 0 && commandLineKind !== 'ex') {
+          closeCommandLine();
+          return true;
+        }
         commandLine = commandLine.slice(0, -1);
         commandLineCursorOffset = Math.max(1, commandLineCursorOffset - 1);
         return true;
       }
       if (key === '<CR>' || key === '<NL>') {
-        return submitCommandLine(`:${commandLine}`);
+        return commandLineKind === 'ex' ? submitCommandLine(`:${commandLine}`) : submitSearchCommandLine();
       }
       if (!event.ctrl && !event.meta && !event.option) {
         const character = key === '<Space>' ? ' ' : key;
@@ -233,7 +362,9 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       }
       return true;
     }
-    if (!isInsertMode(mode) && key === ':') {
+    // A ':' that completes a pending multi-key sequence (e.g. the register argument of
+    // '@:'/'q:') feeds the parser below instead of opening a fresh command line.
+    if (!isInsertMode(mode) && key === ':' && parser.pending.kind === 'none') {
       commandLine = '';
       commandLineCursorOffset = 1;
       prefixKeys = EMPTY_PREFIX_KEYS;
@@ -283,7 +414,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       modifiers: internModifiers(event.shift, event.option, event.ctrl, event.meta),
       rawBytes: EMPTY_RAW_BYTES,
       };
-      const normalized = normalizeVimInput(input, MONOTONIC_CLOCK);
+      const normalized = normalizeVimInput(input, clock);
       if (!normalized.ok) return true;
     const outcome = parseVimInput(parser, normalized.value);
     parser = outcome.state;
@@ -295,7 +426,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
   function canHandleSynchronously(event: OwnedVimKeyEvent, key: string): boolean {
     return commandLine === undefined
-      && !(!isInsertMode(mode) && key === ':')
+      && !(!isInsertMode(mode) && key === ':' && parser.pending.kind === 'none')
       && !(event.ctrl && (key === 's' || key === 'S'))
       && !(mode === 'normal' && key === 'q')
       && !(mode === 'normal' && event.ctrl && (key === 'c' || key === 'C'));
@@ -310,7 +441,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       modifiers: internModifiers(event.shift, event.option, event.ctrl, event.meta),
       rawBytes: EMPTY_RAW_BYTES,
     };
-    const normalized = normalizeVimInput(input, MONOTONIC_CLOCK);
+    const normalized = normalizeVimInput(input, clock);
     if (!normalized.ok) return true;
     const outcome = parseVimInput(parser, normalized.value);
     parser = outcome.state;
@@ -321,6 +452,13 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
   function message(value: string): void { options.onMessage?.(value); }
 
+  function closeCommandLine(): void {
+    commandLine = undefined;
+    commandLineCursorOffset = 0;
+    commandLineKind = 'ex';
+    pendingOperatorSearch = undefined;
+  }
+
   /** Every user keystroke while a macro is recording is appended verbatim, except the
    * terminating bare 'q' itself (handled separately, see the 'q' branch below). */
   function recordMacroKeyIfActive(key: string): void {
@@ -330,12 +468,29 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   }
 
   /** Replay one recorded key through the same parse+execute path a live keystroke uses.
-   * Ex-command-line sequences (a ':' key) are not replayed -- a disclosed limitation,
-   * not attempted, since the session's Ex submission is asynchronous and this dispatch
-   * loop (packages/vim/macros/index.ts's executeVimMacro) is synchronous. */
+   * A recorded ':' begins buffering an Ex command line (mirroring live command-line entry
+   * in handleKeyInternal) instead of being fed to the Normal-mode parser; on <CR> the
+   * buffered line runs through the same executeExCommand the live ':' path uses. This calls
+   * executeExCommand directly rather than through submitCommandLine, whose unconditional
+   * `await options.onExCommand?.(entered)` always yields a tick -- executeVimMacro's
+   * dispatch loop (packages/vim/macros/index.ts) is synchronous and cannot await. An Ex
+   * command whose own effects need a host await (:write, :quit) still resolves, just without
+   * this replay waiting on it -- a disclosed limitation for those effects only. */
   function replayMacroKey(key: string): void {
-    if (key === ':') return;
-    const normalized = { kind: 'key' as const, key, phase: 'press' as const, modifiers: MODIFIER_COMBOS[0] as InputModifiers, atMilliseconds: MONOTONIC_CLOCK.monotonicMilliseconds() };
+    if (macroExBuffer !== null) {
+      if (key === '<CR>' || key === '<NL>') {
+        const source = macroExBuffer.join('');
+        macroExBuffer = null;
+        void executeExCommand(source);
+        return;
+      }
+      if (key === '<Esc>' || key === '<C-c>') { macroExBuffer = null; return; }
+      const character = key === '<Space>' ? ' ' : key;
+      if (character.length === 1) macroExBuffer.push(character);
+      return;
+    }
+    if (key === ':') { macroExBuffer = []; return; }
+    const normalized = { kind: 'key' as const, key, phase: 'press' as const, modifiers: MODIFIER_COMBOS[0] as InputModifiers, atMilliseconds: clock.monotonicMilliseconds() };
     const outcome = parseVimInput(parser, normalized);
     parser = outcome.state;
     if (outcome.kind === 'command') executeCommand(outcome.command);
@@ -343,14 +498,15 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
   function beginMacroRecordingInternal(register: string): boolean {
     if (mode !== 'normal' || macroRecording !== null) return false;
-    const started = beginVimMacroRecording(register);
+    const started = beginVimMacroRecording(register, macroStore);
     if (!started.ok) return false;
     macroRecording = started.value;
     return true;
   }
 
-  function beginInsertRecording(entryKey: VimInsertEntryKey): void {
+  function beginInsertRecording(entryKey: VimInsertEntryKey, count = 1): void {
     insertEntryKey = entryKey;
+    insertEntryCount = count;
     insertTypedChars = [];
     insertTainted = false;
     pendingChangeOperatorMotion = undefined;
@@ -367,18 +523,43 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     const changeMotion = pendingChangeOperatorMotion;
     insertEntryKey = undefined;
     pendingChangeOperatorMotion = undefined;
-    if (entryKey === undefined || insertTainted) return;
+    if (entryKey === undefined) return;
     const text = insertTypedChars.join('');
+    if (text.length > 0) lastInsertedText = text;
+    if (insertTainted) return;
     if (changeMotion !== undefined) {
       changeRepeatTarget = { motionKey: changeMotion.motionKey, text, linewise: changeMotion.linewise };
       lastRepeatKind = 'change';
       return;
     }
     if (text.length === 0) return;
-    const created = createVimInsertRepeatTarget({ entryKey, mode: 'insert', text });
+    const created = createVimInsertRepeatTarget({ entryKey, mode: 'insert', text, count: insertEntryCount });
     if (!created.ok) return;
     const recorded = recordVimRepeatTarget(repeatState, created.value);
     if (recorded.ok) { repeatState = recorded.value; lastRepeatKind = 'engine'; }
+  }
+
+  /**
+   * `<C-r>{register}` in Insert/Replace mode: the literal text the register
+   * owner hands back for the insert engine's `register-request`/
+   * `register-payload` hand-off. Read-only registers this session already
+   * tracks (`.`/`:`/`/`) resolve here too; `%`/`#` have no filename tracked
+   * at this layer yet, so they resolve to empty text rather than crash the
+   * prompt. `=` (the expression register) is explicitly out of scope -- Xi
+   * has no expression evaluator -- so it prints nvim's own advisory message
+   * and inserts nothing, like a cancelled prompt.
+   */
+  function resolveInsertRegisterText(name: string): string {
+    if (name === '=') { message('xi: E15: expression register is not supported\n'); return ''; }
+    if (name === '.') return lastInsertedText;
+    if (name === ':') return lastExCommand ?? '';
+    if (name === '/') return searchState.pattern ?? '';
+    if (name === '%') return options.files?.currentPath() ?? '';
+    if (name === '#') return options.files?.alternatePath() ?? '';
+    if (!isRegisterName(name)) return '';
+    const read = registers.read(name);
+    if (!read.ok) return '';
+    return registerValueText(read.value);
   }
 
   function recordOperatorRepeat(operator: 'delete' | 'change', motionKey: string, count: number, forcedKind?: 'linewise'): void {
@@ -401,6 +582,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     get commandLineActive(): boolean { return commandLine !== undefined; },
     get commandLine(): VimCommandLineState | undefined { return readCommandLine(); },
     get prefixHelp(): VimPrefixHelpState { return readPrefixHelp(); },
+    get searchHighlight(): VimSearchHighlightState | undefined { return readSearchHighlight(); },
     readView(candidate): WorkbenchViewSnapshot | undefined {
       return candidate === viewId ? makeView(viewId, documentId, document.snapshot(), selections, mode) : undefined;
     },
@@ -613,7 +795,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         mode = 'normal';
         const primary = planned.value.members.find((member) => member.id === selections.primaryId) ?? planned.value.members[0];
         const transition = primary?.transition;
-        const cursor = transition?.kind === 'exited' ? transition.lastInsertCursorOffset : planned.value.members[0]?.transition.plan.cursorOffset;
+        const cursor = transition?.kind === 'exited' ? transition.plan.cursorOffset : planned.value.members[0]?.transition.plan.cursorOffset;
         selections = makeNormalSelection(document.snapshot(), cursor ?? offset(0), (selections.selectionGeneration as number) + 1);
         motionCursor = makeMotionCursor(document.snapshot(), selections);
         insertEntryKey = undefined;
@@ -626,8 +808,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      commandLine = undefined;
-      commandLineCursorOffset = 0;
+      closeCommandLine();
       prefixKeys = EMPTY_PREFIX_KEYS;
       macroRecording = null;
       insert = null;
@@ -638,15 +819,25 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   options.onStateChange?.({ selections, mode });
   publishAuxiliaryState();
 
+  function commandLinePrefix(): string {
+    return commandLineKind === 'ex' ? ':' : commandLineKind === 'search-forward' ? '/' : '?';
+  }
+
   function readCommandLine(): VimCommandLineState | undefined {
-    if (commandLineStateCache !== undefined && commandLineStateCache.source === commandLine && commandLineStateCache.cursorOffset === commandLineCursorOffset) {
+    if (commandLineStateCache !== undefined && commandLineStateCache.source === commandLine
+      && commandLineStateCache.cursorOffset === commandLineCursorOffset && commandLineStateCache.kind === commandLineKind) {
       return commandLineStateCache.value;
     }
     const value = commandLine === undefined
       ? undefined
-      : Object.freeze({ source: `:${commandLine}`, cursorOffset: commandLineCursorOffset });
-    commandLineStateCache = { source: commandLine, cursorOffset: commandLineCursorOffset, value };
+      : Object.freeze({ source: `${commandLinePrefix()}${commandLine}`, cursorOffset: commandLineCursorOffset, kind: commandLineKind });
+    commandLineStateCache = { source: commandLine, cursorOffset: commandLineCursorOffset, kind: commandLineKind, value };
     return value;
+  }
+
+  function readSearchHighlight(): VimSearchHighlightState | undefined {
+    if (searchState.pattern === null || searchState.pattern.length === 0) return undefined;
+    return Object.freeze({ pattern: searchState.pattern, active: commandLineKind !== 'ex' && commandLine !== undefined });
   }
 
   function readPrefixHelp(): VimPrefixHelpState {
@@ -674,8 +865,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
   async function submitCommandLine(source: string): Promise<boolean | 'quit'> {
     const entered = source.startsWith(':') ? source.slice(1) : source;
-    commandLine = undefined;
-    commandLineCursorOffset = 0;
+    closeCommandLine();
     lastPublishedCommandLine = undefined;
     options.onCommandLineChange?.(undefined);
     const hostResult = await options.onExCommand?.(entered);
@@ -685,7 +875,96 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     return result === 'quit' ? 'quit' : true;
   }
 
+  /** Submit a `/`/`?` command line: resolves the pattern (and any typed search-offset)
+   * against the engine's search module, updates the persisted last-pattern/direction so
+   * `n`/`N` continue correctly, and either resolves a pending `d/foo`-style operator
+   * motion, extends the active Visual selection to the match (nvim's v_/ behavior), or
+   * moves the Normal cursor there. */
+  async function submitSearchCommandLine(): Promise<boolean> {
+    const raw = commandLine ?? '';
+    const kind = commandLineKind;
+    const count = pendingSearchCount;
+    const pendingOperator = pendingOperatorSearch;
+    closeCommandLine();
+    lastPublishedCommandLine = undefined;
+    options.onCommandLineChange?.(undefined);
+    const delimiter = kind === 'search-backward' ? '?' : '/';
+    const direction: VimSearchDirection = kind === 'search-backward' ? 'backward' : 'forward';
+    const { pattern, offsetText } = splitSearchCommandLine(raw, delimiter);
+    const searchOffset = offsetText === undefined ? undefined : parseSearchOffsetSuffix(offsetText);
+    const current = document.snapshot();
+    const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
+    const origin = primary === undefined ? offset(0) : selectionOffset(primary);
+    const view = { cursor: origin, desiredDisplayColumn: 0, scrollTop: 0, scrollLeft: 0 };
+    const result = searchVimBuffer(current, view, searchState, {
+      command: 'search',
+      pattern,
+      direction,
+      count,
+      ...(searchOffset === undefined ? {} : { offset: searchOffset }),
+    });
+    if (!result.ok) { message('xi: E486: Pattern not found\n'); return true; }
+    searchState = result.value.state;
+    reportSearchOutcome(result.value.outcome);
+    if (result.value.outcome.kind !== 'found') return true;
+    const match = result.value.outcome.match;
+    if (pendingOperator !== undefined) {
+      applySearchOperator(pendingOperator, current, primary, match, searchOffset);
+      return true;
+    }
+    if (isVisualMode(mode)) {
+      const cursor = visualCursorAt(current, match.cursor);
+      if (cursor === undefined) return true;
+      const targets = selections.members.map((member) => ({ id: member.id, cursor }));
+      const extended = extendVimVisualSelection(current, selections, targets);
+      if (extended.ok) selections = extended.value;
+    } else {
+      selections = makeNormalSelection(current, match.cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
+      motionCursor = makeMotionCursor(current, selections);
+    }
+    parser = makeParser(mode, selections);
+    return true;
+  }
+
+  /** Resolve a `d/foo<CR>`-style operator-pending search motion: the range runs from the
+   * pre-search cursor to the match (exclusive, unless the typed offset was `/e`, which nvim
+   * makes inclusive), reusing the same single-cursor operator pipeline `dd`/`cc` use. */
+  function applySearchOperator(
+    pendingOperator: { readonly operator: VimCoreOperator; readonly register: string | undefined },
+    current: DocumentSnapshot,
+    primary: SelectionSetSnapshot['members'][number] | undefined,
+    match: VimSearchMatch,
+    searchOffset: VimSearchOffset | undefined,
+  ): void {
+    if (primary === undefined || primary.kind !== 'normal-cursor') return;
+    // `d/pat/+1<CR>`-style: a `line` search-offset makes the motion linewise (`:help
+    // search-offset`), spanning whole lines from the cursor's line to the offset line.
+    const linewise = searchOffset?.kind === 'line';
+    const motion = {
+      origin: { documentVersion: current.version, offset: primary.anchor.at.offset },
+      target: { documentVersion: current.version, offset: match.cursor },
+      direction: match.direction,
+      motionKind: linewise ? 'linewise' as const : 'characterwise' as const,
+      inclusive: linewise ? true : searchOffset?.kind === 'end',
+      motionKey: match.direction === 'forward' ? '/' : '?',
+    };
+    const prepared = prepareVimOperator(current, {
+      operator: pendingOperator.operator,
+      motion: { ok: true, value: motion },
+      operatorCount: 1,
+      motionCount: 1,
+      ...(pendingOperator.register === undefined ? {} : { register: pendingOperator.register }),
+      state: { mode: 'normal', repeatTarget: null },
+    });
+    if (!prepared.ok || prepared.value.kind === 'failed') { message('xi: search motion failed\n'); return; }
+    applyOperatorPlan(prepared.value);
+  }
+
     async function executeExCommand(source: string): Promise<'quit' | 'stay'> {
+      // '@:' repeats the last Ex command line (see the 'play-macro' branch in
+      // executeLiteral); tracked here so both live ':' entry and a macro-replayed
+      // ':' line (replayMacroKey) feed the same repeat target.
+      lastExCommand = source;
       const normalized = source.trim();
       const selectionCommand = parseXiSelectionCommand(normalized);
       if (selectionCommand !== undefined) {
@@ -795,7 +1074,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         parser = makeParser(mode, selections);
         return;
       }
-      if (command.kind === 'mode-transition' && command.to === 'insert' && mode === 'normal') {
+      if (command.kind === 'mode-transition' && (command.to === 'insert' || command.to === 'replace') && mode === 'normal') {
         const key = command.key;
         if (!isInsertEntryKey(key)) return;
         const members = selections.members.map((member) => ({ id: member.id, cursorOffset: member.anchor.at.offset }));
@@ -807,24 +1086,74 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         motionCursor = undefined;
         selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
         parser = makeParser(mode, selections);
-        if (members.length === 1) beginInsertRecording(key); else insertEntryKey = undefined;
+        if (members.length === 1) beginInsertRecording(key, command.count.value); else insertEntryKey = undefined;
+        return;
+      }
+      if (command.kind === 'insert-key' && isInsertMode(mode) && insert !== null && command.key === '<C-a>') {
+        // nvim: with nothing inserted yet this session, <C-a> is "E29: No inserted text
+        // yet" -- a no-op, not a literal control byte (which the generic key path below
+        // would otherwise produce via its textKey fallback).
+        if (lastInsertedText.length === 0) { message('xi: E29: No inserted text yet\n'); return; }
+        const planned = planVimMultiInsertInput(document.snapshot(), insert, { kind: 'paste', bytes: new TextEncoder().encode(lastInsertedText) });
+        if (!planned.ok) throw new Error(`xi-insert:${planned.error.kind}`);
+        commitPlan(document, planned.value, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
+        // One opaque insertion, like a paste, not a stream of single keys -- see
+        // handlePaste's identical reasoning for tainting rather than misrepresenting dot.
+        insertTainted = true;
+        insert = planned.value.nextSession;
+        if (insert === null) {
+          mode = 'normal';
+          const primary = planned.value.members.find((member) => member.id === selections.primaryId) ?? planned.value.members[0];
+          const transition = primary?.transition;
+          const cursor = transition?.kind === 'exited' ? transition.plan.cursorOffset : planned.value.members[0]?.transition.plan.cursorOffset;
+          selections = makeNormalSelection(document.snapshot(), cursor ?? offset(0), (selections.selectionGeneration as number) + 1);
+          motionCursor = makeMotionCursor(document.snapshot(), selections);
+          insertEntryKey = undefined;
+        } else {
+          selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
+        }
+        parser = makeParser(mode, selections);
         return;
       }
       if (command.kind === 'insert-key' && isInsertMode(mode) && insert !== null) {
         const planned = planVimMultiInsertInput(document.snapshot(), insert, { kind: 'key', key: command.key });
         if (!planned.ok) throw new Error(`xi-insert:${planned.error.kind}`);
         commitPlan(document, planned.value, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
+        const primaryTransition = (planned.value.members.find((member) => member.id === selections.primaryId) ?? planned.value.members[0])?.transition;
+        // `<C-r>` itself and its `<C-r><C-o>`/`<C-r><C-p>` modifier keys only open/hold the
+        // register-name prompt -- no text yet, so they neither become part of dot's typed
+        // text nor taint it; the resolved register text below is spliced in instead.
+        const isRegisterPrompt = command.key === '<C-r>' || command.key === '<C-o>' || command.key === '<C-p>'
+          || primaryTransition?.kind === 'register-request';
         if (insertEntryKey !== undefined) {
-          const character = command.key === '<Space>' ? ' ' : command.key;
-          if (character.length === 1) insertTypedChars.push(character);
-          else insertTainted = true;
+          if (planned.value.undoAction === 'break') {
+            // A cursor move: nvim starts a new undo/dot-repeat piece here, so only text
+            // typed after this point is replayed by '.'.
+            insertTypedChars = [];
+          } else if (!isRegisterPrompt) {
+            const character = command.key === '<Space>' ? ' ' : command.key;
+            if (character.length === 1) insertTypedChars.push(character);
+            else insertTainted = true;
+          }
         }
         insert = planned.value.nextSession;
+        if (insert !== null && primaryTransition?.kind === 'register-request') {
+          // The register owner resolves the name into literal text; feed it back through
+          // the same opaque-insert path Insert mode's own `<C-a>` reuses, which also clears
+          // the `register-payload` wait on every member regardless of that member's own
+          // request id.
+          const text = resolveInsertRegisterText(primaryTransition.request.registerName);
+          const payloadPlanned = planVimMultiInsertInput(document.snapshot(), insert, { kind: 'paste', bytes: new TextEncoder().encode(text) });
+          if (!payloadPlanned.ok) throw new Error(`xi-insert-register:${payloadPlanned.error.kind}`);
+          commitPlan(document, payloadPlanned.value, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
+          if (insertEntryKey !== undefined && text.length > 0) insertTypedChars.push(text);
+          insert = payloadPlanned.value.nextSession;
+        }
         if (insert === null) {
           mode = 'normal';
           const primary = planned.value.members.find((member) => member.id === selections.primaryId) ?? planned.value.members[0];
           const transition = primary?.transition;
-          const cursor = transition?.kind === 'exited' ? transition.lastInsertCursorOffset : planned.value.members[0]?.transition.plan.cursorOffset;
+          const cursor = transition?.kind === 'exited' ? transition.plan.cursorOffset : planned.value.members[0]?.transition.plan.cursorOffset;
           selections = makeNormalSelection(document.snapshot(), cursor ?? offset(0), (selections.selectionGeneration as number) + 1);
           motionCursor = makeMotionCursor(document.snapshot(), selections);
           // Not the explicit Escape/Ctrl-C leave-mode path below; whether the closing
@@ -842,7 +1171,16 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         commitPlan(document, planned.value, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
         const primary = planned.value.members.find((member) => member.id === selections.primaryId) ?? planned.value.members[0];
         const transition = primary?.transition;
-        const cursor = transition?.kind === 'exited' ? transition.lastInsertCursorOffset : offset(0);
+        if (transition?.kind !== 'exited') {
+          // A pending sub-prompt (e.g. `<C-r>`'s register-name/register-payload wait)
+          // absorbed this Escape/Ctrl-C as its own cancel -- Insert/Replace mode itself
+          // is unaffected, unlike a real leave-mode.
+          insert = planned.value.nextSession;
+          if (insert !== null) selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
+          parser = makeParser(mode, selections);
+          return;
+        }
+        const cursor = transition.plan.cursorOffset;
         insert = null;
         mode = 'normal';
         selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1);
@@ -859,6 +1197,28 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
         motionCursor = makeMotionCursor(document.snapshot(), selections);
         parser = makeParser(mode, selections);
+        return;
+      }
+      if (command.kind === 'begin-search') {
+        commandLine = '';
+        commandLineCursorOffset = 1;
+        commandLineKind = command.direction === 'forward' ? 'search-forward' : 'search-backward';
+        pendingSearchCount = command.count?.value ?? 1;
+        pendingOperatorSearch = undefined;
+        return;
+      }
+      // `d/foo<CR>`/`y?foo<CR>`: the parser resolves a `/`/`?` operator motion key
+      // immediately (packages/vim/parser's own MOTION_KEYS include '/'/'?'), but the
+      // pattern text has not been typed yet -- open the same search prompt and resolve
+      // the operator once the pattern is entered (submitSearchCommandLine).
+      if (command.kind === 'operator-motion' && (command.motion === '/' || command.motion === '?')) {
+        const operator = coreOperator(command.operator.name);
+        if (operator === null) return;
+        commandLine = '';
+        commandLineCursorOffset = 1;
+        commandLineKind = command.motion === '/' ? 'search-forward' : 'search-backward';
+        pendingSearchCount = command.operatorCount.value * command.motionCount.value;
+        pendingOperatorSearch = { operator, register: command.register };
         return;
       }
       if (command.kind === 'operator-motion' || command.kind === 'operator-line' || command.kind === 'operator-text-object') {
@@ -895,12 +1255,57 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         parser = makeParser(mode, selections);
         return;
       }
+      if (command.kind === 'single-key' && isVisualMode(mode) && (command.key === ';' || command.key === ',')) {
+        const found = resolveVimMultiVisualFind({ snapshot: document.snapshot(), selections, invocation: { key: command.key, count: command.count.value }, lastFind, failurePolicy: 'reject-command' });
+        if (!found.ok) return;
+        lastFind = found.value.lastFind;
+        selections = found.value.selection;
+        parser = makeParser(mode, selections);
+        return;
+      }
+      // nvim --clean v_star-default/v_#-default: Visual `*`/`#` searches forward/backward
+      // for the exact selected text as a literal (`\V`) pattern -- no `\<...\>` word
+      // boundaries (unlike Normal `*`/`#`) -- and leaves Visual mode on the primary member.
+      if (command.kind === 'single-key' && (mode === 'visual-character' || mode === 'visual-line') && (command.key === '*' || command.key === '#')) {
+        const target = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
+        let resultCursor = target === undefined ? offset(0) : selectionOffset(target);
+        if (target !== undefined) {
+          const snapshotNow = document.snapshot();
+          const range = normalizeVimOperatorRange(snapshotNow, {
+            origin: { documentVersion: snapshotNow.version, offset: target.anchor.at.offset },
+            target: { documentVersion: snapshotNow.version, offset: target.head.at.offset },
+            direction: (target.head.at.offset as number) >= (target.anchor.at.offset as number) ? 'forward' : 'backward',
+            motionKind: mode === 'visual-line' ? 'linewise' : 'characterwise',
+            inclusive: true,
+            motionKey: command.key,
+            operator: 'yank',
+          });
+          const text = range.ok ? snapshotNow.slice(range.value.start, range.value.end) : undefined;
+          if (text?.ok && text.value.length > 0) {
+            const view = { cursor: target.anchor.at.offset, desiredDisplayColumn: 0, scrollTop: 0, scrollLeft: 0 };
+            const result = searchVimBuffer(snapshotNow, view, searchState, {
+              command: 'search',
+              pattern: literalPattern(text.value),
+              direction: command.key === '*' ? 'forward' : 'backward',
+            });
+            if (result.ok) {
+              searchState = result.value.state;
+              if (result.value.outcome.kind === 'found') resultCursor = result.value.outcome.match.cursor;
+            }
+          }
+        }
+        mode = 'normal';
+        selections = makeNormalSelection(document.snapshot(), resultCursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
+        motionCursor = makeMotionCursor(document.snapshot(), selections);
+        parser = makeParser(mode, selections);
+        return;
+      }
       if (command.kind === 'single-key' && isVisualMode(mode) && (command.key === 'd' || command.key === 'c' || command.key === 'y')) {
         executeVisualOperator(command.key);
         return;
       }
       if (command.kind === 'single-key' && mode === 'normal' && command.key === '.') {
-        executeDotRepeat(command.count.value);
+        executeDotRepeat(command.count.explicit ? command.count.value : undefined);
         return;
       }
       if (command.kind === 'single-key' && mode === 'normal' && (command.key === 'p' || command.key === 'P')) {
@@ -913,6 +1318,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
           command: command.key as 'p' | 'P',
           bank: registers,
           registerName,
+          count: command.count.value,
         });
         if (!planned.ok) return;
         const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
@@ -926,13 +1332,46 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         parser = makeParser(mode, selections);
         return;
       }
-      if (command.kind === 'single-key' && mode === 'normal' && isMotionKey(command.key)) {
+      if (command.kind === 'single-key' && mode === 'normal' && isMotionLike(command.key)) {
+        const invocation = motionInvocation(command.key, command.count.explicit ? command.count.value : undefined);
+        if (invocation === null) return;
+        const motionOptions = (command.key === 'H' || command.key === 'M' || command.key === 'L') ? viewportMotionOptions() : undefined;
+        const moved = resolveVimMultiMotion({ snapshot: document.snapshot(), selections, invocation, failurePolicy: 'reject-command', ...(motionOptions ? { options: motionOptions } : {}) });
+        if (!moved.ok) return;
+        selections = moved.value.selection;
+        motionCursor = makeMotionCursor(document.snapshot(), selections);
+        parser = makeParser(mode, selections);
+        return;
+      }
+      if (command.kind === 'single-key' && mode === 'normal'
+        && (command.key === '%' || command.key === '(' || command.key === ')' || command.key === '{' || command.key === '}')) {
         if (motionCursor === undefined) return;
-        const moved = resolveVimMotion(document.snapshot(), motionCursor, { key: command.key, count: command.count.value });
+        const moved = resolveVimStructuralMotion(document.snapshot(), motionCursor, {
+          key: command.key,
+          ...(command.count.explicit ? { count: command.count.value } : {}),
+        });
         if (!moved.ok) return;
         motionCursor = moved.value.cursor;
         selections = makeNormalSelection(document.snapshot(), moved.value.cursor.offset, (selections.selectionGeneration as number) + 1, selections.primaryId);
         parser = makeParser(mode, selections);
+        return;
+      }
+      if (command.kind === 'single-key' && mode === 'normal' && (command.key === ';' || command.key === ',')) {
+        if (motionCursor === undefined) return;
+        const found = resolveVimFind(document.snapshot(), motionCursor, { key: command.key, count: command.count.value }, lastFind);
+        if (!found.ok) return;
+        lastFind = found.value.lastFind;
+        if (found.value.kind !== 'found') { parser = makeParser(mode, selections); return; }
+        selections = makeNormalSelection(document.snapshot(), found.value.cursor.offset, (selections.selectionGeneration as number) + 1, selections.primaryId);
+        motionCursor = found.value.cursor;
+        parser = makeParser(mode, selections);
+        return;
+      }
+      if (command.kind === 'single-key' && mode === 'normal'
+        && (command.key === '*' || command.key === '#' || command.key === 'n' || command.key === 'N')) {
+        const searchCommand: VimSearchCommand = command.key === '*' ? 'star' : command.key === '#' ? 'hash' : command.key === 'n' ? 'next' : 'previous';
+        runSearchCommand(searchCommand, command.count.value);
+        return;
       }
       if (command.kind === 'single-key' && mode === 'normal' && command.key === 'u') {
         for (let count = 0; count < command.count.value; count += 1) {
@@ -955,20 +1394,26 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         });
         if (!prepared.ok) return;
         if (prepared.value.transaction !== null) {
-          const opened = document.beginUndoGroup(DIRECT_GROUP, 'vim');
+          // A direct change that enters Insert (s/S/C) shares one undo group with the
+          // insert text that follows, matching Neovim's single undo step; the group
+          // is left open here and closed by commitPlan when Insert mode exits.
+          const group = prepared.value.mode === 'insert' ? INSERT_GROUP : DIRECT_GROUP;
+          const opened = document.beginUndoGroup(group, 'vim');
           if (!opened.ok) return;
           const committed = document.commit({
             documentId: prepared.value.transaction.documentId,
             expectedVersion: prepared.value.transaction.expectedVersion,
             edits: prepared.value.transaction.edits,
             origin: 'vim',
-            undoGroup: DIRECT_GROUP,
+            undoGroup: group,
           });
           if (!committed.ok) {
-            document.endUndoGroup(DIRECT_GROUP);
+            document.endUndoGroup(group);
             return;
           }
-          if (!document.endUndoGroup(DIRECT_GROUP).ok) return;
+          if (prepared.value.mode === 'insert') {
+            undoOpen = true;
+          } else if (!document.endUndoGroup(group).ok) return;
           notifyCommitted(committed, options.onDocumentChange);
           if (prepared.value.registerEffect !== null) registers = applyRegisterEffect(registers, prepared.value.registerEffect);
         }
@@ -1026,11 +1471,16 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       }
       const motionCommand = command.kind === 'operator-text-object' || command.kind === 'operator-motion' ? command : null;
       if (motionCommand === null) return;
+      // The motion itself must move by operatorCount * motionCount ("2d3w" deletes 6 words):
+      // prepareVimMultiOperator/prepareVimOperator only validate that product against limits,
+      // they do not re-derive the range from the separate counts (see operators/core.ts).
       const motion = motionInvocation(
         motionCommand.kind === 'operator-text-object' ? motionCommand.textObject : motionCommand.motion,
-        motionCommand.motionCount.value,
+        motionCommand.motionCount.value * motionCommand.operatorCount.value,
       );
       if (motion === null) return;
+      const motionKeyForViewport = motionCommand.kind === 'operator-motion' ? motionCommand.motion : undefined;
+      const motionOptions = (motionKeyForViewport === 'H' || motionKeyForViewport === 'M' || motionKeyForViewport === 'L') ? viewportMotionOptions() : undefined;
       const prepared = prepareVimMultiOperator({
         snapshot: document.snapshot(),
         selections,
@@ -1039,34 +1489,42 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         operatorCount: motionCommand.operatorCount.value,
         motionCount: motionCommand.motionCount.value,
         ...(motionCommand.register === undefined ? {} : { register: motionCommand.register }),
+        ...(motionOptions === undefined ? {} : { motionOptions }),
         state: { mode: 'normal', repeatTarget: null },
         failurePolicy: 'reject-command',
       });
       if (!prepared.ok || prepared.value.transaction === null && prepared.value.cursorOffsets.length === 0) return;
+      const entersInsert = prepared.value.members.some((member) => member.plan?.mode === 'insert');
       if (prepared.value.transaction !== null) {
-        const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
+        // A change (cw/ciw/...) shares one undo group with the insert text that
+        // follows the delete, matching Neovim's single undo step; the group is left
+        // open here and closed by commitPlan when Insert mode exits.
+        const group = entersInsert ? INSERT_GROUP : OPERATOR_GROUP;
+        const opened = document.beginUndoGroup(group, 'vim');
         if (!opened.ok) return;
         const committed = document.commit({
           documentId: prepared.value.transaction.documentId,
           expectedVersion: prepared.value.transaction.expectedVersion,
           edits: prepared.value.transaction.edits,
           origin: 'vim',
-          undoGroup: OPERATOR_GROUP,
+          undoGroup: group,
         });
         if (!committed.ok) {
-          document.endUndoGroup(OPERATOR_GROUP);
+          document.endUndoGroup(group);
           return;
         }
-        if (!document.endUndoGroup(OPERATOR_GROUP).ok) return;
+        if (entersInsert) {
+          undoOpen = true;
+        } else if (!document.endUndoGroup(group).ok) return;
         notifyCommitted(committed, options.onDocumentChange);
       }
       for (const effect of prepared.value.registerEffects) registers = applyRegisterEffect(registers, effect);
       const primary = prepared.value.cursorOffsets.find((member) => member.id === selections.primaryId) ?? prepared.value.cursorOffsets[0];
       const cursor = primary?.offset ?? selectionOffset(selections.members[0]);
-      if (prepared.value.members.some((member) => member.plan?.mode === 'insert')) {
+      if (entersInsert) {
         const entered = beginVimMultiInsert(document.snapshot(), [{ id: selections.primaryId, cursorOffset: cursor }], 'i');
         if (!entered.ok) return;
-          commitPlan(document, entered.value.plan, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
+        commitPlan(document, entered.value.plan, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
         insert = entered.value.session;
         mode = entered.value.session.mode;
         selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
@@ -1137,7 +1595,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       insert = null;
       const closedPrimary = closedMembers?.find((member) => member.id === selections.primaryId) ?? closedMembers?.[0];
       const transition = closedPrimary?.transition;
-      return transition?.kind === 'exited' ? transition.lastInsertCursorOffset : offset(0);
+      return transition?.kind === 'exited' ? transition.plan.cursorOffset : offset(0);
     }
 
     /** Prepare+commit a linewise delete/change (e.g. 'dd'/'cc') at the current primary
@@ -1181,9 +1639,12 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       return plan.mode === 'insert' ? plan.cursorOffset : mapOffsetThroughCommit(current, plan.transaction?.edits ?? [], plan.cursorOffset);
     }
 
-    function executeDotRepeat(explicitCount: number): void {
+    function executeDotRepeat(providedCount: number | undefined): void {
       const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
       if (primary === undefined || primary.kind !== 'normal-cursor' || selections.members.length !== 1) return;
+      // changeRepeatTarget carries no recorded count of its own (unlike the engine's
+      // operator/insert targets below), so an explicit override or the Vim default of 1 apply.
+      const explicitCount = providedCount ?? 1;
 
       if (lastRepeatKind === 'change' && changeRepeatTarget !== undefined) {
         const target = changeRepeatTarget;
@@ -1226,23 +1687,24 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
       const engineTarget = repeatState.target;
       if (engineTarget !== null && engineTarget.kind === 'operator' && engineTarget.forcedKind === 'linewise') {
-        const cursor = replayLinewiseOperator(engineTarget.operator, engineTarget.motionKey, explicitCount, primary.anchor.at.offset);
+        const linewiseCount = providedCount ?? engineTarget.count;
+        const cursor = replayLinewiseOperator(engineTarget.operator, engineTarget.motionKey, linewiseCount, primary.anchor.at.offset);
         if (cursor === undefined) { message('xi: repeat unavailable for the last change\n'); return; }
         mode = 'normal';
         selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
         motionCursor = makeMotionCursor(document.snapshot(), selections);
         parser = makeParser(mode, selections);
-        recordOperatorRepeat('delete', engineTarget.motionKey, explicitCount, 'linewise');
+        recordOperatorRepeat('delete', engineTarget.motionKey, linewiseCount, 'linewise');
         return;
       }
 
       type Resolved =
         | { readonly kind: 'operator'; readonly prepared: Extract<ReturnType<typeof prepareVimMultiOperator>, { readonly ok: true }>['value']; readonly motionKey: string }
-        | { readonly kind: 'insert'; readonly entryKey: VimInsertEntryKey; readonly text: string };
+        | { readonly kind: 'insert'; readonly entryKey: VimInsertEntryKey; readonly text: string; readonly count: number };
       const replay = replayVimDot(repeatState, {
         snapshot: document.snapshot(),
         cursorOffset: primary.anchor.at.offset,
-        count: explicitCount,
+        ...(providedCount === undefined ? {} : { count: providedCount }),
       }, (context): { ok: true; value: Resolved } | { ok: false; error: { readonly kind: 'invalid-target'; readonly reason: 'operator' | 'insert' | 'visual' | 'put' } } => {
         if (context.target.kind === 'operator') {
           const motion = motionInvocation(context.target.motionKey, context.count);
@@ -1260,7 +1722,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
           if (!prepared.ok) return { ok: false, error: { kind: 'invalid-target', reason: 'operator' } };
           return { ok: true, value: { kind: 'operator', prepared: prepared.value, motionKey: context.target.motionKey } };
         }
-        if (context.target.kind === 'insert') return { ok: true, value: { kind: 'insert', entryKey: context.target.entryKey, text: context.target.text } };
+        if (context.target.kind === 'insert') return { ok: true, value: { kind: 'insert', entryKey: context.target.entryKey, text: context.target.text, count: context.count } };
         return { ok: false, error: { kind: 'invalid-target', reason: context.target.kind } };
       });
       if (!replay.ok) {
@@ -1294,12 +1756,14 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         recordOperatorRepeat('delete', resolved.motionKey, replay.value.count);
         return;
       }
-      const cursor = replayInsertText(resolved.entryKey, resolved.text, primary.anchor.at.offset);
+      // A recorded insert's count multiplies the replayed text just as it multiplied the
+      // original insertion (see packages/vim/insert/index.ts's own count-repeat at Escape).
+      const cursor = replayInsertText(resolved.entryKey, resolved.text.repeat(resolved.count), primary.anchor.at.offset);
       mode = 'normal';
       selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1);
       motionCursor = makeMotionCursor(document.snapshot(), selections);
       parser = makeParser(mode, selections);
-      const created = createVimInsertRepeatTarget({ entryKey: resolved.entryKey, mode: 'insert', text: resolved.text });
+      const created = createVimInsertRepeatTarget({ entryKey: resolved.entryKey, mode: 'insert', text: resolved.text, count: resolved.count });
       if (created.ok) {
         const recorded = recordVimRepeatTarget(repeatState, created.value);
         if (recorded.ok) { repeatState = recorded.value; lastRepeatKind = 'engine'; }
@@ -1336,11 +1800,15 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       changeLineMotionKey?: string,
     ): void {
       const beforeSnapshot = document.snapshot();
+      // A change (cc/...) shares one undo group with the insert text that follows the
+      // delete, matching Neovim's single undo step; left open here, closed by commitPlan.
+      const group = plan.mode === 'insert' ? INSERT_GROUP : OPERATOR_GROUP;
       if (plan.transaction !== null) {
-        const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
+        const opened = document.beginUndoGroup(group, 'vim');
         if (!opened.ok) return;
-        const committed = document.commit({ documentId: plan.transaction.documentId, expectedVersion: plan.transaction.expectedVersion, edits: plan.transaction.edits, origin: 'vim', undoGroup: OPERATOR_GROUP });
-        if (!committed.ok || !document.endUndoGroup(OPERATOR_GROUP).ok) return;
+        const committed = document.commit({ documentId: plan.transaction.documentId, expectedVersion: plan.transaction.expectedVersion, edits: plan.transaction.edits, origin: 'vim', undoGroup: group });
+        if (!committed.ok) { document.endUndoGroup(group); return; }
+        if (plan.mode === 'insert') { undoOpen = true; } else if (!document.endUndoGroup(group).ok) return;
         notifyCommitted(committed, options.onDocumentChange);
       }
       registers = applyRegisterEffect(registers, plan.registerEffect);
@@ -1378,6 +1846,11 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         parser = makeParser(mode, selections);
         return;
       }
+      if (command.command === 'play-macro' && command.argument === ':') {
+        if (lastExCommand === undefined) { message('xi: no previous command line\n'); return; }
+        for (let repeat = 0; repeat < command.count.value; repeat += 1) void executeExCommand(lastExCommand);
+        return;
+      }
       if (command.command === 'play-macro') {
         const execution = executeVimMacro(macroStore, command.argument, (context) => {
           if (context.token.kind === 'key') replayMacroKey(context.token.key);
@@ -1392,8 +1865,11 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         const cursor = makeMotionCursor(document.snapshot(), selections);
         if (cursor === undefined) return;
         const found = resolveVimFind(document.snapshot(), cursor, { key, target: command.argument, count: command.count.value }, lastFind);
-        if (!found.ok || found.value.kind !== 'found') return;
+        if (!found.ok) return;
+        // A direct f/F/t/T becomes the repeat target even without a match (Neovim
+        // parity, see motions/find.ts's own contract), so lastFind updates either way.
         lastFind = found.value.lastFind;
+        if (found.value.kind !== 'found') { parser = makeParser(mode, selections); return; }
         selections = makeNormalSelection(document.snapshot(), found.value.cursor.offset, (selections.selectionGeneration as number) + 1, selections.primaryId);
         motionCursor = found.value.cursor;
         parser = makeParser(mode, selections);
@@ -1432,6 +1908,10 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       }
       if (mode === 'normal' && command.prefix === 'g' && command.key === '<') {
         emitHostCommand({ kind: 'lookup', target: '', lookup: 'command-output' });
+        return;
+      }
+      if (mode === 'normal' && command.prefix === 'g' && (command.key === '*' || command.key === '#')) {
+        runSearchCommand(command.key === '*' ? 'gstar' : 'ghash', command.count.value);
         return;
       }
       if (mode === 'normal' && (command.prefix === 'g' || command.prefix === 'ctrl-w' || command.prefix === 'ctrl-w-g')

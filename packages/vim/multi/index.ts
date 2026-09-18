@@ -276,6 +276,65 @@ export function resolveVimMultiFind(
   return { ok: true, value: Object.freeze({ selection: updated.value.selectionSet, members: Object.freeze(members), failedMemberIds: Object.freeze(failedMemberIds), lastFind: sharedLastFind }) };
 }
 
+export interface VimMultiVisualFindInput {
+  readonly snapshot: DocumentSnapshot;
+  readonly selections: SelectionSetSnapshot;
+  readonly invocation: VimFindInvocation;
+  readonly lastFind: VimLastFind | null;
+  readonly options?: VimFindOptions;
+  readonly visualOptions?: VimVisualOptions;
+  readonly failurePolicy?: VimMultiFailurePolicy;
+  readonly cancellation?: CancellationToken;
+  readonly isCancelled?: () => boolean;
+}
+
+export interface VimMultiVisualFindResult {
+  readonly selection: SelectionSetSnapshot;
+  readonly members: readonly VimMultiFindMember[];
+  readonly failedMemberIds: readonly SelectionId[];
+  readonly lastFind: VimLastFind | null;
+}
+
+/**
+ * Visual-mode mirror of `resolveVimMultiFind`: repeats/reverses the last `f`/`F`/`t`/`T`
+ * literal find via `;`/`,`, extending each visual member's head (not collapsing it to a
+ * Normal cursor, unlike the Normal-mode resolver above).
+ */
+export function resolveVimMultiVisualFind(
+  input: VimMultiVisualFindInput,
+): Result<VimMultiVisualFindResult, VimMultiFindFailure> {
+  if (!sameSelectionDocument(input.snapshot, input.selections)) return failure({ kind: 'stale-selection' });
+  if (!input.selections.members.every(isVisualMember)) return failure({ kind: 'invalid-selection' });
+  const policy = input.failurePolicy ?? 'retain-failed';
+  const targets: { readonly id: SelectionId; readonly cursor: VimVisualCursor }[] = [];
+  const members: VimMultiFindMember[] = [];
+  const failedMemberIds: SelectionId[] = [];
+  let sharedLastFind: VimLastFind | null = input.lastFind;
+  for (let index = 0; index < input.selections.members.length; index += 1) {
+    if (cancelled(input)) return failure({ kind: 'cancelled' });
+    const member = input.selections.members[index];
+    if (member === undefined) return failure({ kind: 'invalid-selection' });
+    const cursor = motionCursorForMember(input.snapshot, member);
+    if (!cursor.ok) return failure({ kind: 'invalid-selection' });
+    const outcome = resolveVimFind(input.snapshot, cursor.value, input.invocation, input.lastFind, input.options);
+    if (!outcome.ok) return failure({ kind: 'member-failed', memberId: member.id, memberIndex: index, cause: outcome.error });
+    if (sharedLastFind === input.lastFind || sharedLastFind === null) sharedLastFind = outcome.value.lastFind;
+    if (outcome.value.kind !== 'found') {
+      failedMemberIds.push(member.id);
+      members.push(Object.freeze({ id: member.id, status: 'failed', outcome: outcome.value }));
+      targets.push({ id: member.id, cursor: visualCursorForMember(member) });
+      if (policy === 'reject-command') return failure({ kind: 'member-failed', memberId: member.id, memberIndex: index, cause: { kind: 'no-match', reason: outcome.value.reason } });
+      continue;
+    }
+    const motionOutcome: VimMotionOutcome = Object.freeze({ cursor: outcome.value.cursor, kind: 'characterwise', moved: outcome.value.moved });
+    targets.push({ id: member.id, cursor: visualCursorFromMotion(motionOutcome) });
+    members.push(Object.freeze({ id: member.id, status: 'completed', outcome: outcome.value }));
+  }
+  const extended = extendVimVisualSelection(input.snapshot, input.selections, targets, input.visualOptions);
+  if (!extended.ok) return failure({ kind: 'selection-update-failed' });
+  return { ok: true, value: Object.freeze({ selection: extended.value, members: Object.freeze(members), failedMemberIds: Object.freeze(failedMemberIds), lastFind: sharedLastFind }) };
+}
+
 export type VimMultiSearchFailure =
   | { readonly kind: 'stale-selection' }
   | { readonly kind: 'invalid-selection' }
@@ -719,7 +778,10 @@ function visualMemberMotion(
 function operatorMotionInclusive(key: string): boolean {
   // Character motions select the traversed characters; the endpoint is
   // exclusive for h/l and their arrow aliases, so `dl`/`dh` match `x`.
-  return !new Set(['h', 'l', '<Left>', '<Right>', 'w', 'W', 'b', 'B', 'e', 'E', 'ge', 'gE']).has(key);
+  // e/E/ge/gE are inclusive: they land on the last character of a word, and
+  // operators must consume that character too (`de` on "foo bar" -> " bar").
+  // `{`/`}` (paragraph motions) are exclusive charwise motions.
+  return !new Set(['h', 'l', '<Left>', '<Right>', 'w', 'W', 'b', 'B', '{', '}']).has(key);
 }
 
 function mapOperatorCursors(

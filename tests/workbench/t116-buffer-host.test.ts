@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { asIdentifier, type DocumentId, type ViewId } from '../../packages/primitives/src/index';
+import { asIdentifier, asUtf16Offset, type DocumentId, type ViewId } from '../../packages/primitives/src/index';
 import { TextFileDocument } from '../../packages/document/src/index';
 import { WorkbenchSession } from '../../packages/workbench/session/index';
 import { BufferHost } from '../../packages/workbench/host/index';
@@ -68,6 +68,36 @@ session.promoteBuffer(previewOpen?.bufferId as DocumentId);
 const keptDiscard = host.discardPreviewView(previewViewId);
 assert.equal(keptDiscard.ok, false, 'T116-HOST-05b a promoted buffer is never discarded as a stale preview');
 assert.equal(host.sessions.has(previewViewId), true, 'T116-HOST-05c the promoted session survives');
+
+// T116-HOST-05d: opening a second preview replaces the first instead of stacking a tab.
+disk.set('/workspace/preview-1.txt', 'p1-content\n');
+disk.set('/workspace/preview-2.txt', 'p2-content\n');
+session.focus(launchViewId);
+const firstPreview = await host.openBufferAtPath('/workspace/preview-1.txt', { preview: true });
+assert.ok(firstPreview !== undefined, 'T116-HOST-05d1 first preview opens');
+const secondPreview = await host.openBufferAtPath('/workspace/preview-2.txt', { preview: true });
+assert.ok(secondPreview !== undefined, 'T116-HOST-05d2 second preview opens');
+assert.notEqual(secondPreview?.viewId, firstPreview?.viewId, 'T116-HOST-05d3 a fresh view backs the replacement preview');
+assert.equal(session.buffer(firstPreview!.bufferId), undefined, 'T116-HOST-05d4 the first preview buffer is gone from the session');
+assert.equal(host.sessions.has(firstPreview!.viewId), false, 'T116-HOST-05d5 the first preview session is disposed');
+assert.equal(host.documents.has(firstPreview!.bufferId), false, 'T116-HOST-05d6 the first preview document is dropped');
+assert.equal(session.buffer(secondPreview!.bufferId)?.preview, true, 'T116-HOST-05d7 the replacement buffer is itself a preview');
+
+// T116-HOST-05e: a dirty preview is kept (never silently discarded), and a new preview
+// opens alongside it rather than the request failing outright.
+const dirtyBufferId = secondPreview!.bufferId;
+const dirtyDocument = host.documents.get(dirtyBufferId);
+assert.ok(dirtyDocument !== undefined, 'T116-HOST-05e0 the preview document is tracked');
+const firstOffset = asUtf16Offset(0);
+if (!firstOffset.ok) throw new Error('offset fixture');
+assert.equal(dirtyDocument!.apply({ start: firstOffset.value, end: firstOffset.value, text: 'X' }, dirtyDocument!.version).ok, true, 'T116-HOST-05e1 dirtying the preview document');
+assert.equal(dirtyDocument!.isDirty, true, 'T116-HOST-05e2 the preview buffer is now dirty');
+disk.set('/workspace/preview-3.txt', 'p3-content\n');
+const thirdPreview = await host.openBufferAtPath('/workspace/preview-3.txt', { preview: true });
+assert.ok(thirdPreview !== undefined, 'T116-HOST-05e3 a new preview opens instead of failing');
+assert.equal(session.buffer(dirtyBufferId) !== undefined, true, 'T116-HOST-05e4 the dirty preview buffer is kept, not discarded');
+assert.equal(session.buffer(dirtyBufferId)?.preview, true, 'T116-HOST-05e6 the dirty buffer remains a preview, unpromoted');
+assert.equal(session.buffer(thirdPreview!.bufferId)?.preview, true, 'T116-HOST-05e7 the new buffer is also a preview (two previews coexist)');
 
 // T116-HOST-06: closeAllPanels respects `keep`, except for panels registered with alwaysClose.
 let searchClosed = false;

@@ -337,7 +337,10 @@ export class RipgrepSearchBackend implements SearchBackend {
   async search(query: SearchQuery, cancellation: CancellationToken, generation: number, onBatch?: (matches: readonly SearchMatch[]) => void): Promise<Result<readonly SearchMatch[], SearchFailure>> {
     if (cancellation.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
     if (query.query.length === 0) return { ok: true, value: Object.freeze([]) };
-    const args: string[] = [this.#executable, '--json', '--no-heading', '--color', 'never', '--line-number'];
+    // A minified/generated line with no line breaks can be megabytes long; without a column
+    // cap rg still matches and emits it in full, which is exactly the pathological input the
+    // output-byte cap below exists to guard against.
+    const args: string[] = [this.#executable, '--json', '--no-heading', '--color', 'never', '--line-number', '--max-columns', '4096'];
     if (query.includeHidden === true) args.push('--hidden');
     args.push('--glob', '!.git/**', '--glob', '!node_modules/**');
     if (query.caseSensitive !== true) args.push('--ignore-case');
@@ -366,8 +369,16 @@ export class RipgrepSearchBackend implements SearchBackend {
     if (cancellation.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
     // A capped stop kills rg itself; its exit code/signal reflects that kill, not a failure.
     if (capped) return parsed;
-    if (!exited.ok) return { ok: false, error: { kind: 'backend', message: exited.error.message } };
+    // A timeout or a killed process (e.g. the output-byte cap terminating rg) still leaves
+    // whatever matches were already parsed from stdout before the kill; returning failure here
+    // would discard real, already-verified results instead of surfacing them as a (partial)
+    // success.
+    if (!exited.ok) {
+      if (parsed.value.length > 0) return parsed;
+      return { ok: false, error: { kind: 'backend', message: exited.error.message } };
+    }
     if (exited.value.code !== 0 && exited.value.code !== 1) {
+      if (parsed.value.length > 0) return parsed;
       return { ok: false, error: { kind: 'backend', message: stderr.length > 0 ? stderr : `rg exited with code ${String(exited.value.code)}` } };
     }
     return parsed;
@@ -401,17 +412,16 @@ async function parseRipgrepOutput(
   const matches: SearchMatch[] = [];
   let pending = '';
   let outputBytes = 0;
-  let overflow = false;
   let capped = false;
   let emitted = 0;
   for await (const chunk of handle.stdout) {
     if (cancellation.isCancelled) return { result: { ok: false, error: { kind: 'cancelled' } }, capped: false };
     outputBytes += chunk.byteLength;
-    if (outputBytes > maxOutputBytes) {
-      overflow = true;
-      await handle.terminate(50);
-      break;
-    }
+    // The byte cap is checked after parsing this chunk's complete lines (below), not before:
+    // a single stdout read can carry many complete lines and cross the cap in the same chunk,
+    // and those already-decoded lines must still be kept, not discarded just because the cap
+    // was reached partway through the chunk that contained them.
+    const overCap = outputBytes > maxOutputBytes;
     pending += decoder.decode(chunk, { stream: true });
     // Index cursor instead of `pending = pending.slice(newline + 1)` per line: that repeated
     // slice re-copies the remaining tail on every line in a chunk (O(n^2) over a chunk with
@@ -436,6 +446,7 @@ async function parseRipgrepOutput(
       newline = pending.indexOf('\n', cursor);
     }
     pending = pending.slice(cursor);
+    if (overCap) capped = true;
     if (capped) {
       await handle.terminate(50);
       break;
@@ -453,7 +464,7 @@ async function parseRipgrepOutput(
     }
   }
   if (onBatch !== undefined && emitted < matches.length) onBatch(Object.freeze(matches.slice(emitted)));
-  if (overflow) return { result: { ok: false, error: { kind: 'backend', message: `search output exceeded ${String(maxOutputBytes)} bytes` } }, capped: false };
+  // matches parsed before the byte cap (or maxResults) are kept via `capped`, not discarded.
   return { result: { ok: true, value: Object.freeze(matches) }, capped };
 }
 

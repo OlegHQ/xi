@@ -9,7 +9,7 @@ export type GitFailure = { readonly kind: 'malformed' | 'unavailable' | 'stale' 
 export function parsePorcelainV2Z(root: string, bytes: Uint8Array, generation: number, branch?: string): Result<GitStatusSnapshot, GitFailure> {
   let text: string; try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { return { ok: false, error: { kind: 'malformed', message: 'git status is not UTF-8' } }; }
   const values = text.split('\0').filter((value) => value.length > 0); const entries: GitStatusEntry[] = [];
-  for (let index = 0; index < values.length; index += 1) { const value = values[index]; if (value === undefined) continue; if (value.startsWith('# ')) continue; if (value.startsWith('1 ')) { const fields = value.split(' '); const code = fields[1] ?? '  '; const path = fields.slice(8).join(' '); entries.push(entry(path, code[0] ?? ' ', code[1] ?? ' ')); continue; } if (value.startsWith('2 ')) { const fields = value.split(' '); const code = fields[1] ?? '  '; const path = fields.slice(9).join(' '); const original = values[index + 1]; if (original === undefined) return { ok: false, error: { kind: 'malformed', message: 'rename record missing original path' } }; index += 1; entries.push({ ...entry(path, code[0] ?? ' ', code[1] ?? ' '), state: 'renamed', originalPath: original }); continue; } if (value.startsWith('u ')) { const fields = value.split(' '); const path = fields.slice(11).join(' '); entries.push({ ...entry(path, 'U', 'U'), state: 'conflicted', conflict: true, staged: true, unstaged: true }); continue; } if (value.startsWith('? ')) { entries.push({ ...entry(value.slice(2), '?', '?'), state: 'untracked', staged: false, unstaged: true, conflict: false }); continue; } if (value.startsWith('! ')) { entries.push({ ...entry(value.slice(2), '!', '!'), state: 'ignored', staged: false, unstaged: false, conflict: false }); continue; } return { ok: false, error: { kind: 'malformed', message: `unknown porcelain record ${value.slice(0, 2)}` } }; }
+  for (let index = 0; index < values.length; index += 1) { const value = values[index]; if (value === undefined) continue; if (value.startsWith('# ')) continue; if (value.startsWith('1 ')) { const fields = value.split(' '); const code = fields[1] ?? '  '; const path = fields.slice(8).join(' '); entries.push(entry(path, code[0] ?? ' ', code[1] ?? ' ')); continue; } if (value.startsWith('2 ')) { const fields = value.split(' '); const code = fields[1] ?? '  '; const path = fields.slice(9).join(' '); const original = values[index + 1]; if (original === undefined) return { ok: false, error: { kind: 'malformed', message: 'rename record missing original path' } }; index += 1; entries.push({ ...entry(path, code[0] ?? ' ', code[1] ?? ' '), state: 'renamed', originalPath: original }); continue; } if (value.startsWith('u ')) { const fields = value.split(' '); const path = fields.slice(10).join(' '); entries.push({ ...entry(path, 'U', 'U'), state: 'conflicted', conflict: true, staged: true, unstaged: true }); continue; } if (value.startsWith('? ')) { entries.push({ ...entry(value.slice(2), '?', '?'), state: 'untracked', staged: false, unstaged: true, conflict: false }); continue; } if (value.startsWith('! ')) { entries.push({ ...entry(value.slice(2), '!', '!'), state: 'ignored', staged: false, unstaged: false, conflict: false }); continue; } return { ok: false, error: { kind: 'malformed', message: `unknown porcelain record ${value.slice(0, 2)}` } }; }
   return { ok: true, value: Object.freeze({ root, generation, entries: Object.freeze(entries), branch }) };
 }
 
@@ -55,6 +55,10 @@ export class GitHistoryController implements Disposable {
 }
 
 const DEFAULT_STATUS_TIMEOUT_MILLISECONDS = 5_000;
+/** Mutations (stage/commit/push/pull/etc.) can legitimately run far longer than a status
+ * poll, e.g. a push/pull that waits on the network or a large commit hook; the 5 s status
+ * timeout would abort those mid-flight. */
+const DEFAULT_MUTATION_TIMEOUT_MILLISECONDS = 120_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export interface GitStatusServiceOptions {
@@ -125,12 +129,18 @@ export class GitStatusService implements Disposable {
     if (!spawned.ok) { this.#notRepo = true; this.#publishEmpty(generation); return; }
     const handle = spawned.value;
     try {
-      const [stdout, , exit] = await Promise.all([
+      const [stdout, stderr, exit] = await Promise.all([
         drain(handle.stdout, DEFAULT_MAX_OUTPUT_BYTES),
         drain(handle.stderr, DEFAULT_MAX_OUTPUT_BYTES),
         handle.exit,
       ]);
-      if (!exit.ok || exit.value.code !== 0 || !stdout.ok) { this.#notRepo = true; this.#publishEmpty(generation); return; }
+      if (!exit.ok || !stdout.ok) { this.#publishEmpty(generation); return; }
+      if (exit.value.code !== 0) {
+        const stderrText = stderr.ok ? new TextDecoder('utf-8').decode(stderr.value) : '';
+        if (exit.value.code === 128 && stderrText.includes('not a git repository')) this.#notRepo = true;
+        this.#publishEmpty(generation);
+        return;
+      }
       const branch = parseBranch(stdout.value);
       const parsed = parsePorcelainV2Z(this.#root, stdout.value, generation, branch);
       if (!parsed.ok) return;
@@ -180,7 +190,7 @@ async function drain(stream: AsyncIterable<Uint8Array>, limit: number): Promise<
 }
 
 /** GitMutationExecutor implementation over the platform process port; stdin carries commit messages. */
-export function createProcessGitMutationExecutor(process: ProcessPort, root: string, env: Readonly<Record<string, string>> = {}): GitMutationExecutor {
+export function createProcessGitMutationExecutor(process: ProcessPort, root: string, env: Readonly<Record<string, string>> = {}, timeoutMilliseconds: number = DEFAULT_MUTATION_TIMEOUT_MILLISECONDS): GitMutationExecutor {
   return {
     async run(argv: readonly string[], input?: string) {
       if (argv.length === 0) return { ok: false, error: { kind: 'apply', message: 'git mutation has no argv' } };
@@ -190,7 +200,7 @@ export function createProcessGitMutationExecutor(process: ProcessPort, root: str
         cwd: root,
         env,
         stdin: input === undefined ? 'ignore' : 'pipe',
-        timeoutMilliseconds: DEFAULT_STATUS_TIMEOUT_MILLISECONDS,
+        timeoutMilliseconds,
         cancellation: cancellation.token,
       });
       if (!spawned.ok) return { ok: false, error: { kind: 'unavailable', message: spawned.error.message } };

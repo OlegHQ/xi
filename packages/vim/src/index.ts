@@ -260,6 +260,7 @@ export {
   resolveVimMultiFind,
   resolveVimMultiMotion,
   resolveVimMultiSearch,
+  resolveVimMultiVisualFind,
   resolveVimMultiVisualMotion,
   setVimMultiPrimaryMark,
 } from '../multi';
@@ -287,6 +288,8 @@ export type {
   VimMultiOperatorMember,
   VimMultiOperatorPlan,
   VimMultiStateFailure,
+  VimMultiVisualFindInput,
+  VimMultiVisualFindResult,
   VimMultiVisualMotionInput,
   VimMultiVisualMotionResult,
 } from '../multi';
@@ -480,6 +483,7 @@ export {
   EMPTY_VIM_SEARCH_STATE,
   VimSearchPreview,
   beginVimSearch,
+  literalPattern,
   parseVimSubstituteCommand,
   prepareVimSubstitute,
   searchVimBuffer,

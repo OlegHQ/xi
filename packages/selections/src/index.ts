@@ -269,10 +269,27 @@ export function mapSelectionSet(
       if (endpoint.kind === 'character') endpoints.push({ memberIndex, field, part: 'after', endpoint });
     }
   }
+  // A Normal-mode character endpoint must stay exactly one character wide: its `after` boundary
+  // marks where the character ends, not an insertion point that should absorb text inserted
+  // exactly there. Such an `after` is queried with left affinity so it stays put (rather than the
+  // stored right affinity, which would grow the character to swallow the insertion), while the
+  // endpoint's own recorded affinity (restored below) is left untouched for provenance.
+  const restoreAffinity = new Map<number, EndpointAffinity>();
   for (let token = 0; token < endpoints.length; token += 1) {
     const entry = endpoints[token];
     if (entry === undefined) return failure('invalid-endpoint');
-    anchors.push({ token, anchor: entry.part === 'after' && entry.endpoint.kind === 'character' ? entry.endpoint.after : entry.endpoint.at });
+    if (entry.part === 'after' && entry.endpoint.kind === 'character') {
+      const member = set.members[entry.memberIndex];
+      const after = entry.endpoint.after;
+      if (member?.kind === 'normal-cursor' && after.affinity !== 'left') {
+        restoreAffinity.set(token, after.affinity);
+        anchors.push({ token, anchor: Object.freeze({ ...after, affinity: 'left' as const }) });
+        continue;
+      }
+      anchors.push({ token, anchor: after });
+      continue;
+    }
+    anchors.push({ token, anchor: entry.endpoint.at });
   }
   anchors.sort((left, right) => (left.anchor.offset as number) - (right.anchor.offset as number) || left.token - right.token);
   const mappedResult = changeMap.mapSortedAnchors(anchors.map((entry) => entry.anchor));
@@ -283,7 +300,8 @@ export function mapSelectionSet(
     const original = anchors[index];
     const mapped = mappedResult.value[index];
     if (original === undefined || mapped === undefined) return failure('invalid-change-map');
-    mappedOffsets.set(original.token, { offset: mapped.offset, affinity: mapped.affinity });
+    const affinity = restoreAffinity.get(original.token) ?? mapped.affinity;
+    mappedOffsets.set(original.token, { offset: mapped.offset, affinity });
   }
 
   const endpointParts = new Map<string, { at?: DocumentAnchor; after?: DocumentAnchor }>();
@@ -540,7 +558,7 @@ function canonicalize(
   for (const grouped of groups) {
     const group = grouped.members;
     const retained = chooseRetained(group, primaryId);
-    const merged = mergeGroup(group, retained);
+    const merged = mergeGroup(group, retained, snapshot);
     finalMembers.push(merged);
     for (const oldMember of group) oldToNew.set(oldMember.id, retained.id);
     if (group.some((member) => member.id === primaryId)) finalPrimary = retained.id;
@@ -656,30 +674,54 @@ function canJoinGroup(group: SelectionGroup, candidate: SelectionMember): boolea
   return false;
 }
 
-function mergeGroup(group: readonly SelectionMember[], retained: SelectionMember): SelectionMember {
+function mergeGroup(group: readonly SelectionMember[], retained: SelectionMember, snapshot: DocumentSnapshot): SelectionMember {
   if (group.length === 1) return retained;
   switch (retained.kind) {
     case 'normal-cursor':
     case 'insert-caret': return retained;
-    case 'visual-character': return mergeVisualCharacter(group as readonly VisualCharacterMember[], retained);
+    case 'visual-character': return mergeVisualCharacter(group as readonly VisualCharacterMember[], retained, snapshot);
     case 'visual-line': return mergeVisualLine(group as readonly VisualLineMember[], retained);
     case 'visual-block': return mergeVisualBlock(group as readonly VisualBlockMember[], retained);
   }
 }
 
-function mergeVisualCharacter(group: readonly VisualCharacterMember[], retained: VisualCharacterMember): VisualCharacterMember {
+/**
+ * Finds the group endpoint whose own boundary (its `at` offset, or its exclusive end for a
+ * `useEnd` boundary) already equals `target`; if two overlapping members produced `target` via
+ * their own differing direction/inclusivity, no literal endpoint may sit exactly there, so this
+ * falls back to synthesizing the canonical character endpoint at that offset.
+ */
+function boundaryCharacterEndpoint(
+  candidates: readonly VisualCharacterEndpoint[],
+  snapshot: DocumentSnapshot,
+  target: number,
+  useEnd: boolean,
+): VisualCharacterEndpoint {
+  const found = candidates.find((endpoint) => (useEnd ? endpointEnd(endpoint) : endpoint.at.offset as number) === target);
+  if (found !== undefined) return found;
+  const affinity = candidates[0]?.at.affinity ?? 'right';
+  const offset = useEnd ? target - 1 : target;
+  if (offset >= 0) {
+    const anchor = createDocumentAnchor(snapshot, offset as Utf16Offset, affinity);
+    if (anchor.ok) {
+      const synthesized = semanticEndpointAt(snapshot, anchor.value);
+      if (synthesized.ok) return synthesized.value;
+    }
+  }
+  return chooseEndpoint(candidates, () => true);
+}
+
+function mergeVisualCharacter(
+  group: readonly VisualCharacterMember[],
+  retained: VisualCharacterMember,
+  snapshot: DocumentSnapshot,
+): VisualCharacterMember {
   const ranges = group.map((member) => characterCoverage(member));
   const low = Math.min(...ranges.map((range) => range.start));
   const high = Math.max(...ranges.map((range) => range.end));
   const starts = group.flatMap((member) => [member.anchor, member.head]);
-  const lowAt = chooseEndpoint(starts, (endpoint) => {
-    const boundary = retained.direction === 'backward' && !retained.inclusive ? endpointEnd(endpoint) : endpoint.at.offset as number;
-    return boundary === low;
-  });
-  const highAt = chooseEndpoint(starts, (endpoint) => {
-    const boundary = retained.direction === 'forward' && !retained.inclusive ? endpoint.at.offset as number : endpointEnd(endpoint);
-    return boundary === high;
-  });
+  const lowAt = boundaryCharacterEndpoint(starts, snapshot, low, retained.direction === 'backward' && !retained.inclusive);
+  const highAt = boundaryCharacterEndpoint(starts, snapshot, high, !(retained.direction === 'forward' && !retained.inclusive));
   let anchor: VisualCharacterEndpoint;
   let head: VisualCharacterEndpoint;
   if (retained.direction === 'forward') { anchor = lowAt; head = highAt; }
@@ -708,11 +750,34 @@ function mergeVisualLine(group: readonly VisualLineMember[], retained: VisualLin
   });
 }
 
+function blockCornerAt(
+  endpoints: readonly BlockCellEndpoint[],
+  lineIndex: number,
+  displayCellColumn: number,
+): BlockCellEndpoint | undefined {
+  return endpoints.find((endpoint) => endpoint.lineIndex as number === lineIndex && endpoint.displayCellColumn as number === displayCellColumn);
+}
+
 function mergeVisualBlock(group: readonly VisualBlockMember[], retained: VisualBlockMember): VisualBlockMember {
   const endpoints = group.flatMap((member) => [member.anchor, member.head]);
   const shape = group.map(blockShape).reduce(unionBounds);
-  const anchor = chooseEndpoint(endpoints, (endpoint) => endpoint.lineIndex as number === shape.top && endpoint.displayCellColumn as number === shape.left);
-  const head = chooseEndpoint(endpoints, (endpoint) => endpoint.lineIndex as number === shape.bottom && endpoint.displayCellColumn as number === shape.right);
+  // A block member's anchor/head may sit on either diagonal of its rectangle (blockShape only
+  // takes their min/max), so the union's corners may show up as (top,left)+(bottom,right) or as
+  // the other diagonal, (top,right)+(bottom,left) -- both fully determine the same rectangle.
+  let anchor = blockCornerAt(endpoints, shape.top, shape.left);
+  let head = blockCornerAt(endpoints, shape.bottom, shape.right);
+  if (anchor === undefined || head === undefined) {
+    const altAnchor = blockCornerAt(endpoints, shape.top, shape.right);
+    const altHead = blockCornerAt(endpoints, shape.bottom, shape.left);
+    if (altAnchor !== undefined && altHead !== undefined) {
+      anchor = altAnchor;
+      head = altHead;
+    }
+  }
+  // Geometrically every valid rectangle union has one of the two diagonals above, so this is
+  // an unreachable-but-safe fallback rather than a real synthesis path.
+  anchor ??= endpoints.find((endpoint) => endpoint.lineIndex as number === shape.top) ?? endpoints[0] as BlockCellEndpoint;
+  head ??= endpoints.find((endpoint) => endpoint.lineIndex as number === shape.bottom) ?? endpoints[0] as BlockCellEndpoint;
   const directedAnchor = retained.direction === 'forward' ? anchor : head;
   const directedHead = retained.direction === 'forward' ? head : anchor;
   return Object.freeze({

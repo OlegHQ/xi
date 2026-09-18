@@ -1,4 +1,4 @@
-import { asIdentifier, asUtf16Offset, type CancellationToken, CancellationSource, type Disposable, type DocumentId, type Result, type UndoGroupId, type ViewId } from '../../contracts/src/index';
+import { asIdentifier, asUtf16Offset, type CancellationToken, CancellationSource, type ClockPort, type Disposable, type DocumentId, type Result, type UndoGroupId, type ViewId } from '../../contracts/src/index';
 import type { DocumentEdit, DocumentSnapshot } from '../../document/src/index';
 import type { TextFileDocument } from '../../document/src/entrypoints/launch';
 import type { BufferHost } from '../host';
@@ -30,12 +30,15 @@ export interface SaveCoordinatorPersistencePort {
   saveFile(document: TextFileDocument, path: string, cancellation: CancellationToken): Promise<Result<unknown, PersistenceFailure>>;
   clearRecovery(path: string, cancellation: CancellationToken): Promise<Result<unknown, PersistenceFailure>>;
   checkpoint(document: TextFileDocument, path: string, cancellation: CancellationToken): Promise<Result<unknown, PersistenceFailure>>;
+  /** Stop and await any checkpoint write already in progress for `path` (see PersistenceService). */
+  cancelPendingCheckpoint?(path: string): Promise<void>;
 }
 
 export interface SaveCoordinatorOptions {
   readonly host: BufferHost;
   readonly session: WorkbenchSession;
   readonly persistence: SaveCoordinatorPersistencePort;
+  readonly clock: ClockPort;
   readonly marker: (name: string, payload?: unknown) => void;
   /** PTY-visible stderr sink; never writes to `process.stderr` itself. */
   readonly onError: (message: string) => void;
@@ -61,7 +64,10 @@ export interface SaveCoordinatorOptions {
 export class SaveCoordinator implements Disposable {
   readonly #options: SaveCoordinatorOptions;
   readonly #pendingSaves = new Map<string, Promise<boolean>>();
-  readonly #checkpointTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #checkpointTimers = new Map<string, Disposable>();
+  // Tracks a checkpoint write already in flight (its debounce timer already fired) so a save
+  // started while it is running can await it instead of racing it to disk.
+  readonly #inFlightCheckpoints = new Map<string, Promise<void>>();
   readonly #checkpointDebounceMilliseconds: number;
   #formatterPipeline: FormatterPipelinePort | undefined;
   #formattingInitialization: Promise<void> | undefined;
@@ -86,7 +92,18 @@ export class SaveCoordinator implements Disposable {
     const key = String(sessionDocument.id);
     const existing = this.#pendingSaves.get(key);
     if (existing !== undefined) return existing;
-    const save = (): Promise<boolean> => this.#saveWithConfiguredFormatter(sessionDocument, path, viewId);
+    // A save must not race a crash-recovery checkpoint for the same document: cancel any
+    // still-debouncing checkpoint outright, and await one already writing so the save's own
+    // write (and its clearRecovery) always lands after it, never concurrently with it. No
+    // checkpoint is rescheduled here afterward -- only a later edit reschedules one.
+    const existingTimer = this.#checkpointTimers.get(key);
+    if (existingTimer !== undefined) { existingTimer.dispose(); this.#checkpointTimers.delete(key); }
+    const inFlightCheckpoint = this.#inFlightCheckpoints.get(key);
+    const save = async (): Promise<boolean> => {
+      if (inFlightCheckpoint !== undefined) await inFlightCheckpoint;
+      await this.#options.persistence.cancelPendingCheckpoint?.(path);
+      return this.#saveWithConfiguredFormatter(sessionDocument, path, viewId);
+    };
     const pending = this.#options.formatOnSave ? this.ensureFormatting().then(save) : save();
     this.#pendingSaves.set(key, pending);
     void pending.then(
@@ -101,11 +118,13 @@ export class SaveCoordinator implements Disposable {
   scheduleCheckpoint(documentId: DocumentId): void {
     const key = String(documentId);
     const existing = this.#checkpointTimers.get(key);
-    if (existing !== undefined) clearTimeout(existing);
-    this.#checkpointTimers.set(key, setTimeout(() => {
+    if (existing !== undefined) existing.dispose();
+    this.#checkpointTimers.set(key, this.#options.clock.schedule(this.#checkpointDebounceMilliseconds, () => {
       this.#checkpointTimers.delete(key);
-      void this.#writeCheckpoint(documentId);
-    }, this.#checkpointDebounceMilliseconds));
+      const write = this.#writeCheckpoint(documentId);
+      this.#inFlightCheckpoints.set(key, write);
+      void write.finally(() => { if (this.#inFlightCheckpoints.get(key) === write) this.#inFlightCheckpoints.delete(key); });
+    }));
   }
 
   /** Runs the environment-configured formatter over the active view's document, then
@@ -128,7 +147,7 @@ export class SaveCoordinator implements Disposable {
 
   dispose(): void {
     this.#tornDown = true;
-    for (const timer of this.#checkpointTimers.values()) clearTimeout(timer);
+    for (const timer of this.#checkpointTimers.values()) timer.dispose();
     this.#checkpointTimers.clear();
     this.#formatterPipeline?.dispose();
   }

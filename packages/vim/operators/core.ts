@@ -331,14 +331,18 @@ function makeRegisterEffect(
   range: VimNormalizedOperatorRange,
 ): VimOperatorRegisterEffect {
   const hasNewline = range.registerLines.length > 1;
-  const destination = requestedRegister ?? (operator === 'yank'
-    ? '0'
-    : range.kind === 'linewise' || hasNewline ? '1' : '-');
+  // A "small" delete/change (charwise, single line) never rotates the
+  // numbered registers, regardless of whether a register was named.
+  const isSmall = range.kind !== 'linewise' && !hasNewline;
+  const destination = requestedRegister ?? (operator === 'yank' ? '0' : isSmall ? '-' : '1');
   return Object.freeze({
     operation: operator,
     destination,
     alsoUnnamed: destination !== '_',
-    rotateNumbered: requestedRegister === undefined && operator !== 'yank' && destination === '1',
+    // Numbered register "1 always receives a non-small delete/change, even
+    // when the command also named an explicit register (`"add` still sets
+    // "1 in Neovim).
+    rotateNumbered: operator !== 'yank' && !isSmall,
     lines: range.registerLines,
     type: range.registerType,
   });
@@ -350,7 +354,10 @@ function cursorAfterOperator(
   range: VimNormalizedOperatorRange,
   operator: VimCoreOperator,
 ): Utf16Offset {
-  if (operator === 'yank') return motion.origin.offset;
+  // Forward/same-line yanks leave the cursor where it was; a backward yank
+  // (e.g. `yb`, `yk`) moves the cursor back to the motion's target, keeping
+  // its resolved column rather than snapping to the range's raw start byte.
+  if (operator === 'yank') return motion.direction === 'backward' ? motion.target.offset : motion.origin.offset;
   if (operator === 'change') return range.insertionOffset;
   if (range.kind === 'blockwise') return range.start;
   if (range.kind === 'linewise') {

@@ -23,7 +23,112 @@ export async function verifyArchitectureContracts(): Promise<readonly string[]> 
   verifyServicesFeatureBoundary(failures);
   verifyUnknownDataValidation(failures);
   verifyCompositionRootOwnership(failures);
+  await verifyWiringModulesCompose(failures);
   return failures;
+}
+
+/** ARCH-COMPOSITION-ROOT-01 follow-up: the language and git/explorer/search wiring modules
+ * apps/xi/src/wiring/* extracted from `main()` must compose headlessly with fakes -- exactly
+ * the "no module-level mutable state, explicit deps" contract the ticket requires -- and must
+ * not leak disposables when the state they own is never actually populated (language wiring
+ * with no resolvable launch file) or once it is populated and disposed (git wiring). */
+async function verifyWiringModulesCompose(failures: string[]): Promise<void> {
+  const { createLanguageWiring } = await import('../../apps/xi/src/wiring/language');
+  const { createOptionalServicesWiring } = await import('../../apps/xi/src/wiring/optional-services');
+  const { NodeFilesystemPort } = await import('../../packages/platform/src/entrypoints/launch');
+  const { DiagnosticStore } = await import('../../packages/services/src/entrypoints/launch');
+  const { openTextDocument } = await import('../../packages/document/src/entrypoints/launch');
+
+  class FakeProcessPort {
+    spawn(): ReturnType<import('../../packages/contracts/src/index').ProcessPort['spawn']> {
+      return Promise.resolve({ ok: false, error: { code: 'fake-process-unavailable', message: 'architecture smoke: no process is ever actually spawned', retryable: false } });
+    }
+  }
+
+  // Language wiring: a launch document with no resolvable languageId (no configured
+  // languages, path undefined) never dials out -- `ensureLanguage()` must resolve cleanly
+  // and every disposable-shaped getter must stay `undefined` (nothing was ever created, so
+  // there is nothing to leak).
+  const opened = openTextDocument(asDocumentId('architecture:wiring:language'), new TextEncoder().encode(''));
+  if (opened.kind !== 'editable') { failures.push('ARCH-WIRING-COMPOSE-01: fake launch document failed to open'); return; }
+  const diagnostics = new DiagnosticStore();
+  const languageWiring = createLanguageWiring({
+    filesystem: new NodeFilesystemPort(),
+    ProcessPort: FakeProcessPort as unknown as typeof import('../../packages/platform/src/entrypoints/launch').NodeProcessPort,
+    createClock: () => ({ monotonicMilliseconds: () => 0, schedule: () => ({ dispose() {} }), sleep: async () => ({ ok: true, value: undefined }) }),
+    workspaceRoot: '/architecture-smoke',
+    fileUri: (path) => `file://${path}`,
+    processEnvironment: () => ({}),
+    diagnostics,
+    configuredLanguages: undefined,
+    configuredLanguageServers: undefined,
+    launchDocument: opened.document,
+    launchDocumentPath: undefined,
+    readDocumentText: () => '',
+    workbenchBuffers: () => [],
+    renameBufferPath: () => {},
+  });
+  await languageWiring.ensureLanguage();
+  await languageWiring.ensureLanguage();
+  if (languageWiring.session !== undefined || languageWiring.navigationController !== undefined || languageWiring.workspaceEditCoordinator !== undefined) {
+    failures.push('ARCH-WIRING-COMPOSE-01: language wiring created language-server state with no launch file to admit');
+  }
+  diagnostics.dispose();
+
+  // Git/explorer/search wiring: the one lazy `ensure()` promise must construct every service
+  // exactly once (idempotent under concurrent callers) using only the injected process/filesystem
+  // ports (never a real `git`/`rg` invocation), and every constructed disposable must accept
+  // `.dispose()` without throwing.
+  const explorerOpenCalls: unknown[] = [];
+  const attachTreeCalls: unknown[] = [];
+  const optionalServices = createOptionalServicesWiring({
+    filesystem: new NodeFilesystemPort(),
+    ProcessPort: FakeProcessPort as unknown as typeof import('../../packages/platform/src/entrypoints/launch').NodeProcessPort,
+    workspaceRoot: '/architecture-smoke',
+    fileUri: (path) => `file://${path}`,
+    processEnvironment: () => ({}),
+    notifySurfaceChange: () => {},
+    createExplorerFilesystem: () => ({
+      enumerateDirectory: async () => ({ ok: true, value: [] }),
+      watchDirectory: async () => ({ ok: true, value: { dispose() {} } }),
+    }),
+    createGitDecorationPort: () => ({ read: async () => ({ ok: true, value: undefined }) }),
+    getExplorerFeature: () => ({
+      openNode: (node) => { explorerOpenCalls.push(node); },
+      attachTree: (tree, controller) => { attachTreeCalls.push([tree, controller]); return { dispose() {} }; },
+    }),
+    getSearchFeature: () => ({
+      readBuffers: () => [],
+      // Never exercised by this smoke (no replace flow runs): only its construction/wiring is checked.
+      createReplacePort: () => ({
+        apply: (): Promise<never> => { throw new Error('architecture smoke never calls the replace port'); },
+        readTarget: (): Promise<never> => { throw new Error('architecture smoke never calls the replace port'); },
+        restore: (): Promise<never> => { throw new Error('architecture smoke never calls the replace port'); },
+      }),
+      attachServices: () => {},
+    }),
+  });
+  const [first, second] = await Promise.all([optionalServices.ensure(), optionalServices.ensure()]);
+  void first; void second;
+  if (optionalServices.gitStatusService === undefined || optionalServices.explorerTree === undefined || optionalServices.searchService === undefined) {
+    failures.push('ARCH-WIRING-COMPOSE-01: optional-services wiring did not construct git/explorer/search under a single ensure()');
+  }
+  try {
+    optionalServices.explorerSubscription?.dispose();
+    optionalServices.searchService?.dispose();
+    optionalServices.replaceService?.dispose();
+    optionalServices.hostNavigation?.dispose();
+    optionalServices.explorerController?.dispose();
+    optionalServices.explorerTree?.dispose();
+  } catch (error: unknown) {
+    failures.push(`ARCH-WIRING-COMPOSE-01: optional-services disposables threw on dispose: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function asDocumentId(value: string): import('../../packages/primitives/src/index').DocumentId {
+  const result = asIdentifier<import('../../packages/primitives/src/index').DocumentId>(value, 'architecture-smoke-id');
+  if (!result.ok) throw new Error(result.error.message);
+  return result.value;
 }
 
 async function verifyHeadlessComposition(failures: string[]): Promise<void> {
@@ -288,6 +393,8 @@ const FORBIDDEN_HANDLER_NAME = /^handle\w*(Keypress|Pointer|Command)$/u;
 const FORBIDDEN_OPEN_CLOSE_NAME = /^(open|close)\w+$/u;
 const FORBIDDEN_LET_SUFFIXES = ['Open', 'Pending', 'Query', 'SelectedIndex', 'Draft', 'Generation', 'Serial'];
 const MAIN_FUNCTION_LINE_BUDGET = 120;
+const MAIN_OWN_LINE_BUDGET = 200;
+const MAIN_LET_BUDGET = 0;
 
 interface OxcNode { readonly type?: string; readonly [key: string]: unknown }
 
@@ -425,6 +532,26 @@ function verifyCompositionRootOwnership(failures: string[]): void {
           failures.push(`ARCH-COMPOSITION-ROOT-01: ${file} declares function '${name ?? '<anonymous>'}' spanning ${lines} lines (budget ${MAIN_FUNCTION_LINE_BUDGET}; only 'main' is exempt)`);
         }
       });
+
+      // `main()` itself: bounded so state-heavy clusters (language/git/tasks/theme/controller/
+      // pointer/UI wiring) stay pushed out into apps/xi/src/wiring/* modules instead of
+      // accreting back into the composition root as `let`s and inline init logic (T116
+      // follow-up). The budgets are calibrated against the composition-root-cleanup result
+      // (main() reads as parse CLI -> construct ports -> construct services -> construct
+      // workbench controllers (one call) -> wire UI (one call) -> start -> await shutdown,
+      // ~135 lines / 0 `let`s), far below the pre-refactor shapes this replaces (928 lines /
+      // 36 `let`s originally; 765 lines / 5 `let`s after T116 S4-S9).
+      const mainNode = findTopLevelMainFunction(program);
+      if (mainNode !== undefined) {
+        const mainLines = nodeLineSpan(sourceText, mainNode);
+        if (mainLines > MAIN_OWN_LINE_BUDGET) {
+          failures.push(`ARCH-COMPOSITION-ROOT-01: ${file} main() spans ${mainLines} lines (budget ${MAIN_OWN_LINE_BUDGET}; push state-heavy clusters into apps/xi/src/wiring/*)`);
+        }
+        const mainLetCount = letDeclaredNames(mainNode).length;
+        if (mainLetCount > MAIN_LET_BUDGET) {
+          failures.push(`ARCH-COMPOSITION-ROOT-01: ${file} main() declares ${mainLetCount} 'let's (budget ${MAIN_LET_BUDGET}; feature/service state belongs in a wiring module or controller)`);
+        }
+      }
     }
   }
   if (!mainFileChecked) failures.push(`ARCH-COMPOSITION-ROOT-01: ${root}/src/main.ts was not found to check`);

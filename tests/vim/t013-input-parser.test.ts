@@ -350,9 +350,11 @@ function checkCancellationErrorsAndModes(): void {
   const visualState = updateVimParserSession(result.state, 'visual-character', visualSelections);
   assert.equal(visualState.ok, true, 'T013-MODE-VISUAL-01 installs matching Visual selection-set state');
   if (visualState.ok) {
+    // nvim ('abc' vld -> 'c'): Visual d/c/y (and <, >, =) act immediately on
+    // the selection instead of opening an operator-pending motion.
     const visualOperator = feed(visualState.value.state, 'd');
-    assert.equal(visualOperator.kind, 'pending', 'T013-MODE-VISUAL-01 Visual uses the same shared operator grammar');
-    if (visualOperator.kind === 'pending') assert.equal(visualOperator.state.session.selections, visualSelections, 'T013-MODE-VISUAL-01 keeps the Visual selection set attached');
+    assert.equal(visualOperator.kind, 'command', 'T013-MODE-VISUAL-01 Visual d is immediate, not a pending operator-motion');
+    if (visualOperator.kind === 'command') assert.equal(visualOperator.command.kind, 'single-key', 'T013-MODE-VISUAL-01 Visual d dispatches as single-key');
     const visualEscape = feed(visualState.value.state, 'Escape');
     assert.equal(visualEscape.kind, 'command', 'T013-MODE-VISUAL-01 Escape exits Visual mode');
   }

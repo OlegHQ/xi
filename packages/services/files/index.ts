@@ -476,6 +476,9 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
           const nextName = basename(event.relativePath);
           const nextStable = event.entry?.stableIdentity ?? oldNode.stableIdentity;
           const nextId = this.#stableIds.get(stableKey(event.rootId, event.relativePath)) ?? oldNode.id;
+          if (this.#stableIds.get(stableKey(event.rootId, event.previousRelativePath)) === oldNode.id) {
+            this.#stableIds.delete(stableKey(event.rootId, event.previousRelativePath));
+          }
           this.#stableIds.set(stableKey(event.rootId, event.relativePath), nextId);
           oldNode.name = nextName;
           oldNode.relativePath = event.relativePath;
@@ -657,6 +660,10 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     }
     this.#nodes.delete(nodeId);
     this.#loadGenerations.delete(nodeId);
+    if (this.#stableIds.get(stableKey(node.rootId, node.relativePath)) === nodeId) {
+      this.#stableIds.delete(stableKey(node.rootId, node.relativePath));
+    }
+    if (this.#stableIds.get(node.stableIdentity) === nodeId) this.#stableIds.delete(node.stableIdentity);
   }
 
   private renameNodeId(node: MutableNode, nextId: string): void {

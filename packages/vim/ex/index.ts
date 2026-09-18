@@ -19,7 +19,7 @@ import {
 export type VimExCommandName =
   | 'substitute' | 'global' | 'vglobal' | 'normal'
   | 'move' | 'copy' | 'delete' | 'yank'
-  | 'write' | 'edit' | 'quit';
+  | 'write' | 'edit' | 'quit' | 'print';
 
 export type VimExAddress =
   | { readonly kind: 'current' }
@@ -164,12 +164,16 @@ const COMMANDS: ReadonlyArray<{ readonly name: VimExCommandName; readonly min: n
   { name: 'write', min: 1, aliases: ['w', 'write'] },
   { name: 'edit', min: 1, aliases: ['e', 'edit'] },
   { name: 'quit', min: 1, aliases: ['q', 'quit'] },
+  { name: 'print', min: 1, aliases: ['p', 'print'] },
 ];
 
 /** Resolve only native names and reviewed native abbreviations. */
 export function resolveVimExCommandName(typedName: string): Result<VimExCommandName, VimExParseFailure> {
   if (typedName === '&' || typedName === '~') return { ok: true, value: 'substitute' };
-  const matches = COMMANDS.filter((candidate) => candidate.aliases.some((alias) => alias.startsWith(typedName) && typedName.length >= candidate.min));
+  // A full alias always resolves regardless of its minimum abbreviation
+  // length (`:t` for `copy`'s short alias), even when that alias is shorter
+  // than `min`; `min` only governs prefix abbreviations of the long name.
+  const matches = COMMANDS.filter((candidate) => candidate.aliases.some((alias) => alias === typedName || (alias.startsWith(typedName) && typedName.length >= candidate.min)));
   if (matches.length !== 1) {
     return { ok: false, error: { kind: 'invalid-command', sourceOffset: 0, reason: matches.length === 0 ? `unknown-command:${typedName}` : `ambiguous-command:${typedName}` } };
   }
@@ -276,22 +280,32 @@ function prepareCommand(
       return base([], null, [{ kind: 'open', path: command.arguments.kind === 'text' && command.arguments.value.length > 0 ? command.arguments.value : null, bang: command.bang }], [], null);
     case 'quit':
       return base([], null, [{ kind: 'quit', bang: command.bang }], [], null);
+    case 'print':
+      // A bare range (or `:p`) has no text effect; it only moves the cursor
+      // to the resolved range, which the caller reads off the returned plan.
+      return base([], null, [], [], null);
     case 'delete': {
-      const deleted = lineContents(snapshot, range);
+      const effectiveRange = applyExCountRange(snapshot, range, command);
+      const deleted = lineContents(snapshot, effectiveRange);
       if (!deleted.ok) return deleted;
-      const edits = lineDeleteEdits(snapshot, range);
+      const edits = lineDeleteEdits(snapshot, effectiveRange);
       return edits.ok ? base(edits.value, registerFrom(command, 'delete', deleted.value), [], [], null) : edits;
     }
     case 'yank': {
-      const lines = lineContents(snapshot, range);
+      const effectiveRange = applyExCountRange(snapshot, range, command);
+      const lines = lineContents(snapshot, effectiveRange);
       return lines.ok ? base([], registerFrom(command, 'yank', lines.value), [], [], null) : lines;
     }
     case 'copy':
     case 'move': {
       if (command.arguments.kind !== 'destination') return fail(command, 'invalid-command', 'missing-destination');
-      const destination = resolveAddress(snapshot, command.arguments.destination, context, context.currentLine);
+      const destination = resolveAddress(snapshot, command.arguments.destination, context, context.currentLine, { allowLineZero: true });
       if (!destination.ok) return destination;
       const destinationLine = destination.value as number;
+      // `:m$`/`:2,3m3` moving a range to right after its own last line is a
+      // no-op in Neovim, not the "range into itself" error (E134); only a
+      // destination strictly inside the range is rejected.
+      if (destinationLine === (range.lastLine as number)) return base([], null, [], [], null);
       if (destinationLine >= (range.firstLine as number) && destinationLine <= (range.lastLine as number)) return fail(command, 'destination-in-range', 'destination-is-inside-source-range');
       const transformed = command.name === 'copy'
         ? copyLineEdits(snapshot, range, destinationLine)
@@ -410,6 +424,7 @@ function resolveAddress(
   expression: VimExAddressExpression,
   context: VimExResolutionContext,
   relativeCurrent: LineIndex,
+  options?: { readonly allowLineZero?: boolean },
 ): Result<LineIndex, VimExPrepareFailure> {
   let line: number;
   switch (expression.address.kind) {
@@ -433,6 +448,7 @@ function resolveAddress(
     }
   }
   line += expression.offset;
+  if (line === -1 && options?.allowLineZero === true) return { ok: true, value: -1 as LineIndex };
   if (!Number.isSafeInteger(line) || line < 0 || line >= snapshot.lineCount) return { ok: false, error: { kind: 'invalid-line-range', sourceOffset: expression.sourceStart } };
   return { ok: true, value: line as LineIndex };
 }
@@ -570,8 +586,35 @@ function normalEdits(snapshot: DocumentSnapshot, range: VimExResolvedRange, keys
   return { ok: true, value: Object.freeze(edits) };
 }
 
+/**
+ * `:[range]d[elete]`/`:[range]y[ank]` accept `[x] [count]`: an optional
+ * single-letter register followed by an optional decimal line count. A bare
+ * number (`:d 2`) is a count, never a register name.
+ */
+function parseExRegisterAndCount(text: string): { readonly register?: string; readonly count?: number } {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return {};
+  const match = /^(?:([A-Za-z"])\s*)?(\d+)?$/u.exec(trimmed);
+  if (match === null) return {};
+  const [, register, countText] = match;
+  return {
+    ...(register === undefined ? {} : { register }),
+    ...(countText === undefined ? {} : { count: Number(countText) }),
+  };
+}
+
+function applyExCountRange(snapshot: DocumentSnapshot, range: VimExResolvedRange, command: VimExCommand): VimExResolvedRange {
+  if (command.arguments.kind !== 'text') return range;
+  const { count } = parseExRegisterAndCount(command.arguments.value);
+  if (count === undefined || count < 1) return range;
+  const firstLine = range.lastLine as number;
+  const lastLine = Math.min(snapshot.lineCount - 1, firstLine + count - 1);
+  return { ...range, firstLine: firstLine as LineIndex, lastLine: lastLine as LineIndex };
+}
+
 function registerFrom(command: VimExCommand, operation: 'yank' | 'delete', lines: readonly string[]): VimExRegisterEffect {
-  const destination = command.arguments.kind === 'text' && command.arguments.value.length !== 0 ? command.arguments.value[0] ?? '"' : '"';
+  const parsed = command.arguments.kind === 'text' ? parseExRegisterAndCount(command.arguments.value) : {};
+  const destination = parsed.register ?? '"';
   return Object.freeze({ operation, destination, lines: Object.freeze([...lines]), type: 'V' });
 }
 
@@ -592,9 +635,16 @@ function parseOne(source: string, start: number, _nested: boolean): Result<{ rea
     index += 1;
   } else {
     const match = /^[A-Za-z]+/u.exec(source.slice(index));
-    if (match === null) return { ok: false, error: { kind: 'invalid-command', sourceOffset: index, reason: 'missing-command-name' } };
-    typedName = match[0];
-    index += typedName.length;
+    if (match === null) {
+      // A bare range with no command name (`:3`) is Neovim's implicit
+      // `:print`, which just moves the cursor to the range.
+      if (rangeEnd > commandStart) { typedName = 'p'; } else {
+        return { ok: false, error: { kind: 'invalid-command', sourceOffset: index, reason: 'missing-command-name' } };
+      }
+    } else {
+      typedName = match[0];
+      index += typedName.length;
+    }
   }
   const resolved = resolveVimExCommandName(typedName);
   if (!resolved.ok) return { ok: false, error: { ...resolved.error, sourceOffset: nameStart } };
@@ -705,7 +755,8 @@ function parseAddress(source: string, start: number): Result<{ readonly expressi
     const digits = /^\d+/u.exec(source.slice(index))?.[0] ?? '';
     index += digits.length;
     const line = Number(digits);
-    if (!Number.isSafeInteger(line) || line < 1) return { ok: false, error: { kind: 'invalid-address', sourceOffset: sourceStart, reason: 'invalid-line-number' } };
+    // Line 0 is valid syntax: `:m0`/`:t0` mean "before the first line".
+    if (!Number.isSafeInteger(line) || line < 0) return { ok: false, error: { kind: 'invalid-address', sourceOffset: sourceStart, reason: 'invalid-line-number' } };
     address = { kind: 'line', line };
   } else return { ok: true, value: undefined };
   let offset = 0;

@@ -59,6 +59,16 @@ export interface WorkbenchBufferSnapshot {
   readonly viewIds: readonly ViewId[];
 }
 
+/** Read model for a tab strip: one row per open buffer, in open order. */
+export interface WorkbenchTabSnapshot {
+  readonly id: DocumentId;
+  readonly label: string;
+  readonly dirty: boolean;
+  readonly preview: boolean;
+  readonly pinned: boolean;
+  readonly active: boolean;
+}
+
 export interface WorkbenchViewStateSnapshot {
   readonly viewId: ViewId;
   readonly bufferId: DocumentId;
@@ -146,6 +156,8 @@ interface ViewRecord {
   readonly paneId: string;
   scrollTop: number;
   scrollLeft: number;
+  /** Rows the UI last laid this view out with; undefined until the first frame. */
+  viewportHeight?: number;
   readonly returnViewId?: ViewId;
 }
 
@@ -180,6 +192,7 @@ export class WorkbenchSession implements VimSessionReader {
   /** Per-view read cache, self-validating on the coordinator state/document identity that produced it. */
   readonly #readViewCache = new Map<ViewId, { readonly state: AtomicWorkbenchState; readonly document: DocumentSnapshot; readonly scrollTop: number; readonly scrollLeft: number; readonly result: WorkbenchReadView }>();
   readonly #viewSnapshotCache = new Map<ViewId, { readonly read: WorkbenchReadView; readonly paneId: string; readonly scrollTop: number; readonly scrollLeft: number; readonly result: WorkbenchViewStateSnapshot }>();
+  #alternateBufferId: DocumentId | undefined;
   #activeViewId: ViewId | undefined;
   #nextNode = 1;
   #nextView = 1;
@@ -300,6 +313,30 @@ export class WorkbenchSession implements VimSessionReader {
     return this.promoteBuffer(bufferId);
   }
 
+  /** Activate (focus) a buffer for a tab-strip click: focuses one of its existing views,
+   * preferring the currently active view if it already shows the buffer. */
+  activateBuffer(bufferId: DocumentId): Result<void, WorkbenchSessionFailure> {
+    const buffer = this.#buffers.get(bufferId);
+    if (buffer === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId } };
+    const activeView = this.#activeViewId === undefined ? undefined : this.#views.get(this.#activeViewId);
+    const viewId = activeView?.bufferId === bufferId ? this.#activeViewId : [...buffer.viewIds][0];
+    if (viewId === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId } };
+    return this.focus(viewId);
+  }
+
+  /** Ordered read model for a tab strip; another agent's UI renders it. */
+  readTabs(): readonly WorkbenchTabSnapshot[] {
+    const activeBufferId = this.#activeViewId === undefined ? undefined : this.#views.get(this.#activeViewId)?.bufferId;
+    return Object.freeze([...this.#buffers.values()].map((buffer) => Object.freeze({
+      id: buffer.bufferId,
+      label: buffer.path === undefined ? '[No Name]' : (buffer.path.split('/').pop() ?? buffer.path),
+      dirty: buffer.document.isDirty,
+      preview: buffer.preview,
+      pinned: buffer.pinned,
+      active: buffer.bufferId === activeBufferId,
+    })));
+  }
+
   /** Update an open buffer's display/save path after a coordinated file rename. */
   renameBufferPath(bufferId: DocumentId, path: string): Result<WorkbenchBufferSnapshot, WorkbenchSessionFailure> {
     const buffer = this.#buffers.get(bufferId);
@@ -358,8 +395,20 @@ export class WorkbenchSession implements VimSessionReader {
       const focused = buffer.coordinator.replaceState({ activeViewId: viewId, views: state.views, registers: state.registers });
       if (!focused.ok) return { ok: false, error: { kind: 'invalid-layout', message: focused.error.kind } };
     }
+    if (this.#activeViewId !== undefined && this.#activeViewId !== viewId) {
+      const previous = this.#views.get(this.#activeViewId);
+      if (previous !== undefined && previous.bufferId !== view.bufferId) this.#alternateBufferId = previous.bufferId;
+    }
     this.#activeViewId = viewId;
     return { ok: true, value: undefined };
+  }
+
+  /** Vim's alternate file (`#`, Ctrl-^): the buffer that was active before the current one. */
+  alternateBufferPath(): string | undefined {
+    const id = this.#alternateBufferId;
+    if (id === undefined) return undefined;
+    const buffer = this.#buffers.get(id);
+    return buffer?.path;
   }
 
   /** Focus an editor window using the split tree, never a panel focus target. */
@@ -393,6 +442,18 @@ export class WorkbenchSession implements VimSessionReader {
       if (!closed.ok) return closed;
     }
     return this.focus(viewId);
+  }
+
+  /** The UI reports each view's laid-out height so H/M/L and page scrolling address the real
+   * viewport; the height is read-only state, never a layout input, so no read cache keys on it. */
+  setViewViewportHeight(viewId: ViewId, viewportHeight: number): void {
+    const view = this.#views.get(viewId);
+    if (view === undefined || !Number.isSafeInteger(viewportHeight) || viewportHeight < 1) return;
+    view.viewportHeight = viewportHeight;
+  }
+
+  viewViewportHeight(viewId: ViewId): number | undefined {
+    return this.#views.get(viewId)?.viewportHeight;
   }
 
   setViewScroll(viewId: ViewId, scrollTop: number, scrollLeft = 0): Result<WorkbenchViewStateSnapshot, WorkbenchSessionFailure> {
@@ -827,8 +888,12 @@ export class WorkbenchSession implements VimSessionReader {
 /** Buffer registry name used by integrations that do not need split methods. */
 export { WorkbenchSession as BufferRegistry };
 
+// Monotonic, not wall-clock: two edits applied within the same millisecond must still get
+// distinct default undo groups.
+let nextUndoGroupSequence = 0;
 function defaultUndoGroup(): UndoGroupId {
-  return `workbench-${Date.now()}` as UndoGroupId;
+  nextUndoGroupSequence += 1;
+  return `workbench-${nextUndoGroupSequence}` as UndoGroupId;
 }
 
 function createInitialSelection(snapshot: DocumentSnapshot, viewId: ViewId): Result<SelectionSet, { readonly kind: string }> {

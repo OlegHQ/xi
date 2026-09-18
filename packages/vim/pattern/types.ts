@@ -112,6 +112,8 @@ export interface PatternOptions {
   readonly outputLimit?: number;
   readonly cancellationCheckInterval?: number;
   readonly shouldCancel?: () => boolean;
+  /** The last `:substitute` replacement text, for the `~` atom (matches it literally). */
+  readonly previousSubstituteText?: string;
 }
 
 /** Immutable text and version captured from one Xi document snapshot. Offsets use UTF-16 units. */

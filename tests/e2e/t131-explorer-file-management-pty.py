@@ -233,7 +233,7 @@ def delete_case() -> str:
             read_for(master, captured, 0.3)
             if (workspace / "victim.txt").exists():
                 raise SystemExit("a confirmed delete did not remove the file from its original path")
-            trashed = list((workspace / ".xi-trash").glob("*victim.txt"))
+            trashed = list((workspace / ".xi-trash").rglob("*victim.txt"))
             if len(trashed) != 1 or trashed[0].read_text(encoding="utf-8") != "precious data\n":
                 raise SystemExit("delete did not preserve the file's content in the trash for restore")
 

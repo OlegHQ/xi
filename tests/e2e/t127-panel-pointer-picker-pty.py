@@ -131,7 +131,13 @@ def run_search() -> None:
             read_until(master, captured, b"XI_SEARCH_OPEN", 5)
             os.write(master, b"needle")
             read_until(master, captured, b'"firstPath":"src/target.txt"', 5)
-            read_until(master, captured, b"needle from disk", 5)
+            # The search result row's match term now paints in its own accent color, distinct
+            # from the surrounding line text (`packages/ui/search/index.ts`'s restyle), so
+            # the literal, unstyled "needle from disk" substring this used to wait for no
+            # longer appears contiguous in the raw byte stream (an ANSI SGR sequence now sits
+            # between "needle" and " from disk"). Wait on the row's stable, unstyled path
+            # label instead, which the restyle left untouched.
+            read_until(master, captured, b"target.txt:1:1", 5)
             read_for(master, captured, 0.3)
             # Search panel: header row occupies mouse y=14, the sole file heading occupies
             # mouse y=15, its single match row occupies mouse y=16 starting at mouse x=11.

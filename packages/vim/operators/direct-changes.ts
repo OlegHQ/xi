@@ -166,7 +166,9 @@ function prepareReplace(input: VimDirectChangeInput, count: number, cursor: numb
   const first = available[0];
   if (first === undefined) return failure({ kind: 'no-target' });
   const selected = available.slice(0, count);
-  if (selected.length === 0) return failure({ kind: 'no-target' });
+  // Vim refuses `{count}r` entirely when fewer than `count` characters
+  // remain on the line, rather than replacing whatever is left.
+  if (selected.length === 0 || selected.length < count) return failure({ kind: 'no-target' });
   const last = selected[selected.length - 1];
   if (last === undefined) return failure({ kind: 'no-target' });
   const edit = Object.freeze({
@@ -207,7 +209,11 @@ function prepareToggle(input: VimDirectChangeInput, count: number, cursor: numbe
     end: last.end as Utf16Offset,
     text: replacement,
   })];
-  const nextCursor = last.start as Utf16Offset;
+  // `~` advances the cursor past the last toggled character, unless that
+  // character was the last one on the line (then the cursor stays on it).
+  const toggleLine = lineWindow(input.snapshot, cursor);
+  if (!toggleLine.ok) return failure(toggleLine.error);
+  const nextCursor = (last.end < toggleLine.value.end ? last.end : last.start) as Utf16Offset;
   return success(Object.freeze({
     kind: 'prepared' as const,
     key: input.key,
@@ -249,6 +255,48 @@ function impliedMotion(
 ): Result<Omit<VimOperatorRangeInput, 'operator'> | null, VimDirectChangeFailure> {
   const line = lineWindow(snapshot, cursor);
   if (!line.ok) return line;
+  // `{count}D`/`{count}C` delete to end of line, plus every full line below
+  // it for count-1 additional lines (matches d$ with a multi-line `$`).
+  if ((key === 'D' || key === 'C') && count > 1) {
+    const lineIndex = snapshot.lineIndexAt(cursor as Utf16Offset);
+    if (!lineIndex.ok) return failure({ kind: 'document-read-failed' });
+    const targetIndex = Math.min((lineIndex.value as number) + count - 1, snapshot.lineCount - 1);
+    // Every full line consumed by the count is removed whole, including its
+    // trailing newline (not merged with the following line).
+    if (targetIndex + 1 < snapshot.lineCount) {
+      const nextLineStart = snapshot.lineStartOffset((targetIndex + 1) as typeof lineIndex.value);
+      if (!nextLineStart.ok) return failure({ kind: 'document-read-failed' });
+      return {
+        ok: true,
+        value: {
+          origin: endpoint(snapshot, cursor),
+          target: endpoint(snapshot, nextLineStart.value as number),
+          direction: 'forward',
+          motionKind: 'characterwise',
+          inclusive: false,
+          consumeTrailingNewline: true,
+          motionKey: '$',
+        },
+      };
+    }
+    const targetStart = snapshot.lineStartOffset(targetIndex as typeof lineIndex.value);
+    if (!targetStart.ok) return failure({ kind: 'document-read-failed' });
+    const targetBoundaries = graphemeBoundariesOnLine(snapshot, targetStart.value as number, Number.POSITIVE_INFINITY, 0);
+    if (!targetBoundaries.ok) return targetBoundaries;
+    const targetLast = targetBoundaries.value.at(-1);
+    const targetOffset = targetLast === undefined ? (targetStart.value as number) : targetLast.start;
+    return {
+      ok: true,
+      value: {
+        origin: endpoint(snapshot, cursor),
+        target: endpoint(snapshot, targetOffset),
+        direction: 'forward',
+        motionKind: 'characterwise',
+        inclusive: true,
+        motionKey: '$',
+      },
+    };
+  }
   if (key === 'S') {
     return {
       ok: true,

@@ -596,6 +596,10 @@ export class UndoTree {
       if (this.#retainedRootUtf16 < 0) throw new Error('undo-root-retention-underflow');
       delete first.beforeSelection;
       delete first.afterSelection;
+      // A single-entry chain over the retention limit prunes its only entry away entirely: it has
+      // no steps left to replay, so `#current` must not keep pointing at it (that would report
+      // canUndo === true while undoPlan() yields zero steps).
+      if (this.#current === first) this.#current = null;
     }
   }
 
@@ -759,7 +763,11 @@ export function decodeUndoHistory(bytes: Uint8Array, expectedDocumentId: Documen
     if (parentRevisionId !== entry.beforeRevisionId) return { ok: false, error: { kind: 'invalid-history-graph' } };
     if (entry.steps[0]?.beforeRevisionId !== entry.beforeRevisionId
       || entry.steps.at(-1)?.afterRevisionId !== entry.afterRevisionId
-      || entry.steps[0]?.afterRevisionId !== entry.id || entry.id === rootRevisionId
+      // entry.id is the entry's own identity, assigned from a revision reached while recording it
+      // (coalescing can advance afterRevisionId past the id captured at entry creation), so the
+      // real invariant is that it falls within the entry's own revision span, not that it equals
+      // the first (or any single) step's afterRevisionId.
+      || entry.id <= entry.beforeRevisionId || entry.id > entry.afterRevisionId || entry.id === rootRevisionId
       || entry.order <= previousOrder || entry.beforeRevisionId > maximumRevisionId) {
       return { ok: false, error: { kind: 'invalid-history-graph' } };
     }
@@ -871,7 +879,12 @@ function validateStep(input: unknown, maximumRevisionId: number): ValidatedUndoS
     || !Array.isArray(input.inverseLineEndings)) return undefined;
   const forwardEdits = decodeEdits(input.forwardEdits);
   const inverseEdits = decodeEdits(input.inverseEdits);
-  if (forwardEdits === undefined || inverseEdits === undefined || forwardEdits.length !== inverseEdits.length) return undefined;
+  // forwardEdits and inverseEdits describe the same step in two different coordinate spaces
+  // (before- and after-document), and combineAmbiguousInverseEdits (text-fidelity.ts) may merge
+  // touching inverse edits into fewer entries than the forward edits they invert. Equal counts
+  // is therefore not part of the real invariant; only "both present and non-empty" is required.
+  if (forwardEdits === undefined || inverseEdits === undefined
+    || forwardEdits.length === 0 || inverseEdits.length === 0) return undefined;
   const inverseLineEndings: InverseLineEndingPatch[] = [];
   const seen = new Set<number>();
   for (const raw of input.inverseLineEndings as unknown[]) {
@@ -880,19 +893,17 @@ function validateStep(input: unknown, maximumRevisionId: number): ValidatedUndoS
     const removeCount = nonnegativeSafeInteger(raw.removeCount);
     if (editIndex === undefined || removeCount === undefined || editIndex >= inverseEdits.length || seen.has(editIndex)
       || !Array.isArray(raw.insert) || !raw.insert.every(isLineEnding)) return undefined;
+    // editIndex is scoped to inverseEdits (the possibly-merged array); it has no forwardEdits counterpart.
     const inverse = inverseEdits[editIndex];
-    const forward = forwardEdits[editIndex];
-    if (inverse === undefined || forward === undefined || countLineFeeds(inverse.text) !== raw.insert.length
-      || countLineFeeds(forward.text) !== removeCount) return undefined;
+    if (inverse === undefined || countLineFeeds(inverse.text) !== raw.insert.length) return undefined;
     seen.add(editIndex);
     inverseLineEndings.push(Object.freeze({ editIndex, removeCount, insert: Object.freeze([...raw.insert]) }));
   }
-  for (let index = 0; index < forwardEdits.length; index += 1) {
-    const forward = forwardEdits[index];
+  for (let index = 0; index < inverseEdits.length; index += 1) {
     const inverse = inverseEdits[index];
-    if (forward === undefined || inverse === undefined) return undefined;
+    if (inverse === undefined) return undefined;
     const patch = inverseLineEndings.find((candidate) => candidate.editIndex === index);
-    if ((countLineFeeds(forward.text) > 0 || countLineFeeds(inverse.text) > 0) && patch === undefined) return undefined;
+    if (countLineFeeds(inverse.text) > 0 && patch === undefined) return undefined;
   }
   let retainedUtf16 = 0;
   for (const edit of [...forwardEdits, ...inverseEdits]) retainedUtf16 += edit.text.length;

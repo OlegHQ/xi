@@ -15,6 +15,8 @@ export interface WorkbenchTheme {
   readonly selectionSecondary?: string;
   readonly cursorPrimary?: string;
   readonly cursorSecondary?: string;
+  /** Cursor background when the cursor's cell also lies inside a visual selection. */
+  readonly cursorOnSelection?: string;
   readonly motionTrail?: string;
   readonly operatorPreview?: string;
   /** Optional per-kind syntax foreground colors; unset kinds paint with the plain foreground. */
@@ -64,6 +66,7 @@ export const LIGHT_WORKBENCH_THEME: WorkbenchTheme = Object.freeze({
   selectionSecondary: '#E4ECF3',
   cursorPrimary: '#1A2835',
   cursorSecondary: '#405B72',
+  cursorOnSelection: '#6B3FA0',
   motionTrail: '#EEF2F4',
   operatorPreview: '#C4D8E8',
   syntax: LIGHT_SYNTAX_COLORS,
@@ -87,6 +90,7 @@ export const DARK_WORKBENCH_THEME: WorkbenchTheme = Object.freeze({
   selectionSecondary: '#2E3A47',
   cursorPrimary: '#D8DEE9',
   cursorSecondary: '#8B93A1',
+  cursorOnSelection: '#C792EA',
   motionTrail: '#2A2E35',
   operatorPreview: '#3E5670',
   syntax: DARK_SYNTAX_COLORS,

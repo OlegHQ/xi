@@ -638,7 +638,9 @@ export function rebaseMaterializedRows(
     if (row.endOffset !== null) {
       const offset = row.endOffset as number;
       const paddingColumn = source.paddingCount > 0 ? source.cells.length : -1;
-      const column = paddingColumn < 0 ? width : paddingColumn;
+      // A full-width row (no padding cell) has no column past the last cell to place the
+      // exclusive end-offset marker at; clamp to the last real cell instead of `width`.
+      const column = paddingColumn < 0 ? Math.max(width - 1, 0) : paddingColumn;
       if (!positions.hasOffset(offset) || column === 0) {
         positions.setOffset(offset, frameRow, columnBase + column);
       }

@@ -136,14 +136,18 @@ const mappingRun = expectOk(executeVimMacro(mappingStore, 'a', (context) => {
 assert.equal(mappingRun.status, 'completed', 'T025-MAPPING-02 mapped macro completes');
 assert.equal(mappingDispatches, 1, 'T025-MAPPING-03 mapping expansion is performed once by the dispatcher');
 
+// Neovim allows a macro to invoke itself (e.g. a common repeat-to-end-of-file idiom); it
+// terminates naturally when a motion inside it fails, not via a same-register rejection.
+// A register that only ever calls itself therefore runs until the bounded depth cap, not
+// an immediate 'recursive-macro' failure.
 const recursionStore = storeFrom('a', [{ kind: 'macro-call', register: 'a', count: 1 }]);
 const recursionRun = expectOk(executeVimMacro(recursionStore, 'a', () => ({
   ok: true, value: { kind: 'continue', committed: true },
 })));
 assert.deepEqual(recursionRun, {
-  status: 'failed', register: 'a', committedCommands: 0, consumedTokens: 1, slices: 0,
-  lastRegister: 'a', failure: { kind: 'recursive-macro', register: 'a' },
-}, 'T025-FAILURE-01 recursive macro stops before a half transaction');
+  status: 'failed', register: 'a', committedCommands: 0, consumedTokens: 1001, slices: 15,
+  lastRegister: 'a', failure: { kind: 'depth-limit', limit: 1000 },
+}, 'T025-FAILURE-01 self-recursive macro runs until the bounded depth cap, not an immediate rejection');
 
 let dispatchCount = 0;
 const cancellationRun = expectOk(executeVimMacro(simpleStore, 'a', () => {
@@ -172,8 +176,10 @@ assert.deepEqual(hugeCount.failure, { kind: 'repeat-count-limit', count: 2, limi
   'T025-FAILURE-05 huge repeat count is rejected deterministically');
 assert.equal(hugeCount.committedCommands, 0, 'T025-FAILURE-06 huge count fails before dispatch');
 
-assert.deepEqual(expectError(finishVimMacroRecording(expectOk(beginVimMacroRecording('c')))),
-  { kind: 'empty-macro' }, 'T025-FAILURE-07 empty macro is rejected');
+// 'qcq' (stop immediately) is a valid Vim idiom that records/clears an empty macro; it is
+// not an error (Neovim leaves register c holding zero keys, and '@c' is then a no-op).
+const emptyRecording = expectOk(finishVimMacroRecording(expectOk(beginVimMacroRecording('c'))));
+assert.equal(emptyRecording.tokenCount, 0, 'T025-FAILURE-07 an empty macro recording is accepted, not rejected');
 const lookup = expectOk(readVimMacro(committed.store, 'a'));
 assert.equal(lookup.generation, 1, 'T025-REGISTER-01 macro register metadata increments on commit');
 console.log(`T025 macro recording/execution passed ${catalog.fixtures.length} pinned oracle fixtures; raw mapping keys, nested @/@@, recursion, cancellation, work budget and atomic failure isolation verified`);
@@ -194,7 +200,3 @@ function expectOk<T>(result: { readonly ok: true; readonly value: T } | { readon
   throw new Error(`unexpected failure: ${JSON.stringify(result.error)}`);
 }
 
-function expectError<T>(result: { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown }): unknown {
-  if (!result.ok) return result.error;
-  throw new Error('unexpected success');
-}

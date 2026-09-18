@@ -1,4 +1,4 @@
-import { CancellationSource, type CancellationToken, type PlatformFailure, type Result, type ViewId } from '../../contracts/src/index';
+import { CancellationSource, type CancellationToken, type ClockPort, type PlatformFailure, type Result, type ViewId } from '../../contracts/src/index';
 import type { OwnedVimKeyEvent } from '../vim-session';
 import type { BufferHost } from '../host';
 
@@ -29,6 +29,7 @@ export interface PickerControllerOptions<TEntry extends WorkbenchPickerEntry, TT
   readonly host: BufferHost;
   readonly model: PickerModelPort<TEntry>;
   readonly theme: ThemeController<TTheme>;
+  readonly clock: ClockPort;
   readonly marker: (name: string, payload?: unknown) => void;
   readonly startFileIndexPopulation: () => Promise<void>;
   readonly toggleMouseMode: () => boolean;
@@ -198,7 +199,7 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
         // bumps generation per batch); retry with the same bounded backoff as
         // 'not-ready' instead of dropping the query on the floor.
         if ((result.error.kind === 'not-ready' || result.error.kind === 'stale') && this.#open) {
-          setTimeout(() => { if (generation === this.#generation && this.#open) this.#runQuery(); }, 50);
+          this.#options.clock.schedule(50, () => { if (generation === this.#generation && this.#open) this.#runQuery(); });
         }
         return;
       }

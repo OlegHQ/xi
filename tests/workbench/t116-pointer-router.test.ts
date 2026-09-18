@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import type { ClockPort, Disposable } from '../../packages/contracts/src/index';
 import {
   WorkbenchPointerRouter,
   type PointerControlEvent,
@@ -21,9 +22,19 @@ class FakeSession {
 class FakePointerCapture {
   cancelled: readonly string[] = [];
   disposed = false;
-  dispatch(): boolean { return true; }
+  readonly dispatched: unknown[] = [];
+  dispatch(event: unknown): boolean { this.dispatched.push(event); return true; }
   cancel(reason: string): void { this.cancelled = [...this.cancelled, reason]; }
   dispose(): void { this.disposed = true; }
+}
+
+/** A `ClockPort` whose `monotonicMilliseconds()` is set explicitly, so click-count tests
+ * control the interval between clicks without real sleeps. */
+class FakeClock implements ClockPort {
+  now = 0;
+  monotonicMilliseconds(): number { return this.now; }
+  schedule(_delayMilliseconds: number, _callback: () => void): Disposable { return Object.freeze({ dispose: () => {} }); }
+  async sleep(): Promise<{ readonly ok: true; readonly value: undefined }> { return { ok: true, value: undefined }; }
 }
 
 function splitterEvent(action: PointerControlEvent['action'], firstSize: number, secondSize: number): PointerWorkbenchEvent {
@@ -55,6 +66,7 @@ const noopProblems: PointerProblemsPort = { model: { generation: 0, all: [] }, s
   const router = new WorkbenchPointerRouter({
     session: session as never,
     marker: () => {},
+    clock: new FakeClock(),
     pointerCapture: pointerCapture as never,
     contextMenu: { openAt: () => {} },
     picker: noopPicker,
@@ -76,4 +88,76 @@ const noopProblems: PointerProblemsPort = { model: { generation: 0, all: [] }, s
   router.dispose();
 }
 
-console.log('T116 WorkbenchPointerRouter passed splitter-drag-cancel-on-resize fixture');
+// T116-POINTER-02: two 'down' clicks on the same text cell within 400ms report clickCount 1
+// then 2 on the events forwarded to the pointer-capture engine; a third click within the
+// window caps at 3, and a click elsewhere (or after the window) resets to 1.
+{
+  const clock = new FakeClock();
+  const pointerCapture = new FakePointerCapture();
+  const router = new WorkbenchPointerRouter({
+    session: new FakeSession() as never,
+    marker: () => {},
+    clock,
+    pointerCapture: pointerCapture as never,
+    contextMenu: { openAt: () => {} },
+    picker: noopPicker,
+    pickerModel: noopPickerModel,
+    explorer: noopExplorer,
+    search: noopSearch,
+    problems: noopProblems,
+  });
+  const textDown = (row: number, column: number): PointerWorkbenchEvent => ({ phase: 'down', viewId: 'view-1', cell: { row, column }, button: 0 });
+
+  clock.now = 0;
+  router.handlePointer(textDown(2, 5));
+  clock.now = 100;
+  router.handlePointer(textDown(2, 5));
+  clock.now = 200;
+  router.handlePointer(textDown(2, 5));
+  clock.now = 2000;
+  router.handlePointer(textDown(2, 5));
+  clock.now = 2050;
+  router.handlePointer(textDown(9, 9));
+
+  const clickCounts = pointerCapture.dispatched.map((event) => (event as { readonly clickCount?: number }).clickCount);
+  assert.deepEqual(clickCounts, [1, 2, 3, 1, 1], 'T116-POINTER-02 clickCount is 1/2/3-capped within the window and resets after it lapses or the cell changes');
+
+  router.dispose();
+}
+
+// T116-POINTER-03: a single click on a `tab.<id>` control activates that tab; a second click
+// within the window also pins it (promotes it out of preview).
+{
+  const clock = new FakeClock();
+  let activated: string[] = [];
+  let pinned: string[] = [];
+  const router = new WorkbenchPointerRouter({
+    session: new FakeSession() as never,
+    marker: () => {},
+    clock,
+    onTabActivate: (bufferId) => { activated = [...activated, bufferId]; },
+    onTabPin: (bufferId) => { pinned = [...pinned, bufferId]; },
+    pointerCapture: new FakePointerCapture() as never,
+    contextMenu: { openAt: () => {} },
+    picker: noopPicker,
+    pickerModel: noopPickerModel,
+    explorer: noopExplorer,
+    search: noopSearch,
+    problems: noopProblems,
+  });
+  const tabDown: PointerWorkbenchEvent = { phase: 'down', viewId: 'view-1', cell: { row: 0, column: 3 }, button: 0, control: { id: 'doc-1', kind: 'tab', action: 'activate' } };
+
+  clock.now = 0;
+  router.handleControl(tabDown);
+  assert.deepEqual(activated, ['doc-1'], 'T116-POINTER-03a a single tab click activates it');
+  assert.deepEqual(pinned, [], 'T116-POINTER-03b a single tab click does not pin it');
+
+  clock.now = 150;
+  router.handleControl(tabDown);
+  assert.deepEqual(activated, ['doc-1', 'doc-1'], 'T116-POINTER-03c a double click activates again');
+  assert.deepEqual(pinned, ['doc-1'], 'T116-POINTER-03d a double tab click within the window pins it');
+
+  router.dispose();
+}
+
+console.log('T116 WorkbenchPointerRouter passed splitter-drag-cancel, click-count and tab-activate/pin fixtures');

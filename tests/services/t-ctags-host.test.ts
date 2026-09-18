@@ -4,7 +4,7 @@ import { createCtagsNavigationHost, type CtagsFilesystemPort } from '../../packa
 
 const NEVER_CANCELLED: CancellationToken = Object.freeze({ isCancelled: false, onCancel: () => Object.freeze({ dispose(): void {} }) });
 
-const TAGS_FILE = ['main\tsrc/main.ts\tline:10\tf'].join('\n');
+const TAGS_FILE = ['main\tsrc/main.ts\t/^function main() {$/;"\tf\tline:10'].join('\n');
 
 class FakeFilesystem implements CtagsFilesystemPort {
   statCount = 0;
@@ -60,7 +60,7 @@ async function testCachesUnchangedTagsFile(): Promise<void> {
 
   // A changed mtime invalidates the cache and forces a fresh read/parse.
   filesystem.info = { kind: 'file', sizeBytes: TAGS_FILE.length, modifiedMilliseconds: 2_000 };
-  filesystem.content = ['main\tsrc/main.ts\tline:20\tf'].join('\n');
+  filesystem.content = ['main\tsrc/main.ts\t/^function main() {$/;"\tf\tline:20'].join('\n');
   const third = await host.tag('main');
   assert.ok(third.ok && third.value.length === 1, 'T-CTAGS-HOST-03 lookup after mtime change succeeds');
   assert.equal(filesystem.readCount, 2, 'T-CTAGS-HOST-03 a changed mtime invalidates the cache and re-reads');

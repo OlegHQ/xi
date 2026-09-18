@@ -71,14 +71,20 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-scroll-") as temporary:
     captured = bytearray()
     try:
         read_until(master, captured, b"XI_WORKBENCH_READY", 10)
-        os.write(master, mouse(0, 3, 1))
-        os.write(master, mouse(0, 3, 1, "m"))
+        # Files starts already expanded, so clicking its chevron here would collapse the
+        # inline tree instead of opening it (the click toggles the section's own inline
+        # visibility since Explorer/Outline moved inline under the sidebar headers); use the
+        # same leader shortcut tests/e2e/t040-explorer-pty.py uses to open it instead.
+        os.write(master, b" vf")
         read_until(master, captured, b"XI_EXPLORER_OPEN", 5)
         read_for(master, captured, 1.0)
         def thumb_near_bottom(data: bytes) -> bool:
-            # The scrollbar thumb is drawn with the accent background (36;90;136) at column 30 (1-based);
-            # near the bottom of a 40-row terminal that means rows in the high 30s carry that color.
-            return re.search(rb"\x1b\[3[5-9];30H\x1b\[38;2;255;255;255m\x1b\[48;2;36;90;136m", data) is not None
+            # The scrollbar thumb is drawn with the accent background (36;90;136) at column 28 (1-based):
+            # the inline Explorer surface is now bounded to the sidebar's own width (`layout.sidebarWidth`,
+            # 28 cells by default) and nested under the `▾ Files` header/its own "N items" row, rather
+            # than the old full-height overlay; near the bottom of a 40-row terminal that means rows in
+            # the high 30s carry that color.
+            return re.search(rb"\x1b\[3[5-9];28H\x1b\[38;2;255;255;255m\x1b\[48;2;36;90;136m", data) is not None
 
         before = len(captured)
         if thumb_near_bottom(bytes(captured)):
@@ -99,9 +105,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-scroll-") as temporary:
         if thumb_near_bottom(bytes(captured[before_up:])):
             raise SystemExit(f"wheel scroll-up did not return the thumb toward the top: {captured[before_up:][-4000:]!r}")
         before_drag = len(captured)
-        os.write(master, mouse(0, 30, 3))
-        os.write(master, mouse(32, 30, 35, "M"))  # drag motion: button 0 + the SGR motion-while-pressed flag (32)
-        os.write(master, mouse(0, 30, 35, "m"))  # release
+        os.write(master, mouse(0, 28, 3))
+        os.write(master, mouse(32, 28, 35, "M"))  # drag motion: button 0 + the SGR motion-while-pressed flag (32)
+        os.write(master, mouse(0, 28, 35, "m"))  # release
         read_for(master, captured, 0.6)
         if not thumb_near_bottom(bytes(captured[before_drag:])):
             raise SystemExit(f"scrollbar drag did not move the thumb toward the bottom: {captured[before_drag:][-4000:]!r}")

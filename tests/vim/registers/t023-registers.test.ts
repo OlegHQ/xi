@@ -54,10 +54,22 @@ assert.equal(small.ok, true);
 if (!small.ok) throw new Error('T023-REGISTER-SMALL-DELETE');
 assert.deepEqual(small.value.read('-'), { ok: true, value: character(['small']) });
 assert.deepEqual(small.value.read('1'), { ok: true, value: character(['d3']) }, 'small delete does not rotate numbered registers');
-const namedDelete = small.value.delete(character(['named-delete']), { destination: 'b' });
-assert.equal(namedDelete.ok, true);
-if (!namedDelete.ok) throw new Error('T023-REGISTER-NAMED-DELETE');
-assert.deepEqual(namedDelete.value.read('1'), { ok: true, value: character(['d3']) }, 'explicit named delete does not rotate numbered registers');
+// nvim ('"adw' on a single word): a small (single-line, charwise) delete
+// into a named register still skips "-  and "1..9, exactly like an unnamed
+// small delete.
+const namedSmallDelete = small.value.delete(character(['named-delete']), { destination: 'b', small: true });
+assert.equal(namedSmallDelete.ok, true);
+if (!namedSmallDelete.ok) throw new Error('T023-REGISTER-NAMED-SMALL-DELETE');
+assert.deepEqual(namedSmallDelete.value.read('1'), { ok: true, value: character(['d3']) }, 'small named delete does not rotate numbered registers');
+assert.deepEqual(namedSmallDelete.value.read('-'), { ok: true, value: character(['small']) }, 'small named delete leaves the "- register untouched (only an unnamed small delete sets it)');
+assert.deepEqual(namedSmallDelete.value.read('b'), { ok: true, value: character(['named-delete']) }, 'small named delete still writes the named register');
+// nvim ('"add' on two lines): a non-small (linewise/multi-line) delete
+// rotates "1..9 even though a register was also named explicitly.
+const namedLineDelete = small.value.delete(line(['n1', 'n2']), { destination: 'b' });
+assert.equal(namedLineDelete.ok, true);
+if (!namedLineDelete.ok) throw new Error('T023-REGISTER-NAMED-LINE-DELETE');
+assert.deepEqual(namedLineDelete.value.read('1'), { ok: true, value: line(['n1', 'n2']) }, 'PARITY-06 non-small named delete also rotates into "1');
+assert.deepEqual(namedLineDelete.value.read('b'), { ok: true, value: line(['n1', 'n2']) }, 'non-small named delete still writes the named register');
 const blackHoleDelete = small.value.delete(character(['discard']), { destination: '_' });
 assert.equal(blackHoleDelete.ok, true);
 if (!blackHoleDelete.ok) throw new Error('T023-REGISTER-BLACK-HOLE');

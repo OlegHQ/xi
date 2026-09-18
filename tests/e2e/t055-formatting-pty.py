@@ -90,7 +90,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t055-format-") as temporary:
         os.write(master, b"B")
         time.sleep(0.03)
         os.write(master, b"\x1b")
-        expected = "ABconst x = 1;\n"
+        expected = "BAconst x = 1;\n"  # nvim: iA<Esc> leaves the cursor on A, so iB inserts before it
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and success_path.read_text(encoding="utf-8") != expected:
             read_for(master, captured, 0.05)

@@ -70,13 +70,17 @@ with tempfile.TemporaryDirectory(prefix="xi-t094-splitter-pty-") as temporary:
         read_until_count(master, captured, b"XI_WORKBENCH_SPLIT", 2, 5)
         read_for(master, captured, 0.35)
 
-        # Begin on the root vertical separator, cross the nested horizontal
-        # separator, and release there. Capture must stay with the root split.
-        os.write(master, mouse(0, 76, 10) + mouse(0, 83, 20) + mouse(0, 83, 20, True))
+        # Begin on the root vertical separator (column 75, one-based: sidebar width 29 +
+        # the 50/50 root split's 45-cell first pane lands the 1-cell separator at 0-based
+        # column 74), cross the nested horizontal separator, and release there. Capture
+        # must stay with the root split throughout.
+        os.write(master, mouse(0, 75, 10) + mouse(0, 83, 20) + mouse(0, 83, 20, True))
         read_for(master, captured, 0.35)
 
-        # A proposed 10-cell pane violates the 12-cell minimum and is rejected.
-        os.write(master, mouse(0, 83, 10) + mouse(0, 42, 10) + mouse(0, 42, 10, True))
+        # A proposed 5-cell pane (well below the 12-cell minimum) is rejected outright --
+        # SplitterDragController.move() returns false, so no resize ever applies and the
+        # splitter stays exactly where drag 1 left it (column 83) for drag 3 below.
+        os.write(master, mouse(0, 83, 10) + mouse(0, 35, 10) + mouse(0, 35, 10, True))
         read_for(master, captured, 0.25)
 
         # Resize during a live drag cancels capture and restores its initial ratio.

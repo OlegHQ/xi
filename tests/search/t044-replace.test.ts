@@ -41,5 +41,16 @@ if (zeroPlan.ok) { const rendered = applyReplacementEdits(zeroTarget.text, zeroP
 const overlapMatches = [0, 0].map((start, index) => ({ ...match(0, start, start + 1), id: `overlap-${index}`, generation: 5 }));
 const overlap = service.preview({ ...query, query: '.' }, 'X', [target], overlapMatches, 5);
 assert.equal(overlap.ok, false, 'T044-OVERLAP-01 overlapping edits refuse preview');
+// A lookahead/lookbehind depends on context outside the matched range itself; re-verifying the
+// match by exec-ing only the isolated matched slice always reports "match changed" even though
+// nothing changed. The preview must re-run against the full text instead.
+const lookaroundTarget: ReplaceTarget = { rootId: 'root', path: 'lookaround.ts', text: 'foo(bar)', source: 'disk', diskHash: 'la' };
+const lookaroundMatch: SearchMatch = { id: 'lookaround', rootId: 'root', path: 'lookaround.ts', line: 0, range: { startUtf16: 4, endUtf16: 7 }, lineText: 'foo(bar)', snippet: 'foo(bar)', source: 'disk', diskHash: 'la', generation: 6 };
+const lookaroundPlan = service.preview({ ...query, query: '(?<=\\()\\w+(?=\\))' }, 'BAZ', [lookaroundTarget], [lookaroundMatch], 6);
+assert.equal(lookaroundPlan.ok, true, 'T044-LOOKAROUND-01 a lookaround match is not reported as changed');
+if (lookaroundPlan.ok) {
+  const rendered = applyReplacementEdits(lookaroundTarget.text, lookaroundPlan.value.edits);
+  assert.equal(rendered.ok && rendered.value, 'foo(BAZ)', 'T044-LOOKAROUND-02 lookaround preview applies correctly');
+}
 service.dispose(); changed.dispose();
-console.log('T044 workspace replace passed E06 preview/apply equality, stale and overlap refusal, multiline/zero-width matches, captures and preserve-case grammar');
+console.log('T044 workspace replace passed E06 preview/apply equality, stale and overlap refusal, multiline/zero-width matches, captures, preserve-case grammar and lookaround match verification');

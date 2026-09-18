@@ -102,8 +102,11 @@ async function productionRipgrepPath(): Promise<void> {
   await Promise.all(Array.from({ length: 90 }, (_, index) => writeFile(join(root, `flood-${index}.txt`), `${'needle '.repeat(80)}\n`, 'utf8')));
   const flooded = new RipgrepSearchBackend({ process: new NodeProcessPort(), environment, maxOutputBytes: 4_096 });
   const floodResult = await flooded.search(query('needle', { rootPath: root }), new CancellationSource().token, 14);
-  assert.equal(floodResult.ok, false, 'output flood is rejected at the bounded parser');
-  if (!floodResult.ok) assert.match('message' in floodResult.error ? floodResult.error.message : floodResult.error.kind, /output exceeded|backend/u);
+  // Hitting the output-byte cap must not discard matches already parsed before the cap: the
+  // bounded parser stops rg and returns whatever complete lines it already read, exactly like
+  // reaching maxResults.
+  assert.equal(floodResult.ok, true, 'output flood keeps matches already parsed before the byte cap');
+  if (floodResult.ok) assert.ok(floodResult.value.length > 0, 'flooded search still returns the matches parsed before the cap');
 }
 
 async function cancelledDebounceResolves(): Promise<void> {

@@ -26,7 +26,7 @@ const maximumPatternUtf16Units = 65_536;
 // Large-file scans count every evaluator visit and therefore need a ceiling
 // above the 100 MiB qualification corpus. The default remains intentionally
 // small; callers must opt into a larger, still finite work budget.
-const maximumStepBudget = 1_000_000_000;
+export const maximumStepBudget = 1_000_000_000;
 const maximumOutputLimit = 1_000_000;
 const maximumCancellationInterval = 4_096;
 const maximumGroupDepth = 128;
@@ -159,6 +159,8 @@ class Parser {
   private ignoreCombining = false;
   private leadingCombining = '';
   private engineSelector: 0 | 1 | 2 = 0;
+  /** \c / \C apply to the whole pattern regardless of where they appear; last one wins. */
+  private globalCaseOverride: CaseMode | undefined;
   private groupDepth = 0;
   private optionalSequenceDepth = 0;
 
@@ -176,6 +178,7 @@ class Parser {
       const leadingSources = new Set(leadingNodes.map((node) => `${node.source.start}:${node.source.end}`));
       root = stripNonleadingCombining(parsedRoot, leadingSources);
     }
+    if (this.globalCaseOverride !== undefined) root = overrideCaseMode(root, this.globalCaseOverride);
     const hasUppercase = containsUppercaseLiteral(root);
     return {
       source: this.source,
@@ -258,7 +261,10 @@ class Parser {
   private parsePiece(atBranchStart: boolean): PatternNode {
     const start = this.index;
     let atom = this.parseAtom(atBranchStart);
-    const repeat = this.parseQuantifier();
+    // A `^` anchor can't be quantified; Vim treats a following `*`/`\+`/`\?`/
+    // `\{...}` as a literal atom of its own rather than a repeat of `^`.
+    const quantifiable = !(atom.kind === 'anchor' && atom.anchor === 'line-start');
+    const repeat = quantifiable ? this.parseQuantifier() : null;
     if (repeat !== null) {
       atom = {
         kind: 'repeat',
@@ -324,29 +330,36 @@ class Parser {
       if (this.optionalSequenceDepth > 0) this.invalid('groups-not-allowed-in-optional-atom-sequence', start, Math.min(this.source.length, start + 3));
       return this.parseGroup(this.isGroupOpen());
     }
-    if (value === '\\') return this.parseEscapedLiteral();
+    if (value === '\\') return this.parseEscapedLiteral(atBranchStart);
 
-    if (value === '^' && this.magic !== 'very-nomagic' && atBranchStart) {
+    if (value === '^' && this.magic !== 'very-nomagic' && (atBranchStart || this.magic === 'very-magic')) {
       this.index += 1;
       this.containsLineBoundary = true;
       return { kind: 'anchor', anchor: 'line-start', source: { start, end: this.index } };
     }
-    if (value === '$' && this.magic !== 'very-nomagic' && this.isSequenceEnd(this.index + 1)) {
+    if (value === '$' && this.magic !== 'very-nomagic' && (this.magic === 'very-magic' || this.isSequenceEnd(this.index + 1))) {
       this.index += 1;
       this.containsLineBoundary = true;
       return { kind: 'anchor', anchor: 'line-end', source: { start, end: this.index } };
+    }
+    if ((value === '<' || value === '>') && this.magic === 'very-magic') {
+      this.index += 1;
+      return { kind: 'anchor', anchor: value === '<' ? 'word-start' : 'word-end', source: { start, end: this.index } };
     }
     if (value === '.' && (this.magic === 'magic' || this.magic === 'very-magic')) {
       this.index += 1;
       return { kind: 'dot', includeNewline: false, source: { start, end: this.index } };
     }
     if (value === '[' && (this.magic === 'magic' || this.magic === 'very-magic')) return this.parseCharacterClass(true, start);
-    if (value === ']' && this.magic === 'very-magic') this.invalid('unmatched-character-class-close', start, start + 1);
-    if ((value === '+' || value === '?' || value === '{' || value === '}') && this.magic === 'very-magic') {
+    // An unmatched `]` or a stray `}` (no opening `{`) is literal in Vim,
+    // not an error; only an operator that truly needs a preceding atom
+    // (+, ?, =, {) is rejected.
+    if ((value === '+' || value === '?' || value === '=' || value === '{') && this.magic === 'very-magic') {
       this.invalid(`quantifier-without-preceding-atom: ${value}`, start, start + 1);
     }
     if (value === '~' && (this.magic === 'magic' || this.magic === 'very-magic')) {
-      this.unsupported('previous-substitute-pattern-requires-command-context', start, start + 1);
+      this.index += 1;
+      return this.tildeNode(start);
     }
 
     const width = codePointWidthAt(this.source, this.index);
@@ -362,7 +375,8 @@ class Parser {
     if (this.groupDepth > maximumGroupDepth) {
       this.unsupported(`pattern-group-depth-exceeded: ${maximumGroupDepth}`, start, Math.min(this.source.length, start + 2));
     }
-    const openingWidth = this.isNonCapturingGroupOpen() ? 3 : this.isEscape('(') ? 2 : 1;
+    const nonCapturingWidth = this.nonCapturingGroupOpenWidth();
+    const openingWidth = nonCapturingWidth > 0 ? nonCapturingWidth : this.isEscape('(') ? 2 : 1;
     this.index += openingWidth;
     if (capturing && this.captureCount >= maximumCapturingGroups) {
       this.invalid(`pattern-capture-limit-exceeded: ${maximumCapturingGroups}`, start, this.index);
@@ -377,7 +391,7 @@ class Parser {
       : child;
   }
 
-  private parseEscapedLiteral(): PatternNode {
+  private parseEscapedLiteral(atBranchStart: boolean): PatternNode {
     const start = this.index;
     this.index += 1;
     const escaped = this.source[this.index];
@@ -423,10 +437,14 @@ class Parser {
       this.containsLineBoundary = true;
       return { kind: 'anchor', anchor: 'line-end', source: { start, end: this.index } };
     }
+    if (escaped === '^' && this.magic === 'very-nomagic' && atBranchStart) {
+      this.containsLineBoundary = true;
+      return { kind: 'anchor', anchor: 'line-start', source: { start, end: this.index } };
+    }
     if (escaped === '[' && (this.magic === 'nomagic' || this.magic === 'very-nomagic')) return this.parseCharacterClass(true, start);
     if (escaped === '^' || escaped === '$' || escaped === '.' || escaped === '[' || escaped === ']' || escaped === '*' || escaped === '+' || escaped === '?' || escaped === '=' || escaped === '{' || escaped === '}' || escaped === '(' || escaped === ')' || escaped === '|' || escaped === '~') {
       if (escaped === '~' && (this.magic === 'nomagic' || this.magic === 'very-nomagic')) {
-        this.unsupported('previous-substitute-pattern-requires-command-context', start, this.index);
+        return this.tildeNode(start);
       }
       if ((escaped === '+' || escaped === '?' || escaped === '=' || escaped === '{' || escaped === '|' || escaped === '(' || escaped === ')') && this.magic !== 'very-magic') {
         this.invalid(`unexpected-pattern-operator: \\${escaped}`, start, this.index);
@@ -639,6 +657,7 @@ class Parser {
 
   private parseCharacterClass(negatedPrefixAllowed: boolean, start: number, includeNewline = false): PatternNode {
     if (this.source[this.index] === '[') this.index += 1;
+    const openConsumedEnd = this.index;
     let negated = false;
     if (negatedPrefixAllowed && this.source[this.index] === '^') {
       negated = true;
@@ -669,7 +688,12 @@ class Parser {
         parts.push(first);
       }
     }
-    if (!closed) this.invalid('unclosed-character-class', start, this.source.length);
+    if (!closed) {
+      // Vim treats an unclosed `[` as a literal `[`, not an error; the rest
+      // of the pattern re-parses normally from right after the opener.
+      this.index = openConsumedEnd;
+      return { kind: 'literal', value: '[', caseMode: this.caseMode, source: { start, end: openConsumedEnd } };
+    }
     return this.classNode(start, parts, negated, includeNewline);
   }
 
@@ -686,8 +710,9 @@ class Parser {
     const escaped = this.source[this.index];
     if (escaped === undefined) this.invalid('trailing-character-class-backslash', escapeStart, this.index);
     this.index += 1;
-    const builtin = classEscape(escaped);
-    if (builtin !== undefined) return { kind: 'class', name: builtin.name, ...(builtin.negated ? { negated: true } : {}) };
+    // Named class escapes (\d, \s, \I, ...) are only special outside `[...]`;
+    // inside a bracket expression they lose that meaning and stand for their
+    // literal letter (confirmed against Neovim: `[\d]` matches "d", not a digit).
     const value = escaped === 't' ? '\t' : escaped === 'n' ? '\n' : escaped === 'r' ? '\r' : escaped;
     if (value === undefined) this.invalid('empty-character-class-escape', start, this.index);
     if (isCombiningSequence(value)) this.containsCombiningAtom = true;
@@ -712,6 +737,16 @@ class Parser {
     return { kind: 'class', name: mapped, ...(negated ? { negated: true } : {}) };
   }
 
+  /** `~`: the last `:substitute` replacement text, matched literally (empty if there was none). */
+  private tildeNode(start: number): PatternNode {
+    const text = this.options.previousSubstituteText;
+    if (text === undefined) this.unsupported('previous-substitute-pattern-requires-command-context', start, this.index);
+    const terms: PatternNode[] = [...text].map((character) => (
+      { kind: 'literal', value: character, caseMode: this.caseMode, source: { start, end: this.index } } as PatternNode
+    ));
+    return sequence(terms, start, this.index);
+  }
+
   private classNode(start: number, parts: readonly CharacterClassPart[], negated: boolean, includeNewline: boolean): PatternNode {
     return { kind: 'character-class', parts, negated, includeNewline, caseMode: this.caseMode, source: { start, end: this.index } };
   }
@@ -721,7 +756,8 @@ class Parser {
     const char = this.source[this.index];
     if ((char === '*' && (this.magic === 'magic' || this.magic === 'very-magic')) ||
         (char === '+' && this.magic === 'very-magic') ||
-        (char === '?' && this.magic === 'very-magic')) {
+        (char === '?' && this.magic === 'very-magic') ||
+        (char === '=' && this.magic === 'very-magic')) {
       this.index += 1;
       return char === '*' ? { minimum: 0, maximum: null, greedy: true }
         : char === '+' ? { minimum: 1, maximum: null, greedy: true }
@@ -767,6 +803,9 @@ class Parser {
       minimum = first;
       maximum = first;
     }
+    // `\{n,m\}` (closing brace also escaped) is as valid as `\{n,m}`; only
+    // very magic disallows the backslash since `}` is already bare there.
+    if (this.magic !== 'very-magic' && this.source[this.index] === '\\' && this.source[this.index + 1] === '}') this.index += 1;
     if (this.source[this.index] !== '}') this.invalid('unclosed-brace-quantifier', start, this.index);
     this.index += 1;
     if (maximum !== null && maximum < minimum) this.invalid('invalid-brace-quantifier-range', start, this.index);
@@ -800,8 +839,8 @@ class Parser {
     else if (directive === 'M') this.magic = 'nomagic';
     else if (directive === 'v') this.magic = 'very-magic';
     else if (directive === 'V') this.magic = 'very-nomagic';
-    else if (directive === 'c') this.caseMode = 'insensitive';
-    else if (directive === 'C') this.caseMode = 'sensitive';
+    else if (directive === 'c') this.caseMode = this.globalCaseOverride = 'insensitive';
+    else if (directive === 'C') this.caseMode = this.globalCaseOverride = 'sensitive';
   }
 
   private isGroupOpen(): boolean {
@@ -810,7 +849,14 @@ class Parser {
   }
 
   private isNonCapturingGroupOpen(): boolean {
-    return this.isEscape('%') && this.source[this.index + 2] === '(';
+    return this.nonCapturingGroupOpenWidth() > 0;
+  }
+
+  /** Width in source code units of a non-capturing group opener at the cursor, or 0 if absent. */
+  private nonCapturingGroupOpenWidth(): number {
+    if (this.isEscape('%') && this.source[this.index + 2] === '(') return 3;
+    if (this.magic === 'very-magic' && this.source[this.index] === '%' && this.source[this.index + 1] === '(') return 2;
+    return 0;
   }
 
   private isGroupClose(): boolean {
@@ -842,6 +888,8 @@ class Parser {
     if (this.magic !== 'very-magic' && this.source[index] === '\\' && this.source[index + 1] === '|') return true;
     if (this.magic === 'very-magic' && this.source[index] === ')') return true;
     if (this.magic !== 'very-magic' && this.source[index] === '\\' && this.source[index + 1] === ')') return true;
+    if (this.magic === 'very-magic' && this.source[index] === '&') return true;
+    if (this.magic !== 'very-magic' && this.source[index] === '\\' && this.source[index + 1] === '&') return true;
     return false;
   }
 
@@ -1029,12 +1077,37 @@ function posixClass(value: string): CharacterClassName | undefined {
   }
 }
 
+/** Rewrites every node's caseMode to `mode`, for a \c/\C directive that applies to the whole pattern. */
+function overrideCaseMode(node: PatternNode, mode: CaseMode): PatternNode {
+  switch (node.kind) {
+    case 'literal':
+    case 'character-class':
+    case 'backreference':
+      return { ...node, caseMode: mode };
+    case 'sequence':
+      return { ...node, terms: node.terms.map((term) => overrideCaseMode(term, mode)) };
+    case 'alternate':
+      return { ...node, branches: node.branches.map((branch) => overrideCaseMode(branch, mode)) };
+    case 'intersection':
+      return { ...node, concats: node.concats.map((concat) => overrideCaseMode(concat, mode)) };
+    case 'optional-sequence':
+      return { ...node, atoms: node.atoms.map((atom) => overrideCaseMode(atom, mode)) };
+    case 'capture':
+    case 'repeat':
+    case 'assertion':
+      return { ...node, child: overrideCaseMode(node.child, mode) };
+    default:
+      return node;
+  }
+}
+
 function containsUppercaseLiteral(node: PatternNode): boolean {
   switch (node.kind) {
     case 'literal':
       return hasUppercase(node.value);
     case 'character-class':
-      return node.parts.some((part) => part.kind === 'literal' && hasUppercase(part.value));
+      return node.parts.some((part) => (part.kind === 'literal' && hasUppercase(part.value))
+        || (part.kind === 'range' && (hasUppercase(String.fromCodePoint(part.first)) || hasUppercase(String.fromCodePoint(part.last)))));
     case 'sequence':
       return node.terms.some(containsUppercaseLiteral);
     case 'alternate':

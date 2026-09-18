@@ -4,7 +4,7 @@ import { lookupCtags, parseCtags } from '../../packages/services/navigation/ctag
 const TAGS_FILE = [
   '!_TAG_FILE_FORMAT\t2\t/extended format/',
   '!_TAG_FILE_SORTED\t1\t/0=unsorted, 1=sorted/',
-  'main\tsrc/main.ts\tline:10\tf',
+  'main\tsrc/main.ts\t/^function main() {$/;"\tf\tline:10',
   'helper\tsrc/util.ts\t42;"\tf',
   'noline\tsrc/other.ts\t/^const noline = 1;$/;"\tv',
 ].join('\n');

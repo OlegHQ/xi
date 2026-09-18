@@ -263,7 +263,7 @@ const caseInsensitiveClass = findAllMatches(
   compilePattern('[a]', { ignoreCase: true }),
   createPatternTextSnapshot(version, 'A a'),
 ).matches;
-assert.deepEqual(caseInsensitiveClass.map((match) => match.start as number), [2], 'Vim character classes ignore \c/ignorecase directives');
+assert.deepEqual(caseInsensitiveClass.map((match) => match.start as number), [0, 2], 'Vim character classes fold case under ignorecase (verified: nvim `[a]` /ignorecase on "A a" replaces both)');
 const posixAlpha = findAllMatches(compilePattern(String.raw`[[:alpha:]]\+`), createPatternTextSnapshot(version, '42Ab!')).matches[0];
 assert(posixAlpha !== undefined);
 assert.deepEqual([posixAlpha.start as number, posixAlpha.end as number], [2, 4]);

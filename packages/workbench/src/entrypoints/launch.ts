@@ -9,7 +9,7 @@ export type {
   VimPrefixHelpState,
 } from '../../vim-session';
 export { WorkbenchSession } from '../../session';
-export type { BufferOpenOptions, WorkbenchSessionOptions, WorkbenchWindowDirection } from '../../session';
+export type { BufferOpenOptions, WorkbenchSessionOptions, WorkbenchWindowDirection, WorkbenchTabSnapshot } from '../../session';
 export { ContributionRegistry } from '../../contributions';
 export type { ContributionRegistryOptions } from '../../contributions';
 export { CommandRegistry } from '../../commands/registry';
@@ -102,7 +102,7 @@ export type {
   WorkbenchTaskOutputSnapshot,
   WorkbenchTaskSpec,
 } from '../../problems';
-export { buildNavigationRequest, CompletionSnippetController, LanguageOverlayController, nonOverlappingDocumentEdits, planCompletionEdits, WorkspaceEditsController } from '../../language';
+export { buildNavigationRequest, CompletionSnippetController, LanguageOverlayController, languageIdForPath, nonOverlappingDocumentEdits, planCompletionEdits, WorkspaceEditsController } from '../../language';
 export type {
   AppliedWorkspaceEditProposal,
   CompletionControllerPort,
@@ -163,6 +163,7 @@ export type {
 } from '../../language';
 export { WorkbenchInputRouter } from '../../input/router';
 export type {
+  RouterBindingConfig,
   RouterCompletionPort,
   RouterExplorerPort,
   RouterKeyEvent,
@@ -174,6 +175,8 @@ export type {
   RouterWorkspaceEditsPort,
   WorkbenchInputRouterOptions,
 } from '../../input/router';
+export { VIEW_COMMAND_IDS, isViewCommandId } from '../../input/view-commands';
+export type { ViewCommandId } from '../../input/view-commands';
 export { WorkbenchPointerRouter } from '../../input/pointer-router';
 export type {
   ContextMenuItemInput,
@@ -219,3 +222,12 @@ export type {
   SaveCoordinatorOptions,
   SaveCoordinatorPersistencePort,
 } from '../../editing/save-coordinator';
+export { SidebarController } from '../../sidebar';
+export type {
+  SidebarControllerOptions,
+  SidebarOutlineModelPort,
+  SidebarReadModel,
+  SidebarSection,
+  SidebarSectionId,
+  SidebarWidthPersistencePort,
+} from '../../sidebar';

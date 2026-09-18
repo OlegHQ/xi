@@ -66,16 +66,20 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
     captured = bytearray()
     try:
         read_until(master, captured, b"XI_WORKBENCH_READY", 10)
-        os.write(master, mouse(0, 3, 1))
-        os.write(master, mouse(0, 3, 1, "m"))
+        # Files starts already expanded, so clicking its chevron here would collapse the
+        # inline tree instead of opening it; use the same leader shortcut
+        # tests/e2e/t040-explorer-pty.py uses to open it instead.
+        os.write(master, b" vf")
         read_until(master, captured, b"XI_EXPLORER_OPEN", 5)
         read_for(master, captured, 1.0)
 
-        # Right-click the root row (a directory-like container): the menu must show "Expand"/
-        # "Collapse" enabled and "Open" disabled, and the disabled "Open" must not execute.
+        # Right-click the root row (mouse row 3: row 1 is the sidebar's `▾ Files` header, row 2
+        # is the Explorer panel's own "N items" line, row 3 is the expanded workspace root --
+        # a directory-like container): the menu must show "Expand"/"Collapse" enabled and
+        # "Open" disabled, and the disabled "Open" must not execute.
         before = len(captured)
-        os.write(master, mouse(2, 5, 2))
-        os.write(master, mouse(2, 5, 2, "m"))
+        os.write(master, mouse(2, 5, 3))
+        os.write(master, mouse(2, 5, 3, "m"))
         read_for(master, captured, 0.5)
         hit = next((m for m in (PANEL_POINTER.finditer(bytes(captured[before:]))) if b'"action":"context"' in m.group(0)), None)
         if hit is None:
@@ -99,12 +103,13 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
         if b"XI_EXPLORER_REFRESH" not in bytes(captured[before_toggle:]):
             raise SystemExit(f"keyboard-activated context menu item did not toggle the root: {captured[before_toggle:][-2000:]!r}")
 
-        # Right-click the file row (zztarget.txt): "Open" is enabled and does exactly what a
-        # left-click activation does — opens the file in the editor.
+        # Right-click the file row (zztarget.txt, mouse row 5: row 4 is main.ts): "Open" is
+        # enabled and does exactly what a left-click activation does — opens the file in the
+        # editor.
         read_for(master, captured, 0.3)
         before_file = len(captured)
-        os.write(master, mouse(2, 5, 4))
-        os.write(master, mouse(2, 5, 4, "m"))
+        os.write(master, mouse(2, 5, 5))
+        os.write(master, mouse(2, 5, 5, "m"))
         read_for(master, captured, 0.5)
         file_hit = next((m for m in PANEL_POINTER.finditer(bytes(captured[before_file:])) if b'"action":"context"' in m.group(0)), None)
         if file_hit is None:
@@ -116,13 +121,12 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
 
         # Reopen a menu (right-click the root again) and click well outside it (over the status
         # bar): the backdrop must dismiss the menu on that click rather than letting it fall
-        # through to whatever renderable is under the pointer.
-        os.write(master, mouse(0, 3, 1))
-        os.write(master, mouse(0, 3, 1, "m"))
-        read_for(master, captured, 0.5)
+        # through to whatever renderable is under the pointer. Explorer is already open and
+        # expanded from the earlier ` vf` (clicking the `▾ Files` chevron again here would
+        # collapse -- not reopen -- the already-expanded section).
         before_reopen = len(captured)
-        os.write(master, mouse(2, 5, 2))
-        os.write(master, mouse(2, 5, 2, "m"))
+        os.write(master, mouse(2, 5, 3))
+        os.write(master, mouse(2, 5, 3, "m"))
         read_for(master, captured, 0.4)
         if not any(b'"action":"context"' in m.group(0) for m in PANEL_POINTER.finditer(bytes(captured[before_reopen:]))):
             raise SystemExit(f"could not reopen a context menu for the dismiss-on-outside-click check: {captured[before_reopen:][-3000:]!r}")

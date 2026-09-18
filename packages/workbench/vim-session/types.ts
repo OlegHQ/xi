@@ -1,4 +1,4 @@
-import type { ViewId } from '../../contracts/src/index';
+import type { ClockPort, ViewId } from '../../contracts/src/index';
 import type { CommittedDocumentChange } from '../../document/src/index';
 import type { SelectionSetSnapshot } from '../../selections/src/index';
 import type { VimMode } from '../../vim/src/entrypoints/launch';
@@ -18,6 +18,20 @@ export interface OwnedVimKeyEvent {
 
 export interface OwnedVimSessionOptions {
   readonly viewId: ViewId;
+  /** Monotonic time source for repeat-timing/dot-repeat bookkeeping. Defaults to a
+   * performance.now()-backed clock when omitted. */
+  readonly clock?: Pick<ClockPort, 'monotonicMilliseconds'>;
+  /** Host-owned visible-line range, refreshed by the host each frame, for H/M/L. When
+   * omitted, H/M/L fall back to treating the whole document as the viewport. */
+  readonly viewport?: {
+    readonly topLine: () => number;
+    readonly bottomLine: () => number;
+  };
+  /** Host-owned file identity for the `%` and `#` registers (current and alternate file). */
+  readonly files?: {
+    readonly currentPath: () => string | undefined;
+    readonly alternatePath: () => string | undefined;
+  };
   readonly initialLine?: number;
   readonly initialSelections?: SelectionSetSnapshot;
   readonly initialMode?: VimMode;
@@ -43,9 +57,20 @@ export interface VimPrefixHelpState {
 }
 
 export interface VimCommandLineState {
-  /** The leading ':' is included; cursorOffset is UTF-16 based. */
+  /** The leading ':', '/' or '?' is included; cursorOffset is UTF-16 based. */
   readonly source: string;
   readonly cursorOffset: number;
+  /** 'search-forward'/'search-backward' distinguish a `/`/`?` prompt from an Ex `:`
+   * command line so the UI can render the correct prompt glyph; both still expose the
+   * leading character through `source` for a caller that only reads that field. */
+  readonly kind: 'ex' | 'search-forward' | 'search-backward';
+}
+
+/** The last successful search pattern, and whether a `/`/`?` prompt is currently open, for a
+ * later incremental-highlight UI. Cheap: no scanning, just the committed search state. */
+export interface VimSearchHighlightState {
+  readonly pattern: string;
+  readonly active: boolean;
 }
 
 export interface OwnedVimSession extends WorkbenchReadPort {
@@ -53,6 +78,9 @@ export interface OwnedVimSession extends WorkbenchReadPort {
   readonly commandLineActive: boolean;
   readonly commandLine: VimCommandLineState | undefined;
   readonly prefixHelp: VimPrefixHelpState;
+  /** The last successful search pattern (if any) and whether a search prompt is open now,
+   * so a UI can highlight matches later without this session scanning the buffer itself. */
+  readonly searchHighlight: VimSearchHighlightState | undefined;
   /** Re-anchor the engine after a document owner commits an external edit. */
   applyExternalChange(change: CommittedDocumentChange): void;
   /** Close a Vim Insert group before a service-originated edit takes ownership of history. */

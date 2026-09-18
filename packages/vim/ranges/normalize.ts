@@ -26,6 +26,13 @@ export interface VimOperatorRangeInput {
   readonly blockTabPolicy?: 'expand' | 'preserve';
   /** `dd`/`cc`/`yy` supply the already-multiplied doubled-operator count here. */
   readonly lineCount?: number;
+  /**
+   * An exclusive forward target landing exactly at column 0 normally keeps
+   * the preceding line separator (Neovim's exclusive-motion quirk). A
+   * synthesized multi-line range (e.g. `{count}D`) that genuinely wants that
+   * whole further line removed, separator included, sets this to skip it.
+   */
+  readonly consumeTrailingNewline?: boolean;
   readonly tabSize?: number;
   readonly widthPolicy?: CellWidthPolicy;
 }
@@ -132,7 +139,7 @@ function normalizeCharacterwise(
 
   // Neovim's exclusive forward range ending at column zero does not consume
   // the preceding line separator.  The post-motion cursor stays on that row.
-  if (forward && !input.inclusive && target > origin) {
+  if (forward && !input.inclusive && target > origin && input.consumeTrailingNewline !== true) {
     const targetLine = lineBoundsAt(snapshot, asOffset(target));
     if (!targetLine.ok) return targetLine;
     if (target === targetLine.value.start && targetLine.value.index > 0) {
@@ -153,6 +160,14 @@ function normalizeCharacterwise(
     }
   }
 
+  // `l` is normally clamped at end-of-line in Normal mode, but Vim allows it
+  // to reach one past the last character when driving an operator, so `dl`
+  // on the last character of a line still deletes that character.
+  if (start === end && input.motionKey === 'l') {
+    const extended = nextGraphemeBoundary(snapshot, end);
+    if (!extended.ok) return extended;
+    end = extended.value;
+  }
   if (start === end) return rangeFailure('empty-range');
   const range = readTextRange(snapshot, start, end);
   if (!range.ok) return range;

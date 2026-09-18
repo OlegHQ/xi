@@ -1,7 +1,7 @@
 import { TextAttributes, type OptimizedBuffer, type RGBA } from '@opentui/core/renderer';
 import type { CellPoint, ProjectedSelection, ScreenRow, VisibleFrame } from '../../layout/src/index';
 import type { MotionPaintTokens, EditorColorMode } from '../theme/motion-tokens';
-import { resolvePaintColor } from '../theme/motion-tokens';
+import { resolvePaintColor, pickCursorForeground } from '../theme/motion-tokens';
 import type { SyntaxRead, SyntaxSpan, SyntaxTokenKind } from '../../contracts/src/index';
 
 /** Structural read of Vim's immutable presentation output. The UI never imports Vim. */
@@ -179,7 +179,17 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
     secondarySelection: resolvePaintColor(options.theme.selectionSecondary, colorMode),
     cursorPrimary: resolvePaintColor(options.theme.cursorPrimary, colorMode),
     cursorSecondary: resolvePaintColor(options.theme.cursorSecondary, colorMode),
+    cursorOnSelection: resolvePaintColor(options.theme.cursorOnSelection, colorMode),
   };
+  // Cursor heads within the painted range, keyed like `masks.cells`, so the per-cell loop
+  // below can paint the real glyph under the cursor (instead of a second pass stomping it
+  // with a marker) while still seeing that cell's own selection/trail/operator state.
+  const cursorCells = new Map<number, { readonly primary: boolean }>();
+  for (const selection of options.frame.selections) {
+    const point = selection.head.position;
+    if (point === null || point.row < rowRange.start || point.row >= rowRange.end) continue;
+    cursorCells.set(cellKey(point.row, point.column), { primary: selection.primary });
+  }
   let selectedCells = 0;
   let secondarySelectedCells = 0;
   let trailCells = 0;
@@ -215,7 +225,23 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
         if (secondarySelection) attributes |= TextAttributes.UNDERLINE;
         if (primarySelection) attributes |= TextAttributes.INVERSE;
       }
-      const foreground = cell.role === 'gutter' ? options.muted : syntaxForeground(cell, syntaxCursor, syntaxColors, options.foreground);
+      let foreground = cell.role === 'gutter' ? options.muted : syntaxForeground(cell, syntaxCursor, syntaxColors, options.foreground);
+      const cursorInfo = cursorCells.get(key);
+      if (cursorInfo !== undefined) {
+        if (colorMode === 'no-color') {
+          attributes |= cursorInfo.primary ? TextAttributes.INVERSE : TextAttributes.UNDERLINE;
+        } else if (options.mode === 'insert') {
+          // Thin bar-style caret: keep the real glyph and its color, only mark the
+          // position, so it reads as distinct from the solid Normal/Visual block below.
+          attributes |= TextAttributes.UNDERLINE;
+        } else {
+          const onSelection = primarySelection || secondarySelection;
+          const cursorBackground = onSelection ? colors.cursorOnSelection : (cursorInfo.primary ? colors.cursorPrimary : colors.cursorSecondary);
+          foreground = pickCursorForeground(foreground, cursorBackground, options.foreground, options.background);
+          background = cursorBackground;
+          attributes = TextAttributes.BOLD;
+        }
+      }
       buffer.fillRect(options.x + column, rowY, 1, 1, background);
       if (cell.text.length > 0) {
         buffer.setCell(options.x + column, rowY, cell.text, foreground, background, attributes);
@@ -227,18 +253,6 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
   for (const selection of options.frame.selections) {
     const point = selection.head.position;
     if (point === null || point.row < rowRange.start || point.row >= rowRange.end) continue;
-    const color = colorMode === 'no-color'
-      ? options.background
-      : (selection.primary ? colors.cursorPrimary : colors.cursorSecondary);
-    const attributes = colorMode === 'no-color'
-      ? (selection.primary ? TextAttributes.INVERSE : TextAttributes.UNDERLINE)
-      : (selection.primary ? TextAttributes.BOLD : TextAttributes.UNDERLINE);
-    const marker = options.ascii ? '|' : '▌';
-    // Cursor tokens are dark by default. Use the editor canvas foreground
-    // only for no-color reverse/underline mode; a light canvas foreground on
-    // the dark software cursor keeps the glyph visible in truecolor/256 mode.
-    const markerForeground = colorMode === 'no-color' ? options.foreground : options.background;
-    buffer.setCell(options.x + point.column, options.y + point.row, marker, markerForeground, color, attributes);
     if (selection.primary) primaryCursor = Object.freeze({ row: point.row, column: point.column });
     else secondaryCursors += 1;
   }
@@ -291,6 +305,24 @@ export function canPaintPlainFrame(frame: VisibleFrame, presentation: EditorPres
   return true;
 }
 
+/** The glyph and its own (non-cursor) resolved foreground at a cursor's cell, so the
+ * cursor overlay paints the real character instead of stomping it with a marker glyph. */
+function cursorGlyphAndForeground(
+  frame: VisibleFrame,
+  column: number,
+  row: ScreenRow | undefined,
+  syntax: SyntaxRead | undefined,
+  fallback: SyntaxFallbackRow | undefined,
+  syntaxColors: Map<SyntaxTokenKind, RGBA> | undefined,
+  muted: RGBA,
+  base: RGBA,
+): { readonly glyph: string; readonly foreground: RGBA } {
+  const cell = row?.cells[column];
+  if (row === undefined || cell === undefined) return { glyph: ' ', foreground: base };
+  const cursor = syntaxColors === undefined ? undefined : rowSyntaxCursor(frame, row, syntax, fallback);
+  return { glyph: cell.text, foreground: cell.role === 'gutter' ? muted : syntaxForeground(cell, cursor, syntaxColors, base) };
+}
+
 function paintPlainFrame(buffer: OptimizedBuffer, options: MotionPaintOptions, rowRange: PaintRowRange): MotionPaintStats {
   // @xi-perf H1 RENDER-120 -- Per-cell run-coalesced plain paint; run buffers are bounded per row, not per cell.
   const colors = {
@@ -327,12 +359,22 @@ function paintPlainFrame(buffer: OptimizedBuffer, options: MotionPaintOptions, r
   for (const selection of options.frame.selections) {
     const point = selection.head.position;
     if (point === null || point.row < rowRange.start || point.row >= rowRange.end) continue;
-    const color = options.colorMode === 'no-color'
-      ? options.background
-      : (selection.primary ? colors.cursorPrimary : colors.cursorSecondary);
-    const attributes = options.colorMode === 'no-color' ? TextAttributes.INVERSE : TextAttributes.BOLD;
-    const foreground = options.colorMode === 'no-color' ? options.foreground : options.background;
-    buffer.setCell(options.x + point.column, options.y + point.row, options.ascii ? '|' : '▌', foreground, color, attributes);
+    const row = options.frame.rows[point.row];
+    const { glyph, foreground: tokenForeground } = cursorGlyphAndForeground(
+      options.frame, point.column, row, options.syntax, options.syntaxFallbackRows?.[point.row], syntaxColors, options.muted, options.foreground,
+    );
+    if (options.colorMode === 'no-color') {
+      const attributes = selection.primary ? TextAttributes.INVERSE : TextAttributes.UNDERLINE;
+      buffer.setCell(options.x + point.column, options.y + point.row, glyph, tokenForeground, options.background, attributes);
+    } else if (options.mode === 'insert') {
+      // Thin bar-style caret: real glyph, its own color, just underlined -- distinct
+      // from the solid Normal/Visual block cursor below.
+      buffer.setCell(options.x + point.column, options.y + point.row, glyph, tokenForeground, options.background, TextAttributes.UNDERLINE);
+    } else {
+      const cursorBackground = selection.primary ? colors.cursorPrimary : colors.cursorSecondary;
+      const foreground = pickCursorForeground(tokenForeground, cursorBackground, options.foreground, options.background);
+      buffer.setCell(options.x + point.column, options.y + point.row, glyph, foreground, cursorBackground, TextAttributes.BOLD);
+    }
     if (selection.primary) primaryCursor = Object.freeze({ row: point.row, column: point.column });
     else secondaryCursors += 1;
   }

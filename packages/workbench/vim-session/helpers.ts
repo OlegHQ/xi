@@ -68,10 +68,10 @@ export function isMotionLike(key: string): boolean {
   return isMotionKey(key) || isWordMotionKey(key) || isTextObjectKey(key);
 }
 
-export function motionInvocation(key: string, count: number): VimMultiMotionInvocation | null {
-  if (isMotionKey(key)) return { key, count };
-  if (isWordMotionKey(key)) return { key, count };
-  if (isTextObjectKey(key)) return { key, count };
+export function motionInvocation(key: string, count?: number): VimMultiMotionInvocation | null {
+  if (isMotionKey(key)) return count === undefined ? { key } : { key, count };
+  if (isWordMotionKey(key)) return count === undefined ? { key } : { key, count };
+  if (isTextObjectKey(key)) return count === undefined ? { key } : { key, count };
   return null;
 }
 
@@ -119,20 +119,11 @@ export function lineStart(snapshot: DocumentSnapshot, lineNumber?: number): Utf1
 }
 
 export function makeNormalSelection(snapshot: DocumentSnapshot, value: Utf16Offset, generation: number, selectionId = id<SelectionId>('xi-launch-selection')): SelectionSetSnapshot {
-  let at = Math.min(Math.max(value as number, 0), Math.max(0, snapshot.lengthUtf16 - 1));
-  while (at > 0) {
-    const character = snapshot.slice(at as Utf16Offset, (at + 1) as Utf16Offset);
-    if (!character.ok || character.value !== '\n') break;
-    at -= 1;
-  }
-  const endpoint = snapshot.lengthUtf16 === 0
-    ? { kind: 'eof' as const }
-    : (() => {
-      const offset = asUtf16Offset(at);
-      const after = asUtf16Offset(Math.min(at + 1, snapshot.lengthUtf16));
-      if (!offset.ok || !after.ok) throw new Error('xi selection offset');
-      return { kind: 'character' as const, offset: offset.value, after: after.value };
-    })();
+  // Allowed up to lengthUtf16 itself (not just length - 1): a document ending in '\n' has a
+  // real trailing empty last line living exactly at that offset (see normalEndpointInput's
+  // own empty-line check), and a Normal cursor must be able to rest there (e.g. after 'o').
+  const at = Math.min(Math.max(value as number, 0), snapshot.lengthUtf16);
+  const endpoint = normalEndpointInput(snapshot, at);
   const created = createSelectionSet(snapshot, {
     primaryId: selectionId,
     selectionGeneration: generation,
@@ -140,6 +131,40 @@ export function makeNormalSelection(snapshot: DocumentSnapshot, value: Utf16Offs
   });
   if (!created.ok) throw new Error(`xi selection: ${created.error.kind}`);
   return created.value.selectionSet;
+}
+
+type LineIndex = Extract<ReturnType<typeof asLineIndex>, { ok: true }>['value'];
+
+function normalEndpointInput(snapshot: DocumentSnapshot, at: number): { kind: 'eof' } | { kind: 'empty-line'; lineIndex: LineIndex } | { kind: 'character'; offset: Utf16Offset; after: Utf16Offset } {
+  if (snapshot.lengthUtf16 === 0) return { kind: 'eof' };
+  const lineResult = snapshot.lineIndexAt(offset(at));
+  if (lineResult.ok) {
+    const startResult = snapshot.lineStartOffset(lineResult.value);
+    if (startResult.ok) {
+      const start = startResult.value as number;
+      const startChar = snapshot.slice(offset(start), offset(Math.min(start + 1, snapshot.lengthUtf16)));
+      const isEmptyLine = start === snapshot.lengthUtf16 || (startChar.ok && startChar.value === '\n');
+      if (isEmptyLine) return { kind: 'empty-line', lineIndex: lineResult.value };
+    }
+  }
+  // Not a (real or trailing) empty line: `at` must address an actual character, so an
+  // overshoot to lengthUtf16 itself falls back to the document's last character.
+  const bounded = Math.min(at, snapshot.lengthUtf16 - 1);
+  const character = snapshot.slice(offset(bounded), offset(Math.min(bounded + 1, snapshot.lengthUtf16)));
+  const candidate = character.ok && character.value === '\n' && bounded > 0 ? bounded - 1 : bounded;
+  return { kind: 'character', offset: offset(candidate), after: offset(Math.min(candidate + characterWidthAt(snapshot, candidate), snapshot.lengthUtf16)) };
+}
+
+/** 2 for a character whose leading UTF-16 unit is a high surrogate with a matching low
+ * surrogate immediately after (an astral code point, e.g. an emoji), 1 otherwise. Without
+ * this, a normal-cursor endpoint placed on the buffer's last character lands its `after`
+ * boundary mid-surrogate whenever that character is astral. */
+function characterWidthAt(snapshot: DocumentSnapshot, at: number): number {
+  const pair = snapshot.slice(offset(at), offset(Math.min(at + 2, snapshot.lengthUtf16)));
+  if (!pair.ok || pair.value.length < 2) return 1;
+  const high = pair.value.charCodeAt(0);
+  const low = pair.value.charCodeAt(1);
+  return high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff ? 2 : 1;
 }
 
 export function nonEmptyTuple<T>(values: readonly T[]): readonly [T, ...T[]] {
@@ -163,6 +188,7 @@ export function isDirectChangeKey(key: string): key is VimDirectChangeKey {
 export function isMotionKey(key: string): key is VimMotionKey {
   return key === 'h' || key === 'l' || key === 'j' || key === 'k' || key === '0' || key === '^' || key === '$'
     || key === 'g_' || key === '|' || key === '+' || key === '-' || key === '_' || key === 'gg' || key === 'G'
+    || key === 'H' || key === 'M' || key === 'L'
     || key === '<Left>' || key === '<Right>' || key === '<Up>' || key === '<Down>' || key === '<Home>' || key === '<End>'
     || key === '<C-Home>' || key === '<C-End>' || key === '<BS>' || key === '<C-H>' || key === '<Space>'
     || key === '<NL>' || key === '<CR>' || key === '<C-M>' || key === '<C-J>' || key === '<C-N>' || key === '<C-P>';

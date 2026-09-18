@@ -1,3 +1,5 @@
+export { languageIdForPath } from './file-language';
+
 export { buildNavigationRequest, LanguageOverlayController } from './overlays';
 export type {
   HoverOverlayModel,

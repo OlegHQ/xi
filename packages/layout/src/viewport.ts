@@ -266,7 +266,13 @@ export class ViewportLayout {
       displayCellColumn: anchorForProjection.displayCellColumn,
     });
 
-    const geometryKey = JSON.stringify([
+    // A plain delimited join of cheap, O(1) fingerprints -- not JSON.stringify over
+    // folds.map/annotations.map, which walked and serialized every entry on every project()
+    // call. `foldGeneration` is the caller's own cache-busting counter, kept as a fast-path
+    // discriminator, but a caller can reuse a stale generation for changed fold content (see
+    // MP03-T085-FOLD-GEOMETRY-COLLISION-01), so a length + first/last fingerprint of the actual
+    // folds is still included, same as annotations/diff fillers which have no counter at all.
+    const geometryKey = [
       input.viewId,
       snapshot.id,
       snapshot.version,
@@ -281,11 +287,11 @@ export class ViewportLayout {
       widthPolicy.id,
       widthPolicy.generation,
       foldGeneration,
-      folds.map((fold) => [fold.id, fold.startLine, fold.endLineExclusive, fold.placeholder]),
+      cheapListFingerprint(folds, (fold) => [fold.id, fold.startLine, fold.endLineExclusive, fold.placeholder]),
       gutterWidthCells,
-      annotationsResult.value.map((annotation) => [annotation.id, annotation.lineIndex, annotation.offset, annotation.text]),
-      diffFillersResult.value.map((filler) => [filler.id, filler.beforeLine]),
-    ]);
+      cheapListFingerprint(annotationsResult.value, (annotation) => [annotation.id, annotation.lineIndex, annotation.offset, annotation.text]),
+      cheapListFingerprint(diffFillersResult.value, (filler) => [filler.id, filler.beforeLine]),
+    ].join('|');
     if (geometryKey !== this.#lastGeometryKey) {
       this.#layoutGeneration += 1;
       this.#lastGeometryKey = geometryKey;
@@ -936,10 +942,27 @@ function positionForDisplayCell(rows: readonly ScreenRow[], line: LineIndex, cel
       if (target >= 0) return Object.freeze({ row: rowIndex, column: target });
     }
     if (cell === row.displayEndCell && !rows.some((candidate) => candidate.lineIndex === line && candidate.displayStartCell === cell && candidate.wrapIndex > row.wrapIndex)) {
-      return Object.freeze({ row: rowIndex, column: Math.min(row.cells.length, contentStart + Math.min(contentWidth, row.displayEndCell - row.displayStartCell)) });
+      const raw = contentStart + Math.min(contentWidth, row.displayEndCell - row.displayStartCell);
+      // A row with no padding cell has no column past its last real cell; a padded row's first
+      // padding cell (role === 'padding') sits exactly at displayEndCell and is the right target.
+      const paddingColumn = row.cells.findIndex((entry) => entry.role === 'padding');
+      const column = raw < row.cells.length ? raw : paddingColumn >= 0 ? paddingColumn : Math.max(row.cells.length - 1, 0);
+      return Object.freeze({ row: rowIndex, column });
     }
   }
   return null;
+}
+
+/**
+ * O(1) cache-key fingerprint for a list: length plus the first and last entries, JSON-encoded
+ * individually (not joined as delimited text, which lets an id containing the delimiter collide
+ * with a different entry's fields -- e.g. fold ids 'x:1' and 'x' with a ':'-joined fingerprint).
+ */
+function cheapListFingerprint<T>(list: readonly T[], fingerprint: (item: T) => unknown): string {
+  if (list.length === 0) return '0';
+  const first = list[0] as T;
+  const last = list[list.length - 1] as T;
+  return `${list.length}:${JSON.stringify(fingerprint(first))}:${JSON.stringify(fingerprint(last))}`;
 }
 
 function foldAt(folds: readonly FoldRegion[], line: number): FoldRegion | undefined {

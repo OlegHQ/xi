@@ -92,9 +92,10 @@ with tempfile.TemporaryDirectory(prefix="xi-t094-integration-") as temporary:
     try:
         read_until(master, captured, b"XI_WORKBENCH_READY", 10)
 
-        # --- T127: open Explorer, activate a row by stable id. ---
-        os.write(master, mouse(0, 3, 1))
-        os.write(master, mouse(0, 3, 1, "m"))
+        # --- T127: open Explorer, activate a row by stable id. Files starts already
+        # expanded, so clicking its chevron here would collapse the inline tree instead of
+        # opening it; use the same leader shortcut tests/e2e/t040-explorer-pty.py uses. ---
+        os.write(master, b" vf")
         read_until(master, captured, b"XI_EXPLORER_OPEN", 5)
         read_for(master, captured, 1.0)
 
@@ -108,8 +109,8 @@ with tempfile.TemporaryDirectory(prefix="xi-t094-integration-") as temporary:
             raise SystemExit(f"a panel wheel event leaked to the editor scroll path: {captured[before_scroll:][-2000:]!r}")
 
         before_menu = len(captured)
-        os.write(master, mouse(2, 5, 2))
-        os.write(master, mouse(2, 5, 2, "m"))
+        os.write(master, mouse(2, 5, 3))
+        os.write(master, mouse(2, 5, 3, "m"))
         read_for(master, captured, 0.4)
         menu_hit = next((m for m in PANEL_POINTER.finditer(captured[before_menu:]) if b'"action":"context"' in m.group(0)), None)
         if menu_hit is None:
@@ -117,9 +118,10 @@ with tempfile.TemporaryDirectory(prefix="xi-t094-integration-") as temporary:
         os.write(master, b"\x1b")
         read_for(master, captured, 0.3)
 
-        # Activate zztarget.txt by stable id (root is expanded; probe a few rows).
+        # Activate zztarget.txt by stable id. Row 3 is the expanded workspace root (row 2 is
+        # the Explorer panel's own "N items" line); probe rows from 4 (the first child) on.
         opened = False
-        for row in range(3, 8):
+        for row in range(4, 9):
             before = len(captured)
             os.write(master, mouse(0, 5, row))
             os.write(master, mouse(0, 5, row, "m"))
@@ -162,7 +164,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t094-integration-") as temporary:
         read_for(master, captured, 0.3)
 
         before_drag = len(captured)
-        os.write(master, mouse(0, 76, 20))
+        os.write(master, mouse(0, 75, 20))
         os.write(master, mouse(0, 85, 20))
         read_for(master, captured, 0.2)
         drag_events_before_suspend = [json.loads(m.group(1)) for m in SPLITTER.finditer(captured[before_drag:])]
@@ -193,7 +195,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t094-integration-") as temporary:
 
         # A fresh drag after resume must work cleanly (capture state wasn't left corrupted).
         before_post_resume_drag = len(captured)
-        os.write(master, mouse(0, 76, 20))
+        os.write(master, mouse(0, 75, 20))
         os.write(master, mouse(0, 85, 20))
         os.write(master, mouse(0, 85, 20, "m"))
         read_for(master, captured, 0.4)

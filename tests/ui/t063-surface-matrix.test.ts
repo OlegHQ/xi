@@ -40,6 +40,7 @@ const HEIGHT = 8;
 const results: Array<{ readonly surface: string; readonly state: string; readonly rows: number; readonly chars: string }> = [];
 
 await runSearchMatrix();
+await runSearchStylingChecks();
 await runProblemsMatrix();
 await runTaskOutputMatrix();
 await runPickerMatrix();
@@ -117,6 +118,44 @@ async function runSearchMatrix(): Promise<void> {
   ] as const) {
     await capture('search', state, port, create, searchModel(state, message), marker);
   }
+}
+
+/** Beyond the marker-substring checks in `runSearchMatrix`, verify the panel actually
+ * paints styled runs (not one flat-colored line): the heading/match text uses more than
+ * one foreground tone, and the selected match row's background differs from the plain
+ * header row's background (see packages/ui/search/index.ts's `buildSearchRows`). */
+async function runSearchStylingChecks(): Promise<void> {
+  const port = new MutablePort<SearchReadModel>(searchModel('ready'));
+  const setup = await createTestRenderer({ width: WIDTH, height: HEIGHT, bufferedOutput: 'memory', gatherStats: true });
+  const renderable = new SearchRenderable(setup.renderer.root.ctx, {
+    search: port,
+    width: WIDTH,
+    height: HEIGHT,
+    selectedId: () => 'T063-match',
+    background: '#FAF9F6',
+    foreground: '#24292E',
+    muted: '#60666D',
+    accent: '#245A88',
+    border: '#D5D4CF',
+    selectedBackground: '#E7EDF4',
+    hoverBackground: '#F1F0EC',
+  });
+  setup.renderer.root.add(renderable as never);
+  await setup.renderOnce();
+  const frame = setup.captureSpans();
+  const rgb = (color: { readonly toInts: () => readonly [number, number, number, number] }): string => color.toInts().slice(0, 3).join(',');
+  const foregrounds = new Set<string>();
+  for (const line of frame.lines) for (const span of line.spans) foregrounds.add(rgb(span.fg));
+  assert.ok(foregrounds.size > 1, 'T063-SEARCH-STYLE-FG uses more than one foreground tone (heading/match/highlight)');
+  // Row 0 is the bordered header; row 1 is the "[main.ts]" heading; row 2 is the one
+  // (selected) match -- see expandSearchItems/buildSearchRows.
+  const headerBackground = frame.lines[0]?.spans[0]?.bg;
+  const matchBackground = frame.lines[2]?.spans[0]?.bg;
+  assert.ok(headerBackground !== undefined && matchBackground !== undefined, 'T063-SEARCH-STYLE-ROWS header and match rows are painted');
+  if (headerBackground !== undefined && matchBackground !== undefined) {
+    assert.notEqual(rgb(matchBackground), rgb(headerBackground), 'T063-SEARCH-STYLE-SELECTED selected row background differs from the plain header row');
+  }
+  setup.renderer.destroy();
 }
 
 async function runProblemsMatrix(): Promise<void> {

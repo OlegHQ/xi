@@ -61,7 +61,9 @@ export function resolveVimStructuralMotion(
   const maxScan = options.maxScanUtf16 ?? DEFAULT_MAX_SCAN_UTF16;
   if (!Number.isSafeInteger(maxScan) || maxScan < 1) return failure('scan-limit');
   if (invocation.key === '%' && invocation.count !== undefined) {
-    const targetLine = Math.min(snapshot.lineCount - 1, Math.floor((snapshot.lineCount - 1) * count / 100));
+    // Vim's N% line: `(count * line-count + 99) / 100`, truncated, 1-indexed.
+    const line1Indexed = Math.floor((count * snapshot.lineCount + 99) / 100);
+    const targetLine = Math.max(0, Math.min(snapshot.lineCount - 1, line1Indexed - 1));
     const target = snapshot.lineStartOffset(targetLine as LineIndex);
     if (!target.ok) return failure('document-read-failed');
     const nextCursor: VimStructuralMotionCursor = Object.freeze({
@@ -83,8 +85,9 @@ export function resolveVimStructuralMotion(
   let kind: VimStructuralMotionOutcome['kind'] = 'characterwise';
   switch (invocation.key) {
     case '%': {
-      const result = resolveWithGrowingWindow(snapshot, offset, maxScan, (source, current) =>
-        matchingPair(source.scalars, current, parsePairs(options.matchPairs ?? DEFAULT_MATCH_PAIRS)));
+      const result = resolveWithGrowingWindow(snapshot, offset, maxScan, (source, current, currentLine) =>
+        matchingPair(source.scalars, current, parsePairs(options.matchPairs ?? DEFAULT_MATCH_PAIRS),
+          source.lines[currentLine + 1]?.start ?? Number.POSITIVE_INFINITY));
       if (!result.ok) return result;
       targetOffset = result.value;
       break;
@@ -100,9 +103,11 @@ export function resolveVimStructuralMotion(
     }
     case '{':
     case '}': {
-      kind = 'linewise';
+      // `{`/`}` are exclusive charwise motions, not linewise (`d}` from
+      // mid-word only removes up to the blank line, not whole lines).
       const result = resolveWithGrowingWindow(snapshot, offset, maxScan, (source, _current, currentLine) =>
-        paragraphTarget(source.lines, currentLine, invocation.key === '}', count, options.paragraphs ?? ''));
+        paragraphTarget(source.lines, currentLine, invocation.key === '}', count, options.paragraphs ?? '',
+          source.firstLine === 0, source.lastLine === snapshot.lineCount - 1));
       if (!result.ok) return result;
       targetOffset = result.value;
       break;
@@ -339,12 +344,32 @@ function parsePairs(value: string): ReadonlyMap<string, string> {
   return pairs;
 }
 
+function isBracketChar(value: string | undefined, pairs: ReadonlyMap<string, string>): boolean {
+  if (value === undefined) return false;
+  if (pairs.has(value)) return true;
+  for (const end of pairs.values()) if (end === value) return true;
+  return false;
+}
+
 function matchingPair(
   scalars: readonly { readonly value: string; readonly offset: number }[],
   current: number,
   pairs: ReadonlyMap<string, string>,
+  lineEndOffset: number,
 ): number | null {
-  const item = scalars[current];
+  // When the cursor isn't on a bracket, `%` scans forward on the current
+  // line for the first one and matches from there.
+  let start = current;
+  if (!isBracketChar(scalars[start]?.value, pairs)) {
+    let index = current;
+    while (index < scalars.length) {
+      const candidate = scalars[index];
+      if (candidate === undefined || candidate.offset >= lineEndOffset) break;
+      if (isBracketChar(candidate.value, pairs)) { start = index; break; }
+      index += 1;
+    }
+  }
+  const item = scalars[start];
   if (item === undefined) return null;
   let opening = item.value;
   let closing = pairs.get(opening);
@@ -361,7 +386,7 @@ function matchingPair(
   }
   if (closing === undefined) return null;
   let depth = 0;
-  for (let index = current; index >= 0 && index < scalars.length; index += direction) {
+  for (let index = start; index >= 0 && index < scalars.length; index += direction) {
     const value = scalars[index]?.value;
     if (direction === 1 && value === opening) depth += 1;
     else if (direction === 1 && value === closing) {
@@ -437,7 +462,15 @@ function sentenceTarget(
   return starts[target] ?? null;
 }
 
-function paragraphTarget(lines: readonly SourceLine[], current: number, forward: boolean, count: number, paragraphs: string): number | null {
+function paragraphTarget(
+  lines: readonly SourceLine[],
+  current: number,
+  forward: boolean,
+  count: number,
+  paragraphs: string,
+  atDocumentStart: boolean,
+  atDocumentEnd: boolean,
+): number | null {
   let line = current;
   for (let step = 0; step < count; step += 1) {
     const direction = forward ? 1 : -1;
@@ -449,7 +482,17 @@ function paragraphTarget(lines: readonly SourceLine[], current: number, forward:
         break;
       }
     }
-    if (!found) return null;
+    if (!found) {
+      // No further paragraph boundary this direction: only settle for the
+      // buffer's start/end once the scanned window actually reaches it
+      // (otherwise the caller must grow the window and rescan).
+      if (forward && atDocumentEnd) {
+        const last = lines.at(-1);
+        return last === undefined ? null : last.start + last.text.length;
+      }
+      if (!forward && atDocumentStart) return lines[0]?.start ?? null;
+      return null;
+    }
   }
   return lines[line]?.start ?? null;
 }

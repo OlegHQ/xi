@@ -166,7 +166,10 @@ export class LanguageDocumentSync {
       return Promise.resolve(result);
     }
     if (this.#documents.has(document.uri)) {
-      return Promise.resolve(failure('closed-document', `document ${document.uri} is already open`));
+      // A second open for an already-tracked URI (e.g. the session's own openDocument called
+      // again before a close) must re-sync rather than desync: send didClose for the stale
+      // state, then proceed as a fresh open with the new content/version.
+      return this.closeDocument(document.uri).then(() => this.openDocument(document));
     }
     // Build the open-time line table once; it is reused as-is for the
     // acknowledged "sent" baseline below instead of re-scanning the whole
@@ -353,7 +356,7 @@ export class LanguageDocumentSync {
         this.scheduleResyncRetry(state);
         return result;
       }
-      const text = materializeSnapshot(target);
+      const text = await materializeSnapshotSliced(target);
       if (!text.ok) {
         state.pending = pending;
         state.pendingBytes = pendingBytes;
@@ -639,6 +642,39 @@ export function chunkedSnapshotToString(
       end -= 1;
     }
     if (!read) return { ok: false, kind: 'no-safe-chunk', detail: 'no safe UTF-16 chunk boundary found' };
+  }
+  return { ok: true, value: chunks.join('') };
+}
+
+/**
+ * Same result as materializeSnapshot, but yields to a macrotask (setTimeout(0)) whenever a
+ * run of chunk slices has consumed more than maxSliceMilliseconds, instead of joining an
+ * up-to-8MiB document in one synchronous main-thread step. Used only on the full-sync flush
+ * path (flushState), which already runs off a timer, not the keystroke path.
+ */
+export async function materializeSnapshotSliced(snapshot: DocumentSnapshot, chunkUtf16: number = SERIALIZE_CHUNK_UTF16, maxSliceMilliseconds = 4): Promise<Result<string, LanguageSyncFailure>> {
+  const chunks: string[] = [];
+  let start = 0;
+  let sliceStartedAt = performance.now();
+  while (start < snapshot.lengthUtf16) {
+    let end = Math.min(snapshot.lengthUtf16, start + chunkUtf16);
+    let read = false;
+    while (end > start) {
+      const result = snapshot.slice(start as never, end as never);
+      if (result.ok) {
+        chunks.push(result.value);
+        start = end;
+        read = true;
+        break;
+      }
+      if (result.error.kind !== 'surrogate-split') return failure('invalid-document', `snapshot serialization failed: ${result.error.kind}`);
+      end -= 1;
+    }
+    if (!read) return failure('invalid-document', 'snapshot serialization no-safe-chunk: no safe UTF-16 chunk boundary found');
+    if (performance.now() - sliceStartedAt >= maxSliceMilliseconds) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      sliceStartedAt = performance.now();
+    }
   }
   return { ok: true, value: chunks.join('') };
 }

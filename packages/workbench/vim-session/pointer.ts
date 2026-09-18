@@ -115,7 +115,9 @@ export function pointerWordAt(snapshot: DocumentSnapshot, offsetValue: number): 
   if (!text.ok || text.value.length === 0) return undefined;
   const local = Math.max(0, Math.min(offsetValue - (start.value as number), text.value.length - 1));
   const kind = pointerWordKind(text.value[local] ?? '');
-  // ponytail: tokenBoundsAt (Vim's owned boundary scan, packages/vim/motions/token-scan.ts)
+  // ponytail: click word bounds by UTF-16 unit; ceiling: off by one unit on an astral surrogate
+  // half. upgrade: when tokenBoundsAt gains code-point stepping, pass the code-point index here.
+  // tokenBoundsAt (Vim's owned boundary scan, packages/vim/motions/token-scan.ts)
   // indexes by UTF-16 code unit, not Unicode code point, so a click landing exactly on one
   // half of an astral surrogate pair (rare outside emoji / rare CJK extensions) can be off
   // by one unit. Accepted: real Vim word motions run on the same code-unit basis.

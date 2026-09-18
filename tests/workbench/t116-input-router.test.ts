@@ -1,7 +1,9 @@
 import { strict as assert } from 'node:assert';
+import type { ClockPort, Disposable } from '../../packages/contracts/src/index';
 import { CommandRegistry } from '../../packages/workbench/commands/registry';
 import {
   WorkbenchInputRouter,
+  type RouterBindingConfig,
   type RouterCompletionPort,
   type RouterExplorerPort,
   type RouterKeyEvent,
@@ -11,9 +13,18 @@ import {
   type RouterWorkspaceEditsPort,
 } from '../../packages/workbench/input/router';
 
-function key(name: string, raw: string): RouterKeyEvent {
-  return { name, raw, shift: false, option: false, ctrl: false, meta: false };
+function key(name: string, raw: string, overrides: Partial<{ shift: boolean; ctrl: boolean; meta: boolean; option: boolean }> = {}): RouterKeyEvent {
+  return { name, raw, shift: overrides.shift ?? false, option: overrides.option ?? false, ctrl: overrides.ctrl ?? false, meta: overrides.meta ?? false };
 }
+
+const testClock: ClockPort = {
+  monotonicMilliseconds: () => Date.now(),
+  schedule: (delayMilliseconds: number, callback: () => void): Disposable => {
+    const handle = setTimeout(callback, delayMilliseconds);
+    return Object.freeze({ dispose: () => clearTimeout(handle) });
+  },
+  sleep: async () => ({ ok: true, value: undefined }),
+};
 
 const noopCompletion: RouterCompletionPort = {
   isCompletionTrigger: () => false,
@@ -64,7 +75,33 @@ class FakeSession {
   readView(): { readonly session: { readonly mode: string } } | undefined { return { session: { mode: 'normal' } }; }
 }
 
-function makeRouter(explorer: FakeExplorer, search: FakeSearch, host: FakeHost, session: FakeSession): WorkbenchInputRouter {
+/** Enough of `WorkbenchSession`'s `readView`/`setViewScroll` surface for `scrollViewBy` (no
+ * selections, so the cursor-follow branch is skipped and no vim-session stub is needed). */
+class FakeScrollSession {
+  activeViewId: string | undefined = 'view-1';
+  mode = 'normal';
+  scrollTop = 5;
+  scrollLeft = 0;
+  readonly setViewScrollCalls: { readonly viewId: string; readonly scrollTop: number; readonly scrollLeft: number }[] = [];
+  readView(viewId: string): unknown {
+    if (viewId !== this.activeViewId) return undefined;
+    return {
+      session: { mode: this.mode },
+      scrollTop: this.scrollTop,
+      scrollLeft: this.scrollLeft,
+      document: { lineCount: 100 },
+      selections: { members: [], primaryId: undefined },
+    };
+  }
+  setViewScroll(viewId: string, scrollTop: number, scrollLeft: number): { readonly ok: true } {
+    this.scrollTop = scrollTop;
+    this.scrollLeft = scrollLeft;
+    this.setViewScrollCalls.push({ viewId, scrollTop, scrollLeft });
+    return { ok: true };
+  }
+}
+
+function makeRouter(explorer: FakeExplorer, search: FakeSearch, host: FakeHost, session: FakeSession, bindings: readonly RouterBindingConfig[] = []): WorkbenchInputRouter {
   return new WorkbenchInputRouter({
     host: host as never,
     session: session as never,
@@ -83,6 +120,10 @@ function makeRouter(explorer: FakeExplorer, search: FakeSearch, host: FakeHost, 
     ensureOptionalServices: async () => {},
     toggleMouseMode: () => true,
     launchViewId: 'view-1' as never,
+    bindings,
+    scrollLines: 1,
+    getViewportHeight: () => 10,
+    clock: testClock,
   });
 }
 
@@ -157,4 +198,27 @@ function makeRouter(explorer: FakeExplorer, search: FakeSearch, host: FakeHost, 
   router.dispose();
 }
 
-console.log('T116 WorkbenchInputRouter passed leader-open-explorer, command-line-active and synchronous-fast-path fixtures');
+// T116-ROUTER-04: <C-Up>/<C-Down> line-scroll are on by default in Normal mode, resolved to
+// their `view.scroll-up`/`view.scroll-down` commands before Vim's own key handling ever sees
+// the key; a config binding for a plain key resolves the same way, alongside the defaults.
+{
+  const explorer = new FakeExplorer();
+  const search = new FakeSearch();
+  const host = new FakeHost();
+  const session = new FakeScrollSession();
+  const router = makeRouter(explorer, search, host, session as never, [
+    { mode: 'normal', keys: ['g'], commandId: 'view.scroll-down' },
+  ]);
+
+  const upResult = router.handleKeypress(key('up', '', { ctrl: true }));
+  assert.equal(upResult, true, 'T116-ROUTER-04a default <C-Up> is consumed');
+  assert.deepEqual(session.setViewScrollCalls[0], { viewId: 'view-1', scrollTop: 4, scrollLeft: 0 }, 'T116-ROUTER-04b <C-Up> scrolls up by scrollLines');
+
+  const configResult = router.handleKeypress(key('g', 'g'));
+  assert.equal(configResult, true, 'T116-ROUTER-04c a config-bound plain key is also consumed');
+  assert.deepEqual(session.setViewScrollCalls[1], { viewId: 'view-1', scrollTop: 5, scrollLeft: 0 }, 'T116-ROUTER-04d the config binding resolved to view.scroll-down');
+
+  router.dispose();
+}
+
+console.log('T116 WorkbenchInputRouter passed leader-open-explorer, command-line-active, synchronous-fast-path and config-binding fixtures');

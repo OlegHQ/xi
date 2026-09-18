@@ -206,10 +206,20 @@ export class VimRegisterBank {
     const values = new Map(this.#values);
     const vectors = new Map(this.#vectors);
     const named = isUppercaseNamedRegister(destination) ? destination.toLowerCase() as VimRegisterName : destination;
-    if (options.small === true || destination === '-') {
+    if (options.small === true) {
+      // A small (charwise, single-line) delete only reaches the small-delete
+      // register when no register was named; a named small delete (`"adw`)
+      // writes only that register (and unnamed), never "- or "1..9.
+      if (destination === '"') {
+        values.set('-', checked.value);
+        clearVectors(vectors, '-');
+      }
+    } else if (destination === '-') {
       values.set('-', checked.value);
       clearVectors(vectors, '-');
-    } else if (destination === '"') {
+    } else {
+      // Non-small deletes/changes always rotate the numbered registers,
+      // even when the command also named an explicit register.
       for (let index = 9; index >= 2; index -= 1) {
         const target = String(index) as VimRegisterName;
         const source = String(index - 1) as VimRegisterName;
@@ -505,6 +515,8 @@ export interface VimPutContext {
   readonly command: VimPutCommand;
   readonly selection?: VimPutSelection;
   readonly tabstop?: number;
+  /** `{count}p` repeats the register content count times before inserting it. */
+  readonly count?: number;
 }
 
 export interface VimPutPlan {
@@ -581,6 +593,26 @@ export function prepareVimMultiPut(input: {
 export function prepareVimPut(context: VimPutContext): Result<VimPutPlan, VimPutFailure> {
   const checked = normalizeValue(context.register);
   if (!checked.ok) return { ok: false, error: { kind: 'invalid-register-value' } };
+  const count = context.count ?? 1;
+  if (!Number.isSafeInteger(count) || count < 1) return { ok: false, error: { kind: 'invalid-register-value' } };
+  const repeated = count === 1 ? checked.value : repeatRegisterValue(checked.value, count);
+  return prepareVimPutValue(context, repeated);
+}
+
+function repeatRegisterValue(value: VimRegisterValue, count: number): VimRegisterValue {
+  if (value.type === 'blockwise') {
+    return Object.freeze({ ...value, lines: Object.freeze(value.lines.map((line) => line.repeat(count))) });
+  }
+  if (value.type === 'linewise') {
+    const lines: string[] = [];
+    for (let index = 0; index < count; index += 1) lines.push(...value.lines);
+    return Object.freeze({ ...value, lines: Object.freeze(lines) });
+  }
+  const text = value.lines.join('\n').repeat(count);
+  return Object.freeze({ ...value, lines: Object.freeze(text.split('\n')) });
+}
+
+function prepareVimPutValue(context: VimPutContext, value: VimRegisterValue): Result<VimPutPlan, VimPutFailure> {
   const cursor = context.cursor as number;
   if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > context.snapshot.lengthUtf16 || context.snapshot.slice(context.cursor, context.cursor).ok === false) {
     return { ok: false, error: { kind: 'invalid-context' } };
@@ -589,12 +621,12 @@ export function prepareVimPut(context: VimPutContext): Result<VimPutPlan, VimPut
     const selection = context.selection;
     if (!validRange(selection.start as number, selection.end as number, context.snapshot.lengthUtf16)
       || selection.end < selection.start) return { ok: false, error: { kind: 'invalid-selection' } };
-    return prepareVisualPut(context, checked.value);
+    return prepareVisualPut(context, value);
   }
-  if (checked.value.lines.length === 0) return { ok: true, value: emptyPlan(checked.value, context.cursor) };
-  if (checked.value.type === 'blockwise') return prepareBlockPut(context, checked.value);
-  if (checked.value.type === 'linewise') return prepareLinePut(context, checked.value);
-  return prepareCharacterPut(context, checked.value);
+  if (value.lines.length === 0) return { ok: true, value: emptyPlan(value, context.cursor) };
+  if (value.type === 'blockwise') return prepareBlockPut(context, value);
+  if (value.type === 'linewise') return prepareLinePut(context, value);
+  return prepareCharacterPut(context, value);
 }
 
 /** Convenience planner that reads a named register and leaves the bank untouched. */
@@ -649,7 +681,14 @@ export async function importVimRegisterVectorFromClipboard(
 function prepareCharacterPut(context: VimPutContext, value: VimRegisterValue): Result<VimPutPlan, VimPutFailure> {
   const text = value.lines.join('\n');
   const cursor = context.cursor as number;
-  const before = context.command === 'P' || context.command === 'gP' ? cursor : nextCharacterBoundary(context.snapshot, cursor);
+  // An empty line has no character under the cursor to move past: `p` and
+  // `P` both insert right there instead of reading into the next line.
+  const lineIndex = context.snapshot.lineIndexAt(context.cursor);
+  const lineEnd = lineIndex.ok ? lineEndOffset(context.snapshot, lineIndex.value as number) : undefined;
+  const onEmptyLine = lineEnd !== undefined && lineEnd.ok && cursor >= lineEnd.value;
+  const before = context.command === 'P' || context.command === 'gP' || onEmptyLine
+    ? cursor
+    : nextCharacterBoundary(context.snapshot, cursor);
   const edit = Object.freeze({ start: before as Utf16Offset, end: before as Utf16Offset, text });
   const insertedStart = before;
   const insertedEnd = before + text.length;
@@ -674,7 +713,11 @@ function prepareLinePut(context: VimPutContext, value: VimRegisterValue): Result
     ? `${text}\n`
     : (after < context.snapshot.lengthUtf16 ? `${text}\n` : `\n${text}`);
   const insertedEnd = after + payload.length;
-  const targetCursor = context.command === 'gp' || context.command === 'gP' ? insertedEnd : Math.max(after, insertedEnd - 1);
+  // Plain `p`/`P` land on the first non-blank of the first pasted line, not
+  // its last inserted byte; `gp`/`gP` still land just past the paste.
+  const firstLine = value.lines[0] ?? '';
+  const firstNonBlank = after + (firstLine.length - firstLine.replace(/^[ \t]+/, '').length);
+  const targetCursor = context.command === 'gp' || context.command === 'gP' ? insertedEnd : firstNonBlank;
   return { ok: true, value: Object.freeze({ edits: Object.freeze([{ start: after as Utf16Offset, end: after as Utf16Offset, text: payload }]), cursor: targetCursor as Utf16Offset, insertedStart: after as Utf16Offset, insertedEnd: insertedEnd as Utf16Offset, register: value }) };
 }
 
@@ -751,11 +794,24 @@ function prepareVisualPut(context: VimPutContext, value: VimRegisterValue): Resu
 }
 
 function nextCharacterBoundary(snapshot: DocumentSnapshot, offset: number): number {
-  const end = Math.min(offset + 2, snapshot.lengthUtf16);
+  // `p`/`P` land after the grapheme under the cursor, not merely the next
+  // UTF-16 code unit or code point: a base character plus combining marks
+  // (e.g. decomposed "e" + acute) must move past as one cluster.
+  const end = Math.min(offset + 8, snapshot.lengthUtf16);
   const tail = snapshot.slice(offset as Utf16Offset, end as Utf16Offset);
   if (!tail.ok || tail.value.length === 0) return snapshot.lengthUtf16;
+  const first = firstGraphemeCluster(tail.value);
+  if (first !== null) return offset + first.length;
   const scalar = tail.value.codePointAt(0);
   return offset + (scalar !== undefined && scalar > 0xffff ? 2 : 1);
+}
+
+function firstGraphemeCluster(text: string): string | null {
+  if (typeof Intl.Segmenter === 'function') {
+    const first = [...new Intl.Segmenter('und', { granularity: 'grapheme' }).segment(text)][0];
+    return first?.segment ?? null;
+  }
+  return null;
 }
 
 function lineEndOffset(snapshot: DocumentSnapshot, line: number): Result<number, DocumentReadFailure> {

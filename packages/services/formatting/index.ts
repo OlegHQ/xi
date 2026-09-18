@@ -173,16 +173,26 @@ export function createExternalFormatter(options: ExternalFormatterOptions): Form
       const handle = spawned.value;
       try {
         if (handle.stdin === null) return failure('failed', 'formatter process has no stdin pipe');
-        const written = await handle.stdin.write(new TextEncoder().encode(input.text));
-        if (!written.ok) return failure('failed', written.error.message);
-        const closed = await handle.stdin.close();
-        if (!closed.ok) return failure('failed', closed.error.message);
-        const [stdout, stderr, exit] = await Promise.all([
+        const stdin = handle.stdin;
+        // Write stdin concurrently with draining stdout/stderr, not before: a streaming
+        // formatter can start writing output before it has consumed all of its input, and its
+        // stdout pipe has a bounded OS buffer. Awaiting the full stdin write (and close) before
+        // ever reading stdout deadlocks once that buffer fills -- the formatter blocks writing
+        // output nobody is draining yet, while this call blocks writing input it is not
+        // consuming.
+        const stdinTask = (async (): Promise<Result<void, PlatformFailure>> => {
+          const written = await stdin.write(new TextEncoder().encode(input.text));
+          if (!written.ok) return written;
+          return stdin.close();
+        })();
+        const [stdinResult, stdout, stderr, exit] = await Promise.all([
+          stdinTask,
           readOutput(handle.stdout, maxOutputBytes),
           readOutput(handle.stderr, maxOutputBytes),
           handle.exit,
         ]);
         if (cancellation.isCancelled) return failure('cancelled', 'formatting was cancelled');
+        if (!stdinResult.ok) return failure('failed', stdinResult.error.message);
         if (!stdout.ok) {
           localCancellation.cancel();
           return stdout.error.kind === 'output-limit' ? stdout : failure('failed', stdout.error.message);

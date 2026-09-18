@@ -1,4 +1,4 @@
-import { CancellationSource, type CancellationToken, type Disposable, type DocumentId, type PlatformFailure, type Result, type ViewId } from '../../contracts/src/index';
+import { CancellationSource, type CancellationToken, type ClockPort, type Disposable, type DocumentId, type PlatformFailure, type Result, type ViewId } from '../../contracts/src/index';
 import type { OwnedVimKeyEvent } from '../vim-session';
 import type { BufferHost } from '../host';
 
@@ -70,10 +70,35 @@ export interface ExplorerFileOperationsPort {
   makeDirectory(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
 }
 
+/** Mirrors `packages/services/files/directory-draft`'s `DirectoryOperation`/`DirectoryOperationPlan`
+ * shapes structurally -- workbench cannot import `packages/services`, not even types. */
+export type ExplorerDirectoryOperation =
+  | { readonly kind: 'rename'; readonly rowId: string; readonly sourceId: string; readonly from: string; readonly to: string; readonly sourcePath: string; readonly destinationPath: string }
+  | { readonly kind: 'trash'; readonly rowId: string; readonly sourceId: string; readonly sourcePath: string }
+  | { readonly kind: 'copy'; readonly rowId: string; readonly sourceId: string; readonly sourcePath: string; readonly destinationPath: string };
+
+export interface ExplorerDirectoryOperationPlan {
+  readonly contractVersion: 1;
+  readonly directoryPath: string;
+  readonly baseGeneration: number;
+  readonly operations: readonly ExplorerDirectoryOperation[];
+}
+
+/** Narrow port onto `packages/services/files`'s `JournaledFilesystemOperations`: the
+ * durable, crash-recoverable move/copy/trash executor already used by
+ * `packages/workbench/directory` and `main.ts`, so explorer file operations get the same
+ * journal-before-disk-step guarantee instead of a private undo log. */
+export interface ExplorerJournaledOperationsPort {
+  apply(plan: ExplorerDirectoryOperationPlan, cancellation: CancellationToken): Promise<Result<{ readonly journal: unknown }, { readonly kind: string; readonly message?: string }>>;
+  restoreApplied(journal: unknown, cancellation: CancellationToken): Promise<Result<unknown, { readonly kind: string; readonly message?: string }>>;
+}
+
 export interface ExplorerControllerOptions {
   readonly host: BufferHost;
   readonly session: ExplorerSessionPort;
   readonly filesystem: ExplorerFileOperationsPort;
+  readonly fileOperations: ExplorerJournaledOperationsPort;
+  readonly clock: ClockPort;
   readonly marker: (name: string, payload?: unknown) => void;
   /** PTY-visible stderr sink; never writes to `process.stderr` itself. */
   readonly onError: (message: string) => void;
@@ -89,12 +114,6 @@ interface ExplorerDraft {
   readonly text: string;
 }
 
-interface ExplorerUndoEntry {
-  readonly kind: 'rename' | 'copy' | 'delete';
-  readonly from: string;
-  readonly to: string;
-}
-
 /**
  * Owns the Explorer panel's state and key handling: open/filtering/pending-`g`/rename-copy-
  * delete drafts and the in-memory undo journal. Moved out of `apps/xi/src/main.ts`'s `main()`
@@ -107,12 +126,12 @@ export class ExplorerController {
   #open = false;
   #filtering = false;
   #pendingG = false;
-  #pendingGTimer: ReturnType<typeof setTimeout> | undefined;
+  #pendingGTimer: Disposable | undefined;
   #openGeneration = 0;
   #renameDraft: ExplorerDraft | undefined;
   #copyDraft: ExplorerDraft | undefined;
   #deleteConfirm: { readonly nodeId: string } | undefined;
-  readonly #undoJournal: ExplorerUndoEntry[] = [];
+  readonly #undoJournal: { readonly kind: 'rename' | 'copy' | 'delete'; readonly from: string; readonly to: string; readonly journal: unknown }[] = [];
   #tree: ExplorerTreePort | undefined;
   #navigation: ExplorerNavigationPort | undefined;
   readonly #cancellation = new CancellationSource();
@@ -264,7 +283,7 @@ export class ExplorerController {
         await navigation.handle('first');
       } else {
         this.#pendingG = true;
-        this.#pendingGTimer = setTimeout(() => { this.#pendingG = false; this.#pendingGTimer = undefined; }, 500);
+        this.#pendingGTimer = this.#options.clock.schedule(500, () => { this.#pendingG = false; this.#pendingGTimer = undefined; });
       }
       return true;
     }
@@ -306,7 +325,7 @@ export class ExplorerController {
 
   async openNode(node: ExplorerTreeNode): Promise<void> {
     if (node.kind === 'directory' || node.kind === 'root') return;
-    const opened = await this.#options.host.openBufferAtPath(node.path);
+    const opened = await this.#options.host.openBufferAtPath(node.path, { preview: true });
     if (opened === undefined) return;
     this.close();
   }
@@ -355,7 +374,7 @@ export class ExplorerController {
 
   #clearPendingG(): void {
     this.#pendingG = false;
-    if (this.#pendingGTimer !== undefined) { clearTimeout(this.#pendingGTimer); this.#pendingGTimer = undefined; }
+    if (this.#pendingGTimer !== undefined) { this.#pendingGTimer.dispose(); this.#pendingGTimer = undefined; }
   }
 
   /** Explorer file-management (T131): rename/copy/delete each go through an explicit draft
@@ -376,9 +395,12 @@ export class ExplorerController {
     try {
       const existingTarget = await this.#options.filesystem.stat(to, cancellation.token);
       if (existingTarget.ok) { this.#options.onError(`xi: rename failed: ${trimmed} already exists\n`); return; }
-      const result = await this.#options.filesystem.renamePath(node.path, to, cancellation.token);
-      if (!result.ok) { this.#options.onError(`xi: rename failed: ${result.error.message}\n`); return; }
-      this.#undoJournal.push({ kind: 'rename', from: node.path, to });
+      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: parentPath, baseGeneration: 0, operations: [
+        { kind: 'rename', rowId: node.id, sourceId: node.id, from: node.name, to: trimmed, sourcePath: node.path, destinationPath: to },
+      ] };
+      const result = await this.#options.fileOperations.apply(plan, cancellation.token);
+      if (!result.ok) { this.#options.onError(`xi: rename failed: ${result.error.message ?? result.error.kind}\n`); return; }
+      this.#undoJournal.push({ kind: 'rename', from: node.path, to, journal: result.value.journal });
       this.#renameOpenBuffers(node.path, to);
       this.#options.marker('XI_EXPLORER_RENAME_APPLIED', { from: node.path, to });
     } finally {
@@ -396,9 +418,12 @@ export class ExplorerController {
     const to = `${parentPath}/${trimmed}`;
     const cancellation = new CancellationSource();
     try {
-      const result = await this.#options.filesystem.copyPath(node.path, to, cancellation.token);
-      if (!result.ok) { this.#options.onError(`xi: copy failed: ${result.error.message}\n`); return; }
-      this.#undoJournal.push({ kind: 'copy', from: node.path, to });
+      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: parentPath, baseGeneration: 0, operations: [
+        { kind: 'copy', rowId: node.id, sourceId: node.id, sourcePath: node.path, destinationPath: to },
+      ] };
+      const result = await this.#options.fileOperations.apply(plan, cancellation.token);
+      if (!result.ok) { this.#options.onError(`xi: copy failed: ${result.error.message ?? result.error.kind}\n`); return; }
+      this.#undoJournal.push({ kind: 'copy', from: node.path, to, journal: result.value.journal });
       this.#options.marker('XI_EXPLORER_COPY_APPLIED', { from: node.path, to });
     } finally {
       cancellation.dispose();
@@ -412,15 +437,16 @@ export class ExplorerController {
     if (node === undefined) return;
     const dirtyUnder = this.#options.session.buffers().some((buffer) => buffer.dirty === true && buffer.path !== undefined && (buffer.path === node.path || buffer.path.startsWith(`${node.path}/`)));
     if (dirtyUnder) { this.#options.onError(`xi: cannot delete ${node.name}: it has unsaved open buffers\n`); return; }
+    const parentPath = node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '');
     const cancellation = new CancellationSource();
     try {
-      const made = await this.#options.filesystem.makeDirectory(this.#options.trashDirectory, cancellation.token);
-      if (!made.ok) { this.#options.onError(`xi: delete failed: could not prepare trash: ${made.error.message}\n`); return; }
-      const trashPath = `${this.#options.trashDirectory}/${String(Date.now())}-${node.name}`;
-      const moved = await this.#options.filesystem.renamePath(node.path, trashPath, cancellation.token);
-      if (!moved.ok) { this.#options.onError(`xi: delete failed: ${moved.error.message}\n`); return; }
-      this.#undoJournal.push({ kind: 'delete', from: node.path, to: trashPath });
-      this.#options.marker('XI_EXPLORER_DELETE_APPLIED', { from: node.path, trash: trashPath });
+      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: parentPath, baseGeneration: 0, operations: [
+        { kind: 'trash', rowId: node.id, sourceId: node.id, sourcePath: node.path },
+      ] };
+      const result = await this.#options.fileOperations.apply(plan, cancellation.token);
+      if (!result.ok) { this.#options.onError(`xi: delete failed: ${result.error.message ?? result.error.kind}\n`); return; }
+      this.#undoJournal.push({ kind: 'delete', from: node.path, to: node.path, journal: result.value.journal });
+      this.#options.marker('XI_EXPLORER_DELETE_APPLIED', { from: node.path });
     } finally {
       cancellation.dispose();
     }
@@ -431,19 +457,9 @@ export class ExplorerController {
     if (entry === undefined) return;
     const cancellation = new CancellationSource();
     try {
-      if (entry.kind === 'copy') {
-        const removed = await this.#options.filesystem.removePath(entry.to, true, cancellation.token);
-        if (!removed.ok) { this.#options.onError(`xi: restore failed: ${removed.error.message}\n`); this.#undoJournal.push(entry); return; }
-        this.#options.marker('XI_EXPLORER_RESTORE_APPLIED', { kind: entry.kind, path: entry.from });
-        return;
-      }
-      // rename/delete: move back. Refuse (and keep the journal entry, so a retry after the
-      // conflict clears is still possible) if the original path was externally recreated.
-      const existing = await this.#options.filesystem.stat(entry.from, cancellation.token);
-      if (existing.ok) { this.#options.onError(`xi: cannot restore ${entry.from}: it was recreated\n`); this.#undoJournal.push(entry); return; }
-      const result = await this.#options.filesystem.renamePath(entry.to, entry.from, cancellation.token);
-      if (!result.ok) { this.#options.onError(`xi: restore failed: ${result.error.message}\n`); this.#undoJournal.push(entry); return; }
-      if (entry.kind === 'delete') this.#renameOpenBuffers(entry.to, entry.from);
+      const restored = await this.#options.fileOperations.restoreApplied(entry.journal, cancellation.token);
+      if (!restored.ok) { this.#options.onError(`xi: restore failed: ${restored.error.message ?? restored.error.kind}\n`); this.#undoJournal.push(entry); return; }
+      if (entry.kind === 'delete' || entry.kind === 'rename') this.#renameOpenBuffers(entry.to, entry.from);
       this.#options.marker('XI_EXPLORER_RESTORE_APPLIED', { kind: entry.kind, path: entry.from });
     } finally {
       cancellation.dispose();

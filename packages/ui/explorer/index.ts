@@ -7,6 +7,7 @@ import {
 } from '@opentui/core/renderer';
 import type { Disposable } from '../../contracts/src/index.ts';
 import { PanelHitMap, PanelScroll, installPanelPointerHandler, type WorkbenchPanelPointerEvent } from '../src/panel-pointer';
+import { resolveFileIcon, type IconColorToken } from './icons';
 
 export type ExplorerNodeKind = 'root' | 'directory' | 'file' | 'symlink' | 'other' | 'state';
 export type ExplorerLoadState = 'unloaded' | 'loading' | 'ready' | 'empty' | 'permission-denied' | 'symlink-cycle' | 'overflow' | 'error';
@@ -102,7 +103,21 @@ export interface ExplorerRenderableOptions extends RenderableOptions<ExplorerRen
   readonly theme?: ExplorerTheme;
   readonly maxRows?: number;
   readonly showHeader?: boolean;
+  /** ASCII themes fall back to plain markers instead of file-type icon glyphs. */
+  readonly ascii?: boolean;
   readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
+}
+
+function iconColor(theme: ExplorerTheme, token: IconColorToken): string {
+  switch (token) {
+    case 'foreground': return theme.foreground;
+    case 'muted': return theme.muted;
+    case 'accent': return theme.accent;
+    case 'gitAdded': return theme.gitAdded;
+    case 'gitModified': return theme.gitModified;
+    case 'gitConflict': return theme.gitConflict;
+    case 'error': return theme.error;
+  }
 }
 
 /** Bounded panel renderer. All tree state comes from an immutable read model. */
@@ -111,6 +126,7 @@ export class ExplorerRenderable extends Renderable {
   #theme: ExplorerTheme;
   readonly #maxRows: number;
   readonly #showHeader: boolean;
+  readonly #ascii: boolean;
   readonly #hitMap = new PanelHitMap();
   readonly #onPointer: ((event: WorkbenchPanelPointerEvent) => boolean) | undefined;
   readonly #subscription: Disposable;
@@ -118,7 +134,7 @@ export class ExplorerRenderable extends Renderable {
   #lastSelectedId: string | undefined;
 
   constructor(ctx: RenderContext, options: ExplorerRenderableOptions) {
-    const { explorer: _explorer, theme: _theme, maxRows: _maxRows, showHeader: _showHeader, onPointer: _onPointer, ...renderOptions } = options;
+    const { explorer: _explorer, theme: _theme, maxRows: _maxRows, showHeader: _showHeader, ascii: _ascii, onPointer: _onPointer, ...renderOptions } = options;
     super(ctx, {
       ...renderOptions,
       width: options.width ?? '100%',
@@ -129,6 +145,7 @@ export class ExplorerRenderable extends Renderable {
     this.#theme = options.theme ?? DEFAULT_EXPLORER_THEME;
     this.#maxRows = options.maxRows ?? 10_000;
     this.#showHeader = options.showHeader ?? true;
+    this.#ascii = options.ascii ?? false;
     this.#onPointer = options.onPointer;
     if (!Number.isSafeInteger(this.#maxRows) || this.#maxRows < 1) throw new TypeError('explorer-max-rows-must-be-positive');
     installPanelPointerHandler(this, 'explorer', this.#hitMap, () => this.#explorer.model.generation, this.#onPointer, {
@@ -201,7 +218,7 @@ export class ExplorerRenderable extends Renderable {
     this.#scroll.clamp(model.visibleRows.length, viewport);
     const thumb = this.#scroll.thumb(model.visibleRows.length, viewport);
     const textWidth = thumb === undefined ? this.width : Math.max(1, this.width - 1);
-    const lines = formatExplorerLines(model, textWidth, Math.min(this.height, this.#maxRows), this.#showHeader, this.#scroll.offset);
+    const lines = formatExplorerLines(model, textWidth, Math.min(this.height, this.#maxRows), this.#showHeader, this.#scroll.offset, this.#ascii);
     const hitRows: (string | undefined)[] = Array.from({ length: this.height });
     for (let row = 0; row < lines.length && row < this.height; row += 1) {
       const line = lines[row];
@@ -214,6 +231,14 @@ export class ExplorerRenderable extends Renderable {
       buffer.fillRect(0, row, this.width, 1, rowBackground);
       const lineColor = model.state === 'error' || visible?.kind === 'state' ? error : row === 0 && this.#showHeader ? accent : selected ? foreground : muted;
       drawExplorerText(buffer, line, 0, row, lineColor, rowBackground, textWidth);
+      if (visible !== undefined && (visible.kind === 'file' || visible.kind === 'directory')) {
+        const node = model.nodes.find((candidate) => candidate.id === visible.nodeId);
+        if (node !== undefined) {
+          const icon = resolveFileIcon(node.name, visible.kind, node.expanded, this.#ascii);
+          const iconColumn = visible.depth * 2 + 2;
+          if (iconColumn < textWidth) drawExplorerText(buffer, icon.glyph, iconColumn, row, parseColor(iconColor(this.#theme, icon.color)), rowBackground, textWidth);
+        }
+      }
     }
     this.#hitMap.publish(model.generation, hitRows);
     if (thumb !== undefined) {
@@ -233,7 +258,7 @@ export class ExplorerRenderable extends Renderable {
 }
 
 /** Format rows with stable identity markers and explicit empty/error states. */
-export function formatExplorerLines(model: ExplorerReadModel, width: number, maxRows: number, showHeader = true, scrollOffset = 0): readonly string[] {
+export function formatExplorerLines(model: ExplorerReadModel, width: number, maxRows: number, showHeader = true, scrollOffset = 0, ascii = false): readonly string[] {
   const safeWidth = Math.max(1, Math.trunc(width));
   const safeRows = Math.max(1, Math.trunc(maxRows));
   const lines: string[] = [];
@@ -245,17 +270,19 @@ export function formatExplorerLines(model: ExplorerReadModel, width: number, max
     if (lines.length >= safeRows) break;
     const node = model.nodes.find((candidate) => candidate.id === row.nodeId);
     if (node === undefined) continue;
-    lines.push(clipExplorer(formatNodeLine(node, row.depth), safeWidth));
+    lines.push(clipExplorer(formatNodeLine(node, row.depth, ascii), safeWidth));
   }
   return Object.freeze(lines);
 }
 
-function formatNodeLine(node: ExplorerNode, depth: number): string {
+function formatNodeLine(node: ExplorerNode, depth: number, ascii = false): string {
   if (node.kind === 'state') return `${'  '.repeat(depth)}${node.message ?? node.name}`;
   const disclosure = node.kind === 'directory' || node.kind === 'root' || node.kind === 'symlink'
     ? node.loadState === 'loading' ? '·' : node.expanded ? '▾' : '▸'
     : ' ';
-  const icon = node.kind === 'root' ? '⌂' : node.kind === 'directory' ? '□' : node.kind === 'symlink' ? '↪' : node.kind === 'file' ? '·' : '?';
+  const icon = node.kind === 'root' ? '⌂' : node.kind === 'symlink' ? '↪' : node.kind === 'directory' || node.kind === 'file'
+    ? resolveFileIcon(node.name, node.kind, node.expanded, ascii).glyph
+    : '?';
   const git = node.git === undefined ? '' : ` ${node.git.label}`;
   const suffix = node.loadState === 'permission-denied' ? '  [permission denied]' : node.loadState === 'symlink-cycle' ? '  [symlink cycle]' : node.loadState === 'empty' && (node.kind === 'directory' || node.kind === 'root') ? '  [empty]' : '';
   return `${'  '.repeat(depth)}${disclosure} ${icon} ${node.name}${git}${suffix}`;

@@ -513,6 +513,113 @@ export async function discoverCustomThemeConfigs(
   return { themes, diagnostics };
 }
 
+export interface RequiredWorkbenchThemeTokens {
+  readonly background: string;
+  readonly surface: string;
+  readonly ['surface.active']: string;
+  readonly foreground: string;
+  readonly muted: string;
+  readonly border: string;
+  readonly accent: string;
+  readonly error: string;
+}
+
+/** Validates that every base surface token `REQUIRED_WORKBENCH_THEME_TOKENS` names is present,
+ * returning them typed (no `as string` cast needed at the call site) instead of the plain
+ * boolean `hasRequiredWorkbenchThemeTokens` predicate. Only the base surface set is validated
+ * here; optional editor-layer tokens (selection.primary, cursor.primary, ...) stay a loose
+ * lookup on the caller's token table, unchanged. */
+export function decodeRequiredWorkbenchThemeTokens(tokens: Readonly<Record<string, string>>): Result<RequiredWorkbenchThemeTokens, readonly string[]> {
+  const missing = REQUIRED_WORKBENCH_THEME_TOKENS.filter((key) => tokens[key] === undefined);
+  if (missing.length > 0) return { ok: false, error: missing };
+  return {
+    ok: true,
+    value: {
+      background: tokens.background as string,
+      surface: tokens.surface as string,
+      'surface.active': tokens['surface.active'] as string,
+      foreground: tokens.foreground as string,
+      muted: tokens.muted as string,
+      border: tokens.border as string,
+      accent: tokens.accent as string,
+      error: tokens.error as string,
+    },
+  };
+}
+
+export interface FormatterEnvironmentSelection {
+  readonly command: string;
+  readonly args: readonly string[];
+}
+
+/** XI_FORMATTER_COMMAND/XI_FORMATTER_ARGS stay a hard override (tests/e2e/t055-formatting-pty.py
+ * relies on them); with no env override, a buffer's languages.toml [[language]].formatter entry
+ * (if any) selects the external formatter for that language. Pure environment/config parsing --
+ * the composition root still owns constructing the actual `FormatterPipeline` (a platform
+ * process port is a UI/app-layer concern this package never imports). */
+export function resolveFormatterSelection(
+  env: Readonly<Record<string, string | undefined>>,
+  configuredFormatter?: { readonly command: string; readonly args: readonly string[] },
+): Result<FormatterEnvironmentSelection | undefined, { readonly message: string }> {
+  const envCommand = env.XI_FORMATTER_COMMAND?.trim();
+  if (envCommand === undefined || envCommand.length === 0) {
+    if (configuredFormatter === undefined || configuredFormatter.command.trim().length === 0) return { ok: true, value: undefined };
+    return { ok: true, value: { command: configuredFormatter.command, args: [...configuredFormatter.args] } };
+  }
+  const rawArgs = env.XI_FORMATTER_ARGS;
+  if (rawArgs === undefined) return { ok: true, value: { command: envCommand, args: [] } };
+  try {
+    const decoded: unknown = JSON.parse(rawArgs);
+    if (!Array.isArray(decoded) || !decoded.every((value): value is string => typeof value === 'string')) throw new TypeError('formatter args must be a JSON string array');
+    return { ok: true, value: { command: envCommand, args: [...decoded] } };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'formatter args are invalid';
+    return { ok: false, error: { message } };
+  }
+}
+
+/** XI_FORMAT_ON_SAVE stays a hard override for tests that set it
+ * (tests/e2e/t055-formatting-pty.py) rather than a second, conflicting source. */
+export function resolveFormatOnSave(env: Readonly<Record<string, string | undefined>>, configuredAutoFormat: boolean): boolean {
+  return env.XI_FORMAT_ON_SAVE === '1' || configuredAutoFormat;
+}
+
+/** Filesystem slice `loadStartupXiConfig` needs to read `config.toml`/`languages.toml`. */
+export interface StartupConfigFilesystemPort {
+  readFile(path: string, cancellation: CancellationToken): Promise<Result<Uint8Array, PlatformFailure>>;
+}
+
+export interface LoadedStartupConfig {
+  readonly config: CompiledConfig | undefined;
+  readonly diagnostics: readonly string[];
+}
+
+/** Read `config.toml` and `languages.toml` from `configDirectory` (both optional -- a missing
+ * file just means "use defaults", not an error) and compile them. A parse/schema failure is
+ * reported as a diagnostic message and falls back to `config: undefined` rather than blocking
+ * startup or partially applying a broken file. `extraCommandIds` lets a caller (the workbench's
+ * own `view.*` scroll commands, for example) join the default command catalog so config
+ * validation accepts bindings that target them, without this package depending on the
+ * workbench. */
+export async function loadStartupXiConfig(
+  filesystem: StartupConfigFilesystemPort,
+  configDirectory: string,
+  cancellation: CancellationToken,
+  extraCommandIds: readonly string[] = [],
+): Promise<LoadedStartupConfig> {
+  const layers: ConfigLayer[] = [
+    { name: 'defaults', kind: 'defaults', source: DEFAULT_CONFIG_TOML, fileName: 'config/default.toml' },
+  ];
+  const configToml = await filesystem.readFile(`${configDirectory}/config.toml`, cancellation);
+  if (configToml.ok) layers.push({ name: 'user', kind: 'user', source: new TextDecoder('utf-8').decode(configToml.value), fileName: 'config.toml' });
+  const languagesToml = await filesystem.readFile(`${configDirectory}/languages.toml`, cancellation);
+  if (languagesToml.ok) layers.push({ name: 'languages', kind: 'language', source: new TextDecoder('utf-8').decode(languagesToml.value), fileName: 'languages.toml' });
+  const commandCatalog = { ...DEFAULT_COMMAND_CATALOG, commandIds: [...DEFAULT_COMMAND_CATALOG.commandIds, ...extraCommandIds] };
+  const compiled = compileConfig(layers, { commandCatalog });
+  if (!compiled.ok) return { config: undefined, diagnostics: compiled.error.diagnostics.map((diagnostic) => diagnostic.message) };
+  return { config: compiled.value, diagnostics: [] };
+}
+
 export const DEFAULT_CONFIG_TOML = `schema-version = 1
 profile = "xi"
 

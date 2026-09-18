@@ -455,7 +455,7 @@ export class BoundedPickerModel implements Disposable {
     const provider = this.#providers.get(mode);
     if (provider === undefined) {
       const error: PickerFailure = { kind: 'not-ready', mode, message: 'picker mode has no provider' };
-      this.#model = emptyModel(mode, query, generation, 'error', error.message);
+      this.#model = emptyModel(mode, query, generation, error.kind === 'not-ready' ? 'stale' : 'error', error.message);
       this.notify();
       return { ok: false, error };
     }

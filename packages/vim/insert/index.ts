@@ -62,9 +62,14 @@ interface ReplaceFrame {
   readonly cursorBefore: Utf16Offset;
 }
 
+/** `<C-v>{digits}` numeric literal-entry radix: `decimal` is `<C-v>065` (up to 3 digits,
+ * byte value); `hex2` is `<C-v>x41`; `hex4` is `<C-v>u1234`; `hex8` is `<C-v>U0001F600`. */
+export type VimInsertLiteralCodeRadix = 'decimal' | 'hex2' | 'hex4' | 'hex8';
+
 export type VimInsertPendingInput =
   | { readonly kind: 'none' }
   | { readonly kind: 'literal' }
+  | { readonly kind: 'literal-code'; readonly radix: VimInsertLiteralCodeRadix; readonly digits: string }
   | { readonly kind: 'digraph-first' }
   | { readonly kind: 'digraph-second'; readonly value: string }
   | { readonly kind: 'register-name'; readonly requestId: number }
@@ -105,6 +110,20 @@ export interface VimInsertSession {
   readonly autoIndentLineHasContent: boolean;
   readonly suspendedForNormalCommand: boolean;
   readonly undoEpoch: number;
+  /**
+   * `backspace=start` lets `<C-w>`/`<C-u>` delete text typed before Insert
+   * mode started, but only stops there once: the press that lands exactly on
+   * the insert-start boundary is swallowed, and the next press continues
+   * into the pre-existing text.
+   */
+  readonly stoppedAtInsertStart: boolean;
+  /**
+   * Display-cell column an `<Up>`/`<Down>` chain tries to land on (`:help
+   * curswant`), null when it should be recomputed from the actual cursor
+   * column. Any other cursor-moving action resets it to null so a later
+   * `<Up>`/`<Down>` starts fresh from where that action left the cursor.
+   */
+  readonly desiredColumn: number | null;
 }
 
 export interface VimInsertEdit {
@@ -247,6 +266,8 @@ export function beginVimInsert(
       autoIndentLineHasContent: false,
       suspendedForNormalCommand: false,
       undoEpoch: 0,
+      stoppedAtInsertStart: false,
+      desiredColumn: null,
     });
     return success(Object.freeze({
       kind: 'entered' as const,
@@ -283,6 +304,8 @@ export function beginVimInsert(
     autoIndentLineHasContent: false,
     suspendedForNormalCommand: false,
     undoEpoch: 0,
+    stoppedAtInsertStart: false,
+    desiredColumn: null,
   });
   return success(Object.freeze({
     kind: 'entered' as const,
@@ -398,6 +421,12 @@ function planKey(
       const cleared = freezeSession({ ...session, pending: NONE_PENDING });
       return success(continued(snapshot, cleared, [], 'continued'));
     }
+    // `<C-r><C-r>{reg}`/`<C-r><C-o>{reg}`/`<C-r><C-p>{reg}` all insert the
+    // register literally, same as plain `<C-r>{reg}` -- this modifier key is
+    // swallowed and the register name is still the key after it.
+    if (key === '<C-r>' || key === '<C-o>' || key === '<C-p>') {
+      return success(continued(snapshot, session, [], 'continued'));
+    }
     const registerName = textKey(key);
     if (registerName === undefined) return failure('invalid-input');
     const request: VimInsertRegisterRequest = Object.freeze({
@@ -417,10 +446,62 @@ function planKey(
     }));
   }
   if (session.pending.kind === 'literal') {
+    const started = startLiteralCode(key);
+    if (started !== undefined) {
+      const next = freezeSession({ ...session, pending: Object.freeze({ kind: 'literal-code', radix: started.radix, digits: started.digits }) });
+      return success(continued(snapshot, next, [], 'continued'));
+    }
     const literal = literalText(key);
     if (literal === undefined) return failure('invalid-input');
     const cleared = freezeSession({ ...session, pending: NONE_PENDING });
     return insertPayload(snapshot, source, base, cleared, literal, 'continued');
+  }
+  if (session.pending.kind === 'literal-code') {
+    const { radix, digits } = session.pending;
+    const digit = literalCodeDigit(key, radix);
+    if (digit !== undefined) {
+      const nextDigits = digits + digit;
+      if (nextDigits.length < literalCodeMaxDigits(radix)) {
+        const next = freezeSession({ ...session, pending: Object.freeze({ kind: 'literal-code', radix, digits: nextDigits }) });
+        return success(continued(snapshot, next, [], 'continued'));
+      }
+      const char = literalCodeChar(radix, nextDigits);
+      if (char === undefined) return failure('invalid-input');
+      const cleared = freezeSession({ ...session, pending: NONE_PENDING });
+      return insertPayload(snapshot, source, base, cleared, char, 'continued');
+    }
+    // nvim: a non-digit before the maximum digit count terminates the code with
+    // whatever digits were already typed, and the terminating key is then processed
+    // normally -- it is not rejected. A plain textual key folds into one combined
+    // insertion. Any other key (Escape/Ctrl-C, Backspace, Enter, Ctrl-r, Ctrl-w, an
+    // arrow, a further <C-v>, ...) splices the literal character into the line first
+    // and then replays that same key through this same dispatcher against the
+    // updated line/session, so it gets exactly the handling a standalone press of
+    // that key would -- not swallowed.
+    if (digits.length === 0) return failure('invalid-input');
+    const char = literalCodeChar(radix, digits);
+    if (char === undefined) return failure('invalid-input');
+    const cleared = freezeSession({ ...session, pending: NONE_PENDING });
+    const isBracketedKey = key.length > 1 && key.startsWith('<') && key !== '<Space>' && key !== '<Tab>';
+    if (!isBracketedKey) {
+      const plainText = textKey(key);
+      if (plainText !== undefined) return insertPayload(snapshot, source, base, cleared, char + plainText, 'continued');
+    }
+    const current = (cleared.cursorOffset as number) - base;
+    const insertedAt = base + current;
+    const splicedSource = source.slice(0, current) + char + source.slice(current);
+    const advanced = freezeSession({ ...cleared, cursorOffset: offset(insertedAt + char.length) });
+    const replayed = planKey(snapshot, splicedSource, base, advanced, key);
+    if (!replayed.ok) return replayed;
+    // The replayed key computes its own edit(s) against the spliced-in text, which is
+    // only hypothetical -- the real (pre-splice) document never actually gained `char`.
+    // A replayed edit landing exactly at or adjacent to the insertion point (Backspace
+    // deleting it, Ctrl-w's word deletion reaching through it, <CR>'s newline split
+    // starting right after it, ...) is folded together with the literal insertion into
+    // one edit valid against the real snapshot, instead of two edits whose combined
+    // range the real document was never long enough to contain.
+    const edits = foldLiteralInsertionEdits(insertedAt, char, replayed.value.plan.edits);
+    return success(Object.freeze({ ...replayed.value, plan: Object.freeze({ ...replayed.value.plan, edits }) }));
   }
   if (session.pending.kind === 'digraph-first') {
     const value = textKey(key);
@@ -484,6 +565,7 @@ function planKey(
   if (key === '<C-d>') return indentByShiftwidth(snapshot, source, base, session, false);
   if (key === '<C-w>') return deletePreviousWord(snapshot, source, base, session);
   if (key === '<C-u>') return deleteToLineStart(snapshot, source, base, session);
+  if (isCursorMoveKey(key)) return moveInsertCursor(snapshot, source, base, session, key);
   const text = textKey(key);
   if (text === undefined) return success(ignored(snapshot, session));
   return insertPayload(snapshot, source, base, session, text, 'continued');
@@ -568,6 +650,7 @@ function insertPayload(
     ...appendRepeat(session, payload),
     replaceStack: stack,
     autoIndentLineHasContent: autoIndentHasContent,
+    desiredColumn: null,
   });
   return success(continued(snapshot, next, [translateEdit(result.edit, base, textIntent)], kind));
 }
@@ -660,6 +743,7 @@ function insertNewline(snapshot: DocumentSnapshot, source: string, base: number,
     replaceStack: [],
     autoIndentSpan: indent.length > 0 ? { start: offset(base + cursor + 1), end: offset(nextCursor) } : null,
     autoIndentLineHasContent: false,
+    desiredColumn: null,
   });
   return success(continued(snapshot, next, [makeEdit(base + cursor, base + cursor, value)], 'continued'));
 }
@@ -675,6 +759,7 @@ function backspace(snapshot: DocumentSnapshot, source: string, base: number, ses
       cursorOffset: top.cursorBefore,
       replaceStack: nextStack,
       ...trimRepeatBy(session, top.insertedText.length),
+      desiredColumn: null,
     });
     return success(continued(snapshot, next, [makeEdit(start, end, top.replacedText, literalControlIntent(top.replacedText))], 'continued'));
   }
@@ -696,6 +781,13 @@ function backspace(snapshot: DocumentSnapshot, source: string, base: number, ses
     && absoluteCursor <= (indentSpan.end as number);
   if (beforeEntry && !hasOption(session.options, 'start') && !(deletingAutoIndent && hasOption(session.options, 'indent'))) return success(ignored(snapshot, session));
   if (deletingIndent && !hasOption(session.options, 'indent') && beforeEntry) return success(ignored(snapshot, session));
+  if (session.mode !== 'insert') {
+    // Replace/virtual-replace with no frame left to restore (backspaced past every
+    // character this session replaced): nvim only repositions the cursor here, it never
+    // deletes text that predates entering Replace mode.
+    const next = freezeSession({ ...session, cursorOffset: offset(previous), desiredColumn: null });
+    return success(continued(snapshot, next, [], 'continued'));
+  }
   const deletedText = crossesLine ? '\n' : source.slice(previous - base, cursor);
   const nextIndentSpan = adjustSpanAfterEdit(session.autoIndentSpan, previous, absoluteEnd, '');
   const next = freezeSession({
@@ -705,13 +797,28 @@ function backspace(snapshot: DocumentSnapshot, source: string, base: number, ses
     autoIndentSpan: nextIndentSpan,
     autoIndentLineHasContent: session.autoIndentSpan !== null
       && previous > (session.autoIndentSpan.end as number),
+    desiredColumn: null,
   });
   return success(continued(snapshot, next, [makeEdit(previous, absoluteEnd, '')], 'continued'));
 }
 
 function deleteForward(snapshot: DocumentSnapshot, source: string, base: number, session: VimInsertSession): VimInsertResult<VimInsertTransition> {
   const cursor = (session.cursorOffset as number) - base;
-  if (!isSafeBoundary(source, cursor) || cursor >= source.length) return success(ignored(snapshot, session));
+  if (!isSafeBoundary(source, cursor)) return success(ignored(snapshot, session));
+  if (cursor >= source.length) {
+    // `source` is this one line, stopping short of its trailing newline (see
+    // readLineWindow); at its line-local end, <Del> joins with the next line by deleting
+    // that separator -- mirroring how backspace crossing a line boundary deletes just the
+    // '\n' -- unless this is the document's last line, where there is nothing to join.
+    const absoluteCursor = base + cursor;
+    if (absoluteCursor >= snapshot.lengthUtf16) return success(ignored(snapshot, session));
+    const next = freezeSession({
+      ...session,
+      ...removeRepeatSuffix(session, '\n'),
+      autoIndentSpan: adjustSpanAfterEdit(session.autoIndentSpan, absoluteCursor, absoluteCursor + 1, ''),
+    });
+    return success(continued(snapshot, next, [makeEdit(absoluteCursor, absoluteCursor + 1, '')], 'continued'));
+  }
   const end = nextGrapheme(source, cursor, source.length);
   const absoluteCursor = base + cursor;
   const absoluteEnd = base + end;
@@ -727,8 +834,16 @@ function deleteForward(snapshot: DocumentSnapshot, source: string, base: number,
 function deletePreviousWord(snapshot: DocumentSnapshot, source: string, base: number, session: VimInsertSession): VimInsertResult<VimInsertTransition> {
   const cursor = (session.cursorOffset as number) - base;
   if (!isSafeBoundary(source, cursor) || cursor <= 0) return success(ignored(snapshot, session));
-  const lowerBound = Math.max(0, (session.entryOffset as number) - base);
-  if (cursor <= lowerBound) return success(ignored(snapshot, session));
+  const entryBound = Math.max(0, (session.entryOffset as number) - base);
+  const canPassEntry = hasOption(session.options, 'start');
+  // With `backspace=start`, deleting past where Insert began stops once at
+  // that boundary; the very next `<C-w>` press continues into older text.
+  if (cursor <= entryBound) {
+    if (!canPassEntry || cursor < entryBound || session.stoppedAtInsertStart) return success(ignored(snapshot, session));
+    const next = freezeSession({ ...session, stoppedAtInsertStart: true });
+    return success(continued(snapshot, next, []));
+  }
+  const lowerBound = canPassEntry && session.stoppedAtInsertStart ? 0 : entryBound;
   let start = cursor;
   while (start > lowerBound) {
     const previous = previousGrapheme(source, start, lowerBound);
@@ -750,6 +865,8 @@ function deletePreviousWord(snapshot: DocumentSnapshot, source: string, base: nu
     replaceStack: [],
     autoIndentSpan: adjustSpanAfterEdit(session.autoIndentSpan, absoluteStart, absoluteCursor, ''),
     autoIndentLineHasContent: false,
+    stoppedAtInsertStart: start <= entryBound,
+    desiredColumn: null,
   });
   return success(continued(snapshot, next, [makeEdit(absoluteStart, absoluteCursor, '')], 'continued'));
 }
@@ -757,39 +874,153 @@ function deletePreviousWord(snapshot: DocumentSnapshot, source: string, base: nu
 function deleteToLineStart(snapshot: DocumentSnapshot, source: string, base: number, session: VimInsertSession): VimInsertResult<VimInsertTransition> {
   const cursor = (session.cursorOffset as number) - base;
   if (!isSafeBoundary(source, cursor) || cursor === 0) return success(ignored(snapshot, session));
-  const removableStart = Math.max(0, (session.entryOffset as number) - base);
+  const entryBound = Math.max(0, (session.entryOffset as number) - base);
+  // `<C-u>` only ever deletes text entered since Insert started, unless the
+  // cursor is already back at that point: with `backspace=start` it then
+  // deletes the rest of the pre-existing line in the same press (no stop).
+  const removableStart = cursor > entryBound || !hasOption(session.options, 'start') ? entryBound : 0;
   if (removableStart >= cursor) return success(ignored(snapshot, session));
   const removed = source.slice(removableStart, cursor);
   const absoluteStart = base + removableStart;
   const absoluteCursor = base + cursor;
-  const next = freezeSession({ ...session, cursorOffset: offset(absoluteStart), ...removeRepeatSuffix(session, removed), replaceStack: [] });
+  const next = freezeSession({ ...session, cursorOffset: offset(absoluteStart), ...removeRepeatSuffix(session, removed), replaceStack: [], desiredColumn: null });
   return success(continued(snapshot, next, [makeEdit(absoluteStart, absoluteCursor, '')], 'continued'));
 }
 
 function indentByShiftwidth(snapshot: DocumentSnapshot, source: string, base: number, session: VimInsertSession, increase: boolean): VimInsertResult<VimInsertTransition> {
   const cursor = (session.cursorOffset as number) - base;
   if (!isSafeBoundary(source, cursor)) return failure('invalid-cursor');
-  const prefix = source.slice(0, cursor);
-  if (prefix.trim().length > 0) return success(ignored(snapshot, session));
-  const cells = displayColumn(source, 0, cursor, session.options.tabstop);
+  // `<C-t>`/`<C-d>` re-indent the whole line, wherever the cursor sits on
+  // it; the cursor keeps its position relative to the line's text, shifting
+  // only by however many cells the leading indentation grew or shrank.
+  let indentEnd = 0;
+  while (indentEnd < source.length && (source.charAt(indentEnd) === ' ' || source.charAt(indentEnd) === '\t')) indentEnd += 1;
+  const cells = displayColumn(source, 0, indentEnd, session.options.tabstop);
   const nextCells = increase
     ? Math.ceil((cells + 1) / session.options.shiftwidth) * session.options.shiftwidth
     : Math.max(0, Math.floor((Math.max(0, cells - 1)) / session.options.shiftwidth) * session.options.shiftwidth);
   const delta = nextCells - cells;
   if (delta === 0) return success(ignored(snapshot, session));
-  const value = increase ? indentText(delta, session.options) : '';
-  const removeStart = increase ? cursor : indentationStart(source, 0, cursor);
-  const replacement = increase ? value : prefix.slice(0, Math.max(0, prefix.length - -delta));
-  const edit = makeEdit(base + removeStart, base + cursor, replacement);
-  const nextCursor = base + removeStart + replacement.length;
+  const replacement = indentText(nextCells, session.options);
+  const removed = source.slice(0, indentEnd);
+  const edit = makeEdit(base, base + indentEnd, replacement);
+  const nextCursor = base + (cursor <= indentEnd ? replacement.length : cursor + (replacement.length - indentEnd));
   const next = freezeSession({
     ...session,
     cursorOffset: offset(nextCursor),
     replaceStack: [],
-    ...(increase ? appendRepeat(session, value) : removeRepeatSuffix(session, source.slice(removeStart, cursor))),
-    autoIndentSpan: adjustSpanAfterEdit(session.autoIndentSpan, base + removeStart, base + cursor, replacement),
+    ...(increase ? appendRepeat(session, replacement) : removeRepeatSuffix(session, removed)),
+    autoIndentSpan: adjustSpanAfterEdit(session.autoIndentSpan, base, base + indentEnd, replacement),
+    desiredColumn: null,
   });
   return success(continued(snapshot, next, [edit], 'continued'));
+}
+
+/**
+ * `<Left>`/`<Right>`/`<Up>`/`<Down>`/`<Home>`/`<End>`/`<C-Left>`/`<C-Right>`:
+ * move the cursor without editing text or leaving Insert/Replace. Per nvim,
+ * these never wrap to an adjacent line (unlike `<BS>`/`<Space>`) and, like
+ * `<C-w>`'s own word deletion in this same file, `<C-Left>`/`<C-Right>` stay
+ * within the current bounded line window rather than crossing a line
+ * boundary -- an accepted limitation, not a text edit correctness gap. Moving
+ * always reports `'break'`: nvim starts a new undo sequence and dot-repeat
+ * only replays the text typed after the last movement.
+ */
+function moveInsertCursor(
+  snapshot: DocumentSnapshot,
+  source: string,
+  base: number,
+  session: VimInsertSession,
+  key: string,
+): VimInsertResult<VimInsertTransition> {
+  const cursor = (session.cursorOffset as number) - base;
+  if (!isSafeBoundary(source, cursor)) return failure('invalid-cursor');
+  const tabstop = session.options.tabstop;
+  if (key === '<Left>') return moveInsertCursorTo(snapshot, session, base + previousGrapheme(source, cursor, 0), null);
+  if (key === '<Right>') return moveInsertCursorTo(snapshot, session, base + nextGrapheme(source, cursor, source.length), null);
+  if (key === '<C-Left>') return moveInsertCursorTo(snapshot, session, base + previousWordStart(source, cursor), null);
+  if (key === '<C-Right>') return moveInsertCursorTo(snapshot, session, base + nextWordStart(source, cursor, source.length), null);
+  const bounds = lineBounds(snapshot, base + cursor);
+  if (bounds === undefined) return failure('snapshot-read-failed');
+  if (key === '<Home>') return moveInsertCursorTo(snapshot, session, bounds.start, null);
+  if (key === '<End>') return moveInsertCursorTo(snapshot, session, bounds.end, null);
+  // <Up> / <Down>: keep the desired display-cell column, like Normal `j`/`k`.
+  const targetLineIndex = (bounds.lineIndex as number) + (key === '<Up>' ? -1 : 1);
+  if (targetLineIndex < 0 || targetLineIndex >= snapshot.lineCount) return success(ignored(snapshot, session));
+  const desired = session.desiredColumn ?? displayColumn(source, 0, cursor, tabstop);
+  const targetStart = snapshot.lineStartOffset(targetLineIndex as LineIndex);
+  if (!targetStart.ok) return failure('snapshot-read-failed');
+  const targetLine = readLineWindow(snapshot, targetStart.value as number, INSERT_KEY_FORWARD_MARGIN);
+  if (targetLine === undefined) return failure('snapshot-read-failed');
+  const localTarget = offsetForColumn(targetLine.text, 0, targetLine.text.length, desired, tabstop);
+  return moveInsertCursorTo(snapshot, session, targetLine.start + localTarget, desired);
+}
+
+function moveInsertCursorTo(
+  snapshot: DocumentSnapshot,
+  session: VimInsertSession,
+  target: number,
+  desiredColumn: number | null,
+): VimInsertResult<VimInsertTransition> {
+  const next = freezeSession({ ...session, cursorOffset: offset(target), pending: NONE_PENDING, desiredColumn });
+  return success(continued(snapshot, next, [], 'continued', 'break'));
+}
+
+/** Real line bounds (no text materialized) so `<Home>`/`<End>` never pay for a full-line read. */
+function lineBounds(snapshot: DocumentSnapshot, absoluteOffset: number): { readonly start: number; readonly end: number; readonly lineIndex: LineIndex } | undefined {
+  const lineResult = snapshot.lineIndexAt(offset(absoluteOffset));
+  if (!lineResult.ok) return undefined;
+  const lineIndex = lineResult.value;
+  const startResult = snapshot.lineStartOffset(lineIndex);
+  if (!startResult.ok) return undefined;
+  const start = startResult.value as number;
+  let end = snapshot.lengthUtf16;
+  if ((lineIndex as number) + 1 < snapshot.lineCount) {
+    const nextStart = snapshot.lineStartOffset((lineIndex as number + 1) as LineIndex);
+    if (!nextStart.ok) return undefined;
+    end = (nextStart.value as number) - 1;
+  }
+  return Object.freeze({ start, end, lineIndex });
+}
+
+/** First offset in `[start, end)` whose accumulated display width reaches `targetColumn`, per `tabstop`. */
+function offsetForColumn(source: string, start: number, end: number, targetColumn: number, tabstop: number): number {
+  let column = 0;
+  let cursor = start;
+  while (cursor < end) {
+    if (column >= targetColumn) return cursor;
+    const next = nextGrapheme(source, cursor, end);
+    column += graphemeWidth(source.slice(cursor, next), column, tabstop);
+    cursor = next;
+  }
+  return end;
+}
+
+/** Vim's keyword/punctuation/blank word classes (`:help word`), used by `<C-Right>`/`<C-Left>`. */
+function wordClass(ch: string): 0 | 1 | 2 {
+  if (/\s/u.test(ch)) return 0;
+  if (/[\p{L}\p{N}_]/u.test(ch)) return 1;
+  return 2;
+}
+
+function nextWordStart(source: string, cursor: number, end: number): number {
+  let pos = cursor;
+  if (pos < end) {
+    const cls = wordClass(source.charAt(pos));
+    if (cls !== 0) { while (pos < end && wordClass(source.charAt(pos)) === cls) pos += 1; }
+  }
+  while (pos < end && wordClass(source.charAt(pos)) === 0) pos += 1;
+  return pos;
+}
+
+function previousWordStart(source: string, cursor: number): number {
+  if (cursor <= 0) return 0;
+  let pos = cursor - 1;
+  while (pos > 0 && wordClass(source.charAt(pos)) === 0) pos -= 1;
+  if (pos === 0 && wordClass(source.charAt(0)) === 0) return 0;
+  const cls = wordClass(source.charAt(pos));
+  while (pos > 0 && wordClass(source.charAt(pos - 1)) === cls) pos -= 1;
+  return pos;
 }
 
 function exitInsert(snapshot: DocumentSnapshot, source: string, base: number, session: VimInsertSession, exitVia: 'escape' | 'ctrl-c'): VimInsertResult<VimInsertTransition> {
@@ -813,6 +1044,18 @@ function exitInsert(snapshot: DocumentSnapshot, source: string, base: number, se
     const at = finalCursor;
     edits.push(makeEdit(base + at, base + at, repeat, literalControlIntent(repeat)));
     finalSource = finalSource.slice(0, at) + repeat + finalSource.slice(at);
+    finalCursor += repeat.length;
+  }
+  // `3Rxy<Esc>` replays "xy" 2 more times, overwriting forward like typing it again in
+  // Replace mode (not inserting, unlike the Insert-mode count above); it never crosses a
+  // line -- `finalSource` is always the single current line.
+  if (session.count > 1 && repeatUnit.length > 0 && session.mode === 'replace') {
+    const repeat = repeatUnit.repeat(session.count - 1);
+    if (repeat.length + repeatUnit.length > MAX_REPEAT_UTF16) return failure('repeat-limit');
+    const at = finalCursor;
+    const replacedEnd = Math.min(at + repeat.length, finalSource.length);
+    edits.push(makeEdit(base + at, base + replacedEnd, repeat, literalControlIntent(repeat)));
+    finalSource = finalSource.slice(0, at) + repeat + finalSource.slice(replacedEnd);
     finalCursor += repeat.length;
   }
   const normalCursor = previousGrapheme(finalSource, finalCursor, lineStartAt(finalSource, finalCursor));
@@ -935,6 +1178,7 @@ function isSessionValid(session: VimInsertSession): boolean {
     && Number.isSafeInteger(session.count) && session.count >= 1
     && Number.isSafeInteger(session.nextRegisterRequestId) && session.nextRegisterRequestId >= 1
     && Number.isSafeInteger(session.undoEpoch) && session.undoEpoch >= 0
+    && (session.desiredColumn === null || (Number.isSafeInteger(session.desiredColumn) && session.desiredColumn >= 0))
     && isPendingValid(session.pending);
 }
 
@@ -944,6 +1188,8 @@ function isPendingValid(pending: VimInsertPendingInput): boolean {
     case 'literal':
     case 'digraph-first':
     case 'control-g': return true;
+    case 'literal-code': return typeof pending.digits === 'string' && pending.digits.length < literalCodeMaxDigits(pending.radix)
+      && (pending.radix === 'decimal' ? /^[0-9]*$/ : /^[0-9a-fA-F]*$/).test(pending.digits);
     case 'digraph-second': return isUnicodeScalarText(pending.value);
     case 'register-name': return Number.isSafeInteger(pending.requestId) && pending.requestId >= 1;
     case 'register-payload': {
@@ -1021,7 +1267,15 @@ function keyNeedsLineContext(key: string): boolean {
     || key === '<BS>' || key === '<C-h>' || key === '<Del>' || key === '<C-t>'
     || key === '<C-d>' || key === '<C-w>' || key === '<C-u>' || key === '<Esc>'
     || key === '<C-c>' || key === '<C-o>' || key === '<C-r>' || key === '<C-g>'
-    || key === '<C-g>u' || key === '<C-v>' || key === '<C-q>' || key === '<C-k>';
+    || key === '<C-g>u' || key === '<C-v>' || key === '<C-q>' || key === '<C-k>'
+    || isCursorMoveKey(key);
+}
+
+/** Insert/Replace cursor-only keys: they move the caret without leaving the
+ * mode and without editing text (`:help ins-special-special`). */
+function isCursorMoveKey(key: string): boolean {
+  return key === '<Left>' || key === '<Right>' || key === '<Up>' || key === '<Down>'
+    || key === '<Home>' || key === '<End>' || key === '<C-Left>' || key === '<C-Right>';
 }
 
 function translateEdit(edit: VimInsertEdit, base: number, textIntent?: VimInsertEdit['textIntent']): VimInsertEdit {
@@ -1078,11 +1332,6 @@ function indentText(cells: number, options: NormalizedVimInsertOptions): string 
   return options.expandtab ? ' '.repeat(cells) : '\t'.repeat(Math.floor(cells / options.tabstop)) + ' '.repeat(cells % options.tabstop);
 }
 
-function indentationStart(source: string, lineStart: number, cursor: number): number {
-  let start = cursor;
-  while (start > lineStart && (source.charAt(start - 1) === ' ' || source.charAt(start - 1) === '\t')) start -= 1;
-  return start;
-}
 
 function firstGrapheme(value: string): string {
   return graphemes(value)[0] ?? '';
@@ -1219,6 +1468,41 @@ function literalText(key: string): string | undefined {
   return textKey(key);
 }
 
+/** The key right after `<C-v>` that opens a numeric literal-entry sequence instead of an
+ * immediate single-key literal. Unlike `u`/`U`/`x`/`X`, a digit is itself the first digit. */
+function startLiteralCode(key: string): { readonly radix: VimInsertLiteralCodeRadix; readonly digits: string } | undefined {
+  if (key.length === 1 && key >= '0' && key <= '9') return { radix: 'decimal', digits: key };
+  if (key === 'u') return { radix: 'hex4', digits: '' };
+  if (key === 'U') return { radix: 'hex8', digits: '' };
+  if (key === 'x' || key === 'X') return { radix: 'hex2', digits: '' };
+  return undefined;
+}
+
+function literalCodeDigit(key: string, radix: VimInsertLiteralCodeRadix): string | undefined {
+  if (key.length !== 1) return undefined;
+  if (radix === 'decimal') return key >= '0' && key <= '9' ? key : undefined;
+  return /^[0-9a-fA-F]$/.test(key) ? key : undefined;
+}
+
+function literalCodeMaxDigits(radix: VimInsertLiteralCodeRadix): number {
+  switch (radix) {
+    case 'decimal': return 3;
+    case 'hex2': return 2;
+    case 'hex4': return 4;
+    case 'hex8': return 8;
+  }
+}
+
+/** `decimal`/`hex2` are byte values (0-255, e.g. `<C-v>065` and `<C-v>x41` both give 'A');
+ * `hex4`/`hex8` are Unicode code points (`<C-v>u1234`, `<C-v>U0001F600`). */
+function literalCodeChar(radix: VimInsertLiteralCodeRadix, digits: string): string | undefined {
+  const value = Number.parseInt(digits, radix === 'decimal' ? 10 : 16);
+  if (!Number.isSafeInteger(value) || value < 0) return undefined;
+  if (radix === 'decimal' || radix === 'hex2') return value <= 0xff ? String.fromCharCode(value) : undefined;
+  if (value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) return undefined;
+  return String.fromCodePoint(value);
+}
+
 function digraphValue(first: string, second: string): string | undefined {
   const sequence = `${first}${second}`;
   const value = lookupDefaultVimDigraph(sequence);
@@ -1334,6 +1618,45 @@ function adjustSpanAfterEdit(
   if (editStart >= start && editEnd <= end) return { start: offset(start), end: offset(end + insertedLength - removedLength) };
   return { start: offset(start), end: offset(Math.max(start, editStart + insertedLength)) };
 }
+/**
+ * Combine a single-character literal insertion at `insertedAt` with whatever edits a
+ * replayed terminator key computed against the hypothetical spliced-in text, producing
+ * edits valid against the real (pre-splice) document. Only the first replayed edit can
+ * possibly touch the inserted span (every caller here replays exactly one key against a
+ * cursor sitting right at the insertion's far edge); any further edits (e.g. exitInsert's
+ * trailing autoindent-strip/count-repeat cleanup) are untouched by the splice and pass
+ * through unchanged.
+ */
+function foldLiteralInsertionEdits(insertedAt: number, insertedText: string, edits: readonly VimInsertEdit[]): readonly VimInsertEdit[] {
+  const literalEdit = makeEdit(insertedAt, insertedAt, insertedText);
+  const [first, ...rest] = edits;
+  if (first === undefined) return Object.freeze([literalEdit]);
+  const insertEnd = insertedAt + insertedText.length;
+  const start = first.start as number;
+  const end = first.end as number;
+  if (start === end && start === insertEnd) {
+    // The replayed key inserts more text immediately after the literal (e.g. <CR>'s
+    // newline split): one insertion at the same real point, texts concatenated in order.
+    return Object.freeze([makeEdit(insertedAt, insertedAt, insertedText + first.text, first.textIntent), ...rest]);
+  }
+  if (end === insertEnd && start <= insertedAt) {
+    // The replayed key deletes/replaces backward through the literal (Backspace,
+    // Ctrl-w, ...): the portion of its range at or past the insertion point was never
+    // real, so only the genuinely pre-existing `[start, insertedAt)` needs the edit.
+    return Object.freeze([makeEdit(start, insertedAt, first.text, first.textIntent), ...rest]);
+  }
+  if (start >= insertEnd) {
+    // The replayed key edits real, pre-existing text entirely past the literal (e.g.
+    // <Del> removing the character that follows it): unaffected by the splice except
+    // for shifting back by the literal's own length.
+    const shifted = makeEdit(start - insertedText.length, end - insertedText.length, first.text, first.textIntent);
+    return Object.freeze([literalEdit, shifted, ...rest]);
+  }
+  // Doesn't touch the inserted span (an unrelated cleanup edit, a key that didn't edit
+  // at all, ...): keep the literal insertion and the replayed edit separate.
+  return Object.freeze([literalEdit, first, ...rest]);
+}
+
 function makeEdit(start: number, end: number, text: string, textIntent?: VimInsertEdit['textIntent']): VimInsertEdit {
   return Object.freeze({
     start: offset(start),

@@ -111,7 +111,9 @@ function createInput(sink: Bun.FileSink): ProcessInput {
 
 async function* streamChunks(stream: ReadableStream<Uint8Array<ArrayBuffer>> | null): AsyncIterable<Uint8Array> {
   if (stream === null) return;
-  // ponytail: each pulled chunk is Bun's own freshly allocated buffer for that read, not a
+  // ponytail: zero-copy chunk yield; ceiling: consumers must never mutate a chunk in place.
+  // upgrade: if a consumer ever needs to mutate, copy at that consumer (slice()) rather than here.
+  // Each pulled chunk is Bun's own freshly allocated buffer for that read, not a
   // reused/aliased view, so it is yielded as-is instead of copied. Every consumer (language
   // transport decoding, search/formatting/git/tasks output draining) only reads or copies
   // bytes out of it and never mutates the chunk in place; this saved a full extra copy of

@@ -602,7 +602,11 @@ export class IncrementalSyntaxHighlighter {
   #scheduled = false;
   #disposed = false;
   #sequence = 0;
-  #latestSequence = 0;
+  /** Per-document, not global: a shared highlighter serves many open documents, and a newer
+   * request for document B must not mark document A's own still-current queued/active
+   * request stale (that would leave A never highlighted whenever any other document is
+   * touched). */
+  readonly #latestSequenceByDocument = new Map<DocumentId, number>();
   #latestResult: SyntaxHighlightResult | undefined;
   #diagnostics: SyntaxServiceDiagnostics = Object.freeze({
     queued: 0,
@@ -646,7 +650,7 @@ export class IncrementalSyntaxHighlighter {
       return { accepted: false, error: { kind: 'queue-full', message: 'syntax request exceeds the bounded service byte credit' } };
     }
     const sequence = ++this.#sequence;
-    this.#latestSequence = sequence;
+    this.#latestSequenceByDocument.set(request.documentId, sequence);
     while (this.#queue.length >= this.#maxPendingRequests
       || this.#activeUtf16Units + this.#queuedUtf16Units + units > this.#maxPendingUtf16Units) {
       const dropped = this.#queue.shift();
@@ -690,6 +694,19 @@ export class IncrementalSyntaxHighlighter {
     this.#documents.delete(documentId);
     this.#publishedResults.get(documentId)?.dispose();
     this.#publishedResults.delete(documentId);
+    // Drop this document's own tracked sequence so any queued/active request for it is
+    // recognized as stale by the existing per-document sequence check, and actively remove
+    // it now instead of leaving it to be discovered on the next pump.
+    this.#latestSequenceByDocument.delete(documentId);
+    const remaining = this.#queue.filter((item) => item.request.documentId !== documentId);
+    if (remaining.length !== this.#queue.length) {
+      for (const item of this.#queue) {
+        if (item.request.documentId === documentId) this.#queuedUtf16Units -= item.request.snapshot.lengthUtf16;
+      }
+      this.#queue.length = 0;
+      this.#queue.push(...remaining);
+    }
+    if (this.#active !== undefined && this.#active.item.request.documentId === documentId) this.#abandonActive();
   }
 
   dispose(): void {
@@ -778,18 +795,28 @@ export class IncrementalSyntaxHighlighter {
     if (this.#active === undefined) {
       const item = this.#queue[0];
       if (item === undefined) return;
-      if (item.sequence !== this.#latestSequence) {
+      if (item.sequence !== this.#latestSequenceByDocument.get(item.request.documentId)) {
         this.#queue.shift();
         this.#queuedUtf16Units -= item.request.snapshot.lengthUtf16;
         this.#diagnostics = Object.freeze({ ...this.#diagnostics, staleIgnored: this.#diagnostics.staleIgnored + 1 });
         if (this.#queue.length !== 0) this.#schedulePump();
         return;
       }
-      if (!this.#beginActive(item)) return; // waiting on an async grammar/runtime resolution
+      if (!this.#beginActive(item)) {
+        // #beginActive returns false for two different reasons: (a) it is still waiting on an
+        // async grammar/runtime resolution -- the item stays queued and its own `.then(() =>
+        // this.#schedulePump())` will resume the pump; or (b) it already published a
+        // synchronous fallback result (large-file/grammar-missing) and shifted the item off
+        // the queue. Only case (b) needs a reschedule here, or a second queued document (or a
+        // second request for the same document) is left waiting forever for a pump that
+        // already ran to completion.
+        if (this.#queue[0] !== item && this.#queue.length !== 0) this.#schedulePump();
+        return;
+      }
     }
     const active = this.#active;
     if (active === undefined) return;
-    if (active.item.sequence !== this.#latestSequence) {
+    if (active.item.sequence !== this.#latestSequenceByDocument.get(active.item.request.documentId)) {
       this.#abandonActive();
       if (this.#queue.length !== 0) this.#schedulePump();
       return;
@@ -950,7 +977,7 @@ export class IncrementalSyntaxHighlighter {
   }
 
   #publishParsed(item: QueuedRequest, result: SyntaxHighlightResult): void {
-    if (item.sequence !== this.#latestSequence) {
+    if (item.sequence !== this.#latestSequenceByDocument.get(item.request.documentId)) {
       // A dropped, never-exposed result still needs its owned tree copy freed.
       if (result instanceof LiveHighlightResult) result.dispose();
       this.#diagnostics = Object.freeze({ ...this.#diagnostics, staleIgnored: this.#diagnostics.staleIgnored + 1 });

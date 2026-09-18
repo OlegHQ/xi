@@ -132,7 +132,7 @@ const EMPTY_STORE: VimMacroStore = Object.freeze({
   generation: 0,
   values: new Map<VimMacroRegisterName, VimMacroRegister>(),
 });
-const DEFAULT_MAX_DEPTH = 20;
+const DEFAULT_MAX_DEPTH = 1_000;
 const DEFAULT_MAX_REPEAT_COUNT = 1_000;
 const DEFAULT_MAX_COMMANDS = 100_000;
 const DEFAULT_SLICE_SIZE = 64;
@@ -141,9 +141,16 @@ export function createVimMacroStore(): VimMacroStore {
   return EMPTY_STORE;
 }
 
-export function beginVimMacroRecording(register: string): VimMacroResult<VimMacroRecordingSession> {
+/** An uppercase register letter (`qA`) appends to the lowercase register's existing
+ * recording instead of replacing it, matching Vim; playback (`@A`) always targets the
+ * same lowercase register as `@a`, so only recording start needs to fold the case. */
+export function beginVimMacroRecording(register: string, store?: VimMacroStore): VimMacroResult<VimMacroRecordingSession> {
   if (!isMacroRegister(register)) return failure('invalid-register');
-  return { ok: true, value: Object.freeze({ kind: 'recording', register, tokens: Object.freeze([]) }) };
+  const target = register.toLowerCase();
+  if (!isMacroRegister(target)) return failure('invalid-register');
+  const appending = target !== register;
+  const existing = appending ? store?.values.get(target)?.recording.tokens ?? [] : [];
+  return { ok: true, value: Object.freeze({ kind: 'recording', register: target, tokens: Object.freeze([...existing]) }) };
 }
 
 /** Append one raw user key; mapping expansions and macro replay are ignored. */
@@ -175,7 +182,8 @@ export function recordVimMacroToken(
 
 export function finishVimMacroRecording(session: VimMacroRecordingSession): VimMacroResult<VimMacroRecording> {
   if (session.kind !== 'recording') return failure('not-recording');
-  if (session.tokens.length === 0) return failure('empty-macro');
+  // 'qaq' (stop immediately) is a valid Vim idiom that clears/records an empty macro,
+  // not an error.
   const normalized: VimMacroToken[] = [];
   for (const token of session.tokens) {
     const checked = normalizeToken(token);
@@ -188,7 +196,6 @@ export function finishVimMacroRecording(session: VimMacroRecordingSession): VimM
 
 export function writeVimMacro(store: VimMacroStore, recording: VimMacroRecording): VimMacroResult<VimMacroStore> {
   if (!isMacroRegister(recording.register)) return failure('invalid-register');
-  if (recording.tokens.length === 0) return failure('empty-macro');
   const normalized: VimMacroToken[] = [];
   for (const token of recording.tokens) {
     const checked = normalizeToken(token);
@@ -255,7 +262,6 @@ export function executeVimMacro(
   let committedCommands = 0;
   let slices = 0;
   let lastRegister: VimMacroRegisterName = root;
-  const stack: VimMacroRegisterName[] = [];
 
   const cancelled = (): boolean => options.cancellation?.isCancelled === true || options.isCancelled?.() === true;
   const progress = (): void => {
@@ -274,33 +280,25 @@ export function executeVimMacro(
   }) };
 
   function run(current: VimMacroRegisterName, repeats: number, depth: number): { readonly status: VimMacroExecution['status']; readonly failure?: VimMacroFailure } {
+    // Vim allows a macro to invoke itself (e.g. register 'a' recorded with a trailing
+    // '@a', a common repeat-to-end-of-file idiom); it terminates naturally when a motion
+    // inside it fails, not via a same-register rejection. Only a bounded depth guards
+    // against runaway/infinite recursion.
     if (depth > effectiveMaxDepth) return { status: 'failed', failure: { kind: 'depth-limit', limit: effectiveMaxDepth } };
-    if (stack.includes(current)) return { status: 'failed', failure: { kind: 'recursive-macro', register: current } };
     if (repeats < 1 || repeats > effectiveMaxRepeatCount) return { status: 'failed', failure: { kind: 'repeat-count-limit', count: repeats, limit: effectiveMaxRepeatCount } };
     const macro = store.values.get(current);
     if (macro === undefined) return { status: 'failed', failure: { kind: 'macro-not-found', register: current } };
-    stack.push(current);
     lastRegister = current;
     for (let iteration = 0; iteration < repeats; iteration += 1) {
       for (const token of macro.recording.tokens) {
-        if (cancelled()) {
-          stack.pop();
-          return { status: 'cancelled', failure: { kind: 'cancelled' } };
-        }
-        if (consumedTokens >= effectiveMaxCommands) {
-          stack.pop();
-          return { status: 'failed', failure: { kind: 'work-budget', limit: effectiveMaxCommands } };
-        }
+        if (cancelled()) return { status: 'cancelled', failure: { kind: 'cancelled' } };
+        if (consumedTokens >= effectiveMaxCommands) return { status: 'failed', failure: { kind: 'work-budget', limit: effectiveMaxCommands } };
         consumedTokens += 1;
         if (consumedTokens % effectiveSliceSize === 0) progress();
         const tokenResult = executeToken(token, current, iteration, depth);
-        if (tokenResult.status !== 'completed') {
-          stack.pop();
-          return tokenResult;
-        }
+        if (tokenResult.status !== 'completed') return tokenResult;
       }
     }
-    stack.pop();
     return { status: 'completed' };
   }
 

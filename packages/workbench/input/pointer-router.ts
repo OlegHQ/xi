@@ -1,4 +1,4 @@
-import type { Disposable } from '../../contracts/src/index';
+import type { ClockPort, Disposable } from '../../contracts/src/index';
 import type { WorkbenchSession } from '../session';
 import { WorkbenchControlRegistry, SplitterDragController, type WorkbenchControl } from './controls';
 import { WorkbenchPointerCapture } from './pointer-capture';
@@ -10,11 +10,22 @@ import type { ProblemsDiagnostic, ProblemsReadModel } from '../problems';
  * import `packages/ui`, not even types. */
 export interface PointerControlEvent {
   readonly id: string;
-  readonly kind: 'tree' | 'tab' | 'picker' | 'button' | 'splitter';
+  /** `'tab-close'` is the per-tab close glyph; kept distinct from `'tab'` (the tab body,
+   * which activates/pins) so both can share the same `id` (the buffer id). */
+  readonly kind: 'tree' | 'tab' | 'tab-close' | 'picker' | 'button' | 'splitter';
   readonly action: 'activate' | 'begin' | 'move' | 'commit';
   readonly firstSize?: number;
   readonly secondSize?: number;
   readonly availableCells?: number;
+}
+
+/** Narrow port onto `packages/workbench/sidebar`'s `SidebarController` resize methods;
+ * `WorkbenchPointerRouter` cannot import `packages/workbench/sidebar` types by value here
+ * without creating a cycle risk, so this mirrors its begin/move/commit shape structurally. */
+export interface PointerSidebarPort {
+  beginResize(): void;
+  moveResize(width: number): void;
+  commitResize(): void;
 }
 
 /** Mirrors `packages/ui`'s `WorkbenchPointerEvent`. */
@@ -31,6 +42,10 @@ export interface PointerWorkbenchEvent {
   };
   readonly button: number | null;
   readonly control?: PointerControlEvent;
+  /** Single/double/triple click, derived by `WorkbenchPointerRouter` on `phase: 'down'` from
+   * same-cell clicks within ~400ms (docs/plan/09-interaction.md); `undefined` for other
+   * phases. Capped at 3 (a click beyond triple still counts as triple). */
+  readonly clickCount?: number;
 }
 
 /** Mirrors `packages/ui`'s `WorkbenchPanelPointerEvent`. */
@@ -101,6 +116,17 @@ export interface WorkbenchPointerRouterOptions {
   readonly search: PointerSearchPort;
   readonly problems: PointerProblemsPort;
   readonly splitterMinimumCells?: number;
+  /** Drives click-count derivation (`clickCount`, tab single/double-click). */
+  readonly clock: ClockPort;
+  /** A `tab.<bufferId>` control (see `PointerControlEvent.kind: 'tab'`) was clicked once. */
+  readonly onTabActivate?: (bufferId: string) => void;
+  /** The same control was double-clicked -- pins the tab (promotes it out of preview). */
+  readonly onTabPin?: (bufferId: string) => void;
+  /** The tab's close glyph (`kind: 'tab-close'`) was clicked. */
+  readonly onTabClose?: (bufferId: string) => void;
+  /** Drives the sidebar's own resize splitter (`splitter:sidebar`), separate from the editor
+   * pane splitters which resize through `session.resizeSplit`. */
+  readonly sidebar?: PointerSidebarPort;
 }
 
 /**
@@ -115,6 +141,7 @@ export class WorkbenchPointerRouter implements Disposable {
   readonly #controlRegistry = new WorkbenchControlRegistry();
   readonly #splitterDrag: SplitterDragController;
   #activeSplitter: { readonly nodeId: string; readonly availableCells: number } | undefined;
+  #lastClick: { readonly kind: string; readonly row: number; readonly column: number; readonly time: number; readonly count: number } | undefined;
   #disposed = false;
 
   constructor(options: WorkbenchPointerRouterOptions) {
@@ -128,24 +155,58 @@ export class WorkbenchPointerRouter implements Disposable {
     this.#controlRegistry.publish(controls);
   }
 
+  /** Single/double/triple click within ~400ms of the same cell; capped at 3. Independent
+   * per `kind` (a tab click does not chain with a text click in the same cell coordinates). */
+  #clickCount(kind: string, row: number, column: number): number {
+    const time = this.#options.clock.monotonicMilliseconds();
+    const previous = this.#lastClick;
+    const count = previous !== undefined && previous.kind === kind && previous.row === row && previous.column === column && time - previous.time <= 400
+      ? Math.min(3, previous.count + 1)
+      : 1;
+    this.#lastClick = { kind, row, column, time, count };
+    return count;
+  }
+
   /** Top-level `onPointer` decision: control events go to `handleControl`, everything else
    * is a text/gutter gesture forwarded to the Vim-side pointer capture engine. */
   handlePointer(event: PointerWorkbenchEvent): boolean {
     if (event.control !== undefined) return this.handleControl(event);
+    const clickCount = event.phase === 'down' ? this.#clickCount('text', event.cell.row, event.cell.column) : undefined;
     return this.#options.pointerCapture.dispatch({
       ...event,
       cell: { ...event.cell, ...(event.target === undefined ? {} : { target: event.target }) },
+      ...(clickCount === undefined ? {} : { clickCount }),
     } as PointerEvent);
   }
 
   handleControl(event: PointerWorkbenchEvent): boolean {
     const control = event.control;
+    if (control?.kind === 'tab') {
+      if (event.phase === 'down' && event.button === 0) {
+        const count = this.#clickCount('tab', event.cell.row, event.cell.column);
+        this.#options.onTabActivate?.(control.id);
+        if (count >= 2) this.#options.onTabPin?.(control.id);
+        this.#options.marker('XI_TAB_POINTER', { id: control.id, clickCount: count });
+        return true;
+      }
+      return event.phase === 'up' || event.phase === 'move';
+    }
+    if (control?.kind === 'tab-close') {
+      if (event.phase === 'down' && event.button === 0) {
+        this.#options.onTabClose?.(control.id);
+        this.#options.marker('XI_TAB_CLOSE_POINTER', { id: control.id });
+        return true;
+      }
+      return event.phase === 'up' || event.phase === 'move';
+    }
     if (control?.kind === 'splitter') {
       const nodeId = control.id.startsWith('splitter:') ? control.id.slice('splitter:'.length) : '';
+      const isSidebar = nodeId === 'sidebar';
       if (nodeId.length === 0 || control.firstSize === undefined || control.secondSize === undefined || control.availableCells === undefined) return true;
       if (control.action === 'begin' && event.button === 0) {
         if (this.#splitterDrag.begin({ firstSize: control.firstSize, secondSize: control.secondSize })) {
           this.#activeSplitter = { nodeId, availableCells: control.availableCells };
+          if (isSidebar) this.#options.sidebar?.beginResize();
           this.#options.marker('XI_WORKBENCH_SPLITTER', { action: 'begin', nodeId, firstSize: control.firstSize, secondSize: control.secondSize });
         }
         return true;
@@ -153,15 +214,21 @@ export class WorkbenchPointerRouter implements Disposable {
       if (this.#activeSplitter?.nodeId !== nodeId || this.#activeSplitter.availableCells !== control.availableCells) return true;
       if (control.action === 'move') {
         if (this.#splitterDrag.move(control.firstSize, control.secondSize)) {
-          const resized = this.#options.session.resizeSplit(nodeId, control.firstSize / control.availableCells, control.availableCells);
-          if (!resized.ok) this.#splitterDrag.cancel();
-          this.#options.marker('XI_WORKBENCH_SPLITTER', { action: 'move', nodeId, firstSize: control.firstSize, secondSize: control.secondSize, resized: resized.ok });
+          if (isSidebar) {
+            this.#options.sidebar?.moveResize(control.firstSize);
+            this.#options.marker('XI_WORKBENCH_SPLITTER', { action: 'move', nodeId, firstSize: control.firstSize, secondSize: control.secondSize, resized: true });
+          } else {
+            const resized = this.#options.session.resizeSplit(nodeId, control.firstSize / control.availableCells, control.availableCells);
+            if (!resized.ok) this.#splitterDrag.cancel();
+            this.#options.marker('XI_WORKBENCH_SPLITTER', { action: 'move', nodeId, firstSize: control.firstSize, secondSize: control.secondSize, resized: resized.ok });
+          }
         }
         return true;
       }
       if (control.action === 'commit') {
         const committed = this.#splitterDrag.commit();
         this.#activeSplitter = undefined;
+        if (isSidebar && committed !== undefined) this.#options.sidebar?.commitResize();
         this.#options.marker('XI_WORKBENCH_SPLITTER', { action: 'commit', nodeId, committed: committed !== undefined });
         return true;
       }
@@ -256,7 +323,8 @@ export class WorkbenchPointerRouter implements Disposable {
     const initial = this.#splitterDrag.cancel();
     this.#activeSplitter = undefined;
     if (initial !== undefined) {
-      this.#options.session.resizeSplit(capture.nodeId, initial.firstSize / capture.availableCells, capture.availableCells);
+      if (capture.nodeId === 'sidebar') this.#options.sidebar?.moveResize(initial.firstSize);
+      else this.#options.session.resizeSplit(capture.nodeId, initial.firstSize / capture.availableCells, capture.availableCells);
       this.#options.marker('XI_WORKBENCH_SPLITTER', { action: 'cancel', nodeId: capture.nodeId, firstSize: initial.firstSize, secondSize: initial.secondSize });
     }
   }

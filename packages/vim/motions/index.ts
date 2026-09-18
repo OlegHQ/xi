@@ -22,11 +22,22 @@ export {
   type VimViewportScrollKey,
 } from './viewport';
 
+export {
+  resolveVimStructuralMotion,
+  type VimStructuralMotionCursor,
+  type VimStructuralMotionFailure,
+  type VimStructuralMotionInvocation,
+  type VimStructuralMotionKey,
+  type VimStructuralMotionOptions,
+  type VimStructuralMotionOutcome,
+} from './structural';
+
 /** Neovim's sentinel for a cursor whose desired display column is the line end. */
 export const VIM_END_OF_LINE_COLUMN = 0x7fffffff as CellColumn;
 
 export type VimMotionKey =
   | 'h' | 'l' | 'j' | 'k' | '0' | '^' | '$' | 'g_' | '|' | '+' | '-' | '_' | 'gg' | 'G'
+  | 'H' | 'M' | 'L'
   | '<Left>' | '<Right>' | '<Up>' | '<Down>' | '<Home>' | '<End>'
   | '<C-Home>' | '<C-End>'
   | 'go'
@@ -58,6 +69,9 @@ export interface VimMotionOptions {
   readonly widthPolicy?: CellWidthPolicy;
   /** Closed folds supplied by the view; vertical motions skip hidden body lines. */
   readonly folds?: readonly FoldRegion[];
+  /** Host-reported visible line range for H/M/L. Zero-based, inclusive. Defaults to the
+   * whole document (topLine 0, bottomLine lineCount-1) when the host has no viewport. */
+  readonly viewport?: { readonly topLine: number; readonly bottomLine: number };
 }
 
 export type VimMotionKind = 'characterwise' | 'linewise';
@@ -317,6 +331,16 @@ export function resolveVimMotion(
   if (key === 'G') {
     const targetLineIndex = invocation.count === undefined ? snapshot.lineCount - 1 : clampLineIndex(count - 1, snapshot.lineCount);
     return toFileLine(snapshot, cursor, targetLineIndex, resolvedOptions.value, resolvedOptions.value.startOfLine);
+  }
+  if (key === 'H' || key === 'M' || key === 'L') {
+    const viewport = options.viewport ?? { topLine: 0, bottomLine: snapshot.lineCount - 1 };
+    const topLine = clampLineIndex(viewport.topLine, snapshot.lineCount);
+    const bottomLine = clampLineIndex(viewport.bottomLine, snapshot.lineCount);
+    let targetLineIndex: number;
+    if (key === 'H') targetLineIndex = topLine + count - 1;
+    else if (key === 'L') targetLineIndex = bottomLine - count + 1;
+    else targetLineIndex = Math.floor((topLine + bottomLine) / 2);
+    return toFileLine(snapshot, cursor, clampLineIndex(targetLineIndex, snapshot.lineCount), resolvedOptions.value, true);
   }
   return motionFailure('invalid-option');
 }

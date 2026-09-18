@@ -3,6 +3,7 @@ import type { DocumentEdit, DocumentSnapshot, DocumentVersion, LineIndex, Utf16O
 import {
   compilePattern,
   createPatternEvaluation,
+  maximumStepBudget,
   patternSnapshotFromDocument,
   PatternEvaluationError,
   type PatternMatch,
@@ -17,7 +18,11 @@ export type VimSearchOffset =
   | { readonly kind: 'start'; readonly amount?: number }
   | { readonly kind: 'end'; readonly amount?: number }
   | { readonly kind: 'line-start'; readonly amount?: number }
-  | { readonly kind: 'line-end'; readonly amount?: number };
+  | { readonly kind: 'line-end'; readonly amount?: number }
+  /** nvim's bare-number search-offset (`/pat/`, `/pat/+1`, `/pat/-2`): [num] lines
+   * downwards/upwards from the match's line, cursor put in column 1 (`:help
+   * search-offset`). An operator target using this offset becomes linewise. */
+  | { readonly kind: 'line'; readonly amount: number };
 
 export type VimSearchCommand = 'search' | 'next' | 'previous' | 'star' | 'hash' | 'gstar' | 'ghash';
 
@@ -36,12 +41,21 @@ export interface VimSearchState {
   readonly lastMatch: VimSearchMatch | null;
   /** Raw replacement used by `~`; this is separate from the search pattern. */
   readonly previousReplacement: string | null;
+  /** Set by `*`/`#`/`g*`/`g#` (true only for `*`/`#`) so `n`/`N` keep matching whole
+   * words; nvim achieves this by embedding `\<...\>` in the stored pattern, but this
+   * engine has no word-boundary atom, so the constraint travels alongside the pattern. */
+  readonly fullWord: boolean;
+  /** The offset from the last `/`/`?` search, reused by a following `n`/`N` and cleared
+   * by any command that redefines the search (a plain `/pat<CR>`, or `*`/`#`/`g*`/`g#`,
+   * none of which nvim carries an offset through). */
+  readonly offset?: VimSearchOffset;
 }
 
 export const EMPTY_VIM_SEARCH_STATE: VimSearchState = Object.freeze({
   pattern: null,
   direction: null,
   lastMatch: null,
+  fullWord: false,
   previousReplacement: null,
 });
 
@@ -131,6 +145,8 @@ export class VimSearchPreview {
   readonly #snapshot: DocumentSnapshot;
   readonly #fullWord: boolean;
   readonly #direction: VimSearchDirection;
+  readonly #persistDirection: VimSearchDirection;
+  readonly #offset: VimSearchOffset | undefined;
   private complete: VimSearchOutcome | undefined;
   private failure: VimSearchFailure | undefined;
 
@@ -143,6 +159,8 @@ export class VimSearchPreview {
     evaluation: ReturnType<typeof createPatternEvaluation>,
     fullWord: boolean,
     direction: VimSearchDirection,
+    persistDirection: VimSearchDirection,
+    offset: VimSearchOffset | undefined,
   ) {
     this.#snapshot = snapshot;
     this.snapshotVersion = snapshot.version;
@@ -153,6 +171,8 @@ export class VimSearchPreview {
     this.#evaluation = evaluation;
     this.#fullWord = fullWord;
     this.#direction = direction;
+    this.#persistDirection = persistDirection;
+    this.#offset = offset;
   }
 
   get steps(): number { return this.#evaluation.steps; }
@@ -169,7 +189,7 @@ export class VimSearchPreview {
     try {
       const progress = this.#evaluation.resume(maxWorkUnits);
       if (progress.kind === 'pending') return { ok: true, value: progress };
-      const outcome = selectOutcome(this.#snapshot, this.initialView, this.initialState, this.request, this.pattern, progress.result.matches, this.#fullWord, this.#direction);
+      const outcome = selectOutcome(this.#snapshot, this.initialView, this.initialState, this.request, this.pattern, progress.result.matches, this.#fullWord, this.#direction, this.#persistDirection, this.#offset);
       if (!outcome.ok) {
         this.failure = outcome.error;
         return outcome;
@@ -212,13 +232,19 @@ export function beginVimSearch(
     const result = resolveRequest(snapshot, view, state, request);
     if (!result.ok) return result;
     resolved = result.value;
-    const patternOptions = request.patternOptions ?? {};
+    const baseOptions = request.patternOptions ?? {};
+    const patternOptions = withScaledStepBudget(
+      baseOptions.previousSubstituteText === undefined && state.previousReplacement !== null
+        ? { ...baseOptions, previousSubstituteText: state.previousReplacement }
+        : baseOptions,
+      snapshot.lengthUtf16,
+    );
     const program = compilePattern(resolved.pattern, patternOptions);
     const patternSnapshot = patternSnapshotFromDocument(snapshot);
     const evaluation = createPatternEvaluation(program, patternSnapshot);
     return {
       ok: true,
-      value: new VimSearchPreview(snapshot, view, state, request, resolved.pattern, evaluation, resolved.fullWord, resolved.direction),
+      value: new VimSearchPreview(snapshot, view, state, request, resolved.pattern, evaluation, resolved.fullWord, resolved.direction, resolved.persistDirection, resolved.offset),
     };
   } catch (error: unknown) {
     return { ok: false, error: patternFailure(error) };
@@ -356,7 +382,13 @@ export function prepareVimSubstitute(
   if (pattern === null || pattern.length === 0) return { ok: false, error: { kind: 'empty-pattern' } };
   let evaluation: ReturnType<typeof createPatternEvaluation>;
   try {
-    const patternOptions = substitutePatternOptions(request.patternOptions, flagSet);
+    const baseOptions = substitutePatternOptions(request.patternOptions, flagSet);
+    const patternOptions = withScaledStepBudget(
+      baseOptions.previousSubstituteText === undefined && state.previousReplacement !== null
+        ? { ...baseOptions, previousSubstituteText: state.previousReplacement }
+        : baseOptions,
+      snapshot.lengthUtf16,
+    );
     const program = compilePattern(pattern, patternOptions);
     evaluation = createPatternEvaluation(program, patternSnapshotFromDocument(snapshot));
   } catch (error: unknown) {
@@ -413,6 +445,7 @@ export function prepareVimSubstitute(
     direction: 'forward',
     lastMatch: selected.at(-1) ?? state.lastMatch,
     previousReplacement: request.replacement,
+    fullWord: state.fullWord,
   });
   return {
     ok: true,
@@ -440,18 +473,31 @@ function resolveRequest(
 ): Result<ResolvedSearch, VimSearchFailure> {
   let pattern = request.pattern ?? '';
   let direction = request.direction ?? 'forward';
+  let persistDirection: VimSearchDirection | undefined;
   let fullWord = false;
+  // nvim only carries a typed search-offset (`/pat/+1`) forward through a following
+  // `n`/`N`; a plain `/pat<CR>`/`?pat<CR>` (no offset text) and `*`/`#`/`g*`/`g#` (which
+  // have no offset syntax at all) both reset it to none.
+  let resolvedOffset: VimSearchOffset | undefined = request.offset;
   switch (request.command) {
     case 'search':
-      if (pattern.length === 0) pattern = state.pattern ?? '';
+      if (pattern.length === 0) { pattern = state.pattern ?? ''; fullWord = state.fullWord; }
       break;
     case 'next':
       pattern = state.pattern ?? '';
       direction = state.direction ?? 'forward';
+      fullWord = state.fullWord;
+      resolvedOffset = request.offset ?? state.offset;
       break;
     case 'previous':
       pattern = state.pattern ?? '';
+      // N flips direction for this one query only; the persisted "last search
+      // direction" that a later plain `n` repeats stays whatever `*`/`/`/`?` set
+      // (nvim: `n`/`N` never redefine each other's sense of "forward").
       direction = opposite(state.direction ?? 'forward');
+      fullWord = state.fullWord;
+      persistDirection = state.direction ?? 'forward';
+      resolvedOffset = request.offset ?? state.offset;
       break;
     case 'star':
     case 'hash':
@@ -462,15 +508,22 @@ function resolveRequest(
       pattern = literalPattern(word.value);
       direction = request.command === 'star' || request.command === 'gstar' ? 'forward' : 'backward';
       fullWord = request.command === 'star' || request.command === 'hash';
+      resolvedOffset = undefined;
       break;
     }
   }
   if (pattern.length === 0) return { ok: false, error: { kind: 'empty-pattern' } };
   if (direction !== 'forward' && direction !== 'backward') return { ok: false, error: { kind: 'invalid-offset' } };
-  return { ok: true, value: { pattern, direction, fullWord } };
+  return { ok: true, value: { pattern, direction, fullWord, persistDirection: persistDirection ?? direction, offset: resolvedOffset } };
 }
 
-interface ResolvedSearch { readonly pattern: string; readonly direction: VimSearchDirection; readonly fullWord: boolean }
+interface ResolvedSearch {
+  readonly pattern: string;
+  readonly direction: VimSearchDirection;
+  readonly fullWord: boolean;
+  readonly persistDirection: VimSearchDirection;
+  readonly offset: VimSearchOffset | undefined;
+}
 
 function selectOutcome(
   snapshot: DocumentSnapshot,
@@ -481,25 +534,36 @@ function selectOutcome(
   matches: readonly PatternMatch[],
   fullWord: boolean,
   direction: VimSearchDirection,
+  persistDirection: VimSearchDirection,
+  offset: VimSearchOffset | undefined,
 ): Result<VimSearchOutcome, VimSearchFailure> {
   const count = request.count ?? 1;
   const candidates = matches.filter((match) => !fullWord || isWholeWordMatch(snapshot, match));
   let position = initialView.cursor as number;
   let wrapped = false;
   let chosen: PatternMatch | undefined;
+  // Rebuilt from scratch (not `{ ...initialState }`) so a resolved `offset` of
+  // `undefined` actually clears any offset the prior state carried, rather than an
+  // explicit-undefined assignment tripping exactOptionalPropertyTypes.
+  const noMatchState = (): VimSearchState => Object.freeze({
+    pattern,
+    direction: persistDirection,
+    lastMatch: initialState.lastMatch,
+    previousReplacement: initialState.previousReplacement,
+    fullWord,
+    ...(offset === undefined ? {} : { offset }),
+  });
   for (let iteration = 0; iteration < count; iteration += 1) {
     const found = nextCandidate(candidates, position, direction);
     if (found === undefined) {
       if (request.wrapscan === false || wrapped) {
-        const nextState: VimSearchState = Object.freeze({ ...initialState, pattern, direction });
-        return { ok: true, value: { kind: 'no-match', reason: request.wrapscan === false ? 'no-wrap' : 'target-not-found', view: initialView, state: nextState } };
+        return { ok: true, value: { kind: 'no-match', reason: request.wrapscan === false ? 'no-wrap' : 'target-not-found', view: initialView, state: noMatchState() } };
       }
       wrapped = true;
       position = direction === 'forward' ? -1 : snapshot.lengthUtf16 + 1;
       const wrappedFound = nextCandidate(candidates, position, direction);
       if (wrappedFound === undefined) {
-        const nextState: VimSearchState = Object.freeze({ ...initialState, pattern, direction });
-        return { ok: true, value: { kind: 'no-match', reason: 'target-not-found', view: initialView, state: nextState } };
+        return { ok: true, value: { kind: 'no-match', reason: 'target-not-found', view: initialView, state: noMatchState() } };
       }
       chosen = wrappedFound;
     } else chosen = found;
@@ -508,8 +572,15 @@ function selectOutcome(
       : (chosen.start as number);
   }
   if (chosen === undefined) return { ok: false, error: { kind: 'no-match', pattern } };
-  const searchMatch = toSearchMatch(snapshotMatch(chosen), pattern, direction, wrapped, offsetForMatch(snapshot, chosen, request.offset));
-  const nextState: VimSearchState = Object.freeze({ pattern, direction, lastMatch: searchMatch, previousReplacement: initialState.previousReplacement });
+  const searchMatch = toSearchMatch(snapshotMatch(chosen), pattern, direction, wrapped, offsetForMatch(snapshot, chosen, offset));
+  const nextState: VimSearchState = Object.freeze({
+    pattern,
+    direction: persistDirection,
+    lastMatch: searchMatch,
+    previousReplacement: initialState.previousReplacement,
+    fullWord,
+    ...(offset === undefined ? {} : { offset }),
+  });
   const nextView = Object.freeze({ ...initialView, cursor: searchMatch.cursor });
   return { ok: true, value: { kind: 'found', match: searchMatch, view: nextView, state: nextState } };
 }
@@ -518,7 +589,7 @@ function nextCandidate(matches: readonly PatternMatch[], position: number, direc
   if (direction === 'forward') return matches.find((match) => (match.start as number) > position);
   let found: PatternMatch | undefined;
   for (const match of matches) {
-    if ((match.end as number) <= position) found = match;
+    if ((match.start as number) < position) found = match;
     else break;
   }
   return found;
@@ -601,7 +672,9 @@ function isWholeWordMatch(snapshot: DocumentSnapshot, match: PatternMatch): bool
   return (before === undefined || !isWordCodePoint(before)) && (after === undefined || !isWordCodePoint(after));
 }
 
-function literalPattern(value: string): string {
+/** Build a `\V` (very-nomagic) literal pattern matching `value` verbatim, for `*`/`#`
+ * (whole-word, filtered separately) and Visual-mode `*`/`#` (substring, no filtering). */
+export function literalPattern(value: string): string {
   return `\\V${value.replaceAll('\\', '\\\\')}`;
 }
 
@@ -611,7 +684,12 @@ function offsetForMatch(snapshot: DocumentSnapshot, match: PatternMatch, offset:
   if (!Number.isSafeInteger(amount)) return match.start as number;
   switch (offset.kind) {
     case 'start': return clampOffset((match.start as number) + amount, snapshot.lengthUtf16);
-    case 'end': return clampOffset(Math.max(match.start as number, (match.end as number) - (match.end > match.start ? 1 : 0) + amount), snapshot.lengthUtf16);
+    case 'end': {
+      const base = match.end > match.start
+        ? lastCodePointStart(snapshot, match.start as number, match.end as number)
+        : match.start as number;
+      return clampOffset(stepCodePoints(snapshot, base, amount), snapshot.lengthUtf16);
+    }
     case 'line-start': {
       const line = snapshot.lineIndexAt(match.start);
       if (!line.ok) return match.start as number;
@@ -625,10 +703,48 @@ function offsetForMatch(snapshot: DocumentSnapshot, match: PatternMatch, offset:
       const end = next.ok ? (next.value as number) - 1 : snapshot.lengthUtf16;
       return clampOffset(end + amount, snapshot.lengthUtf16);
     }
+    case 'line': {
+      const line = snapshot.lineIndexAt(match.start);
+      if (!line.ok) return match.start as number;
+      const targetLine = Math.max(0, Math.min(snapshot.lineCount - 1, (line.value as number) + amount));
+      const start = snapshot.lineStartOffset(targetLine as LineIndex);
+      return start.ok ? clampOffset(start.value as number, snapshot.lengthUtf16) : match.start as number;
+    }
   }
 }
 
 function clampOffset(offset: number, length: number): number { return Math.max(0, Math.min(length, offset)); }
+
+/** Start offset of the last Unicode code point in `[start, end)`, or `start` if the range is empty. */
+function lastCodePointStart(snapshot: DocumentSnapshot, start: number, end: number): number {
+  if (end <= start) return start;
+  const window = snapshot.slice(Math.max(start, end - 2) as Utf16Offset, end as Utf16Offset);
+  if (!window.ok || window.value.length === 0) return Math.max(start, end - 1);
+  const previous = previousCodePoint(window.value, window.value.length);
+  return previous === undefined ? Math.max(start, end - 1) : end - (window.value.length - previous.start);
+}
+
+/** `/e` (and similar) search offsets count in characters, not UTF-16 code units; step by whole code points. */
+function stepCodePoints(snapshot: DocumentSnapshot, start: number, count: number): number {
+  let position = start;
+  if (count > 0) {
+    for (let index = 0; index < count && position < snapshot.lengthUtf16; index += 1) {
+      const window = snapshot.slice(position as Utf16Offset, Math.min(position + 2, snapshot.lengthUtf16) as Utf16Offset);
+      if (!window.ok || window.value.length === 0) break;
+      const codePoint = window.value.codePointAt(0);
+      position += codePoint !== undefined && codePoint > 0xffff ? 2 : 1;
+    }
+  } else {
+    for (let index = 0; index < -count && position > 0; index += 1) {
+      const window = snapshot.slice(Math.max(0, position - 2) as Utf16Offset, position as Utf16Offset);
+      if (!window.ok || window.value.length === 0) break;
+      const previous = previousCodePoint(window.value, window.value.length);
+      if (previous === undefined) break;
+      position -= window.value.length - previous.start;
+    }
+  }
+  return position;
+}
 
 function toSearchMatch(
   match: PatternMatch,
@@ -694,6 +810,23 @@ function expandVimReplacement(
     else return { ok: false, error: { kind: 'unsupported-replacement', sourceOffset: index - 1, escape: escaped } };
   }
   return { ok: true, value: output.join('') };
+}
+
+const minimumStepBudget = 250_000;
+/** Steps budgeted per UTF-16 code unit of document text, above the floor, so long lines don't starve a plain scan. */
+const stepBudgetPerCodeUnit = 32;
+
+/**
+ * A fixed step budget fails ordinary searches on long lines (e.g. a 200 KB
+ * single-line file) purely because there is more text to scan, not because
+ * the pattern is pathological. Scale the default with document length while
+ * leaving an explicit caller-supplied budget, and the cooperative
+ * cancellation/slicing behavior it gates, untouched.
+ */
+function withScaledStepBudget(options: PatternOptions, lengthUtf16: number): PatternOptions {
+  if (options.stepBudget !== undefined) return options;
+  const scaled = Math.min(maximumStepBudget, Math.max(minimumStepBudget, Math.ceil(lengthUtf16 * stepBudgetPerCodeUnit)));
+  return { ...options, stepBudget: scaled };
 }
 
 function substitutePatternOptions(options: PatternOptions | undefined, flags: ReadonlySet<string>): PatternOptions {

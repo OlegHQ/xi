@@ -1,13 +1,15 @@
 import { createCliRenderer, type CliRenderer, type CliRendererConfig, type KeyEvent } from '@opentui/core/renderer';
+import { splitCoalescedEscape } from '../input/coalesced-escape';
 import type { PasteEvent } from '@opentui/core';
 import type { Disposable, DisposableScope, PlatformFailure, Result, SyntaxReadPort } from '../../contracts/src/index.ts';
 import type { UiComposition, UiMountContext, TerminalAdapter, TerminalAdapterFactory } from './contracts';
-import { calculateWorkbenchLayout, WorkbenchRenderable, type WorkbenchPointerEvent, type WorkbenchRenderableOptions, type WorkbenchTheme } from './workbench';
+import { ASCII_WORKBENCH_THEME, calculateWorkbenchLayout, computeSidebarSectionLayout, WorkbenchRenderable, type WorkbenchPointerEvent, type WorkbenchRenderableOptions, type WorkbenchTheme } from './workbench';
 import type { WorkbenchReadPort } from '../../workbench/src/index.ts';
 import type { PrefixHelpReadPort, PrefixHelpRenderable } from '../help/index';
 import type { PickerReadPort, PickerRenderable, PickerTheme } from '../picker/index';
 import type { ExplorerReadPort, ExplorerRenderable, ExplorerTheme } from '../explorer/index';
-import type { SearchReadPort, SearchRenderable } from '../search/index';
+import type { SidebarReadModel, WorkbenchTabSnapshot } from '../../workbench/src/entrypoints/launch';
+import type { SearchReadPort, SearchRenderable, SearchTheme } from '../search/index';
 import type { ProblemsReadPort, ProblemsRenderable } from '../problems/index';
 import type { TaskOutputReadPort, TaskOutputRenderable } from '../output/index';
 import type { OutlineReadPort, OutlineRenderable, HierarchyReadPort, HierarchyRenderable, HoverReadPort, HoverRenderable } from '../navigation/index';
@@ -16,6 +18,21 @@ import type { ExCommandLineReadPort, ExCommandLineRenderable } from '../commandl
 import type { DirectoryDraftReadPort, DirectoryReviewRenderable } from '../directory/index';
 import type { WorkbenchPanelPointerEvent } from './panel-pointer';
 import type { ContextMenuStore, ContextMenuRenderable, ContextMenuBackdrop, ContextMenuTheme } from './context-menu';
+
+/**
+ * Render exactly one frame. OpenTUI's public `CliRenderer.intermediateRender()` sets
+ * `immediateRerenderRequested = true` before invoking its internal `loop()`, and `loop()`
+ * always schedules a second render via `setTimeout` whenever that flag is true when it
+ * checks it -- see `loop()` in `@opentui/core`'s bundled source -- so every
+ * `intermediateRender()` call produces two renders per key, not one. `loop()` itself only
+ * reschedules when running continuously (`_isRunning`, unused here) or when that flag was
+ * set, so calling it directly -- without setting the flag -- renders once. `loop` is typed
+ * `private` in OpenTUI's declarations (compile-time only; the field is a plain public class
+ * property at runtime), hence the structural cast instead of `any`.
+ */
+function renderOnce(renderer: CliRenderer): void {
+  (renderer as unknown as { loop(): Promise<void> }).loop();
+}
 
 export interface OpenTuiTerminalAdapterOptions {
   readonly rendererConfig?: CliRendererConfig;
@@ -117,10 +134,17 @@ export interface OpenTuiWorkbenchOptions {
   readonly syntax?: SyntaxReadPort;
   /** Current Git branch for the status line; undefined hides it. */
   readonly gitBranch?: () => string | undefined;
+  /** Live sidebar section/width read model; see `WorkbenchRenderableOptions.sidebar`. Also
+   * used to bound `getExplorerBounds`'s sidebar-docked region below the section headers. */
+  readonly sidebar?: () => SidebarReadModel;
+  /** Live buffer tab strip; see `WorkbenchRenderableOptions.tabs`. */
+  readonly tabs?: () => readonly WorkbenchTabSnapshot[];
   /** Wake panels whose read ports become available after an asynchronous open. */
   readonly subscribeSurfaceChanges?: (listener: () => void) => Disposable;
   /** Forwarded to the main viewport renderable; see `WorkbenchRenderableOptions.onViewportAnchorChange`. */
   readonly onViewportAnchorChange?: (viewId: string, scrollTop: number, scrollLeft: number) => void;
+  /** Forwarded to the main viewport renderable; see `WorkbenchRenderableOptions.onViewportSizeChange`. */
+  readonly onViewportSizeChange?: (viewId: string, heightCells: number) => void;
   /** Return true when the application consumed the key, or `quit` after an application command. */
   readonly onKeypress?: (event: KeyEvent) => boolean | 'quit' | Promise<boolean | 'quit'>;
   /** Bracketed-paste bytes, delivered as one opaque event; never re-parsed as keystrokes. */
@@ -276,11 +300,11 @@ export function createOpenTuiUiComposition(options: OpenTuiUiCompositionOptions 
 /** Derive each lazily-loaded panel's own narrower theme shape from the one WorkbenchTheme the
  * host application switches, so every themed surface repaints in step -- fixed git-status
  * accent colors are kept theme-independent (a disclosed simplification, not yet themed). */
-function panelThemesFromWorkbench(theme: WorkbenchTheme): { readonly picker: PickerTheme; readonly explorer: ExplorerTheme; readonly search: { readonly background: string; readonly foreground: string }; readonly contextMenu: ContextMenuTheme } {
+function panelThemesFromWorkbench(theme: WorkbenchTheme): { readonly picker: PickerTheme; readonly explorer: ExplorerTheme; readonly search: SearchTheme; readonly contextMenu: ContextMenuTheme } {
   return {
     picker: { background: theme.background, surface: theme.surface, surfaceActive: theme.surfaceActive, foreground: theme.foreground, muted: theme.muted, accent: theme.accent, error: theme.error },
     explorer: { background: theme.background, surface: theme.surface, surfaceActive: theme.surfaceActive, foreground: theme.foreground, muted: theme.muted, border: theme.border, accent: theme.accent, error: theme.error, gitModified: '#9B6A16', gitAdded: '#367C4A', gitConflict: '#A52A36' },
-    search: { background: theme.background, foreground: theme.foreground },
+    search: { background: theme.background, foreground: theme.foreground, muted: theme.muted, accent: theme.accent, border: theme.border, selectedBackground: theme.surfaceActive, hoverBackground: theme.surface },
     contextMenu: { background: theme.surface, foreground: theme.foreground, muted: theme.muted, selectedBackground: theme.surfaceActive },
   };
 }
@@ -331,9 +355,14 @@ export async function runOpenTuiWorkbench(
     ...(options.theme === undefined ? {} : { theme: options.theme }),
     ...(options.syntax === undefined ? {} : { syntax: options.syntax }),
     ...(options.gitBranch === undefined ? {} : { gitBranch: options.gitBranch }),
+    ...(options.sidebar === undefined ? {} : { sidebar: options.sidebar }),
+    ...(options.tabs === undefined ? {} : { tabs: options.tabs }),
     ...(options.onPointer === undefined ? {} : { onPointer: (event: WorkbenchPointerEvent): boolean => {
       const handled = options.onPointer?.(event) ?? false;
       if (handled) {
+        syncSidebarSurfaceBounds();
+        syncExplorerVisibility();
+        syncOutlineVisibility();
         const install = installOpenOptionalSurfaces();
         // `WorkbenchRenderable.refresh()`/its own pointer-up handling only mark the
         // renderable dirty now (see workbench.ts); this is what actually schedules the
@@ -345,6 +374,7 @@ export async function runOpenTuiWorkbench(
     } }),
     ...(options.onPointerCancel === undefined ? {} : { onPointerCancel: options.onPointerCancel }),
     ...(options.onViewportAnchorChange === undefined ? {} : { onViewportAnchorChange: options.onViewportAnchorChange }),
+    ...(options.onViewportSizeChange === undefined ? {} : { onViewportSizeChange: options.onViewportSizeChange }),
   });
   renderer.root.add(viewport);
   let currentTheme = viewport.theme;
@@ -407,8 +437,49 @@ export async function runOpenTuiWorkbench(
   const syncPickerVisibility = (): void => {
     if (pickerSurface !== undefined && options.picker !== undefined) pickerSurface.visible = options.picker.isOpen();
   };
+  // The inline sidebar surfaces (Explorer/Outline) resize whenever a section's expand state
+  // changes -- not just on a terminal resize -- because that changes the 60/40 split (or
+  // hands one section the other's rows back). Re-applied every key/pointer refresh, which is
+  // cheap (four field writes) and idempotent when nothing about the split actually moved.
+  const syncSidebarSurfaceBounds = (): void => {
+    if (explorerSurface !== undefined) {
+      const bounds = getExplorerBounds(renderer.width, renderer.height, options.sidebar?.());
+      explorerSurface.width = bounds.width;
+      explorerSurface.height = bounds.height;
+      explorerSurface.left = bounds.left;
+      explorerSurface.top = bounds.top;
+    }
+    if (outlineSurface !== undefined) {
+      const bounds = getSidebarOutlineBounds(renderer.width, renderer.height, options.sidebar?.());
+      outlineSurface.width = bounds.width;
+      outlineSurface.height = bounds.height;
+      outlineSurface.left = bounds.left;
+      outlineSurface.top = bounds.top;
+    }
+  };
+  // Once the sidebar is showing, a section's own expand state is what shows/hides its inline
+  // content -- opening a file closes the Explorer panel (returning keyboard focus to the
+  // editor, `ExplorerController#openNode`) without hiding a still-expanded Files section,
+  // exactly like every other always-visible sidebar tree. Narrower terminals (no sidebar; the
+  // old floating overlay) keep the previous isOpen()-gated behavior.
+  const explorerShouldBeVisible = (): boolean => {
+    if (options.explorer === undefined) return false;
+    const sidebar = options.sidebar?.();
+    const sidebarVisible = calculateWorkbenchLayout(renderer.width, renderer.height, false, sidebar?.width).sidebarVisible;
+    return sidebarVisible && sidebar !== undefined
+      ? getExplorerBounds(renderer.width, renderer.height, sidebar).height > 0
+      : options.explorer.isOpen();
+  };
+  const outlineShouldBeVisible = (): boolean => {
+    if (options.outline === undefined) return false;
+    const sidebar = options.sidebar?.();
+    const sidebarVisible = calculateWorkbenchLayout(renderer.width, renderer.height, false, sidebar?.width).sidebarVisible;
+    return sidebarVisible && sidebar !== undefined
+      ? getSidebarOutlineBounds(renderer.width, renderer.height, sidebar).height > 0
+      : options.outline.isOpen();
+  };
   const syncExplorerVisibility = (): void => {
-    if (explorerSurface !== undefined && options.explorer !== undefined) explorerSurface.visible = options.explorer.isOpen();
+    if (explorerSurface !== undefined) explorerSurface.visible = explorerShouldBeVisible();
   };
   const syncSearchVisibility = (): void => {
     if (searchSurface !== undefined && options.search !== undefined) searchSurface.visible = options.search.isOpen();
@@ -417,7 +488,7 @@ export async function runOpenTuiWorkbench(
     if (problemsSurface !== undefined && options.problems !== undefined) problemsSurface.visible = options.problems.isOpen();
   };
   const syncOutlineVisibility = (): void => {
-    if (outlineSurface !== undefined && options.outline !== undefined) outlineSurface.visible = options.outline.isOpen();
+    if (outlineSurface !== undefined) outlineSurface.visible = outlineShouldBeVisible();
   };
   const syncOutputVisibility = (): void => {
     if (outputSurface !== undefined && options.output !== undefined) outputSurface.visible = options.output.isOpen();
@@ -451,12 +522,15 @@ export async function runOpenTuiWorkbench(
   let pendingKeyHead = 0;
   let drainingKeys = false;
   let framePending = false;
-  renderer.keyInput.on('keypress', (event: KeyEvent) => {
-    if (event.name.toLowerCase() === 'escape' || event.name === 'ESC') {
-      viewport.cancelPointerCapture();
-      options.onPointerCancel?.('escape');
+  renderer.keyInput.on('keypress', (incoming: KeyEvent) => {
+    const split = splitCoalescedEscape(incoming);
+    for (const event of split ?? [incoming]) {
+      if (event.name.toLowerCase() === 'escape' || event.name === 'ESC') {
+        viewport.cancelPointerCapture();
+        options.onPointerCancel?.('escape');
+      }
+      pendingKeys.push(event);
     }
-    pendingKeys.push(event);
     drainKeys();
   });
   renderer.keyInput.on('paste', (event: PasteEvent) => {
@@ -533,6 +607,7 @@ export async function runOpenTuiWorkbench(
   }
 
   function refreshAfterKey(): void | Promise<void> {
+    syncSidebarSurfaceBounds();
     syncPickerVisibility();
     syncExplorerVisibility();
     syncSearchVisibility();
@@ -596,13 +671,13 @@ export async function runOpenTuiWorkbench(
     // read-only projection of already-resolved anchors instead of deciding and
     // writing back scroll state while painting (see `syncAnchors`'s doc comment).
     viewport.syncAnchors();
-    renderer.intermediateRender();
+    renderOnce(renderer);
     options.onFrame?.();
   }
   renderer.on('render:error', () => renderer.destroy());
   renderer.on('resize', () => {
     if (explorerSurface !== undefined) {
-      const bounds = getExplorerBounds(renderer.width, renderer.height);
+      const bounds = getExplorerBounds(renderer.width, renderer.height, options.sidebar?.());
       explorerSurface.width = bounds.width;
       explorerSurface.height = bounds.height;
       explorerSurface.left = bounds.left;
@@ -630,7 +705,7 @@ export async function runOpenTuiWorkbench(
         outputSurface.top = bounds.top;
       }
       if (outlineSurface !== undefined) {
-        const bounds = getOutlineBounds(renderer.width, renderer.height);
+        const bounds = getSidebarOutlineBounds(renderer.width, renderer.height, options.sidebar?.());
         outlineSurface.width = bounds.width;
         outlineSurface.height = bounds.height;
         outlineSurface.left = bounds.left;
@@ -745,12 +820,12 @@ export async function runOpenTuiWorkbench(
   }
 
   function optionalSurfaceIsOpenAndMissing(): boolean {
-    return (options.explorer?.isOpen() === true && explorerSurface === undefined)
+    return (explorerShouldBeVisible() && explorerSurface === undefined)
       || (options.picker?.isOpen() === true && pickerSurface === undefined)
       || (options.search?.isOpen() === true && searchSurface === undefined)
       || (options.problems?.isOpen() === true && problemsSurface === undefined)
       || (options.output?.isOpen() === true && outputSurface === undefined)
-      || (options.outline?.isOpen() === true && outlineSurface === undefined)
+      || (outlineShouldBeVisible() && outlineSurface === undefined)
       || (options.hierarchy?.isOpen() === true && hierarchySurface === undefined)
       || (options.hover?.isOpen() === true && hoverSurface === undefined)
       || (options.directoryReview?.isOpen() === true && directoryReviewSurface === undefined)
@@ -773,13 +848,15 @@ export async function runOpenTuiWorkbench(
 
   async function installOptionalSurfacesNow(): Promise<void> {
     try {
-      if (options.explorer?.isOpen() === true && explorerSurface === undefined) {
+      if (options.explorer !== undefined && explorerShouldBeVisible() && explorerSurface === undefined) {
+        const explorer = options.explorer;
         const module = await import('../explorer/index');
         if (renderer.isDestroyed) return;
-        const bounds = getExplorerBounds(renderer.width, renderer.height);
+        const bounds = getExplorerBounds(renderer.width, renderer.height, options.sidebar?.());
         explorerSurface = new module.ExplorerRenderable(renderer.root.ctx, {
-          explorer: options.explorer.read,
+          explorer: explorer.read,
           theme: panelThemesFromWorkbench(currentTheme).explorer,
+          ascii: currentTheme === ASCII_WORKBENCH_THEME,
           onPointer: (event) => forwardPanelPointer(options.explorer?.onPointer, event),
           width: bounds.width,
           height: bounds.height,
@@ -788,7 +865,7 @@ export async function runOpenTuiWorkbench(
           top: bounds.top,
           zIndex: 20,
         });
-        explorerSurface.visible = options.explorer.isOpen();
+        explorerSurface.visible = explorerShouldBeVisible();
         renderer.root.add(explorerSurface);
       }
       if (options.picker?.isOpen() === true && pickerSurface === undefined) {
@@ -863,12 +940,13 @@ export async function runOpenTuiWorkbench(
         outputSurface.visible = options.output.isOpen();
         renderer.root.add(outputSurface);
       }
-      if (options.outline?.isOpen() === true && outlineSurface === undefined) {
-        const bounds = getOutlineBounds(renderer.width, renderer.height);
+      if (options.outline !== undefined && outlineShouldBeVisible() && outlineSurface === undefined) {
+        const outline = options.outline;
+        const bounds = getSidebarOutlineBounds(renderer.width, renderer.height, options.sidebar?.());
         const module = await import('../navigation/index');
         if (renderer.isDestroyed) return;
         outlineSurface = new module.OutlineRenderable(renderer.root.ctx, {
-          outline: options.outline.read,
+          outline: outline.read,
           width: bounds.width,
           height: bounds.height,
           position: 'absolute',
@@ -876,7 +954,7 @@ export async function runOpenTuiWorkbench(
           top: bounds.top,
           zIndex: 70,
         });
-        outlineSurface.visible = options.outline.isOpen();
+        outlineSurface.visible = outlineShouldBeVisible();
         renderer.root.add(outlineSurface);
       }
       if (options.hierarchy?.isOpen() === true && hierarchySurface === undefined) {
@@ -1033,8 +1111,17 @@ export async function runOpenTuiWorkbench(
   }
 }
 
-function getExplorerBounds(width: number, height: number): { readonly width: number; readonly height: number; readonly left: number; readonly top: number } {
-  const layout = calculateWorkbenchLayout(width, height);
+/** Bounds the Explorer surface: docked inline under the sidebar's `▾ Files` header, bounded
+ * to that section's own rows (`computeSidebarSectionLayout`), whenever the sidebar is visible
+ * (terminal width >= 100 cols) -- the old full-height/floating overlay is used only for
+ * narrower terminals, where the sidebar itself is hidden. A collapsed Files section reports a
+ * zero-height rect, which the caller pairs with `visible = false`. */
+function getExplorerBounds(width: number, height: number, sidebar?: SidebarReadModel): { readonly width: number; readonly height: number; readonly left: number; readonly top: number } {
+  const layout = calculateWorkbenchLayout(width, height, false, sidebar?.width);
+  if (layout.sidebarVisible && sidebar !== undefined) {
+    const sections = computeSidebarSectionLayout(sidebar, layout.statusRow);
+    return { width: layout.sidebarWidth, height: sections.filesContentHeight, left: 0, top: sections.filesContentTop };
+  }
   if (layout.sidebarVisible) return { width: layout.sidebarWidth, height: Math.max(1, height), left: 0, top: 0 };
   const panelWidth = Math.max(1, Math.min(60, width - 2));
   const panelHeight = Math.max(1, Math.min(24, height - 2));
@@ -1068,6 +1155,9 @@ function getProblemsBounds(width: number, height: number): { readonly width: num
   };
 }
 
+/** Floating bounds, unrelated to the sidebar's own Outline section: used only by the call
+ * hierarchy panel (`hierarchySurface`), which happens to share this shape, and by the
+ * sidebar Outline surface itself on narrow terminals (sidebar hidden, `sidebar` omitted). */
 function getOutlineBounds(width: number, height: number): { readonly width: number; readonly height: number; readonly left: number; readonly top: number } {
   const panelWidth = Math.max(1, Math.min(80, width - 2));
   const panelHeight = Math.max(3, Math.min(20, height - 2));
@@ -1077,6 +1167,18 @@ function getOutlineBounds(width: number, height: number): { readonly width: numb
     left: Math.max(0, width - panelWidth - 1),
     top: 1,
   };
+}
+
+/** Bounds the sidebar Outline surface: docked inline under its `▾ Outline` header, bounded to
+ * that section's own rows, whenever the sidebar is visible; falls back to the floating
+ * `getOutlineBounds` shape on narrow terminals (sidebar hidden). */
+function getSidebarOutlineBounds(width: number, height: number, sidebar?: SidebarReadModel): { readonly width: number; readonly height: number; readonly left: number; readonly top: number } {
+  const layout = calculateWorkbenchLayout(width, height, false, sidebar?.width);
+  if (layout.sidebarVisible && sidebar !== undefined) {
+    const sections = computeSidebarSectionLayout(sidebar, layout.statusRow);
+    return { width: layout.sidebarWidth, height: sections.outlineContentHeight, left: 0, top: sections.outlineContentTop };
+  }
+  return getOutlineBounds(width, height);
 }
 
 function getDirectoryReviewBounds(width: number, height: number): { readonly width: number; readonly height: number; readonly left: number; readonly top: number } {

@@ -162,7 +162,10 @@ export function resolveVimFind(
     && nextLastFind.lastMatch.documentVersion === snapshot.version
     ? nextLastFind.lastMatch.offset as number
     : null;
-  const skipLastTillTarget = (invocation.key === ';' || invocation.key === ',')
+  // Neovim only skips the immediately-adjacent till-target for a bare `;`/`,`
+  // repeat (count 1); an explicit count finds the Nth match plainly,
+  // including that adjacent one, and fails outright if fewer than N remain.
+  const skipLastTillTarget = (invocation.key === ';' || invocation.key === ',') && count === 1
     && previousMatchOffset !== null && previousMatchOffset >= lineStart && previousMatchOffset < lineEnd
     ? previousMatchOffset - lineStart
     : null;

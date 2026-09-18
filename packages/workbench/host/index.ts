@@ -1,10 +1,10 @@
-import { asIdentifier, type DocumentId, type Disposable, type ViewId } from '../../contracts/src/index';
+import { asIdentifier, type ClockPort, type DocumentId, type Disposable, type Result, type ViewId } from '../../contracts/src/index';
 import type { SelectionSetSnapshot } from '../../selections/src/index';
 import type { TextFileDocument } from '../../document/src/entrypoints/launch';
 import type { VimHostCommand } from '../../vim/src/index';
 import { createOwnedVimSession } from '../vim-session';
 import type { OwnedVimKeyEvent, OwnedVimSession, VimCommandLineState, VimPrefixHelpState } from '../vim-session';
-import type { WorkbenchSession } from '../session';
+import type { WorkbenchBufferSnapshot, WorkbenchSession, WorkbenchSessionFailure } from '../session';
 
 export type { OwnedVimKeyEvent };
 
@@ -32,6 +32,8 @@ export interface BufferHostOptions {
    * document is registered separately by the composition root itself. */
   readonly onBufferOpened?: (buffer: { readonly documentId: DocumentId; readonly path: string; readonly document: TextFileDocument }) => void;
   readonly onBufferClosed?: (buffer: { readonly documentId: DocumentId; readonly path: string | undefined }) => void;
+  /** Monotonic clock for the Vim session's key-timing state; defaults to a built-in one. */
+  readonly clock?: Pick<ClockPort, 'monotonicMilliseconds'>;
 }
 
 export interface OpenBufferAtPathOptions {
@@ -111,8 +113,23 @@ export class BufferHost {
   createSession(document: TextFileDocument, viewId: ViewId, initialSelections?: SelectionSetSnapshot, initialLine?: number): OwnedVimSession {
     const options = this.#options;
     const resolvedInitialLine = initialLine ?? (viewId === options.launchViewId ? options.launchInitialLine : undefined);
+    const workbenchSession = this.#session;
     const session = createOwnedVimSession(document, {
       viewId,
+      ...(options.clock === undefined ? {} : { clock: options.clock }),
+      files: {
+        currentPath: () => workbenchSession.buffer(document.id)?.path,
+        alternatePath: () => workbenchSession.alternateBufferPath(),
+      },
+      viewport: {
+        topLine: () => workbenchSession.readView(viewId)?.scrollTop ?? 0,
+        bottomLine: () => {
+          const read = workbenchSession.readView(viewId);
+          const height = workbenchSession.viewViewportHeight(viewId);
+          if (read === undefined || height === undefined) return Math.max(0, document.snapshot().lineCount - 1);
+          return Math.min(Math.max(0, document.snapshot().lineCount - 1), read.scrollTop + height - 1);
+        },
+      },
       ...(initialSelections === undefined ? {} : { initialSelections }),
       ...(resolvedInitialLine === undefined ? {} : { initialLine: resolvedInitialLine }),
       ...(options.onMessage === undefined ? {} : { onMessage: options.onMessage }),
@@ -180,10 +197,37 @@ export class BufferHost {
       const splitDocument = this.documents.get(createdSplit.value.session.documentId);
       if (splitDocument !== undefined && !this.sessions.has(createdSplit.value.viewId)) this.createSession(splitDocument, createdSplit.value.viewId, createdSplit.value.session.selections);
     }
-    const openedBuffer = this.#session.openBuffer(openedFile, { path, ...(options.preview === true ? { preview: true } : {}) });
+    let openedBuffer: Result<WorkbenchBufferSnapshot, WorkbenchSessionFailure>;
+    // Preview replacement (VS Code semantics): opening a new preview replaces the existing
+    // preview buffer/view rather than stacking another tab. `replacePreview` refuses when
+    // the existing preview is dirty ('dirty-preview-replacement'); that dirty preview has
+    // since been promoted to a real tab by an edit, so it must be kept and a fresh preview
+    // opened alongside it instead of discarding unsaved work.
+    let replacedPreviewBuffer: WorkbenchBufferSnapshot | undefined;
+    if (options.preview === true) {
+      replacedPreviewBuffer = this.#session.buffers().find((buffer) => buffer.preview);
+      const replaced = this.#session.replacePreview(openedFile, { path });
+      if (!replaced.ok && replaced.error.kind === 'dirty-preview-replacement') {
+        replacedPreviewBuffer = undefined;
+        openedBuffer = this.#session.openBuffer(openedFile, { path, preview: true });
+      } else {
+        openedBuffer = replaced;
+      }
+    } else {
+      openedBuffer = this.#session.openBuffer(openedFile, { path });
+    }
     if (!openedBuffer.ok) {
       this.documents.delete(openedFile.id);
       return undefined;
+    }
+    if (replacedPreviewBuffer !== undefined && this.#session.buffer(replacedPreviewBuffer.bufferId) === undefined) {
+      for (const staleViewId of replacedPreviewBuffer.viewIds) {
+        this.sessions.get(staleViewId)?.dispose();
+        this.sessions.delete(staleViewId);
+      }
+      this.documents.delete(replacedPreviewBuffer.bufferId);
+      this.#options.onBufferClosed?.({ documentId: replacedPreviewBuffer.bufferId, path: replacedPreviewBuffer.path });
+      for (const listener of this.#bufferClosedListeners) listener(replacedPreviewBuffer.bufferId);
     }
     const viewId = openedBuffer.value.viewIds[0];
     if (viewId === undefined) return undefined;

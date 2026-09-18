@@ -98,7 +98,7 @@ export interface CtagsRecord {
   readonly line: number;
 }
 
-const LINE_ADDRESS = /(?:^|;)line:([1-9][0-9]*)/;
+const LINE_ADDRESS = /(?:^|[;\t])line:([1-9][0-9]*)/;
 const NUMERIC_ADDRESS = /^(?:[?/]?(\d+))(?:;"|[/?])?$/u;
 
 /** Parses ctags (Universal/Exuberant) tab-separated tag lines, skipping `!_TAG_` pseudo-tag
@@ -125,11 +125,16 @@ export function parseCtags(text: string, options?: { readonly maxBytes?: number 
         const tab2 = text.indexOf('\t', tab1 + 1);
         if (tab2 !== -1 && tab2 < rowEnd) {
           const tab3 = text.indexOf('\t', tab2 + 1);
-          const addressEnd = tab3 !== -1 && tab3 < rowEnd ? tab3 : rowEnd;
+          const hasExtensionFields = tab3 !== -1 && tab3 < rowEnd;
+          const addressEnd = hasExtensionFields ? tab3 : rowEnd;
           const name = text.slice(rowStart, tab1);
           const path = text.slice(tab1 + 1, tab2);
           const address = text.slice(tab2 + 1, addressEnd);
-          const lineMatch = LINE_ADDRESS.exec(address);
+          // `line:N` is an extension field emitted after the address's `;"` terminator (e.g.
+          // `/pattern/;"<TAB>kind:f<TAB>line:42`), not part of the ex-command address itself;
+          // it must be read from there, not from the address segment.
+          const extensionFields = hasExtensionFields ? text.slice(tab3 + 1, rowEnd) : undefined;
+          const lineMatch = extensionFields === undefined ? null : LINE_ADDRESS.exec(extensionFields);
           const numericMatch = NUMERIC_ADDRESS.exec(address);
           const lineNumber = lineMatch?.[1] ?? numericMatch?.[1];
           const line = lineNumber === undefined ? 0 : Number(lineNumber) - 1;
