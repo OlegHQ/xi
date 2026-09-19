@@ -87,6 +87,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e06-") as temporary:
         read_until(master, captured, lambda data: b"XI_SEARCH_OPEN" in data, 5)
         os.write(master, b"needle")
         read_until(master, captured, lambda data: any(item.get("state") == "ready" and item.get("totalMatches") == 2 for item in search_results(data)), 5)
+        # Esc first leaves insert mode for normal mode, a second Esc closes the panel.
+        os.write(master, b"\x1b")
+        time.sleep(0.15)
         os.write(master, b"\x1b")
         read_until(master, captured, lambda data: b"XI_SEARCH_CANCELLED" in data, 5)
 

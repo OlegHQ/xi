@@ -82,7 +82,12 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e16-") as temporary:
     master, slave = pty.openpty()
     original_rows, original_cols = struct.unpack("HH", fcntl.ioctl(master, termios.TIOCGWINSZ, struct.pack("HHHH", 0, 0, 0, 0))[:4])
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({
+        "TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1",
+        # TypeScript is configured for format-on-save. Keep this popup/layout fixture
+        # independent of whether Biome happens to be installed on the host.
+        "XI_FORMATTER_COMMAND": "/bin/cat",
+    })
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "main.ts"],
         cwd=workspace,
@@ -138,7 +143,10 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e16-") as temporary:
             if child.poll() is not None:
                 break
             read_for(master, captured, 0.3)
-        child.wait(timeout=5)
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            raise SystemExit(f"editor did not exit after :wq: {captured[-8000:]!r}")
     finally:
         if child.poll() is None:
             child.kill()

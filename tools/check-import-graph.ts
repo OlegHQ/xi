@@ -29,7 +29,7 @@ const forbiddenNodeModules = new Set([
   'assert', 'child_process', 'crypto', 'events', 'fs', 'os', 'path', 'process', 'stream', 'timers', 'tty', 'url', 'util', 'worker_threads',
 ]);
 const ownerExternalDependencies: Readonly<Partial<Record<Owner, ReadonlySet<string>>>> = {
-  ui: new Set(['@opentui/core']),
+  ui: new Set(['@opentui/core', 'solid-js']),
   services: new Set(['vscode-jsonrpc', 'vscode-languageserver-protocol', 'web-tree-sitter']),
 };
 

@@ -19,6 +19,7 @@ import {
   applyVimSelectionCommand,
   resolveVimMultiVisualFind,
   resolveVimMultiVisualMotion,
+  resolveVimMultiVisualTextObject,
   resolveVimCharacterInfo,
   resolveVimFind,
   prepareVimPutFromBank,
@@ -790,7 +791,9 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       const word = intent.kind === 'word' ? pointerWordRange(current, anchorCursor, headCursor) : undefined;
       const effectiveAnchor = word === undefined ? anchorCursor : word.anchor;
       const effectiveHead = word === undefined ? headCursor : word.head;
-      const started = beginVimVisualSelection(current, primary.id, effectiveAnchor, visualKind);
+      // A fresh generation per pointer move: the renderer's row diff keys selection repaints
+      // on it, so a drag whose head moves inside one generation would never repaint.
+      const started = beginVimVisualSelection(current, primary.id, effectiveAnchor, visualKind, { selectionGeneration: (selections.selectionGeneration as number) + 1 });
       if (!started.ok) return false;
       const extended = extendVimVisualSelection(current, started.value, [{ id: primary.id, cursor: effectiveHead }]);
       if (!extended.ok) return false;
@@ -1286,6 +1289,19 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       }
       if (command.kind === 'single-key' && mode === 'normal' && command.key === 'K') {
         if (primary !== undefined) emitHostCommand({ kind: 'lookup', target: hostTarget(document.snapshot(), primary)?.target ?? '', lookup: 'keyword' });
+        return;
+      }
+      if (command.kind === 'visual-text-object' && isVisualMode(mode)) {
+        const extended = resolveVimMultiVisualTextObject({
+          snapshot: document.snapshot(),
+          selections,
+          invocation: { key: command.textObject as VimTextObjectKey, count: command.count.value },
+          failurePolicy: 'reject-command',
+        });
+        if (!extended.ok) return;
+        selections = extended.value.selection;
+        mode = extended.value.kind === 'visual-line' ? 'visual-line' : mode;
+        parser = makeParser(mode, selections);
         return;
       }
       if (command.kind === 'single-key' && isVisualMode(mode) && isMotionLike(command.key)) {

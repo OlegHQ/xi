@@ -1,8 +1,9 @@
+import '../../../packages/ui/src/entrypoints/preload';
 import { CancellationSource, type DocumentId } from '../../../packages/primitives/src/entrypoints/launch';
 // Value imports of the UI entrypoint would evaluate OpenTUI before main() runs; keep the UI lazy.
 import type { TextFileDocument } from '../../../packages/document/src/entrypoints/launch';
 import type { PersistenceService } from '../../../packages/services/src/entrypoints/launch';
-import { languageIdForPath, VIEW_COMMAND_IDS } from '../../../packages/workbench/src/entrypoints/launch';
+import { languageIdForPath, VIEW_COMMAND_IDS, StatusMessageController } from '../../../packages/workbench/src/entrypoints/launch';
 import { loadStartupXiConfig } from '../../../packages/services/src/entrypoints/config';
 import { parseCliArgs, resolveFileArgument } from './cli';
 import { installCrashHandlers } from './lifecycle';
@@ -63,17 +64,28 @@ async function main(): Promise<void> {
       TextFileDocument.create(documentId, text, lineEndings, defaultLineEnding, hasUtf8Bom, seed, textIntent),
   });
   const configCancellation = new CancellationSource();
+  // Owns every feature-reported status/error message from here on, including ones raised
+  // before the renderer exists (recovery notices below): the OpenTUI status row picks up
+  // whatever is already published the moment it mounts, so nothing is lost, and nothing is
+  // written to stderr underneath the alt-screen buffer once the renderer is live.
+  const statusMessages = new StatusMessageController();
   // Kicked off now, alongside the other startup filesystem work, so the awaits below (once,
   // before it's first needed) do not add a second sequential round-trip on top of it.
   const startupConfigPromise = loadStartupXiConfig(filesystem, themeStateDirectory(), configCancellation.token, VIEW_COMMAND_IDS);
   // The document open and the theme-state read are independent IO: overlap them. Custom
   // theme files are only enumerated before the first frame when the persisted theme is not
   // builtin; otherwise they load after the first frame for the picker.
-  const themeWiringPromise = createThemeWiring(filesystem);
-  const documentPromise = openDocument(openTextDocument, persistence, filePath?.path, id<DocumentId>('xi-launch-document'));
+  const themeWiringPromise = createThemeWiring(filesystem, statusMessages);
+  const documentPromise = openDocument(openTextDocument, persistence, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages);
   const themeWiring = await themeWiringPromise;
   const document = await documentPromise;
-  if (document === undefined) return;
+  if (document === undefined) {
+    // The renderer never exists on this path, so the status row that would otherwise show
+    // `openDocument`'s failure message never mounts to display it -- flush it to stderr here
+    // as the one case where that message must still reach the user.
+    if (statusMessages.model !== undefined) process.stderr.write(`${statusMessages.model.text}\n`);
+    return;
+  }
   startupTrace('document');
   const ui = earlyUi ?? import('../../../packages/ui/src/entrypoints/launch');
   const renderer = ui.then(({ createOpenTuiRenderer }) => createOpenTuiRenderer());
@@ -98,7 +110,8 @@ async function main(): Promise<void> {
       NodeProcessPort,
       createClock: createNodeClock,
       positionToOffset,
-      openDocumentAt: (path, documentId) => openDocument(openTextDocument, persistence, path, documentId),
+      statusMessages,
+      openDocumentAt: (path, documentId) => openDocument(openTextDocument, persistence, path, documentId, statusMessages),
       marker,
       xiUiTestMarkersEnabled: XI_UI_TEST_MARKERS_ENABLED,
       startupTrace,
@@ -120,6 +133,9 @@ async function main(): Promise<void> {
     }));
     marker('XI_TEARDOWN', { step: 'workbench-returned' });
     await teardownControllers(controllers, persistence, marker);
+    // Bun can retain the PTY stdin reference after OpenTUI has restored the terminal. Every
+    // Xi-owned disposable is closed above, so finish the successful process boundary here.
+    process.exit(0);
   } catch (error) {
     const created = await renderer.catch(() => undefined);
     if (created !== undefined && !created.isDestroyed) created.destroy();
@@ -145,6 +161,7 @@ async function teardownControllers(controllers: Controllers, persistence: Persis
   controllers.directoryDraftController.dispose();
   resolvedOptionalServices?.explorerSubscription.dispose();
   controllers.searchFeature.dispose();
+  controllers.gitPanelFeature.dispose();
   controllers.languageWiring.completionSubscription?.dispose();
   controllers.languageWiring.signatureSubscription?.dispose();
   resolvedOptionalServices?.searchService.dispose();
@@ -165,6 +182,7 @@ async function teardownControllers(controllers: Controllers, persistence: Persis
   controllers.workspaceEditsFeature.dispose();
   controllers.diagnostics.dispose();
   controllers.problemsFeature.dispose();
+  controllers.gitDiffFeature.dispose();
   controllers.taskWiring.dispose();
   resolvedOptionalServices?.explorerController.dispose();
   resolvedOptionalServices?.explorerTree.dispose();
@@ -194,9 +212,10 @@ async function openDocument(
   persistence: PersistenceService,
   path: string | undefined,
   documentId: DocumentId,
+  statusMessages: StatusMessageController,
 ): Promise<TextFileDocument | undefined> {
   if (path === undefined) {
-    const opened = openTextDocument(documentId, new TextEncoder().encode('// Xi editor\n// Press :q<Enter> to quit\n'));
+    const opened = openTextDocument(documentId, new TextEncoder().encode(''));
     if (opened.kind !== 'editable') throw new Error(`xi cannot edit this input: ${opened.kind}`);
     return opened.document;
   }
@@ -204,11 +223,11 @@ async function openDocument(
   try {
     const opened = await persistence.openFile(path, documentId, cancellation.token);
     if (!opened.ok) {
-      process.stderr.write(`xi: cannot open ${path}: ${opened.error.kind}\n`);
+      statusMessages.publish(`xi: cannot open ${path}: ${opened.error.kind}`);
       return undefined;
     }
     if (opened.value.kind !== 'editable') {
-      process.stderr.write(`xi: cannot edit ${path}: ${opened.value.document.reason}\n`);
+      statusMessages.publish(`xi: cannot edit ${path}: ${opened.value.document.reason}`);
       return undefined;
     }
     // E13 crash recovery: a checkpoint from a previous session that never reached a clean
@@ -217,12 +236,12 @@ async function openDocument(
     // never silently overwrites someone else's newer edit with older recovered content.
     const recovered = await persistence.recover(path, documentId, cancellation.token);
     if (recovered.ok && recovered.value.kind === 'recovered') {
-      process.stderr.write(`xi: recovered unsaved changes for ${path} from an earlier session that did not exit cleanly\n`);
+      statusMessages.publish(`xi: recovered unsaved changes for ${path} from an earlier session that did not exit cleanly`, 'info');
       marker('XI_RECOVERY', { path, kind: 'recovered' });
       return recovered.value.document;
     }
     if (recovered.ok && recovered.value.kind === 'disk-diverged') {
-      process.stderr.write(`xi: a recovery checkpoint exists for ${path} but the file changed on disk since; opened the current file instead\n`);
+      statusMessages.publish(`xi: a recovery checkpoint exists for ${path} but the file changed on disk since; opened the current file instead`, 'info');
       marker('XI_RECOVERY', { path, kind: 'disk-diverged' });
     }
     return opened.value.document;

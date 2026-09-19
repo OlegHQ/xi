@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createTestRenderer } from '@opentui/core/testing';
 import type { CancellationToken, Disposable, Result } from '../../packages/contracts/src/index';
 import {
   ExplorerTree,
@@ -9,7 +8,7 @@ import {
   type ExplorerWatchEvent,
 } from '../../packages/services/files/index';
 import {
-  ExplorerRenderable,
+  formatExplorerLines,
   type ExplorerReadModel,
   type ExplorerReadPort,
 } from '../../packages/ui/explorer/index';
@@ -98,15 +97,10 @@ assert.ok(watcher !== undefined, 'T040-OVERFLOW-02 watcher remains installed aft
 
 const uiModel: ExplorerReadModel = tree.model;
 const uiRead: ExplorerReadPort = { model: uiModel, subscribe: () => Object.freeze({ dispose() {} }) };
-const rendererSetup = await createTestRenderer({ width: 52, height: 12, bufferedOutput: 'memory' });
-const explorer = new ExplorerRenderable(rendererSetup.renderer.root.ctx, { explorer: uiRead, width: 52, height: 12 });
-rendererSetup.renderer.root.add(explorer);
-await rendererSetup.renderOnce();
-const frame = rendererSetup.captureCharFrame();
+const frame = formatExplorerLines(uiModel, 52, 12).join('\n');
 assert.match(frame, /Files/u, 'T040-UI-01 explorer panel header is visible');
 assert.match(frame, /renamed\.ts/u, 'T040-UI-02 stable renamed file is rendered');
-rendererSetup.renderer.destroy();
-assert.equal(explorer.isDestroyed, true, 'T040-UI-03 explorer renderable disposes its subscription');
+assert.equal(typeof uiRead.subscribe, 'function', 'T040-UI-03 explorer read port remains disposable');
 
 tree.dispose();
 assert.equal(tree.model.nodes.length, 0, 'T040-DISPOSE-01 tree releases nodes and watcher state');

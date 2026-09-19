@@ -66,8 +66,11 @@ for (const fixture of catalog.fixtures) {
     const selected = slice(snapshot, extended.value.start, extended.value.end);
     assert.deepEqual(registerLines(selected, extended.value.kind), register(expectedRegisterSnapshot, 'a').lines,
       `T020-VISUAL-02 ${fixture.id} expanded selection equals Neovim register payload`);
-    assert.equal(extended.value.anchor, selection.anchor,
-      `T020-VISUAL-03 ${fixture.id} preserves existing selection anchor`);
+    // nvim: a single-point Visual selection adopts the object's start as its anchor
+    // (`12lvas` on 'One two. Three four. Five.' -> col("v")=10); an already-extended
+    // selection keeps its anchor.
+    assert.equal(extended.value.anchor, selection.anchor === selection.head ? extended.value.start : selection.anchor,
+      `T020-VISUAL-03 ${fixture.id} anchor is the object start for a single-point selection, otherwise preserved`);
     assert.equal(extended.value.direction, selection.direction,
       `T020-VISUAL-04 ${fixture.id} preserves forward/backward selection direction`);
     const visualCursor = cursorOffset(initial, fixture.lines);

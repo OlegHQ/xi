@@ -41,9 +41,19 @@ export interface OperatorPreviewMemberRead {
   readonly end: number;
 }
 
+/** Workspace-search matches for the painted document, as absolute UTF-16 offset ranges;
+ * painted only while `documentId`/`documentVersion` match the frame (stale reads are skipped
+ * like the other previews). */
+export interface SearchHighlightRead {
+  readonly documentId: string;
+  readonly documentVersion: number;
+  readonly ranges: readonly { readonly start: number; readonly end: number }[];
+}
+
 export interface EditorPresentationRead {
   readonly motionPreview?: MotionPreviewRead | null;
   readonly operatorPreview?: OperatorPreviewRead | null;
+  readonly searchHighlight?: SearchHighlightRead | null;
   readonly motionTrail?: 'off' | 'last-motion';
   readonly reducedMotion?: boolean;
   readonly colorMode?: EditorColorMode;
@@ -173,6 +183,7 @@ const PAINT_PRIMARY_SELECTION = 1;
 const PAINT_SECONDARY_SELECTION = 2;
 const PAINT_TRAIL = 4;
 const PAINT_OPERATOR = 8;
+const PAINT_SEARCH = 16;
 
 /**
  * Paint one visible frame in strict layer order. All range work is bounded by
@@ -190,6 +201,7 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
   const colors = {
     trail: resolvePaintColor(options.theme.motionTrail, colorMode),
     operator: resolvePaintColor(options.theme.operatorPreview, colorMode),
+    search: resolvePaintColor(options.theme.searchMatch, colorMode),
     primarySelection: resolvePaintColor(options.theme.selectionPrimary, colorMode),
     secondarySelection: resolvePaintColor(options.theme.selectionSecondary, colorMode),
     cursorPrimary: resolvePaintColor(options.theme.cursorPrimary, colorMode),
@@ -223,6 +235,7 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
       const secondarySelection = (mask & PAINT_SECONDARY_SELECTION) !== 0;
       const trail = (mask & PAINT_TRAIL) !== 0;
       const operator = (mask & PAINT_OPERATOR) !== 0;
+      const search = (mask & PAINT_SEARCH) !== 0;
       if (primarySelection) selectedCells += 1;
       if (secondarySelection) secondarySelectedCells += 1;
       if (trail) trailCells += 1;
@@ -230,12 +243,14 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
       let background = options.background;
       let attributes = 0;
       if (trail) background = colors.trail;
+      if (search) background = colors.search;
       if (operator) { background = colors.operator; attributes = TextAttributes.UNDERLINE; }
       if (secondarySelection) { background = colors.secondarySelection; attributes = TextAttributes.BOLD; }
       if (primarySelection) { background = colors.primarySelection; attributes = TextAttributes.BOLD; }
       if (colorMode === 'no-color') {
         background = options.background;
         if (trail) attributes |= TextAttributes.DIM;
+        if (search) attributes |= TextAttributes.BOLD | TextAttributes.UNDERLINE;
         if (operator) attributes |= TextAttributes.UNDERLINE;
         if (secondarySelection) attributes |= TextAttributes.UNDERLINE;
         if (primarySelection) attributes |= TextAttributes.INVERSE;
@@ -333,7 +348,7 @@ function isRowPlain(row: ScreenRow): boolean {
 
 /** Exported for direct unit testing of the plain-paint fast path (see tests/ui). */
 export function canPaintPlainFrame(frame: VisibleFrame, presentation: EditorPresentationRead | undefined): boolean {
-  if (presentation?.motionPreview != null || presentation?.operatorPreview != null) return false;
+  if (presentation?.motionPreview != null || presentation?.operatorPreview != null || presentation?.searchHighlight != null) return false;
   for (const selection of frame.selections) {
     // Only a visual-* selection ever populates `buildPaintMasks`' cell map (see
     // `markSelectionCells`); a plain cursor -- normal mode's block or insert mode's
@@ -481,6 +496,19 @@ function buildPaintMasks(
       for (const member of operator.members) {
         paintOffsetRange(frame, member.start, member.end, (row, column) => setMask(row, column, PAINT_OPERATOR), rowRange);
       }
+    }
+  }
+  const search = presentation?.searchHighlight;
+  if (search !== undefined && search !== null && search.documentId === identity.documentId && search.documentVersion === identity.documentVersion) {
+    // Ranges are sorted by start; only the ones overlapping the painted rows cost anything.
+    const firstRow = frame.rows[rowRange.start];
+    const lastRow = frame.rows[rowRange.end - 1];
+    const lowest = (firstRow?.startOffset as number | null | undefined) ?? 0;
+    const highest = (lastRow?.endOffset as number | null | undefined) ?? Number.MAX_SAFE_INTEGER;
+    for (const range of search.ranges) {
+      if (range.start > highest) break;
+      if (range.end < lowest) continue;
+      paintOffsetRange(frame, range.start, range.end, (row, column) => setMask(row, column, PAINT_SEARCH), rowRange);
     }
   }
   return Object.freeze({ cells, trailPainted: trailAllowed && motion !== undefined && motion !== null && !rejectedStalePreview, rejectedStalePreview });

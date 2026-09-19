@@ -22,3 +22,19 @@ export type {
 } from '../../git/index';
 export { toExplorerGitDecoration, createGitDecorationPort } from '../../git/decorations';
 export type { ExplorerGitDecoration, ExplorerGitDecorationFailure, GitDecorationPort } from '../../git/decorations';
+export { computeLineDiff, GitDiffService } from '../../git/diff';
+export type {
+  DiffLine,
+  DiffLineKind,
+  DiffHunk,
+  LineDiff,
+  GitDiffTarget,
+  GitDiffSideKind,
+  GitDiffSide,
+  GitDiffReady,
+  GitDiffBinary,
+  GitDiffUnavailable,
+  GitDiffResult,
+  GitDiffLoadOptions,
+  GitDiffServiceOptions,
+} from '../../git/diff';

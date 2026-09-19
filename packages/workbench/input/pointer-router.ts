@@ -50,7 +50,7 @@ export interface PointerWorkbenchEvent {
 
 /** Mirrors `packages/ui`'s `WorkbenchPanelPointerEvent`. */
 export interface PointerPanelEvent {
-  readonly panel: 'explorer' | 'picker' | 'search' | 'problems';
+  readonly panel: 'explorer' | 'picker' | 'search' | 'problems' | 'git' | 'git-diff';
   readonly action: 'activate' | 'context';
   readonly itemId: string;
   readonly generation: number;
@@ -86,6 +86,21 @@ export interface PointerSearchPort {
   readModel(): WorkbenchSearchModel | undefined;
   setSelectedIndex(index: number): void;
   openMatch(match: WorkbenchSearchMatch): Promise<void>;
+  /** Opens the currently selected match as a preview buffer without closing the panel. */
+  previewSelected(): void;
+  /** Clicked the query field (row 0): focuses insert mode. */
+  focusQuery(): void;
+  /** Clicked the replace field (row 1): focuses replace mode. */
+  focusReplace(): void;
+  /** Clicked a `file:<path>` group heading: toggles that file's collapsed state. */
+  toggleCollapsed(path: string): void;
+}
+
+/** Narrow pointer port onto `packages/workbench/git`'s `GitPanelController`: a click on a
+ * `git-section:<id>` header toggles that section's collapse, a click on a row selects it
+ * and opens its diff -- mirrors `packages/workbench/explorer`'s click-opens behavior. */
+export interface PointerGitPort {
+  onPointerActivate(itemId: string): void;
 }
 
 export interface PointerProblemsPort {
@@ -114,6 +129,7 @@ export interface WorkbenchPointerRouterOptions {
   readonly pickerModel: PointerPickerModelPort;
   readonly explorer: PointerExplorerPort;
   readonly search: PointerSearchPort;
+  readonly git?: PointerGitPort;
   readonly problems: PointerProblemsPort;
   readonly splitterMinimumCells?: number;
   /** Drives click-count derivation (`clickCount`, tab single/double-click). */
@@ -124,6 +140,9 @@ export interface WorkbenchPointerRouterOptions {
   readonly onTabPin?: (bufferId: string) => void;
   /** The tab's close glyph (`kind: 'tab-close'`) was clicked. */
   readonly onTabClose?: (bufferId: string) => void;
+  /** A button went down on editor text/gutter: keyboard focus returns to the editor, so any
+   * focused panel (Files tree, Search) must release it. */
+  readonly onEditorPointerDown?: () => void;
   /** Drives the sidebar's own resize splitter (`splitter:sidebar`), separate from the editor
    * pane splitters which resize through `session.resizeSplit`. */
   readonly sidebar?: PointerSidebarPort;
@@ -171,6 +190,7 @@ export class WorkbenchPointerRouter implements Disposable {
    * is a text/gutter gesture forwarded to the Vim-side pointer capture engine. */
   handlePointer(event: PointerWorkbenchEvent): boolean {
     if (event.control !== undefined) return this.handleControl(event);
+    if (event.phase === 'down') this.#options.onEditorPointerDown?.();
     const clickCount = event.phase === 'down' ? this.#clickCount('text', event.cell.row, event.cell.column) : undefined;
     return this.#options.pointerCapture.dispatch({
       ...event,
@@ -255,13 +275,22 @@ export class WorkbenchPointerRouter implements Disposable {
       return true;
     }
     if (event.panel === 'search') {
+      if (event.itemId === 'query') { this.#options.search.focusQuery(); return true; }
+      if (event.itemId === 'replace') { this.#options.search.focusReplace(); return true; }
+      if (event.itemId.startsWith('file:')) { this.#options.search.toggleCollapsed(event.itemId.slice('file:'.length)); return true; }
       const model = this.#options.search.readModel();
       if (model === undefined || model.generation !== event.generation) return true;
       const index = model.matches.findIndex((match) => match.id === event.itemId);
       const match = model.matches[index];
       if (index < 0 || match === undefined) return true;
+      // A single click selects and previews (VS Code Search-view style) rather than opening
+      // and immediately closing the panel; the panel's own context menu offers "Open match".
       this.#options.search.setSelectedIndex(index);
-      void this.#options.search.openMatch(match);
+      this.#options.search.previewSelected();
+      return true;
+    }
+    if (event.panel === 'git') {
+      this.#options.git?.onPointerActivate(event.itemId);
       return true;
     }
     const model = this.#options.problems.model;
@@ -307,6 +336,7 @@ export class WorkbenchPointerRouter implements Disposable {
       });
       return true;
     }
+    if (event.panel === 'git') return true;
     const model = this.#options.problems.model;
     if (model.generation !== event.generation) return true;
     const problem = model.all.find((candidate) => candidate.id === event.itemId);

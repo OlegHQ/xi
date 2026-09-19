@@ -1,4 +1,6 @@
 export type SidebarSectionId = 'files' | 'outline';
+/** The sidebar's top tab bar: which panel occupies the column below it. */
+export type SidebarPanelId = 'files' | 'search' | 'git';
 
 export interface SidebarSection {
   readonly id: SidebarSectionId;
@@ -10,6 +12,8 @@ export interface SidebarSection {
 export interface SidebarReadModel {
   readonly sections: readonly SidebarSection[];
   readonly activeSection: SidebarSectionId;
+  /** Derived from the open panels (search open -> 'search', git picker -> 'git', else 'files'). */
+  readonly panel: SidebarPanelId;
   readonly width: number;
 }
 
@@ -32,6 +36,8 @@ export interface SidebarControllerOptions {
   readonly outline: SidebarOutlineModelPort;
   readonly persistence?: SidebarWidthPersistencePort;
   readonly initialWidth?: number;
+  /** Which top tab is active; defaults to 'files' when absent. */
+  readonly panelState?: () => SidebarPanelId;
   /** Clamped 22-40 cells (docs/plan/03-ux.md:11). */
   readonly minimumWidth?: number;
   readonly maximumWidth?: number;
@@ -43,7 +49,8 @@ function clamp(value: number, minimum: number, maximum: number): number {
 
 /**
  * Owns the sidebar's section (Files/Outline) expand state and its resizable width: Files
- * starts expanded; Outline auto-expands once the outline model has symbols and auto-collapses
+ * starts collapsed (its tree loads lazily, so an expanded-but-empty header would lie) and
+ * expands when the Explorer opens; Outline auto-expands once the outline model has symbols and auto-collapses
  * once it doesn't, except that a user's own toggle sticks until the symbol presence actually
  * changes. Resize mirrors `packages/workbench/input/controls`' `SplitterDragController`
  * begin/move/commit shape.
@@ -53,7 +60,7 @@ export class SidebarController {
   readonly #minimumWidth: number;
   readonly #maximumWidth: number;
   #activeSection: SidebarSectionId = 'files';
-  #filesExpanded = true;
+  #filesExpanded = false;
   #outlineExpanded: boolean;
   #outlineUserOverride = false;
   #hadSymbols: boolean;
@@ -85,6 +92,16 @@ export class SidebarController {
 
   /** User-driven expand/collapse; Outline's toggle sticks until `refreshOutline` sees the
    * symbol-presence flip. */
+  collapseSection(id: SidebarSectionId): void {
+    if (id === 'files') this.#filesExpanded = false;
+    else { this.#outlineExpanded = false; this.#outlineUserOverride = true; }
+  }
+
+  expandSection(id: SidebarSectionId): void {
+    if (id === 'files') this.#filesExpanded = true;
+    else { this.#outlineExpanded = true; this.#outlineUserOverride = true; }
+  }
+
   toggleSection(id: SidebarSectionId): void {
     if (id === 'files') { this.#filesExpanded = !this.#filesExpanded; return; }
     this.#outlineExpanded = !this.#outlineExpanded;
@@ -117,7 +134,8 @@ export class SidebarController {
   }
 
   readModel(): SidebarReadModel {
-    const key = `${this.#filesExpanded}|${this.#outlineExpanded}|${this.#activeSection}|${this.#width}`;
+    const panel = this.#options.panelState?.() ?? 'files';
+    const key = `${this.#filesExpanded}|${this.#outlineExpanded}|${this.#activeSection}|${this.#width}|${panel}`;
     if (this.#cachedModel !== undefined && this.#cachedModelKey === key) return this.#cachedModel;
     const model = Object.freeze({
       sections: Object.freeze([
@@ -125,6 +143,7 @@ export class SidebarController {
         Object.freeze({ id: 'outline' as const, label: 'Outline', expanded: this.#outlineExpanded }),
       ]),
       activeSection: this.#activeSection,
+      panel,
       width: this.#width,
     });
     this.#cachedModel = model;

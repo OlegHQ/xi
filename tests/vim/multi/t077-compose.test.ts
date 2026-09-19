@@ -125,8 +125,10 @@ const objectOperator = prepareVimMultiOperator({
 });
 assert.equal(objectOperator.ok, true, 'T077-MC01-08 inner text objects resolve for every member');
 if (objectOperator.ok) {
-  assert.deepEqual(objectOperator.value.transaction?.edits, [{ start: 1, end: 3, text: '' }, { start: 5, end: 7, text: '' }], 'T077-MC01-09 text-object ranges compose without translating coordinates');
-  assert.equal(apply(objectSnapshot, objectOperator.value.transaction?.edits ?? []), 'o t', 'T077-MC01-10 composed inner objects preserve the shared base snapshot');
+  // Cursors sit mid-word (offsets 1 and 5); `diw` removes each whole word, not cursor-to-end.
+  // nvim --headless --clean -c "call setline(1,['one two'])" -c 'normal! ldiw' -> [' two']
+  assert.deepEqual(objectOperator.value.transaction?.edits, [{ start: 0, end: 3, text: '' }, { start: 4, end: 7, text: '' }], 'T077-MC01-09 text-object ranges start at the object, not the cursor');
+  assert.equal(apply(objectSnapshot, objectOperator.value.transaction?.edits ?? []), ' ', 'T077-MC01-10 composed inner objects preserve the shared base snapshot');
 }
 
 const visualSelections = makeVisualSelections(snapshot);

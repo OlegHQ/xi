@@ -87,6 +87,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e15-") as temporary:
         errored = [json.loads(m.group(1)) for m in RESULT.finditer(captured) if json.loads(m.group(1)).get("state") == "error"]
         if not errored or not errored[-1].get("message"):
             raise SystemExit(f"missing rg did not produce a clear degraded error message: {errored!r}")
+        # Search uses Vim-like modes: first Escape leaves query editing, second closes.
+        os.write(master, b"\x1b")
+        read_for(master, captured, 0.15)
         os.write(master, b"\x1b")
         read_for(master, captured, 0.3)
 
@@ -95,6 +98,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e15-") as temporary:
         os.write(master, b"ggIEDITED \x1b")
         read_for(master, captured, 0.3)
         os.write(master, b":wq\r")
+        read_for(master, captured, 0.3)
         child.wait(timeout=5)
     finally:
         if child.poll() is None:

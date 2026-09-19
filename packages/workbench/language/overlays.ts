@@ -118,6 +118,8 @@ export interface LanguageOverlayControllerOptions {
    * work, never duplicated here; a no-op (already-resolved) promise when no language server
    * applies to the current file, matching the original `ensureLanguage`'s own early return. */
   readonly ensureLanguage: () => Promise<void>;
+  /** Tab from the Outline section moves keyboard focus to the Files tree. */
+  readonly focusExplorer?: () => void;
 }
 
 const UNAVAILABLE_OUTLINE_MODEL: OutlineOverlayModel = Object.freeze({ state: 'unavailable', symbols: Object.freeze([]), message: 'No language server available' });
@@ -134,6 +136,7 @@ const NOOP_DISPOSABLE: Disposable = Object.freeze({ dispose: () => {} });
 export class LanguageOverlayController {
   #outlineOpen = false;
   #hoverOpen = false;
+  #pendingCtrlW = false;
   #navigation: NavigationControllerPort | undefined;
   #session: LanguageServerSessionPort | undefined;
   #outlineRead: LanguageOverlayReadPort<OutlineOverlayModel> | undefined;
@@ -208,19 +211,24 @@ export class LanguageOverlayController {
   }
 
   handleOutlineKeypress(event: OwnedVimKeyEvent): boolean {
-    if (event.name.toLowerCase() === 'escape' || event.raw === '') {
+    const key = event.name.toLowerCase();
+    if (key === 'escape' || event.raw === '') {
       this.closeOutline();
       return true;
     }
+    // Sidebar section cycling: Tab hands focus to the Files tree; Ctrl-W + w/h/j/k/l/p returns
+    // to the editor (mirrors the explorer's own chords).
+    if (key === 'tab' || event.raw === '\t') { this.closeOutline(); this.#options.focusExplorer?.(); return true; }
+    if (this.#pendingCtrlW) { this.#pendingCtrlW = false; if ('whjklp'.includes(key)) this.closeOutline(); return true; }
+    if (event.ctrl && key === 'w') { this.#pendingCtrlW = true; return true; }
     return true;
   }
 
+  /** The hover popup is transient: Escape just closes it; any other key closes it and is
+   * reported unhandled so the router forwards it to the editor (the motion still happens). */
   handleHoverKeypress(event: OwnedVimKeyEvent): boolean {
-    if (event.name.toLowerCase() === 'escape' || event.raw === '') {
-      this.closeHover();
-      return true;
-    }
-    return true;
+    this.closeHover();
+    return event.name.toLowerCase() === 'escape' || event.raw === '\x1b';
   }
 
   dispose(): void {

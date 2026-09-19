@@ -17,7 +17,7 @@ export type {
   WorkbenchPointerEvent,
 } from './workbench';
 export type { WorkbenchPanel, WorkbenchPanelPointerEvent } from './panel-pointer';
-export { ContextMenuStore, ContextMenuRenderable, contextMenuBounds } from './context-menu';
+export { ContextMenuStore, contextMenuBounds } from './context-menu';
 export type { ContextMenuItem } from './context-menu';
 export { paintEditorFrame } from '../editor/motion-paint';
 export type {
@@ -44,7 +44,6 @@ export type {
 export {
   DEFAULT_PREFIX_HELP_THEME,
   PrefixHelpController,
-  PrefixHelpRenderable,
   formatPrefixHelpLines,
 } from '../help/index';
 export type {
@@ -58,12 +57,10 @@ export type {
 } from '../help/index';
 export {
   DEFAULT_EX_COMMAND_LINE_THEME,
-  ExCommandLineRenderable,
   formatExCommandLineLines,
 } from '../commandline/index';
 export type {
   ExCommandLineReadPort,
-  ExCommandLineRenderableOptions,
   ExCommandLineTheme,
 } from '../commandline/index';
 
@@ -71,22 +68,21 @@ export {
   DEFAULT_PICKER_THEME,
   PickerModelBridge,
   PickerFocusLifecycle,
-  PickerRenderable,
   formatPickerLines,
 } from '../picker/index';
 
-export { SearchRenderable, formatSearchLines } from '../search/index';
-export type { SearchReadPort, SearchRenderableOptions } from '../search/index';
-export { ProblemsRenderable, formatProblemsLines } from '../problems/index';
-export type { Problem, ProblemRange, ProblemsReadModel, ProblemsReadPort, ProblemsRenderableOptions } from '../problems/index';
+export { formatSearchLines } from '../search/index';
+export type { SearchReadPort } from '../search/index';
+export { formatProblemsLines } from '../problems/index';
+export type { Problem, ProblemRange, ProblemsReadModel, ProblemsReadPort } from '../problems/index';
 export { projectSemanticRow } from '../editor/semantic-tokens';
 export type { SemanticDecoration, SemanticReadModel } from '../editor/semantic-tokens';
-export { CompletionRenderable, formatCompletionLines, SignatureRenderable, formatSignatureLines } from '../completion/index';
-export type { CompletionItemRead, CompletionReadModel as CompletionUiReadModel, CompletionReadPort, CompletionRenderableOptions, SignatureReadModel, SignatureReadPort, SignatureRenderableOptions } from '../completion/index';
-export { OutlineRenderable, formatOutlineLines, HierarchyRenderable, formatHierarchyLines, HoverRenderable, formatHoverLines } from '../navigation/index';
-export type { OutlineSymbolRead, OutlineReadModel, OutlineReadPort, OutlineRenderableOptions, HierarchyNodeRead, HierarchyLinkRead, HierarchyReadModel, HierarchyReadPort, HierarchyRenderableOptions, HoverReadModel, HoverReadPort, HoverRenderableOptions } from '../navigation/index';
-export { TaskOutputRenderable, formatTaskOutputLines } from '../output/index';
-export type { TaskOutputReadModel, TaskOutputReadPort, TaskOutputRenderableOptions } from '../output/index';
+export { formatCompletionLines, formatSignatureLines } from '../completion/index';
+export type { CompletionItemRead, CompletionReadModel as CompletionUiReadModel, CompletionReadPort, SignatureReadModel, SignatureReadPort } from '../completion/index';
+export { formatOutlineLines, formatHierarchyLines, formatHoverLines, measureHover } from '../navigation/index';
+export type { OutlineSymbolRead, OutlineReadModel, OutlineReadPort, HierarchyNodeRead, HierarchyLinkRead, HierarchyReadModel, HierarchyReadPort, HoverReadModel, HoverReadPort } from '../navigation/index';
+export { formatTaskOutputLines } from '../output/index';
+export type { TaskOutputReadModel, TaskOutputReadPort } from '../output/index';
 export type {
   PickerMode,
   PickerEntryKind,
@@ -98,10 +94,9 @@ export type {
   PickerFocusLifecycleOptions,
   PickerFocusFailure,
   PickerTheme,
-  PickerRenderableOptions,
 } from '../picker/index';
 
-export { DEFAULT_EXPLORER_THEME, ExplorerRenderable, formatExplorerLines } from '../explorer/index';
+export { DEFAULT_EXPLORER_THEME, formatExplorerLines } from '../explorer/index';
 export type {
   ExplorerGitDecoration,
   ExplorerGitState,
@@ -110,7 +105,6 @@ export type {
   ExplorerNodeKind,
   ExplorerReadModel,
   ExplorerReadPort,
-  ExplorerRenderableOptions,
   ExplorerTheme,
   ExplorerVisibleRow,
 } from '../explorer/index';
@@ -118,7 +112,6 @@ export type {
 export {
   DEFAULT_DIRECTORY_REVIEW_THEME,
   DirectoryReviewFocusLifecycle,
-  DirectoryReviewRenderable,
   formatDirectoryReviewLines,
 } from '../directory/index';
 export type {
@@ -133,6 +126,5 @@ export type {
   DirectoryOperationPlan,
   DirectoryReviewFocusFailure,
   DirectoryReviewFocusLifecycleOptions,
-  DirectoryReviewRenderableOptions,
   DirectoryReviewTheme,
 } from '../directory/index';

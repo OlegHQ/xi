@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { Writable } from 'node:stream';
 import { createTestRenderer } from '@opentui/core/testing';
 import { asIdentifier, asUtf16Offset, type DocumentId, type SelectionId, type ViewId } from '../../packages/primitives/src/index';
 import { openTextDocument, type DocumentReadPort, type DocumentSnapshot } from '../../packages/document/src/index';
@@ -106,10 +107,8 @@ async function testNoIdleLoop(): Promise<void> {
   await new Promise((resolveWait) => setTimeout(resolveWait, 200));
   assert.equal(renderCount, 0, 'T111-IDLE-02 an idle renderer performs no renderSelf calls over 200ms');
 
-  // `refresh()` only marks the renderable dirty now (see workbench.ts and
-  // packages/ui/src/terminal.ts's `scheduleFlush`); production drives the actual
-  // frame with one explicit synchronous render after every key, which `renderOnce()`
-  // mirrors here.
+  // This component-only fixture drives paint explicitly. Production instead uses
+  // Core's public requestRender scheduler after refreshing its read models.
   viewport.refresh();
   await setup.renderOnce();
   assert.equal(renderCount, 1, 'T111-IDLE-03 a state change (refresh + one driven render) triggers exactly one renderSelf');
@@ -185,19 +184,7 @@ async function testSessionScrollRenders(): Promise<void> {
   setup.renderer.destroy();
 }
 
-/**
- * T111-KEY-01/02: the real production entrypoint (`runOpenTuiWorkbench`) used to
- * render twice per key -- once from its own explicit synchronous `flushFrame`
- * (`renderer.intermediateRender()`), and once more when the OpenTUI renderer's own
- * scheduled frame (from `WorkbenchRenderable.refresh()`'s old `requestRender()` call)
- * fired later via `process.nextTick`. It also flushed once per key even when several
- * keys arrived in the same synchronous stdin chunk. Both are fixed: `refresh()` only
- * marks the renderable dirty (see workbench.ts), and `terminal.ts` coalesces every
- * key processed before the current synchronous stack unwinds into one microtask-
- * scheduled flush. This drives keys through the real `renderer.stdin` -> key-parser
- * -> `keypress` pipeline, not a direct method call, so it exercises the same path a
- * real keystroke does.
- */
+/** Real parsed key bursts must share a Core-scheduled frame without losing keys. */
 async function testKeyBurstRendersOnce(): Promise<void> {
   const { workbench, moveCursor } = makeMutableWorkbench('alpha\nbeta\ngamma\n');
   const setup = await createTestRenderer({ width: 80, height: 24, bufferedOutput: 'memory', gatherStats: true });
@@ -212,8 +199,7 @@ async function testKeyBurstRendersOnce(): Promise<void> {
       return true;
     }),
   });
-  // Let `runOpenTuiWorkbench`'s synchronous setup (including its own initial
-  // `renderer.intermediateRender()`) finish before measuring key-driven frames.
+  // Let Core paint the initial mount before measuring key-driven frames.
   await new Promise((resolveWait) => setTimeout(resolveWait, 0));
   frames = 0;
 
@@ -231,8 +217,89 @@ async function testKeyBurstRendersOnce(): Promise<void> {
   await run;
 }
 
+/** Public scheduling must preserve ordered async commands and completion after paint. */
+async function testAsyncDispatchAndFrame(): Promise<void> {
+  const { workbench, moveCursor } = makeMutableWorkbench('alpha\nbeta\ngamma\n');
+  const setup = await createTestRenderer({ width: 80, height: 24, bufferedOutput: 'memory' });
+  let releaseCommand!: () => void;
+  const command = new Promise<void>((resolve) => { releaseCommand = resolve; });
+  let releaseFrame!: () => void;
+  let blockFrame = false;
+  const frame = new Promise<void>((resolve) => { releaseFrame = resolve; });
+  setup.renderer.setFrameCallback(async () => { if (blockFrame) await frame; });
+  const keys: string[] = [];
+  let frames = 0;
+  const run = runOpenTuiWorkbench(workbench, 'editor.ts', {
+    renderer: Promise.resolve(setup.renderer),
+    onFrame: () => { frames += 1; },
+    dispatchKey: (event) => {
+      keys.push(event.name);
+      if (keys.length === 1) return command.then(() => { moveCursor(1); return 'consumed' as const; });
+      moveCursor(keys.length);
+      return 'consumed';
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await setup.renderer.idle();
+  const startFrames = frames;
+  blockFrame = true;
+  await setup.mockInput.pressKeys(['a', 'b'], 0);
+  assert.deepEqual(keys, ['a'], 'T133-ORDER awaiting a command must hold later keys');
+  releaseCommand();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(keys, ['a', 'b']);
+  assert.equal(frames, startFrames, 'T133-COMPLETE no frame completion before async pre-paint finishes');
+  setup.mockInput.pressKey('c');
+  releaseFrame();
+  await setup.renderer.idle();
+  assert.deepEqual(keys, ['a', 'b', 'c']);
+  assert.ok(frames > startFrames);
+  const cursor = setup.renderer.getCursorState();
+  assert.equal(cursor.x, 8, 'T133-INFLIGHT the final cursor includes the key received during paint (1-based gutter 5 + offset 3)');
+  const settled = frames;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(frames, settled, 'T133-IDLE no delayed duplicate frame after settling');
+  setup.renderer.destroy();
+  await run;
+}
+
+/** A slow output consumer must not require another key to deliver the final state. */
+async function testOutputBackpressure(): Promise<void> {
+  let held = true;
+  let releaseWrite: (() => void) | undefined;
+  const output = new Writable({
+    highWaterMark: 1,
+    write(_chunk, _encoding, callback) {
+      if (held) releaseWrite = callback;
+      else callback();
+    },
+  });
+  const { workbench, moveCursor } = makeMutableWorkbench('alpha\nbeta\ngamma\n');
+  const setup = await createTestRenderer({ width: 80, height: 24, stdout: output as unknown as NodeJS.WriteStream, bufferedOutput: 'stdout' });
+  let nextOffset = 0;
+  const run = runOpenTuiWorkbench(workbench, 'editor.ts', {
+    renderer: Promise.resolve(setup.renderer),
+    dispatchKey: () => { moveCursor(++nextOffset); return 'consumed'; },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(releaseWrite !== undefined, 'T133-BACKPRESSURE fixture holds real renderer output');
+  const pendingBytes = output.writableLength;
+  await setup.mockInput.pressKeys(['a', 'b', 'c'], 0);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(nextOffset, 3, 'T133-BACKPRESSURE output blockage must not block input');
+  assert.equal(output.writableLength, pendingBytes, 'T133-BACKPRESSURE no growing output queue');
+  held = false;
+  releaseWrite?.();
+  await setup.renderer.idle();
+  assert.equal(setup.renderer.getCursorState().x, 8, 'T133-BACKPRESSURE final cursor renders after drain without another input');
+  setup.renderer.destroy();
+  await run;
+}
+
 await testNoIdleLoop();
 await testCursorFollowScroll();
 await testSessionScrollRenders();
 await testKeyBurstRendersOnce();
-console.log('T111 render scheduling passed on-demand rendering, cursor-follow scroll, session-scroll and key-burst/double-render fixtures');
+await testAsyncDispatchAndFrame();
+await testOutputBackpressure();
+console.log('T111/T133 scheduling passed: idle, scrolling, bursts, async input/frame completion, in-flight invalidation and output backpressure');

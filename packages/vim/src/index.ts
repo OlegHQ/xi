@@ -262,6 +262,7 @@ export {
   resolveVimMultiSearch,
   resolveVimMultiVisualFind,
   resolveVimMultiVisualMotion,
+  resolveVimMultiVisualTextObject,
   setVimMultiPrimaryMark,
 } from '../multi';
 export type {

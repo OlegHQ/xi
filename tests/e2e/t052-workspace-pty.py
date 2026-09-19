@@ -28,6 +28,17 @@ def wait_for(master: int, captured: bytearray, marker: bytes, timeout: float) ->
         raise SystemExit(f"missing marker {marker!r}: {captured[-4000:]!r}")
 
 
+def read_for(master: int, captured: bytearray, seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([master], [], [], 0.05)
+        if readable:
+            try:
+                captured.extend(os.read(master, 65536))
+            except OSError:
+                return
+
+
 with tempfile.TemporaryDirectory(prefix="xi-t052-workspace-") as temporary:
     workspace = Path(temporary)
     (workspace / "package.json").write_text("{}\n", encoding="utf-8")
@@ -38,7 +49,10 @@ with tempfile.TemporaryDirectory(prefix="xi-t052-workspace-") as temporary:
     closed_target.write_text("import { value } from './main';\nconsole.log(value);\n", encoding="utf-8")
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({
+        "TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1",
+        "XI_FORMATTER_COMMAND": "/bin/cat",
+    })
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "main.ts"],
         cwd=workspace,
@@ -66,7 +80,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t052-workspace-") as temporary:
         wait_for(master, captured, b"XI_RENAME_APPLIED", 15)
         if b'XI_RENAME_PREPARE_SKIPPED {"reason":"unsupported"}' not in captured:
             raise AssertionError(f"expected optional prepareRename to be skipped for this server: {captured!r}")
+        read_for(master, captured, 0.3)
         os.write(master, b":wq\r")
+        read_for(master, captured, 0.3)
         child.wait(timeout=10)
     finally:
         if child.poll() is None:

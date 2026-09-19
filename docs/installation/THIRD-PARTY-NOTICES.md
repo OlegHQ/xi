@@ -41,11 +41,22 @@ checksums are present before a target is called packaged.
 
 ## Grammar assets
 
-No grammar binary or font/icon asset is currently bundled by the Xi CLI. The
-source tree pins `web-tree-sitter` as the runtime parser dependency and has no
-checked-in grammar files. A release that enables a grammar must add its name,
-version, license and checksum here and to the native/package manifest before
-advertising that language support.
+The compiled Xi CLI embeds the Tree-sitter runtime wasm plus one grammar wasm
+and highlights query per supported language (`apps/xi/src/syntax-assets.ts`
+imports them with `type: "file"`, so `bun build --compile` bundles the bytes).
+No grammar file is checked into the source tree; every one comes from a pinned
+package below. A release that enables another language must add its name,
+version, license and notice source here first.
+
+| Grammar | Version | License | Notice source |
+|---|---:|---|---|
+| `@opentui/core` (typescript, javascript, markdown assets) | 0.5.11 | MIT | `@opentui/core/LICENSE` |
+| `tree-sitter-python` | 0.25.0 | MIT | `tree-sitter-python/LICENSE` |
+| `tree-sitter-json` | 0.24.8 | MIT | `tree-sitter-json/LICENSE` |
+| `@tree-sitter-grammars/tree-sitter-toml` | 0.7.0 | MIT | `@tree-sitter-grammars/tree-sitter-toml/LICENSE` |
+
+Markdown ships the block-level grammar only; inline emphasis and link styling
+need Tree-sitter query injections, which the syntax service does not implement.
 
 ## Neovim policy
 

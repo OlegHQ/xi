@@ -116,6 +116,15 @@ controller.openHover();
 assert.equal(controller.isHoverOpen, true, 'T116-OVERLAY-04a openHover marks hover open');
 assert.equal(controller.isOutlineOpen, false, 'T116-OVERLAY-04b opening hover closed the mutually exclusive outline panel');
 
+// T116-OVERLAY-05: the hover popup is transient -- Escape closes it and is consumed; any other
+// key closes it and is reported unhandled so the router forwards the motion to the editor.
+assert.equal(controller.isHoverOpen, true, 'sanity: hover still open');
+assert.equal(controller.handleHoverKeypress({ name: 'j', raw: 'j', shift: false, option: false, ctrl: false, meta: false }), false, 'T116-OVERLAY-05a a motion key closes hover and falls through');
+assert.equal(controller.isHoverOpen, false, 'T116-OVERLAY-05b hover closed on the motion');
+controller.openHover();
+assert.equal(controller.handleHoverKeypress({ name: 'escape', raw: '\x1b', shift: false, option: false, ctrl: false, meta: false }), true, 'T116-OVERLAY-05c Escape closes hover and is consumed');
+assert.equal(controller.isHoverOpen, false, 'T116-OVERLAY-05d hover closed on Escape');
+
 controller.dispose();
 subscription.dispose();
 

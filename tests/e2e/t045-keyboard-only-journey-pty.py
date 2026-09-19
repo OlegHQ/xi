@@ -42,7 +42,7 @@ def wait_for(master: int, captured: bytearray, marker: bytes, timeout: float) ->
         raise SystemExit(f"missing PTY marker {marker!r}: {captured[-4000:]!r}")
 
 
-DARK_BACKGROUND = b"\x1b[48;2;30;33;38m"
+DARK_BACKGROUND = b"\x1b[48;2;30;30;46m"
 
 with tempfile.TemporaryDirectory(prefix="xi-t045-keyboard-only-") as temporary:
     workspace = Path(temporary)
@@ -87,6 +87,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-keyboard-only-") as temporary:
         wait_for(master, captured, b"XI_SEARCH_OPEN", 5)
         os.write(master, b"needle")
         read_for(master, captured, 0.5)
+        # Esc first leaves insert mode for normal mode, a second Esc closes the panel.
+        os.write(master, b"\x1b")
+        time.sleep(0.15)
         os.write(master, b"\x1b")
         read_for(master, captured, 0.2)
 

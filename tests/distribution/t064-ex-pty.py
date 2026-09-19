@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import pty
 import select
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -108,7 +109,7 @@ def main() -> None:
         empty_path.mkdir()
         source.write_text("first line\nsecond line\n", encoding="utf-8")
         build = subprocess.run(
-            ["bun", "build", "--compile", "--bytecode", "--format=esm", "--minify", "--define", 'process.env.NODE_ENV="production"', "--define", 'process.env.DEV="false"', "apps/xi/src/main.ts", "--outfile", str(binary)],
+            ["bun", "run", "package:build"],
             cwd=ROOT,
             check=False,
             capture_output=True,
@@ -116,6 +117,7 @@ def main() -> None:
         )
         if build.returncode != 0:
             raise SystemExit(f"T064 Ex compiled build failed: {build.stdout}{build.stderr}")
+        shutil.copy2(ROOT / "dist" / "xi", binary)
         environment = os.environ.copy()
         environment.update({
             "HOME": str(home),

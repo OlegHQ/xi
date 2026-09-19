@@ -26,6 +26,10 @@ export function splitCoalescedEscape<T extends CoalescedKeyLike>(event: T): read
   if (rest.length !== 1) return undefined;
   const character = rest[0] ?? '';
   const code = character.codePointAt(0) ?? 0;
+  if (character === ESC) {
+    const escape = { ...event, name: 'escape', sequence: ESC, raw: ESC, ctrl: false, meta: false, option: false, shift: false };
+    return [escape, escape];
+  }
   // A real escape sequence introducer (CSI '[', SS3 'O', DCS/OSC) is never split.
   if (character === '[' || character === 'O' || code < 0x20 || code === 0x7f) return undefined;
   const escape = { ...event, name: 'escape', sequence: ESC, raw: ESC, ctrl: false, meta: false, option: false, shift: false };

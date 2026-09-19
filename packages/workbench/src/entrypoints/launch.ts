@@ -40,6 +40,8 @@ export type {
   OpenBufferAtPathOptions,
   OpenBufferAtPathResult,
 } from '../../host';
+export { StatusMessageController } from '../../status';
+export type { StatusMessageModel, StatusMessageReadPort } from '../../status';
 export { PickerController, ThemeController } from '../../picker';
 export type {
   PickerControllerOptions,
@@ -85,6 +87,37 @@ export type {
   WorkbenchSearchModel,
   WorkbenchSearchQuery,
 } from '../../search';
+export { GitPanelController } from '../../git';
+export type {
+  GitKeyEvent,
+  GitMutationContext,
+  GitMutationFailure,
+  GitMutationPort,
+  GitMutationResult,
+  GitPanelFilesystemPort,
+  GitPanelOptions,
+  GitPanelReadModel,
+  GitPanelRow,
+  GitPanelSection,
+  GitSectionId,
+  GitStatusPort,
+  WorkbenchGitEntry,
+  WorkbenchGitEntryState,
+  WorkbenchGitSnapshot,
+} from '../../git';
+export { DiffViewController } from '../../git/diff';
+export type {
+  DiffLayout,
+  DiffViewControllerOptions,
+  DiffViewReadModel,
+  DiffViewState,
+  GitDiffHunk,
+  GitDiffKeyEvent,
+  GitDiffLine,
+  GitDiffLoadResult,
+  GitDiffServicePort,
+  GitDiffTarget,
+} from '../../git/diff';
 export { ProblemsController } from '../../problems';
 export type {
   DiagnosticsPort,
@@ -183,6 +216,7 @@ export type {
   ContextMenuPort,
   PointerControlEvent,
   PointerExplorerPort,
+  PointerGitPort,
   PointerPanelEvent,
   PointerPickerEntry,
   PointerPickerModelPort,

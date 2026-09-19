@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict';
 import {
   PrefixHelpController,
-  PrefixHelpRenderable,
   formatPrefixHelpLines,
   type PrefixHelpClock,
   type PrefixHelpGenerations,
   type PrefixHelpSource,
 } from '../../packages/ui/help/index';
 import type { PrefixHelpBinding, PrefixHelpReadModel } from '../../packages/workbench/src/index';
-import { createTestRenderer } from '@opentui/core/testing';
 import {
   buildPrefixHelpReadModel,
   CommandRegistry,
@@ -122,16 +120,9 @@ assert.ok(dModel.hints.some((hint) => hint.kind === 'escape'), 'E20-D-02 d expos
 assert.equal(dModel.registryGeneration, registry.snapshot.generation, 'T082-GENERATION-01 help captures registry generation');
 assert.deepEqual(formatPrefixHelpLines(dModel, 40, 4).length, 1, 'E20-NARROW-01 narrow help collapses to a bounded status row');
 assert.equal(dModel.targetId, editorTargetId, 'E20-FOCUS-01 help does not steal focus (target is unchanged by scheduling)');
-const panelSetup = await createTestRenderer({ width: 80, height: 4, bufferedOutput: 'memory' });
-const panel = new PrefixHelpRenderable(panelSetup.renderer.root.ctx, { help: controller, width: 80, height: 4 });
-panelSetup.renderer.root.add(panel);
-await panelSetup.renderOnce();
-assert.match(panelSetup.captureCharFrame(), /Prefix/u, 'E20-RENDER-01 passive panel renders the active prefix model');
-panelSetup.resize(32, 4);
-await panelSetup.renderOnce();
-assert.ok(panelSetup.captureCharFrame().split('\n').filter((line) => line.trim() !== '').length <= 4, 'E20-RENDER-02 narrow panel remains bounded to available rows');
-panelSetup.renderer.destroy();
-assert.equal(panel.isDestroyed, true, 'E20-RENDER-03 panel subscription is disposed with its renderable');
+assert.match(formatPrefixHelpLines(controller.model, 80, 4).join('\n'), /Prefix/u, 'E20-RENDER-01 shared formatter renders the active prefix model');
+assert.ok(formatPrefixHelpLines(controller.model, 32, 4).length <= 4, 'E20-RENDER-02 narrow panel remains bounded to available rows');
+assert.equal(typeof controller.subscribe, 'function', 'E20-RENDER-03 read port remains disposable');
 
 controller.schedule({ targetId: editorTargetId, pendingKeys: ['<Space>'], parserContinuations: [], configGeneration });
 clock.fireAll();

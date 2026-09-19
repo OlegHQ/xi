@@ -11,6 +11,7 @@ type RealtimeSearchService = InstanceType<LaunchServices['RealtimeSearchService'
 type WorkspaceReplaceService = InstanceType<LaunchServices['WorkspaceReplaceService']>;
 type GitStatusService = InstanceType<GitServices['GitStatusService']>;
 type GitMutationCoordinator = InstanceType<GitServices['GitMutationCoordinator']>;
+type GitDiffService = InstanceType<GitServices['GitDiffService']>;
 
 export interface OptionalServicesWiringDeps {
   readonly filesystem: NodeFilesystemPort;
@@ -44,6 +45,7 @@ export interface OptionalServices {
   readonly explorerSubscription: Disposable;
   readonly gitStatusService: GitStatusService;
   readonly gitMutationCoordinator: GitMutationCoordinator;
+  readonly gitDiffService: GitDiffService;
   readonly searchService: RealtimeSearchService;
   readonly replaceService: WorkspaceReplaceService;
   readonly expandSnippet: LaunchServices['expandSnippet'];
@@ -82,6 +84,7 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
   let explorerSubscription: Disposable | undefined;
   let gitStatusService: GitStatusService | undefined;
   let gitMutationCoordinator: GitMutationCoordinator | undefined;
+  let gitDiffService: GitDiffService | undefined;
   let gitStatusSubscription: Disposable | undefined;
   let gitWatchRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let searchService: RealtimeSearchService | undefined;
@@ -134,6 +137,7 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
       });
       gitStatusService = nextGitStatus;
       gitMutationCoordinator = new git.GitMutationCoordinator(git.createProcessGitMutationExecutor(new deps.ProcessPort(), deps.workspaceRoot, deps.processEnvironment()));
+      gitDiffService = new git.GitDiffService({ process: new deps.ProcessPort(), filesystem: deps.filesystem, env: deps.processEnvironment() });
       void nextGitStatus.refresh();
       const nextExplorer = new ExplorerTree(
         deps.createExplorerFilesystem(deps.filesystem, deps.workspaceRoot, () => scheduleGitRefresh()),
@@ -158,14 +162,14 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
       expandSnippet = services.expandSnippet;
       SnippetSession = services.SnippetSession;
       executeLanguageCodeAction = services.executeLanguageCodeAction;
-      deps.notifySurfaceChange();
       // Every field above is assigned unconditionally in this block, so by the time `ensure()`
       // resolves the bundle is fully populated; this is the one value pushed to consumers.
       current = {
         hostNavigation, explorerTree, explorerController, explorerSubscription,
-        gitStatusService, gitMutationCoordinator, searchService, replaceService,
+        gitStatusService, gitMutationCoordinator, gitDiffService, searchService, replaceService,
         expandSnippet, SnippetSession, executeLanguageCodeAction,
       };
+      deps.notifySurfaceChange();
       return current;
     })();
     return initialization;

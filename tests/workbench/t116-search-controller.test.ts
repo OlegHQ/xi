@@ -193,12 +193,40 @@ await controller.handleKeypress(key('up', ''));
 await controller.handleKeypress(key('up', ''));
 assert.equal(controller.selectedIndex, 0, 'T116-SEARCH-02d moving up past the first match clamps at 0');
 
-// T116-SEARCH-03: escape closes the panel and cancels the search service.
+// T116-SEARCH-03: escape leaves insert mode for normal mode without closing; a second
+// escape closes the panel and cancels the search service.
 assert.equal(controller.isOpen, true, 'sanity: still open before escape');
+assert.equal(controller.mode, 'insert', 'sanity: still in insert mode before escape');
 await controller.handleKeypress(key('escape', ''));
-assert.equal(controller.isOpen, false, 'T116-SEARCH-03a escape closes the controller');
-assert.ok(search.cancels.length > 0, 'T116-SEARCH-03b escape cancels the search service');
-assert.ok(markers.some((entry) => entry.name === 'XI_SEARCH_CANCELLED'), 'T116-SEARCH-03c a cancelled marker was emitted');
+assert.equal(controller.isOpen, true, 'T116-SEARCH-03a a single escape only leaves insert mode');
+assert.equal(controller.mode, 'normal', 'T116-SEARCH-03b the first escape lands in normal mode');
+await controller.handleKeypress(key('d', '', { ctrl: true }));
+assert.equal(controller.selectedIndex, 2, 'T116-SEARCH-03b2 Ctrl-D uses sidebar half-page navigation in normal mode');
+await controller.handleKeypress(key('u', '', { ctrl: true }));
+assert.equal(controller.selectedIndex, 0, 'T116-SEARCH-03b3 Ctrl-U uses sidebar half-page navigation in normal mode');
+await controller.handleKeypress(key('escape', ''));
+assert.equal(controller.isOpen, false, 'T116-SEARCH-03c a second escape closes the controller');
+assert.ok(search.cancels.length > 0, 'T116-SEARCH-03d escape cancels the search service');
+assert.ok(markers.some((entry) => entry.name === 'XI_SEARCH_CANCELLED'), 'T116-SEARCH-03e a cancelled marker was emitted');
+
+// T116-SEARCH-05: after reopening, mode starts 'insert' -- typed letters (including j/k,
+// which are Vim navigation letters in `normal` mode) edit the query instead of moving the
+// selection; Tab/Shift-Tab move focus between the query and replace fields.
+controller.open();
+assert.equal(controller.mode, 'insert', 'T116-SEARCH-05a open() starts in insert mode');
+const queriesBeforeJ = search.queries.length;
+await controller.handleKeypress(key('j', 'j'));
+assert.equal(search.queries.length, queriesBeforeJ + 1, 'T116-SEARCH-05b "j" in insert mode re-queries (it edited the query)');
+assert.ok(search.queries[search.queries.length - 1]?.endsWith('j'), 'T116-SEARCH-05c "j" was appended to the query text, not treated as a motion');
+await controller.handleKeypress(key('tab', '	'));
+assert.equal(controller.mode, 'replace', 'T116-SEARCH-05d Tab moves focus to the replace field');
+await controller.handleKeypress(key('tab', '	', { shift: true }));
+assert.equal(controller.mode, 'insert', 'T116-SEARCH-05e Shift-Tab moves focus back to the query field');
+await controller.handleKeypress(key('escape', ''));
+assert.equal(controller.mode, 'normal', 'T116-SEARCH-05f Esc from insert leaves for normal mode without closing');
+assert.equal(controller.isOpen, true, 'T116-SEARCH-05g the panel is still open after the first Esc');
+await controller.handleKeypress(key('escape', ''));
+assert.equal(controller.isOpen, false, 'T116-SEARCH-05h a second Esc closes the panel');
 
 // T116-SEARCH-04: replacing a match in a dirty open buffer goes through the document/edit
 // coordinator (`session.applyDocumentEdits`), never the filesystem -- even though a closed

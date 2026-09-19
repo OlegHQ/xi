@@ -92,6 +92,9 @@ export interface RouterWorkspaceEditsPort {
 export interface RouterOverlayKeypressPort {
   readonly isOpen: () => boolean;
   readonly onKeypress: (event: OwnedVimKeyEvent) => boolean | void | Promise<boolean | void>;
+  /** True while the overlay owns typed characters (a filter/rename prompt); `:` then stays
+   * with the overlay instead of opening the editor's command line. Absent means never. */
+  readonly capturesTextInput?: () => boolean;
 }
 
 export interface RouterVoidOverlayKeypressPort {
@@ -125,6 +128,8 @@ export interface WorkbenchInputRouterOptions {
   readonly overlays: RouterOverlayPort;
   readonly completion: RouterCompletionPort;
   readonly workspaceEdits: RouterWorkspaceEditsPort;
+  /** Workbench-level Ex fallback used when no editable Vim session owns a command line. */
+  readonly executeWorkbenchCommand?: (source: string, viewId: ViewId) => 'handled' | 'unhandled' | 'quit' | Promise<'handled' | 'unhandled' | 'quit'>;
   /** Lazily-constructed explorer/search backing services; composition-root work this
    * router never duplicates -- it only asks whether they are ready yet. */
   readonly isExplorerServiceLoaded: () => boolean;
@@ -154,6 +159,8 @@ export interface WorkbenchInputRouterOptions {
   readonly overlayPicker?: RouterVoidOverlayKeypressPort;
   readonly overlayExplorer?: RouterOverlayKeypressPort;
   readonly overlaySearch?: RouterOverlayKeypressPort;
+  readonly overlayGit?: RouterOverlayKeypressPort;
+  readonly overlayGitDiff?: RouterOverlayKeypressPort;
   readonly overlayProblems?: RouterOverlayKeypressPort;
   readonly overlayOutput?: RouterOverlayKeypressPort;
   readonly overlayOutline?: RouterOverlayKeypressPort;
@@ -163,6 +170,9 @@ export interface WorkbenchInputRouterOptions {
    * to the rest of the stack ('unhandled') -- the one entry in this stack that can decline. */
   readonly overlayDirectoryReview?: RouterDirectoryReviewOverlayPort;
   readonly overlaySignature?: RouterOverlayKeypressPort;
+  /** `Space v d`: opens the worktree diff for the active buffer's workspace-relative path.
+   * Composition-root work (path resolution, `GitDiffService`) this router never duplicates. */
+  readonly openGitDiffForActiveBuffer?: () => Promise<void> | void;
 }
 
 /**
@@ -188,7 +198,12 @@ export class WorkbenchInputRouter implements Disposable {
   // array copies and any timer churn entirely.
   #lastPrefixPendingKeys: readonly string[] | undefined;
   #lastPrefixContinuations: VimPrefixHelpState['parserContinuations'] | undefined;
+  // `Ctrl-W` toggles input focus between the diff view and the still-open Git panel behind
+  // it (both stay open together, see `DiffViewController.open`'s `closeAllPanels` call).
+  #gitPanelFocused = false;
+  #lastGitDiffOpen = false;
   #exCommandLineSession: ExCommandLineSession | undefined;
+  #commandLineWithoutSession = false;
   #searchPromptModel: ReturnType<ExCommandLineSession['readModel']> | undefined;
   readonly #commandLineListeners = new Set<(model: ReturnType<ExCommandLineSession['readModel']> | undefined) => void>();
   #disposed = false;
@@ -237,6 +252,7 @@ export class WorkbenchInputRouter implements Disposable {
 
   /** Called from `BufferHostOptions.onCommandLineChange`. */
   handleCommandLineChange(state: { readonly source: string; readonly cursorOffset: number; readonly kind?: 'ex' | 'search-forward' | 'search-backward' } | undefined): void {
+    this.#commandLineWithoutSession = false;
     this.#searchPromptModel = undefined;
     if (state === undefined) {
       this.#exCommandLineSession?.dispose();
@@ -258,7 +274,7 @@ export class WorkbenchInputRouter implements Disposable {
   }
 
   isCommandLineActive(): boolean {
-    return this.#options.host.activeSession()?.commandLineActive === true;
+    return this.#commandLineWithoutSession || this.#options.host.activeSession()?.commandLineActive === true;
   }
 
   /** Called from `BufferHostOptions.onPrefixStateChange`. */
@@ -323,20 +339,54 @@ export class WorkbenchInputRouter implements Disposable {
    */
   dispatchKey(event: OwnedVimKeyEvent): RouterDispatchOutcome | Promise<RouterDispatchOutcome> {
     const o = this.#options;
+    // The leader key is global even while a navigational panel is focused: it is how users
+    // reach terminal controls such as mouse-mode toggle without first dismissing the panel.
+    if (event.raw === ' ' || this.#leaderPending) return finishOverlay(this.handleKeypress(event));
     if (o.overlayContextMenu?.open === true) return finishOverlay(o.overlayContextMenu.handleKey(event));
     if (this.isCommandLineActive()) return finishOverlay(this.handleCommandLineKeypress(event));
     if (o.overlayCompletion?.isOpen() === true) return finishOverlay(o.overlayCompletion.onKeypress(event));
     if (o.overlayPicker?.isOpen() === true) return finishOverlay(o.overlayPicker.onKeypress(event));
+    // `:` works everywhere a panel is only navigated, not typed into (explorer, problems,
+    // output, outline, hierarchy, hover): it opens the editor's command line so `:q`, `:w`
+    // and friends never depend on which panel has focus.
+    if (event.raw === ':' && !event.ctrl && !event.meta && !event.option && this.#colonPanelOpen()) return finishOverlay(this.handleKeypress(event));
     if (o.overlayExplorer?.isOpen() === true) return finishOverlay(o.overlayExplorer.onKeypress(event));
     if (o.overlaySearch?.isOpen() === true) return finishOverlay(o.overlaySearch.onKeypress(event));
+    {
+      const gitDiffOpen = o.overlayGitDiff?.isOpen() === true;
+      const gitPanelOpen = o.overlayGit?.isOpen() === true;
+      if (gitDiffOpen && !this.#lastGitDiffOpen) this.#gitPanelFocused = false;
+      this.#lastGitDiffOpen = gitDiffOpen;
+      if (!gitPanelOpen) this.#gitPanelFocused = false;
+      if (gitDiffOpen && gitPanelOpen && event.ctrl && event.name.toLowerCase() === 'w') {
+        this.#gitPanelFocused = !this.#gitPanelFocused;
+        return finishOverlay(true);
+      }
+      if (gitDiffOpen && !this.#gitPanelFocused) return finishOverlay(o.overlayGitDiff!.onKeypress(event));
+      if (gitPanelOpen) return finishOverlay(o.overlayGit!.onKeypress(event));
+    }
     if (o.overlayProblems?.isOpen() === true) return finishOverlay(o.overlayProblems.onKeypress(event));
     if (o.overlayOutput?.isOpen() === true) return finishOverlay(o.overlayOutput.onKeypress(event));
     if (o.overlayOutline?.isOpen() === true) return finishOverlay(o.overlayOutline.onKeypress(event));
     if (o.overlayHierarchy?.isOpen() === true) return finishOverlay(o.overlayHierarchy.onKeypress(event));
-    if (o.overlayHover?.isOpen() === true) return finishOverlay(o.overlayHover.onKeypress(event));
+    // Hover is dismiss-on-next-key: a `false` from it means "closed, now give the key to the
+    // editor", so the stack keeps walking instead of swallowing the motion.
+    if (o.overlayHover?.isOpen() === true) {
+      const outcome = o.overlayHover.onKeypress(event);
+      if (outcome !== false) return finishOverlay(outcome);
+    }
     if (o.overlayDirectoryReview?.isOpen() === true && o.overlayDirectoryReview.onKeypress(event) === 'handled') return 'consumed';
     if (o.overlaySignature?.isOpen() === true) return finishOverlay(o.overlaySignature.onKeypress(event));
     return this.dispatch(event);
+  }
+
+  #colonPanelOpen(): boolean {
+    const o = this.#options;
+    const activeViewId = o.session.activeViewId;
+    const mode = activeViewId === undefined ? undefined : o.session.readView(activeViewId)?.session.mode;
+    if (mode !== 'normal' && mode !== undefined && !mode.startsWith('visual')) return false;
+    const navigated = (port: RouterOverlayKeypressPort | undefined): boolean => port?.isOpen() === true && port.capturesTextInput?.() !== true;
+    return navigated(o.overlayExplorer) || navigated(o.overlaySearch) || navigated(o.overlayGit) || navigated(o.overlayGitDiff) || navigated(o.overlayProblems) || navigated(o.overlayOutput) || navigated(o.overlayOutline) || navigated(o.overlayHierarchy) || navigated(o.overlayHover);
   }
 
   handleKeypress(event: OwnedVimKeyEvent): boolean | 'quit' | Promise<boolean | 'quit'> {
@@ -384,7 +434,15 @@ export class WorkbenchInputRouter implements Disposable {
       }
     }
     const active = session.activeViewId === undefined ? undefined : host.sessions.get(session.activeViewId);
-    if (active === undefined) return false;
+    if (active === undefined) {
+      if (event.raw === ':' && !event.ctrl && !event.meta && !event.option) {
+        this.#commandLineWithoutSession = true;
+        this.#exCommandLineSession = new ExCommandLineSession({ registry: this.#options.commandRegistry, source: ':', cursorOffset: 1 });
+        this.#publishCommandLine();
+        return true;
+      }
+      return false;
+    }
     return active.handleKey(event);
   }
 
@@ -457,6 +515,13 @@ export class WorkbenchInputRouter implements Disposable {
       problems.openProblems();
       return true;
     }
+    if (panelPrefix && event.name.toLowerCase() === 'd' && this.#options.openGitDiffForActiveBuffer !== undefined) {
+      if (picker.isOpen) await picker.close(true);
+      if (explorer.isOpen) explorer.close();
+      if (search.isOpen) search.close();
+      await this.#options.openGitDiffForActiveBuffer();
+      return true;
+    }
     if (panelPrefix && event.name.toLowerCase() === 'o') {
       if (picker.isOpen) await picker.close(true);
       if (explorer.isOpen) explorer.close();
@@ -508,8 +573,9 @@ export class WorkbenchInputRouter implements Disposable {
 
   async handleCommandLineKeypress(event: OwnedVimKeyEvent): Promise<boolean | 'quit'> {
     const active = this.#options.host.activeSession();
-    if (active === undefined) return false;
+    if (active === undefined && !this.#commandLineWithoutSession) return false;
     if (this.#searchPromptModel !== undefined) {
+      if (active === undefined) return false;
       await active.handleKey(event);
       return true;
     }
@@ -519,14 +585,41 @@ export class WorkbenchInputRouter implements Disposable {
     if (input === undefined) return true;
     const result = line.handleInput(input);
     if (result.kind === 'cancel') {
-      await active.handleKey(event);
+      if (active !== undefined) await active.handleKey(event);
+      else this.#closeStandaloneCommandLine();
       return true;
     }
     if (result.kind === 'execute' || result.kind === 'error') {
-      return active.submitCommandLine(result.source);
+      if (active !== undefined) return active.submitCommandLine(result.source);
+      const source = result.source.startsWith(':') ? result.source.slice(1) : result.source;
+      this.#closeStandaloneCommandLine();
+      const outcome = await this.#options.executeWorkbenchCommand?.(source, this.#options.launchViewId) ?? 'unhandled';
+      if (outcome === 'quit') return 'quit';
+      if (outcome === 'unhandled') this.#options.onError('xi: command requires an editable buffer\n');
+      return true;
     }
-    active.setCommandLineSource(result.source, result.cursorOffset);
+    if (active !== undefined) active.setCommandLineSource(result.source, result.cursorOffset);
+    else this.#publishCommandLine();
     return true;
+  }
+
+  #publishCommandLine(): void {
+    this.commandLine.read.model = this.#exCommandLineSession?.readModel();
+    for (const listener of [...this.#commandLineListeners]) listener(this.commandLine.read.model);
+    this.#options.marker('XI_EX_COMMANDLINE_STATE', this.commandLine.read.model === undefined ? undefined : {
+      source: this.commandLine.read.model.source,
+      cursorOffset: this.commandLine.read.model.cursorOffset,
+      kind: 'ex',
+    });
+  }
+
+  #closeStandaloneCommandLine(): void {
+    this.#commandLineWithoutSession = false;
+    this.#exCommandLineSession?.dispose();
+    this.#exCommandLineSession = undefined;
+    this.commandLine.read.model = undefined;
+    for (const listener of [...this.#commandLineListeners]) listener(undefined);
+    this.#options.marker('XI_EX_COMMANDLINE_STATE', undefined);
   }
 
   dispose(): void {

@@ -16,6 +16,8 @@ export {
   resolveLanguageRoot,
 } from './lifecycle';
 export type { LanguageProviderSession } from './provider-session';
+export { LanguageServerRouter } from './router';
+export type { LanguageServerRouterOptions, RoutedLanguageSession } from './router';
 export type {
   LanguageConfigurationItem,
   LanguageCapabilityChange,

@@ -28,6 +28,7 @@ async function contentAndBufferSources(): Promise<void> {
   assert.equal(result.value.matches[0]?.source, 'buffer', 'dirty open buffer replaces disk result');
   assert.equal(result.value.totalMatches, 2);
   assert.equal(result.value.matches[0]?.documentVersion, 7);
+  // Rows 0-2 are the fixed query/replace/summary rows; row 3 is the first group heading.
   assert.match(formatSearchLines(result.value, 60, 4).join('\n'), /src\/a\.ts/);
   service.dispose();
 }

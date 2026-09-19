@@ -1,5 +1,7 @@
 {
   "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
@@ -28,7 +30,9 @@
     "tools/**/*.ts",
     "docs/**/*.ts",
     "packages/**/*.ts",
+    "packages/**/*.tsx",
     "apps/**/*.ts",
+    "apps/**/*.tsx",
     "tests/**/*.ts",
     "examples/**/*.ts"
   ],

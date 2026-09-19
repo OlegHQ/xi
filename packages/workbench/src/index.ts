@@ -115,6 +115,8 @@ export type {
   OpenBufferAtPathOptions,
   OpenBufferAtPathResult,
 } from '../host/index';
+export { StatusMessageController } from '../status/index';
+export type { StatusMessageModel, StatusMessageReadPort } from '../status/index';
 export { PickerController, ThemeController } from '../picker/index';
 export type {
   PickerControllerOptions,

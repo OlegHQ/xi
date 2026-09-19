@@ -31,6 +31,9 @@ export interface VimVisualCursor {
 
 export interface VimVisualOptions {
   readonly selection?: 'inclusive' | 'exclusive';
+  /** `beginVimVisualSelection` only: generation for the new set (callers rebuilding a
+   * selection per pointer move pass previous+1 so renderers see it as changed). */
+  readonly selectionGeneration?: number;
 }
 
 export type VimVisualFailure =
@@ -97,7 +100,7 @@ export function beginVimVisualSelection(
     : kind === 'visual-line'
       ? { id: selectionId, kind, direction: 'forward', anchor: endpoint.value, head: endpoint.value, desiredColumn, anchorDesiredColumn: desiredColumn }
       : { id: selectionId, kind, direction: 'forward', anchor: endpoint.value, head: endpoint.value, desiredColumn, anchorDesiredColumn: desiredColumn };
-  const created = createSelectionSet(snapshot, { primaryId: selectionId, members: [member] });
+  const created = createSelectionSet(snapshot, { primaryId: selectionId, members: [member], ...(options.selectionGeneration === undefined ? {} : { selectionGeneration: options.selectionGeneration }) });
   if (!created.ok) return { ok: false, error: { kind: 'invalid-selection', reason: created.error.kind } };
   return { ok: true, value: created.value.selectionSet };
 }

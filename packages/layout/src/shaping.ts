@@ -754,8 +754,10 @@ export function buildFoldRow(
  */
 export function buildGutterCells(line: LineIndex, wrapIndex: number, gutterWidth: number): GutterCells {
   const lineNumber = wrapIndex === 0 ? String((line as number) + 1) : '';
-  const visibleNumber = lineNumber.slice(-gutterWidth);
-  const leftPadding = Math.max(0, gutterWidth - visibleNumber.length);
+  // The last gutter column is always a blank separator between the number and the text.
+  const labelWidth = Math.max(0, gutterWidth - 1);
+  const visibleNumber = lineNumber.slice(-labelWidth);
+  const leftPadding = Math.max(0, labelWidth - visibleNumber.length);
   const gutterCells: ScreenCell[] = [];
   const cellTexts: string[] = [];
   for (let column = 0; column < gutterWidth; column += 1) {

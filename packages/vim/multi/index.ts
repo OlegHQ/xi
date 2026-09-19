@@ -33,6 +33,7 @@ import {
   type VimWordMotionKey,
 } from '../motions/word';
 import {
+  extendVimVisualTextObject,
   resolveVimTextObject,
   vimTextObjectMotion,
   type VimTextObjectInvocation,
@@ -51,7 +52,9 @@ import { normalizeAtomicEdits, type AtomicEditConflict } from '../transactions/m
 import {
   type VimVisualCursor,
   type VimVisualFailure,
+  type VimVisualKind,
   type VimVisualOptions,
+  beginVimVisualSelection,
   extendVimVisualSelection,
 } from '../visual/index';
 import { resolveVimFind, type VimFindFailure, type VimFindInvocation, type VimFindOptions, type VimFindOutcome, type VimLastFind } from '../motions/find';
@@ -210,6 +213,65 @@ export interface VimMultiVisualMotionResult {
   readonly members: readonly VimMultiMotionMember[];
   readonly failedMemberIds: readonly SelectionId[];
   readonly preview: VimMotionPreview | null;
+}
+
+export interface VimMultiVisualTextObjectInput {
+  readonly snapshot: DocumentSnapshot;
+  readonly selections: SelectionSetSnapshot;
+  readonly invocation: VimTextObjectInvocation;
+  readonly options?: VimMultiMotionOptions;
+  readonly failurePolicy?: VimMultiFailurePolicy;
+}
+
+export interface VimMultiVisualTextObjectResult {
+  readonly selection: SelectionSetSnapshot;
+  /** The Visual kind every member now has: `ip`/`ap` turn a characterwise Visual linewise (nvim `vip`). */
+  readonly kind: VimVisualKind;
+  readonly failedMemberIds: readonly SelectionId[];
+}
+
+/** Extend every Visual member by one text object (`viw`, `vi{`, `vap`, ...). Each member is
+ * rebuilt through beginVimVisualSelection + extendVimVisualSelection so anchor and head
+ * endpoints keep the visual package's own endpoint rules. */
+export function resolveVimMultiVisualTextObject(
+  input: VimMultiVisualTextObjectInput,
+): Result<VimMultiVisualTextObjectResult, VimMultiMotionFailure> {
+  if (!sameSelectionDocument(input.snapshot, input.selections)) return failure({ kind: 'stale-selection' });
+  if (input.selections.members.length === 0) return failure({ kind: 'invalid-selection' });
+  const policy = input.failurePolicy ?? 'retain-failed';
+  const members: SelectionMemberInput[] = [];
+  const failedMemberIds: SelectionId[] = [];
+  let kind: VimVisualKind = 'visual-character';
+  const cursorAt = (offset: Utf16Offset): VimVisualCursor => Object.freeze({ documentVersion: input.snapshot.version, offset, displayCellColumn: 0 as CellColumn });
+  for (let index = 0; index < input.selections.members.length; index += 1) {
+    const member = input.selections.members[index];
+    if (member === undefined || !isVisualMember(member)) return failure({ kind: 'invalid-selection' });
+    const extended = extendVimVisualTextObject(input.snapshot, {
+      documentVersion: input.snapshot.version,
+      anchor: member.anchor.at.offset,
+      head: member.head.at.offset,
+      direction: member.direction,
+      kind: member.kind === 'visual-line' ? 'linewise' : 'characterwise',
+    }, input.invocation, textObjectOptions(input.options));
+    if (!extended.ok) {
+      failedMemberIds.push(member.id);
+      const cause: VimMotionFailure = { kind: extended.error.kind === 'stale-document-version' ? 'stale-document-version' : extended.error.kind === 'invalid-cursor' ? 'invalid-cursor' : extended.error.kind === 'invalid-count' ? 'invalid-count' : extended.error.kind === 'invalid-option' ? 'invalid-option' : 'document-read-failed' };
+      if (policy === 'reject-command') return failure({ kind: 'member-failed', memberId: member.id, memberIndex: index, cause });
+      members.push(memberInput(member));
+      continue;
+    }
+    const memberKind: VimVisualKind = extended.value.kind === 'linewise' ? 'visual-line' : member.kind === 'visual-block' ? 'visual-character' : member.kind;
+    if (memberKind === 'visual-line') kind = 'visual-line';
+    const begun = beginVimVisualSelection(input.snapshot, member.id, cursorAt(extended.value.anchor), memberKind);
+    if (!begun.ok) return failure({ kind: 'selection-update-failed' });
+    const moved = extendVimVisualSelection(input.snapshot, begun.value, [{ id: member.id, cursor: cursorAt(extended.value.head) }]);
+    const rebuilt = moved.ok ? moved.value.members[0] : undefined;
+    if (rebuilt === undefined) return failure({ kind: 'selection-update-failed' });
+    members.push({ ...memberInput(rebuilt), creationOrdinal: member.creationOrdinal as number });
+  }
+  const updated = updateSelectionSet(input.snapshot, input.selections, { primaryId: input.selections.primaryId, members });
+  if (!updated.ok) return failure({ kind: 'selection-update-failed' });
+  return { ok: true, value: Object.freeze({ selection: updated.value.selectionSet, kind, failedMemberIds: Object.freeze(failedMemberIds) }) };
 }
 
 export type VimMultiFindFailure =
@@ -675,24 +737,8 @@ function resolveMultiMotion(
   options?: VimMultiMotionOptions,
 ): Result<VimMotionOutcome, VimMotionFailure> {
   if (isTextObjectKey(invocation.key)) {
-    const objectOptions: VimTextObjectOptions = {
-      ...(options?.isKeyword === undefined ? {} : { isKeyword: options.isKeyword }),
-      ...(options?.quoteEscape === undefined ? {} : { quoteEscape: options.quoteEscape }),
-      ...(options?.cpOptions === undefined ? {} : { cpOptions: options.cpOptions }),
-      ...(options?.paragraphs === undefined ? {} : { paragraphs: options.paragraphs }),
-      ...(options?.maxScanUtf16 === undefined ? {} : { maxScanUtf16: options.maxScanUtf16 }),
-    };
-    const textInvocation: VimTextObjectInvocation = invocation.count === undefined
-      ? { key: invocation.key }
-      : { key: invocation.key, count: invocation.count };
-    const object = resolveVimTextObject(snapshot, {
-      documentVersion: cursor.documentVersion,
-      offset: cursor.offset,
-      ...(cursor.desiredDisplayCellColumn === null ? {} : { displayCellColumn: cursor.desiredDisplayCellColumn }),
-    }, textInvocation, objectOptions);
-    if (!object.ok) return { ok: false, error: { kind: object.error.kind === 'stale-document-version' ? 'stale-document-version' : object.error.kind === 'invalid-cursor' ? 'invalid-cursor' : object.error.kind === 'invalid-count' ? 'invalid-count' : object.error.kind === 'invalid-option' ? 'invalid-option' : 'document-read-failed' } };
-    const motion = vimTextObjectMotion(snapshot, object.value);
-    if (!motion.ok) return { ok: false, error: { kind: 'document-read-failed' } };
+    const motion = textObjectMotion(snapshot, cursor, invocation.key, invocation.count, options);
+    if (!motion.ok) return motion;
     return {
       ok: true,
       value: Object.freeze({
@@ -724,6 +770,37 @@ function resolveMultiMotion(
   return resolveVimMotion(snapshot, cursor, motionInvocation, options);
 }
 
+function textObjectOptions(options?: VimMultiMotionOptions): VimTextObjectOptions {
+  return {
+    ...(options?.isKeyword === undefined ? {} : { isKeyword: options.isKeyword }),
+    ...(options?.quoteEscape === undefined ? {} : { quoteEscape: options.quoteEscape }),
+    ...(options?.cpOptions === undefined ? {} : { cpOptions: options.cpOptions }),
+    ...(options?.paragraphs === undefined ? {} : { paragraphs: options.paragraphs }),
+    ...(options?.maxScanUtf16 === undefined ? {} : { maxScanUtf16: options.maxScanUtf16 }),
+  };
+}
+
+/** A text object is a range, not a cursor move: its origin is the object's start,
+ * which differs from the cursor whenever the cursor sits inside the object
+ * (`ciw` mid-word, `di(` after the opening paren). Operators must use this full
+ * range; collapsing it to a target offset silently deletes from the cursor instead. */
+function textObjectMotion(
+  snapshot: DocumentSnapshot,
+  cursor: VimMotionCursor,
+  key: VimTextObjectKey,
+  count: number | undefined,
+  options?: VimMultiMotionOptions,
+): Result<Omit<import('../ranges/normalize').VimOperatorRangeInput, 'operator'>, VimMotionFailure> {
+  const object = resolveVimTextObject(snapshot, {
+    documentVersion: cursor.documentVersion,
+    offset: cursor.offset,
+    ...(cursor.desiredDisplayCellColumn === null ? {} : { displayCellColumn: cursor.desiredDisplayCellColumn }),
+  }, count === undefined ? { key } : { key, count }, textObjectOptions(options));
+  if (!object.ok) return { ok: false, error: { kind: object.error.kind === 'stale-document-version' ? 'stale-document-version' : object.error.kind === 'invalid-cursor' ? 'invalid-cursor' : object.error.kind === 'invalid-count' ? 'invalid-count' : object.error.kind === 'invalid-option' ? 'invalid-option' : 'document-read-failed' } };
+  const motion = vimTextObjectMotion(snapshot, object.value);
+  return motion.ok ? motion : { ok: false, error: { kind: 'document-read-failed' } };
+}
+
 function isWordMotionKey(key: VimMultiMotionInvocation['key']): key is VimWordMotionKey {
   return key === 'w' || key === 'W' || key === 'b' || key === 'B' || key === 'e' || key === 'E' || key === 'ge' || key === 'gE';
 }
@@ -747,6 +824,20 @@ function normalMemberMotion(
 ): Result<Omit<import('../ranges/normalize').VimOperatorRangeInput, 'operator'>, VimOperatorMotionFailure> {
   const cursor = motionCursorForMember(snapshot, member);
   if (!cursor.ok) return { ok: false, error: { kind: 'motion-failed', reason: cursor.error.kind } };
+  if (isTextObjectKey(invocation.key)) {
+    const motion = textObjectMotion(snapshot, cursor.value, invocation.key, invocation.count, options);
+    if (!motion.ok) return { ok: false, error: { kind: 'motion-failed', reason: motion.error.kind } };
+    return {
+      ok: true,
+      value: {
+        ...motion.value,
+        ...(force === 'V' ? { forceKind: 'linewise' as const } : force === '<C-v>' ? { forceKind: 'blockwise' as const, blockTabPolicy: 'preserve' as const } : {}),
+        ...(options?.tabSize === undefined ? {} : { tabSize: options.tabSize }),
+        ...(options?.widthPolicy === undefined ? {} : { widthPolicy: options.widthPolicy }),
+        ...(options?.folds === undefined ? {} : { folds: options.folds }),
+      },
+    };
+  }
   const outcome = resolveMultiMotion(snapshot, cursor.value, invocation, options);
   if (!outcome.ok) return { ok: false, error: { kind: 'motion-failed', reason: outcome.error.kind } };
   const start = memberOffset(member) as number;

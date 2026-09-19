@@ -4,6 +4,7 @@ import type { WorkbenchTheme } from '../../../../packages/ui/src/entrypoints/lau
 import { BUILTIN_WORKBENCH_THEMES } from '../../../../packages/ui/src/entrypoints/theme';
 import type { NodeFilesystemPort } from '../../../../packages/platform/src/entrypoints/launch';
 import { decodeWorkbenchThemeTokens } from '../../../../packages/services/src/entrypoints/config';
+import type { StatusMessageController } from '../../../../packages/workbench/src/entrypoints/launch';
 
 /** The standard XDG-style `~/.config/xi/` convention every config file (theme state,
  * config.toml, languages.toml) lives under; never throws, since a missing/unreadable/corrupt
@@ -30,16 +31,16 @@ interface LoadedCustomTheme { readonly label: string; readonly theme: WorkbenchT
  * tables (owned by `packages/services/config`'s `discoverCustomThemeConfigs`) into the UI's
  * `WorkbenchTheme` launch shape -- the one piece of this that is composition-root wiring, not
  * a services-owned algorithm, since only the app knows the UI's launch type. */
-async function discoverCustomThemes(filesystem: NodeFilesystemPort, cancellation: CancellationSource): Promise<ReadonlyMap<string, LoadedCustomTheme>> {
+async function discoverCustomThemes(filesystem: NodeFilesystemPort, cancellation: CancellationSource, statusMessages: StatusMessageController): Promise<ReadonlyMap<string, LoadedCustomTheme>> {
   const directory = `${themeStateDirectory()}/themes`;
   const { discoverCustomThemeConfigs } = await import('../../../../packages/services/src/entrypoints/theme');
   const { themes: discovered, diagnostics } = await discoverCustomThemeConfigs(filesystem, directory, cancellation.token);
-  for (const diagnostic of diagnostics) process.stderr.write(`xi: ${diagnostic.message}\n`);
+  for (const diagnostic of diagnostics) statusMessages.publish(`xi: ${diagnostic.message}`);
   const themes = new Map<string, LoadedCustomTheme>();
   for (const [id, discoveredTheme] of discovered) {
     const theme = workbenchThemeFromTokens(discoveredTheme.tokens);
     if (theme === undefined) {
-      process.stderr.write(`xi: theme file ${id}.toml is missing one or more required tokens (background, surface, surface.active, foreground, muted, border, accent, error)\n`);
+      statusMessages.publish(`xi: theme file ${id}.toml is missing one or more required tokens (background, surface, surface.active, foreground, muted, border, accent, error)`);
       continue;
     }
     themes.set(id, { label: discoveredTheme.name, theme });
@@ -58,7 +59,7 @@ export interface ThemeWiring {
 /** Constructs the theme controller, reads the persisted active theme id and (only when that
  * persisted theme is a custom one, not a builtin) loads custom themes before the first frame;
  * otherwise custom themes load after the first frame for the picker via `loadCustomThemes()`. */
-export async function createThemeWiring(filesystem: NodeFilesystemPort): Promise<ThemeWiring> {
+export async function createThemeWiring(filesystem: NodeFilesystemPort, statusMessages: StatusMessageController): Promise<ThemeWiring> {
   const themeStateCancellation = new CancellationSource();
   const themeController = new ThemeController<WorkbenchTheme>({
     initial: new Map(Object.entries(BUILTIN_WORKBENCH_THEMES)),
@@ -66,11 +67,11 @@ export async function createThemeWiring(filesystem: NodeFilesystemPort): Promise
     filesystem,
     statePath: themeStatePath(),
     stateDirectory: themeStateDirectory(),
-    onPersistError: (message) => process.stderr.write(`xi: ${message}\n`),
+    onPersistError: (message) => statusMessages.publish(`xi: ${message}`),
   });
   const persistedThemeId = await themeController.readPersistedId(themeStateCancellation.token);
   const loadCustomThemes = async (): Promise<void> => {
-    for (const [customId, custom] of await discoverCustomThemes(filesystem, themeStateCancellation)) {
+    for (const [customId, custom] of await discoverCustomThemes(filesystem, themeStateCancellation, statusMessages)) {
       themeController.addCustomTheme(customId, custom.label, custom.theme);
     }
   };

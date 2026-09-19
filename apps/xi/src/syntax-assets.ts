@@ -32,7 +32,16 @@ interface FileImportModule {
 interface GrammarAssetLoaders {
   readonly wasm: () => Promise<FileImportModule>;
   readonly highlights: () => Promise<FileImportModule>;
+  /** Appended verbatim to the grammar's own highlights query. Later patterns win equal-range
+   * ties in the syntax service's sweep, so this is how a vendored query's classification is
+   * overridden without editing node_modules. */
+  readonly extraHighlights?: string;
 }
+
+/** tree-sitter-json captures object keys as `@string.special.key` BEFORE its blanket
+ * `(string) @string` rule, so the generic capture wins the tie and keys paint as plain
+ * strings. Re-stating it last restores the distinct key color. */
+const JSON_KEY_HIGHLIGHTS = '\n(pair key: (_) @string.special.key)\n';
 
 const GRAMMAR_ASSET_LOADERS: Readonly<Record<string, GrammarAssetLoaders>> = {
   typescript: {
@@ -42,6 +51,25 @@ const GRAMMAR_ASSET_LOADERS: Readonly<Record<string, GrammarAssetLoaders>> = {
   javascript: {
     wasm: () => import('../../../node_modules/@opentui/core/assets/javascript/tree-sitter-javascript.wasm' as string, { with: { type: 'file' } }),
     highlights: () => import('../../../node_modules/@opentui/core/assets/javascript/highlights.scm' as string, { with: { type: 'file' } }),
+  },
+  python: {
+    wasm: () => import('../../../node_modules/tree-sitter-python/tree-sitter-python.wasm' as string, { with: { type: 'file' } }),
+    highlights: () => import('../../../node_modules/tree-sitter-python/queries/highlights.scm' as string, { with: { type: 'file' } }),
+  },
+  json: {
+    wasm: () => import('../../../node_modules/tree-sitter-json/tree-sitter-json.wasm' as string, { with: { type: 'file' } }),
+    highlights: () => import('../../../node_modules/tree-sitter-json/queries/highlights.scm' as string, { with: { type: 'file' } }),
+    extraHighlights: JSON_KEY_HIGHLIGHTS,
+  },
+  toml: {
+    wasm: () => import('../../../node_modules/@tree-sitter-grammars/tree-sitter-toml/tree-sitter-toml.wasm' as string, { with: { type: 'file' } }),
+    highlights: () => import('../../../node_modules/@tree-sitter-grammars/tree-sitter-toml/queries/highlights.scm' as string, { with: { type: 'file' } }),
+  },
+  // Block-level Markdown only: inline emphasis/links live in the separate `markdown_inline`
+  // grammar, which needs query injections the syntax service does not implement yet.
+  markdown: {
+    wasm: () => import('../../../node_modules/@opentui/core/assets/markdown/tree-sitter-markdown.wasm' as string, { with: { type: 'file' } }),
+    highlights: () => import('../../../node_modules/@opentui/core/assets/markdown/highlights.scm' as string, { with: { type: 'file' } }),
   },
 };
 
@@ -81,7 +109,7 @@ export function createBundledGrammarProvider(reader: AssetFileReader, cancellati
       ]);
       if (!wasmRead.ok) return { ok: false, error: { kind: 'grammar-missing', message: `failed to read grammar wasm for "${languageId}": ${wasmRead.error.message}` } };
       if (!highlightsRead.ok) return { ok: false, error: { kind: 'grammar-missing', message: `failed to read highlights query for "${languageId}": ${highlightsRead.error.message}` } };
-      return { ok: true, value: { wasm: wasmRead.value, highlights: textDecoder.decode(highlightsRead.value) } };
+      return { ok: true, value: { wasm: wasmRead.value, highlights: `${textDecoder.decode(highlightsRead.value)}${loaders.extraHighlights ?? ''}` } };
     } catch (error) {
       return {
         ok: false,

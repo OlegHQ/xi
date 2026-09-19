@@ -72,6 +72,12 @@ export interface HostCommandsOptions {
   readonly problems: HostCommandsProblemsPort;
   readonly saveCoordinator: HostCommandsSaveCoordinatorPort;
   readonly directoryDrafts: HostCommandsDirectoryDraftPort;
+  /** `gd`: language-server definition lookup for the active cursor; resolves to the first
+   * location, or a user-facing reason when no server/definition is available. */
+  readonly lookupDefinition?: () => Promise<{ readonly ok: true; readonly location: HostNavigationLocation } | { readonly ok: false; readonly message: string }>;
+  /** `Ctrl-W h`/`Ctrl-W w` past the leftmost pane: hand focus to the sidebar panel; returns
+   * whether a sidebar took it. */
+  readonly focusSidebar?: () => boolean;
 }
 
 /**
@@ -171,6 +177,12 @@ export class WorkbenchHostCommands {
       return;
     }
     if (command.kind === 'lookup') {
+      if (command.lookup === 'definition' && this.#options.lookupDefinition !== undefined) {
+        const found = await this.#options.lookupDefinition();
+        if (found.ok) await this.openHostLocation(found.location, false, sourceViewId);
+        else this.#options.marker('XI_DEFINITION_UNAVAILABLE', { message: found.message });
+        return;
+      }
       const detail = command.lookup === 'definition' ? 'definition provider' : command.lookup === 'keyword' ? 'keyword provider' : 'command output history';
       onError(`xi: native lookup unavailable: ${detail}\n`);
       return;
@@ -233,7 +245,12 @@ export class WorkbenchHostCommands {
       let current = sourceViewId;
       for (let index = 0; index < repeats; index += 1) {
         const moved = session.focusAdjacent(current, direction);
-        if (!moved.ok) break;
+        // `focusAdjacent` reports the same view when nothing lies in that direction: past the
+        // leftmost pane (or cycling with `w`/`p` in a single pane) the sidebar is the next window.
+        if (!moved.ok || moved.value === current) {
+          if ((direction === 'left' || direction === 'next' || direction === 'previous') && this.#options.focusSidebar?.() === true) return;
+          break;
+        }
         current = moved.value;
       }
       return;
@@ -322,6 +339,7 @@ export class WorkbenchHostCommands {
     }
     const current = session.views().find((view) => view.viewId === viewId);
     const buffer = current === undefined ? undefined : session.buffer(current.bufferId);
+    if (current === undefined && (command === 'q' || command === 'q!')) return 'quit';
     if (command === 'q' && buffer?.dirty === true) return 'unhandled';
     if (host.sessions.size === 1) return 'unhandled';
     const closingBufferId: DocumentId | undefined = current?.bufferId;

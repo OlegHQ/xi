@@ -68,6 +68,7 @@ export interface ExplorerFileOperationsPort {
   copyPath(from: string, to: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
   removePath(path: string, recursive: boolean, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
   makeDirectory(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
+  writeFileAtomic(path: string, contents: Uint8Array, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
 }
 
 /** Mirrors `packages/services/files/directory-draft`'s `DirectoryOperation`/`DirectoryOperationPlan`
@@ -107,6 +108,12 @@ export interface ExplorerControllerOptions {
   /** Lazily constructs the services-owned `ExplorerTree`/`ExplorerNavigationController`
    * (composition-root work, never duplicated here) and resolves once `attachTree` has run. */
   readonly ensureServices: () => Promise<void>;
+  /** Runs once the tree is bound and the panel is opening (e.g. expand the sidebar's Files section). */
+  readonly onOpen?: () => void;
+  /** `zc` on the tree: collapse the sidebar's Files section (focus returns to the editor). */
+  readonly onCollapse?: () => void;
+  /** Tab on the tree: move keyboard focus to the Outline section. */
+  readonly focusOutline?: () => void;
 }
 
 interface ExplorerDraft {
@@ -124,12 +131,16 @@ interface ExplorerDraft {
  */
 export class ExplorerController {
   #open = false;
+  #visible = false;
   #filtering = false;
   #pendingG = false;
   #pendingGTimer: Disposable | undefined;
   #openGeneration = 0;
   #renameDraft: ExplorerDraft | undefined;
   #copyDraft: ExplorerDraft | undefined;
+  #createDraft: { readonly parentPath: string; readonly text: string } | undefined;
+  #pendingCtrlW = false;
+  #pendingZ = false;
   #deleteConfirm: { readonly nodeId: string } | undefined;
   readonly #undoJournal: { readonly kind: 'rename' | 'copy' | 'delete'; readonly from: string; readonly to: string; readonly journal: unknown }[] = [];
   #tree: ExplorerTreePort | undefined;
@@ -142,6 +153,17 @@ export class ExplorerController {
   }
 
   get isOpen(): boolean { return this.#open; }
+  get isVisible(): boolean { return this.#visible; }
+  /** True while a filter/rename/copy/delete prompt owns typed characters, so `:` must stay here. */
+  get capturesTextInput(): boolean { return this.#filtering || this.#renameDraft !== undefined || this.#copyDraft !== undefined || this.#createDraft !== undefined || this.#deleteConfirm !== undefined; }
+  /** The in-progress rename/copy/create/delete prompt, painted on the panel's footer row. */
+  get promptText(): string | undefined {
+    if (this.#renameDraft !== undefined) return `Rename: ${this.#renameDraft.text}`;
+    if (this.#copyDraft !== undefined) return `Copy to: ${this.#copyDraft.text}`;
+    if (this.#createDraft !== undefined) return `New (dir: name/): ${this.#createDraft.text}`;
+    if (this.#deleteConfirm !== undefined) return `Move ${this.#tree?.readNode(this.#deleteConfirm.nodeId)?.name ?? 'entry'} to trash? y/n`;
+    return undefined;
+  }
 
   /** Binds the lazily-constructed tree/navigation controller once the composition root has
    * created them, and starts forwarding tree refreshes as `XI_EXPLORER_REFRESH` markers.
@@ -159,18 +181,41 @@ export class ExplorerController {
     });
   }
 
+  /** Loads and shows the tree in the sidebar without taking keyboard focus (startup default). */
+  show(): void {
+    if (this.#tree === undefined) {
+      void this.#options.ensureServices().then(() => { if (!this.#open) this.show(); }).catch((error: unknown) => {
+        this.#options.onError(`xi: explorer failed to load: ${error instanceof Error ? error.message : String(error)}\n`);
+      });
+      return;
+    }
+    this.#visible = true;
+    this.#options.onOpen?.();
+    const tree = this.#tree;
+    const rootId = tree.model.roots[0];
+    const root = rootId === undefined ? undefined : tree.readNode(rootId);
+    if (rootId !== undefined && root !== undefined && !root.expanded) {
+      void tree.expand(rootId, false, this.#cancellation.token);
+      void tree.watchRoot('workspace', this.#cancellation.token);
+    }
+    this.#options.host.notifySurfaceChange();
+  }
+
   open(): void {
     this.#options.host.closeAllPanels('explorer');
     this.#open = true;
+    this.#visible = true;
     if (this.#tree === undefined) {
       void this.#options.ensureServices().then(() => { if (this.#open) this.open(); }).catch((error: unknown) => {
         this.#open = false;
+        this.#visible = false;
         this.#options.onError(`xi: explorer failed to load: ${error instanceof Error ? error.message : String(error)}\n`);
       });
       return;
     }
     this.#filtering = false;
     this.#clearPendingG();
+    this.#options.onOpen?.();
     const tree = this.#tree;
     this.#openGeneration = tree.model.generation;
     tree.focus();
@@ -197,8 +242,19 @@ export class ExplorerController {
   close(): void {
     this.#open = false;
     this.#filtering = false;
+    this.#createDraft = undefined;
+    this.#pendingCtrlW = false;
+    this.#pendingZ = false;
     this.#clearPendingG();
     this.#tree?.blur();
+  }
+
+  /** Explicitly collapses the Files section. Losing keyboard focus only calls `close()` so
+   * the tree remains visible beside the editor. */
+  hide(): void {
+    this.#visible = false;
+    this.close();
+    this.#options.host.notifySurfaceChange();
   }
 
   async handleKeypress(event: OwnedVimKeyEvent): Promise<boolean> {
@@ -214,6 +270,18 @@ export class ExplorerController {
       const nodeId = this.#deleteConfirm.nodeId;
       this.#deleteConfirm = undefined;
       if (confirmed) await this.#applyDelete(nodeId);
+      return true;
+    }
+    if (this.#createDraft !== undefined) {
+      const draft = this.#createDraft;
+      if (key === 'escape' || event.raw === '') { this.#createDraft = undefined; return true; }
+      if (key === 'enter' || key === 'return' || event.raw === '\r' || event.raw === '\n') {
+        this.#createDraft = undefined;
+        await this.#applyCreate(draft.parentPath, draft.text);
+        return true;
+      }
+      if (key === 'backspace' || key === 'backspace2' || event.raw === '') { this.#createDraft = { ...draft, text: draft.text.slice(0, -1) }; return true; }
+      if (!event.ctrl && !event.meta && !event.option && event.raw.length === 1 && event.raw >= ' ' && event.raw !== '') this.#createDraft = { ...draft, text: `${draft.text}${event.raw}` };
       return true;
     }
     if (this.#renameDraft !== undefined || this.#copyDraft !== undefined) {
@@ -295,6 +363,24 @@ export class ExplorerController {
       await navigation.handle('last');
       return true;
     }
+    // Ctrl-W + w/h/j/k/l/p: back to the editor, like leaving a Vim window.
+    if (this.#pendingCtrlW) { this.#pendingCtrlW = false; if ('whjklp'.includes(key)) this.close(); return true; }
+    if (event.ctrl && key === 'w') { this.#pendingCtrlW = true; return true; }
+    // Tab: hand focus to the Outline section; zc/zo/za: collapse/expand/toggle the Files section.
+    if (key === 'tab' || event.raw === '\t') { this.#options.focusOutline?.(); return true; }
+    if (this.#pendingZ) {
+      this.#pendingZ = false;
+      if (key === 'c' || key === 'a') { this.close(); this.#options.onCollapse?.(); this.#options.host.notifySurfaceChange(); }
+      return true;
+    }
+    if (key === 'z' && !event.ctrl && !event.meta && !event.shift) { this.#pendingZ = true; return true; }
+    if (key === 'a' && !event.ctrl && !event.meta) {
+      const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
+      const rootId = tree.model.roots[0];
+      const parentPath = node === undefined ? (rootId === undefined ? undefined : tree.readNode(rootId)?.path) : node.kind === 'file' ? node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '') : node.path;
+      if (parentPath !== undefined) this.#createDraft = { parentPath, text: '' };
+      return true;
+    }
     if (key === 'r' && !event.ctrl && !event.meta) {
       const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
       if (node !== undefined && node.kind !== 'root') this.#renameDraft = { nodeId: node.id, text: node.name };
@@ -333,15 +419,40 @@ export class ExplorerController {
     this.close();
   }
 
-  /** Shared body of `handlePanelPointer`'s explorer branch: select the clicked row, then
-   * either toggle a container open or open the file it names. */
+  /** Selects `absolutePath` in the visible tree (expanding its parents) without taking
+   * keyboard focus -- the Files section follows whatever the picker/search just opened. */
+  revealPath(absolutePath: string): void {
+    const relative = this.#options.workspaceRelativePath(absolutePath);
+    if (relative === undefined || this.#tree === undefined) return;
+    void this.#tree.reveal('workspace', relative, this.#cancellation.token);
+  }
+
+  /** Takes keyboard focus for the already-visible tree without `open()`'s expand/reveal work:
+   * a click on the sidebar must leave the cursor there (VS Code semantics). */
+  focus(): void {
+    if (this.#open || this.#tree === undefined) return;
+    this.#options.host.closeAllPanels('explorer');
+    this.#open = true;
+    this.#filtering = false;
+    this.#clearPendingG();
+    this.#options.onOpen?.();
+    this.#openGeneration = this.#tree.model.generation;
+    this.#tree.focus();
+    this.#options.marker('XI_EXPLORER_OPEN', { selectedId: this.#tree.model.selectedId });
+  }
+
+  /** Shared body of `handlePanelPointer`'s explorer branch: focus the tree, select the clicked
+   * row, then either toggle a container open or preview the file it names. Focus stays in the
+   * tree after a click (VS Code single-click semantics); Enter still opens and returns focus. */
   handlePointerActivate(itemId: string, generation: number): boolean {
     const tree = this.#tree;
     if (tree === undefined || tree.model.generation !== generation) return true;
     const node = tree.readNode(itemId);
-    if (node === undefined || node.kind === 'state' || !tree.select(node.id)) return true;
+    if (node === undefined || node.kind === 'state') return true;
+    this.focus();
+    if (!tree.select(node.id)) return true;
     if (node.kind === 'directory' || node.kind === 'root') void this.#navigation?.handle('open');
-    else void this.openNode(node);
+    else void this.#options.host.openBufferAtPath(node.path, { preview: true });
     return true;
   }
 
@@ -386,6 +497,32 @@ export class ExplorerController {
    * scoped, not persisted) so 'u' can reverse the most recent one. Trash lives under the
    * workspace root (`trashDirectory`) so a delete's rename onto the same filesystem stays
    * atomic and genuinely restorable, unlike a real permanent removal. */
+  /** `a`: create `<parent>/<name>` (a trailing `/` makes a directory; missing parents are created). */
+  async #applyCreate(parentPath: string, rawName: string): Promise<void> {
+    const name = rawName.trim();
+    if (name.length === 0 || name.includes('..') || name.startsWith('/')) return;
+    const isDirectory = name.endsWith('/');
+    const target = `${parentPath}/${name.replace(/\/+$/u, '')}`;
+    const cancellation = new CancellationSource();
+    try {
+      if ((await this.#options.filesystem.stat(target, cancellation.token)).ok) { this.#options.onError(`xi: create failed: ${name} already exists\n`); return; }
+      const directory = isDirectory ? target : target.slice(0, target.lastIndexOf('/'));
+      if (directory.length > parentPath.length) {
+        const made = await this.#options.filesystem.makeDirectory(directory, cancellation.token);
+        if (!made.ok) { this.#options.onError(`xi: create failed: ${made.error.message}\n`); return; }
+      }
+      if (!isDirectory) {
+        const written = await this.#options.filesystem.writeFileAtomic(target, new Uint8Array(), cancellation.token);
+        if (!written.ok) { this.#options.onError(`xi: create failed: ${written.error.message}\n`); return; }
+      }
+      this.#options.marker('XI_EXPLORER_CREATE_APPLIED', { path: target, directory: isDirectory });
+      const relative = this.#options.workspaceRelativePath(target);
+      if (relative !== undefined && this.#tree !== undefined) void this.#tree.reveal('workspace', relative, this.#cancellation.token);
+    } finally {
+      cancellation.dispose();
+    }
+  }
+
   async #applyRename(nodeId: string, newName: string): Promise<void> {
     const tree = this.#tree;
     if (tree === undefined) return;

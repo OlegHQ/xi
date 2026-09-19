@@ -19,80 +19,91 @@ export interface WorkbenchTheme {
   readonly cursorOnSelection?: string;
   readonly motionTrail?: string;
   readonly operatorPreview?: string;
+  /** Background of workspace-search matches painted in the editor. */
+  readonly searchMatch?: string;
+  /** Git diff view: added/removed line backgrounds and the hunk-header foreground. Unset
+   * themes fall back to stable defaults in `packages/ui/git/diff.ts`. */
+  readonly diffAdded?: string;
+  readonly diffRemoved?: string;
+  readonly diffHunk?: string;
   /** Optional per-kind syntax foreground colors; unset kinds paint with the plain foreground. */
   readonly syntax?: Partial<Record<SyntaxTokenKind, string>>;
 }
 
 const LIGHT_SYNTAX_COLORS: Partial<Record<SyntaxTokenKind, string>> = Object.freeze({
-  comment: '#6A737D',
-  string: '#22863A',
-  number: '#B08800',
-  keyword: '#D73A49',
-  boolean: '#005CC5',
-  type: '#6F42C1',
-  function: '#6F42C1',
-  operator: '#D73A49',
-  punctuation: '#24292E',
-  variable: '#24292E',
-  property: '#005CC5',
-  constant: '#005CC5',
+  comment: '#8A8FA0',
+  string: '#3B8A3E',
+  number: '#C25A00',
+  keyword: '#7C3AED',
+  boolean: '#1F5FBF',
+  type: '#5B6ABF',
+  function: '#1F5FBF',
+  operator: '#1A8A8F',
+  punctuation: '#4C5566',
+  variable: '#1E2430',
+  property: '#B02A45',
+  constant: '#B02A45',
 });
 
 const DARK_SYNTAX_COLORS: Partial<Record<SyntaxTokenKind, string>> = Object.freeze({
-  comment: '#7F8C98',
-  string: '#98C379',
-  number: '#D19A66',
-  keyword: '#E06C75',
-  boolean: '#56B6C2',
-  type: '#C678DD',
-  function: '#C678DD',
-  operator: '#E06C75',
-  punctuation: '#D8DEE9',
-  variable: '#D8DEE9',
-  property: '#56B6C2',
-  constant: '#56B6C2',
+  comment: '#6C7086',
+  string: '#A6E3A1',
+  number: '#FAB387',
+  keyword: '#CBA6F7',
+  boolean: '#89B4FA',
+  type: '#F9E2AF',
+  function: '#89B4FA',
+  operator: '#94E2D5',
+  punctuation: '#9399B2',
+  variable: '#CDD6F4',
+  property: '#F38BA8',
+  constant: '#FAB387',
 });
 
+/** Warm, high-contrast light theme: near-white paper, cool blue accent, amber motion trail. */
 export const LIGHT_WORKBENCH_THEME: WorkbenchTheme = Object.freeze({
-  background: '#FAF9F6',
-  surface: '#F1F0EC',
-  surfaceActive: '#E7EDF4',
-  foreground: '#24292E',
-  muted: '#60666D',
-  border: '#D5D4CF',
-  accent: '#245A88',
-  error: '#A52A36',
-  selectionPrimary: '#D6E5F2',
-  selectionSecondary: '#E4ECF3',
-  cursorPrimary: '#1A2835',
-  cursorSecondary: '#405B72',
-  cursorOnSelection: '#6B3FA0',
-  motionTrail: '#EEF2F4',
-  operatorPreview: '#C4D8E8',
+  background: '#FCFCFA',
+  surface: '#F1F2F5',
+  surfaceActive: '#E2E8F2',
+  foreground: '#1E2430',
+  muted: '#5B6572',
+  border: '#D3D8DF',
+  accent: '#1F5FBF',
+  error: '#C0392B',
+  selectionPrimary: '#CFE1FA',
+  selectionSecondary: '#E1EBF9',
+  cursorPrimary: '#14202E',
+  cursorSecondary: '#3F5670',
+  cursorOnSelection: '#6D3BB5',
+  motionTrail: '#FFEDB3',
+  operatorPreview: '#F6C7C2',
+  searchMatch: '#F5E3A1',
   syntax: LIGHT_SYNTAX_COLORS,
 });
 
 export const ASCII_WORKBENCH_THEME: WorkbenchTheme = Object.freeze({
   ...LIGHT_WORKBENCH_THEME,
-  border: '#60666D',
+  border: '#5B6572',
 });
 
+/** Catppuccin-Mocha-inspired dark theme: deep navy base, lavender/blue accents. */
 export const DARK_WORKBENCH_THEME: WorkbenchTheme = Object.freeze({
-  background: '#1E2126',
-  surface: '#262A31',
-  surfaceActive: '#2E3440',
-  foreground: '#D8DEE9',
-  muted: '#8B93A1',
-  border: '#3B4048',
-  accent: '#6FA8DC',
-  error: '#E06C75',
-  selectionPrimary: '#3B4A5A',
-  selectionSecondary: '#2E3A47',
-  cursorPrimary: '#D8DEE9',
-  cursorSecondary: '#8B93A1',
-  cursorOnSelection: '#C792EA',
-  motionTrail: '#2A2E35',
-  operatorPreview: '#3E5670',
+  background: '#1E1E2E',
+  surface: '#181825',
+  surfaceActive: '#313244',
+  foreground: '#CDD6F4',
+  muted: '#A6ADC8',
+  border: '#45475A',
+  accent: '#89B4FA',
+  error: '#F38BA8',
+  selectionPrimary: '#45475A',
+  selectionSecondary: '#313244',
+  cursorPrimary: '#F5E0DC',
+  cursorSecondary: '#B4BEFE',
+  cursorOnSelection: '#CBA6F7',
+  motionTrail: '#4A3D63',
+  operatorPreview: '#6B3A46',
+  searchMatch: '#5E5230',
   syntax: DARK_SYNTAX_COLORS,
 });
 

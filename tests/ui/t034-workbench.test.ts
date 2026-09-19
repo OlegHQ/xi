@@ -7,6 +7,7 @@ import { openTextDocument, type DocumentReadPort, type DocumentSnapshot } from '
 import { createSelectionSet } from '../../packages/selections/src/index';
 import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../../packages/workbench/src/index';
 import { ASCII_WORKBENCH_THEME, OpenTuiTerminalAdapter, WorkbenchRenderable, calculateWorkbenchLayout, type WorkbenchTheme } from '../../packages/ui/src/index';
+import { createChromeSurfaceNode, createThemeBridge, mountSolidRoot } from '../../packages/ui/src/solid/composition';
 
 const VIEW_ID = id<ViewId>('T034-view');
 const DOCUMENT_ID = id<DocumentId>('T034-document');
@@ -109,6 +110,13 @@ async function renderAt(width: number, height: number, options: { readonly ascii
   };
   const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, renderOptions);
   setup.renderer.root.add(viewport);
+  await mountSolidRoot(setup.renderer, [createChromeSurfaceNode({
+    workbench,
+    theme: viewport.theme,
+    fileLabel: 'editor.ts',
+    ...(options.ascii === undefined ? {} : { ascii: options.ascii }),
+    showBottomPanel: options.bottom ?? false,
+  }, createThemeBridge(viewport.theme))]);
   await setup.renderOnce();
   return { frame: viewport.lastFrame, chars: setup.captureCharFrame(), viewport, setup };
 }
@@ -128,7 +136,7 @@ async function testRenderedFrames(): Promise<void> {
   const rendered = await renderAt(120, 40, { bottom: true });
   assert.equal(rendered.frame?.layout.sidebarVisible, true, 'T034-FRAME-120-01 sidebar layout is published');
   assert.equal(rendered.frame?.frame?.selections.length, 2, 'T034-FRAME-120-02 primary and secondary selections are projected');
-  assert.match(rendered.chars, /Files  Search  Git/u, 'T034-FRAME-120-03 shell labels are visible');
+  assert.match(rendered.chars, /󰉋 Files\s+ Search\s+ Git/u, 'T034-FRAME-120-03 icon-backed shell labels are visible');
   assert.match(rendered.chars, /NORMAL/u, 'T034-FRAME-120-04 mode is textual and discoverable');
   rendered.setup.resize(80, 24);
   await rendered.setup.renderOnce();
@@ -189,6 +197,12 @@ async function testLowColorAndTerminalFailure(): Promise<void> {
     theme: lowColorTheme,
   });
   lowColorSetup.renderer.root.add(lowColor);
+  await mountSolidRoot(lowColorSetup.renderer, [createChromeSurfaceNode({
+    workbench: makeWorkbench().workbench,
+    theme: lowColor.theme,
+    fileLabel: 'editor.ts',
+    showBottomPanel: false,
+  }, createThemeBridge(lowColor.theme))]);
   await lowColorSetup.renderOnce();
   assert.equal(lowColor.lastFrame?.frame?.selections.length, 2, 'T034-LOW-COLOR-01 cursor markers remain projected with a restricted palette');
   assert.match(lowColorSetup.captureCharFrame(), /NORMAL/u, 'T034-LOW-COLOR-02 status remains readable with a restricted palette');
@@ -229,6 +243,13 @@ async function testGitBranchStatus(): Promise<void> {
     gitBranch: () => 'feature/status-branch',
   });
   setup.renderer.root.add(viewport);
+  await mountSolidRoot(setup.renderer, [createChromeSurfaceNode({
+    workbench,
+    theme: viewport.theme,
+    fileLabel: 'editor.ts',
+    gitBranch: () => 'feature/status-branch',
+    showBottomPanel: false,
+  }, createThemeBridge(viewport.theme))]);
   await setup.renderOnce();
   assert.match(setup.captureCharFrame(), /editor\.ts \(feature\/status-branch\)/u, 'T034-GIT-BRANCH-01 status line shows the branch next to the file name');
   setup.renderer.destroy();
@@ -236,6 +257,12 @@ async function testGitBranchStatus(): Promise<void> {
   const withoutBranch = await createTestRenderer({ width: 120, height: 40, bufferedOutput: 'memory', gatherStats: true });
   const plainViewport = new WorkbenchRenderable(withoutBranch.renderer.root.ctx, { workbench, fileLabel: 'editor.ts' });
   withoutBranch.renderer.root.add(plainViewport);
+  await mountSolidRoot(withoutBranch.renderer, [createChromeSurfaceNode({
+    workbench,
+    theme: plainViewport.theme,
+    fileLabel: 'editor.ts',
+    showBottomPanel: false,
+  }, createThemeBridge(plainViewport.theme))]);
   await withoutBranch.renderOnce();
   assert.doesNotMatch(withoutBranch.captureCharFrame(), /\(feature/u, 'T034-GIT-BRANCH-02 no branch reader omits the parenthetical');
   withoutBranch.renderer.destroy();

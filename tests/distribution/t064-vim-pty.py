@@ -16,6 +16,17 @@ BUN = shutil.which("bun")
 if BUN is None:
     raise SystemExit("bun is required for the source PTY fixture")
 
+
+def read_for(master: int, captured: bytearray, seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([master], [], [], 0.05)
+        if readable:
+            try:
+                captured.extend(os.read(master, 65536))
+            except OSError:
+                return
+
 with tempfile.TemporaryDirectory(prefix="xi-t064-vim-") as temporary:
     path = Path(temporary) / "sample.txt"
     path.write_text("hello world\n", encoding="utf-8")
@@ -41,7 +52,8 @@ with tempfile.TemporaryDirectory(prefix="xi-t064-vim-") as temporary:
             raise SystemExit("T064 Vim PTY did not become ready")
         for key in (b"d", b"w", b":", b"w", b"q", b"\r"):
             os.write(master, key)
-            time.sleep(0.08)
+            read_for(master, captured, 0.08)
+        read_for(master, captured, 0.3)
         child.wait(timeout=5)
     finally:
         if child.poll() is None:

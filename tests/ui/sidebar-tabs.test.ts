@@ -17,8 +17,10 @@ import {
   type PointerSearchPort,
   type PointerWorkbenchEvent,
 } from '../../packages/workbench/input/pointer-router';
-import { WorkbenchRenderable, calculateWorkbenchLayout, computeTabLayout } from '../../packages/ui/src/workbench';
+import { WorkbenchRenderable, calculateWorkbenchLayout, computeSidebarTabLayout, computeTabLayout } from '../../packages/ui/src/workbench';
+import { createChromeSurfaceNode, createThemeBridge, mountSolidRoot } from '../../packages/ui/src/solid/composition';
 import { parseColor } from '@opentui/core/renderer';
+import { wireControllerPanels } from '../../apps/xi/src/wiring/pointer';
 
 const VIEW_ID = id<ViewId>('SB-view');
 const DOCUMENT_ID = id<DocumentId>('SB-document');
@@ -66,17 +68,28 @@ async function renderWithSidebar(sidebar: () => SidebarReadModel, ascii = false)
   const setup = await createTestRenderer({ width: 120, height: 30, bufferedOutput: 'memory', gatherStats: true });
   const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench: makeWorkbench(), fileLabel: 'editor.ts', sidebar, ascii });
   setup.renderer.root.add(viewport);
+  await mountSolidRoot(setup.renderer, [createChromeSurfaceNode({
+    workbench: makeWorkbench(),
+    theme: viewport.theme,
+    fileLabel: 'editor.ts',
+    ascii,
+    showBottomPanel: false,
+    sidebar,
+  }, createThemeBridge(viewport.theme))]);
   await setup.renderOnce();
   return { chars: setup.captureCharFrame(), setup };
 }
 
-// T-SIDEBAR-TABS-01: default sections render with chevrons -- Files expanded (▾), Outline
-// collapsed (▸) while its outline model has no symbols yet.
+// T-SIDEBAR-TABS-01: default sections render with chevrons -- Files collapsed (▸) until the
+// Explorer opens, Outline collapsed (▸) while its outline model has no symbols yet.
 async function testSectionChevronsDefault(): Promise<void> {
   const controller = new SidebarController({ outline: new FakeOutline() });
   const { chars, setup } = await renderWithSidebar(() => controller.readModel());
-  assert.match(chars, /▾ Files/u, 'T-SIDEBAR-TABS-01a Files renders expanded with a down chevron');
+  assert.match(chars, /▸ .*Files/u, 'T-SIDEBAR-TABS-01a Files renders collapsed with a right chevron until the Explorer opens');
   assert.match(chars, /▸ Outline/u, 'T-SIDEBAR-TABS-01b Outline renders collapsed with a right chevron while empty');
+  assert.match(chars, /󰉋 Files/u, 'T-SIDEBAR-TABS-01c Files has its navigation icon');
+  assert.match(chars, / Search/u, 'T-SIDEBAR-TABS-01d Search has its navigation icon');
+  assert.match(chars, / Git/u, 'T-SIDEBAR-TABS-01e Git has its navigation icon');
   setup.renderer.destroy();
 }
 
@@ -95,6 +108,7 @@ async function testSectionChevronsOutlineExpanded(): Promise<void> {
 // of the Unicode triangles, matching the rest of the ASCII fallback policy.
 async function testSectionChevronsAscii(): Promise<void> {
   const controller = new SidebarController({ outline: new FakeOutline() });
+  controller.expandSection('files');
   const { chars, setup } = await renderWithSidebar(() => controller.readModel(), true);
   assert.match(chars, /v Files/u, 'T-SIDEBAR-TABS-03a ASCII Files chevron is a plain "v"');
   assert.match(chars, /> Outline/u, 'T-SIDEBAR-TABS-03b ASCII Outline chevron is a plain ">"');
@@ -123,6 +137,13 @@ async function testTabBarAttributes(): Promise<void> {
   const setup = await createTestRenderer({ width: 120, height: 30, bufferedOutput: 'memory', gatherStats: true });
   const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench: makeWorkbench(), fileLabel: 'editor.ts', tabs: () => tabs });
   setup.renderer.root.add(viewport);
+  await mountSolidRoot(setup.renderer, [createChromeSurfaceNode({
+    workbench: makeWorkbench(),
+    theme: viewport.theme,
+    fileLabel: 'editor.ts',
+    showBottomPanel: false,
+    tabs: () => tabs,
+  }, createThemeBridge(viewport.theme))]);
   await setup.renderOnce();
   const frame = setup.captureSpans();
   const headerRow = frame.lines[0];
@@ -160,7 +181,7 @@ const noopExplorer: PointerExplorerPort = {
   selectForContextMenu: () => undefined,
   activateContextMenuAction: () => {},
 };
-const noopSearch: PointerSearchPort = { readModel: () => undefined, setSelectedIndex: () => {}, openMatch: async () => {} };
+const noopSearch: PointerSearchPort = { readModel: () => undefined, setSelectedIndex: () => {}, openMatch: async () => {}, previewSelected: () => {}, focusQuery: () => {}, focusReplace: () => {}, toggleCollapsed: () => {} };
 const noopProblems: PointerProblemsPort = { model: { generation: 0, all: [] }, setSelectedProblemIndex: () => {}, openProblem: async () => {} };
 
 function sidebarSplitterEvent(action: PointerControlEvent['action'], firstSize: number, secondSize: number): PointerWorkbenchEvent {
@@ -223,11 +244,76 @@ function testLayoutHonorsSidebarWidthOverride(): void {
   assert.equal(clampedHigh.sidebarWidth, 40, 'T-SIDEBAR-TABS-07c a too-large override is clamped to the 40-cell maximum');
 }
 
+function testSidebarTabTargetsFillHeader(): void {
+  const tabs = computeSidebarTabLayout(22);
+  assert.deepEqual(tabs.map(tab => [tab.id, tab.x, tab.width]), [
+    ['files', 0, 7], ['search', 7, 8], ['git', 15, 7],
+  ], 'T-SIDEBAR-TABS-08a the narrow header gives Search enough room for its wider label');
+  assert.equal(tabs.reduce((sum, tab) => sum + tab.width, 0), 22, 'T-SIDEBAR-TABS-08b the visible tabs fill the entire clickable header');
+  for (let column = 0; column < 22; column += 1) {
+    assert.equal(tabs.filter(tab => column >= tab.x && column < tab.x + tab.width).length, 1, `T-SIDEBAR-TABS-08c column ${column} belongs to exactly one visible tab`);
+  }
+}
+
+/** Regression: Files (expanded) -> Search -> Git -> Files used to toggle the Files section
+ * closed (its content was already hidden by the other panel), leaving the sidebar blank. */
+function testFilesTabSwitchesBackFromOtherPanels(): void {
+  const panels = new Map<string, { isOpen(): boolean; close(): void }>();
+  const host = {
+    registerPanel: (name: string, panel: { isOpen(): boolean; close(): void }) => { panels.set(name, panel); },
+    closeAllPanels: (keep?: string) => { for (const [name, panel] of panels) if (name !== keep && panel.isOpen()) panel.close(); },
+    notifySurfaceChange: () => {},
+  };
+  const feature = (name: string) => {
+    let open = false;
+    return { get isOpen() { return open; }, open: () => { host.closeAllPanels(name); open = true; }, close: () => { open = false; }, hide: () => { open = false; } };
+  };
+  const explorerFeature = feature('explorer');
+  const searchFeature = feature('search');
+  const pickerFeature = feature('picker');
+  const picker = { get isOpen() { return pickerFeature.isOpen; }, mode: 'git', close: async () => { pickerFeature.close(); } };
+  const gitPanelFeature = feature('git');
+  const gitDiffFeature = feature('git-diff');
+  const sidebarController = new SidebarController({
+    outline: { hasSymbols: false },
+    panelState: () => (searchFeature.isOpen ? 'search' : gitPanelFeature.isOpen ? 'git' : 'files'),
+  });
+  const controls = new Map<string, () => void>();
+  const controllers = {
+    pointerRouter: { publishControls: (list: readonly { id: string; activate: () => void }[]) => { for (const control of list) controls.set(control.id, control.activate); } },
+    host, sidebarController, explorerFeature, searchFeature, gitPanelFeature, picker, gitDiffFeature,
+    problemsFeature: { isProblemsOpen: false, isOutputOpen: false },
+    overlayFeature: { isOutlineOpen: false, isHoverOpen: false },
+    completionFeature: { isCompletionOpen: false, isSignatureOpen: false },
+    directoryDraftController: { isReviewOpen: false },
+    workbench: {},
+    ensureGitAndOpenPicker: async () => { pickerFeature.open(); },
+  };
+  wireControllerPanels(controllers as unknown as Parameters<typeof wireControllerPanels>[0]);
+  const click = (id: string): void => { const activate = controls.get(id); assert.ok(activate, `SB-TAB-${id}`); activate(); };
+  click('sidebar.files');
+  assert.equal(sidebarController.readModel().panel, 'files');
+  assert.ok(explorerFeature.isOpen, 'SB-TAB-01 Files opens the explorer');
+  click('sidebar.search');
+  assert.equal(sidebarController.readModel().panel, 'search');
+  click('sidebar.git');
+  assert.equal(sidebarController.readModel().panel, 'git');
+  assert.ok(!searchFeature.isOpen, 'SB-TAB-02 Git closes Search');
+  click('sidebar.files');
+  assert.equal(sidebarController.readModel().panel, 'files', 'SB-TAB-03 Files closes the Git picker');
+  assert.ok(explorerFeature.isOpen, 'SB-TAB-03 Files reopens the explorer instead of collapsing it');
+  assert.equal(sidebarController.readModel().sections[0]?.expanded, true, 'SB-TAB-03 Files section stays expanded');
+  click('sidebar.files');
+  assert.ok(!explorerFeature.isOpen, 'SB-TAB-04 the chevron still toggles while on the Files panel');
+}
+
 await testSectionChevronsDefault();
+testFilesTabSwitchesBackFromOtherPanels();
 await testSectionChevronsOutlineExpanded();
 await testSectionChevronsAscii();
 await testTabBarAttributes();
 testTabOverflowKeepsActiveVisible();
 testSidebarSplitterDragChangesWidth();
 testLayoutHonorsSidebarWidthOverride();
-console.log('T-SIDEBAR-TABS sidebar/tab chrome passed section-chevron, outline auto-expand, ASCII fallback, tab-attribute, overflow, splitter-drag and layout-override fixtures');
+testSidebarTabTargetsFillHeader();
+console.log('T-SIDEBAR-TABS sidebar/tab chrome passed section-chevron, files-tab-switchback, outline auto-expand, ASCII fallback, tab-attribute, overflow, splitter-drag and layout-override fixtures');

@@ -15,6 +15,8 @@ export interface MotionPaintTokens {
   readonly cursorOnSelection: string;
   readonly motionTrail: string;
   readonly operatorPreview: string;
+  /** Background of workspace-search matches shown in the editor while the Search panel is open. */
+  readonly searchMatch: string;
 }
 
 export interface MotionPaintThemeSource {
@@ -25,6 +27,7 @@ export interface MotionPaintThemeSource {
   readonly cursorOnSelection?: string;
   readonly motionTrail?: string;
   readonly operatorPreview?: string;
+  readonly searchMatch?: string;
 }
 
 export const DEFAULT_MOTION_PAINT_TOKENS: MotionPaintTokens = Object.freeze({
@@ -35,6 +38,7 @@ export const DEFAULT_MOTION_PAINT_TOKENS: MotionPaintTokens = Object.freeze({
   cursorOnSelection: '#6B3FA0',
   motionTrail: '#EEF2F4',
   operatorPreview: '#C4D8E8',
+  searchMatch: '#F5E3A1',
 });
 
 /** Resolve optional theme tokens while retaining T034's small theme contract. */
@@ -47,6 +51,7 @@ export function resolveMotionPaintTokens(theme: MotionPaintThemeSource): MotionP
     cursorOnSelection: theme.cursorOnSelection ?? DEFAULT_MOTION_PAINT_TOKENS.cursorOnSelection,
     motionTrail: theme.motionTrail ?? DEFAULT_MOTION_PAINT_TOKENS.motionTrail,
     operatorPreview: theme.operatorPreview ?? DEFAULT_MOTION_PAINT_TOKENS.operatorPreview,
+    searchMatch: theme.searchMatch ?? DEFAULT_MOTION_PAINT_TOKENS.searchMatch,
   });
 }
 

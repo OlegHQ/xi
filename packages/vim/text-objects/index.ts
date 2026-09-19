@@ -249,11 +249,14 @@ export function extendVimVisualTextObject(
   const objectEnd = object.value.end as number;
   const samePoint = selection.anchor === selection.head;
   if (samePoint) {
-    const head = object.value.kind === 'linewise'
-      ? selection.direction === 'forward' ? lastLineStartBefore(snapshot, objectEnd) : asOffset(objectStart)
-      : selection.direction === 'forward' ? previousGraphemeStart(snapshot, objectEnd) : asOffset(objectStart);
-    if (head === null) return failure('document-read-failed');
-    return visualSelection(snapshot, selection.anchor, head, selection.direction, object.value.kind, objectStart, objectEnd);
+    // nvim: `viw` / `vi{` from a single-character Visual selection selects the whole
+    // object -- the anchor (VIsual) moves to the object's start and the cursor lands
+    // on its last character (or last line for linewise objects), always forward.
+    // nvim --headless --clean -c "call setline(1,['foo bar baz'])" -c 'normal! 5lviwd' -> ['foo  baz']
+    const head = object.value.kind === 'linewise' ? lastLineStartBefore(snapshot, objectEnd) : previousGraphemeStart(snapshot, objectEnd);
+    const anchor = asOffset(objectStart);
+    if (head === null || anchor === null) return failure('document-read-failed');
+    return visualSelection(snapshot, anchor, head, 'forward', object.value.kind, objectStart, objectEnd);
   }
 
   const current = selectionRange(snapshot, selection);

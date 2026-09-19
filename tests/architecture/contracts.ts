@@ -38,6 +38,7 @@ async function verifyWiringModulesCompose(failures: string[]): Promise<void> {
   const { NodeFilesystemPort } = await import('../../packages/platform/src/entrypoints/launch');
   const { DiagnosticStore } = await import('../../packages/services/src/entrypoints/launch');
   const { openTextDocument } = await import('../../packages/document/src/entrypoints/launch');
+  const { StatusMessageController } = await import('../../packages/workbench/src/entrypoints/launch');
 
   class FakeProcessPort {
     spawn(): ReturnType<import('../../packages/contracts/src/index').ProcessPort['spawn']> {
@@ -67,6 +68,7 @@ async function verifyWiringModulesCompose(failures: string[]): Promise<void> {
     readDocumentText: () => '',
     workbenchBuffers: () => [],
     renameBufferPath: () => {},
+    statusMessages: new StatusMessageController(),
   });
   await languageWiring.ensureLanguage();
   await languageWiring.ensureLanguage();

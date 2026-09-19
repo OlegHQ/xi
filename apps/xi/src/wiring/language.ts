@@ -3,7 +3,7 @@ import type { TextFileDocument } from '../../../../packages/document/src/entrypo
 import type { NodeFilesystemPort, NodeProcessPort } from '../../../../packages/platform/src/entrypoints/launch';
 import type { LanguageConfig, LanguageServerConfig } from '../../../../packages/services/src/entrypoints/config';
 import type { Disposable } from '../../../../packages/primitives/src/entrypoints/launch';
-import type { LanguageOverlayController, CompletionSnippetController, WorkspaceEditsController, WorkbenchSessionOptions } from '../../../../packages/workbench/src/entrypoints/launch';
+import type { LanguageOverlayController, CompletionSnippetController, WorkspaceEditsController, WorkbenchSessionOptions, StatusMessageController } from '../../../../packages/workbench/src/entrypoints/launch';
 import { languageIdForPath } from '../../../../packages/workbench/src/entrypoints/launch';
 import type { LaunchServices, LanguageServices } from './types';
 
@@ -14,7 +14,7 @@ import type { LaunchServices, LanguageServices } from './types';
 type CommittedDocumentChange = NonNullable<WorkbenchSessionOptions['onDocumentChange']> extends (change: infer C) => void ? C : never;
 
 type DiagnosticStore = InstanceType<LaunchServices['DiagnosticStore']>;
-type LanguageServerSession = InstanceType<LanguageServices['LanguageServerSession']>;
+type LanguageServerSession = InstanceType<LanguageServices['LanguageServerRouter']>;
 type LanguageNavigationController = InstanceType<LanguageServices['LanguageNavigationController']>;
 type CompletionController = InstanceType<LanguageServices['CompletionController']>;
 type LanguageServerCompletionProvider = InstanceType<LanguageServices['LanguageServerCompletionProvider']>;
@@ -39,6 +39,7 @@ export interface LanguageWiringDeps {
   readonly readDocumentText: (document: TextFileDocument) => string | undefined;
   readonly workbenchBuffers: () => readonly { readonly bufferId: DocumentId; readonly documentId: DocumentId; readonly path: string | undefined }[];
   readonly renameBufferPath: (bufferId: DocumentId, path: string) => void;
+  readonly statusMessages: StatusMessageController;
 }
 
 /** Late-bound: constructed after `host`/`overlayFeature`/`completionFeature`/`workspaceEditsFeature`
@@ -75,6 +76,19 @@ export interface LanguageWiring {
 /** Owns the language-server session, navigation/completion/signature/workspace-edit controllers
  * and the lazy `ensureLanguage()` boot sequence -- previously ~11 top-level `let`s in `main()`
  * plus their tightly-coupled init closures (T116's language-init cluster). */
+// The language server command/args/rootMarkers a resolved languageId should launch, from
+// languages.toml's [[language]].language-servers -> [language-server.<name>] indirection.
+// Undefined means "no server": the hardcoded typescript-language-server fallback applies
+// only to the languages it serves, never to one Xi merely highlights (json/toml/markdown).
+function resolveLanguageServerConfig(deps: LanguageWiringDeps, resolvedLanguageId: string): { readonly name: string; readonly command: string; readonly args: readonly string[]; readonly rootMarkers: readonly string[] } | undefined {
+  const language = deps.configuredLanguages?.find((entry) => entry.name === resolvedLanguageId);
+  const serverName = language?.languageServers[0];
+  const server = serverName === undefined ? undefined : deps.configuredLanguageServers?.find((entry) => entry.name === serverName);
+  if (server !== undefined) return server;
+  if (resolvedLanguageId !== 'typescript' && resolvedLanguageId !== 'javascript') return undefined;
+  return { name: 'typescript', command: 'typescript-language-server', args: ['--stdio'], rootMarkers: ['tsconfig.json', 'package.json', '.git'] };
+}
+
 export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
   let languageSession: LanguageServerSession | undefined;
   let navigationController: LanguageNavigationController | undefined;
@@ -104,17 +118,6 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
     return languageIdForPath(path);
   }
 
-  // The language server command/args/rootMarkers a resolved languageId should launch, from
-  // languages.toml's [[language]].language-servers -> [language-server.<name>] indirection,
-  // falling back to today's hardcoded typescript-language-server when nothing configures it.
-  function resolveLanguageServerConfig(resolvedLanguageId: string): { readonly name: string; readonly command: string; readonly args: readonly string[]; readonly rootMarkers: readonly string[] } {
-    const fallback = { name: 'typescript', command: 'typescript-language-server', args: ['--stdio'], rootMarkers: ['tsconfig.json', 'package.json', '.git'] };
-    const language = deps.configuredLanguages?.find((entry) => entry.name === resolvedLanguageId);
-    const serverName = language?.languageServers[0];
-    const server = serverName === undefined ? undefined : deps.configuredLanguageServers?.find((entry) => entry.name === serverName);
-    return server ?? fallback;
-  }
-
   // Shared by the launch document and by BufferHost's onBufferOpened, so every buffer -- not
   // only the one opened at process launch -- gets a didOpen once a language session exists,
   // whether it was already open before the session started (backfilled below) or opened
@@ -122,29 +125,36 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
   function admitBufferToLanguageSession(path: string | undefined, documentId: DocumentId, document: TextFileDocument): void {
     if (languageSession === undefined || path === undefined) return;
     const bufferLanguageId = resolveLanguageId(path);
-    if (bufferLanguageId === undefined) return;
+    // Languages Xi only highlights (json/toml/markdown) have no server: skip silently.
+    if (bufferLanguageId === undefined || resolveLanguageServerConfig(deps, bufferLanguageId) === undefined) return;
     const text = deps.readDocumentText(document);
     if (text === undefined) return;
     const admitted = languageSession.openDocument({ uri: deps.fileUri(path), documentId: String(documentId), languageId: bufferLanguageId, version: document.version, text });
-    if (!admitted.ok) process.stderr.write(`xi: language document unavailable: ${admitted.error.message}\n`);
+    if (!admitted.ok) deps.statusMessages.publish(`xi: language document unavailable: ${admitted.error.message}`);
   }
 
+  // One router for the whole workbench, with one server session per configured server
+  // (typescript-language-server, pyright, ...) created lazily by the first buffer of a
+  // language it serves. Previously a single session was created for the launch document's
+  // language only, so `xi` started with no file (or on a .md) never got a server for any
+  // .ts/.py buffer opened later, and a .py buffer opened after `xi main.ts` was sent to the
+  // TypeScript server.
   async function initializeLanguage(): Promise<void> {
-    const resolvedLanguageId = resolveLanguageId(deps.launchDocumentPath);
-    if (resolvedLanguageId === undefined || deps.launchDocumentPath === undefined || connection === undefined) return;
+    if (connection === undefined) return;
     const activeConnection = connection;
-    const text = deps.readDocumentText(deps.launchDocument);
-    if (text === undefined) return;
     const language = await import('../../../../packages/services/src/entrypoints/language');
-    languageSession = new language.LanguageServerSession({
-      process: new deps.ProcessPort(),
-      clock: deps.createClock(),
-      config: resolveLanguageServerConfig(resolvedLanguageId),
-      root: deps.workspaceRoot,
-      workspaceId: 'xi-workspace',
-      workspaceFolders: [{ uri: deps.fileUri(deps.workspaceRoot), name: deps.workspaceRoot }],
-      environment: deps.processEnvironment(),
-      diagnostics: deps.diagnostics,
+    languageSession = new language.LanguageServerRouter({
+      resolveServer: (resolvedLanguageId) => resolveLanguageServerConfig(deps, resolvedLanguageId),
+      createSession: (serverConfig) => new language.LanguageServerSession({
+        process: new deps.ProcessPort(),
+        clock: deps.createClock(),
+        config: serverConfig,
+        root: deps.workspaceRoot,
+        workspaceId: 'xi-workspace',
+        workspaceFolders: [{ uri: deps.fileUri(deps.workspaceRoot), name: deps.workspaceRoot }],
+        environment: deps.processEnvironment(),
+        diagnostics: deps.diagnostics,
+      }),
     });
     admitBufferToLanguageSession(deps.launchDocumentPath, deps.launchDocument.id, deps.launchDocument);
     // Buffers opened before the session existed (e.g. via the explorer/picker before any
@@ -192,7 +202,7 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
     const admitted = languageSession?.changeDocument(change);
     if (admitted !== undefined && !admitted.ok && !languageSyncWarnedDocumentIds.has(change.documentId)) {
       languageSyncWarnedDocumentIds.add(change.documentId);
-      process.stderr.write(`xi: language sync unavailable: ${admitted.error.message}\n`);
+      deps.statusMessages.publish(`xi: language sync unavailable: ${admitted.error.message}`);
     }
   }
 

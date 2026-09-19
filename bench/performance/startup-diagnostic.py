@@ -111,7 +111,9 @@ def trial(name: str, command: list[str], root: Path, output: Path, index: int,
             else:
                 ready = (visible_marker(captured, "startup_probe_7Q")
                          and visible_marker(captured, "second line")
-                         and (b"\x1b[?25l" if name == "helix" else b"\x1b[?25h") in captured
+                         # Both editors paint their own cursor cell and keep the terminal's
+                         # hardware cursor hidden while the buffer has focus.
+                         and b"\x1b[?25l" in captured
                          and captured.rfind(b"\x1b[?2026l") >= captured.rfind(b"\x1b[?2026h"))
             if ready:
                 break

@@ -13,7 +13,11 @@ export function parsePorcelainV2Z(root: string, bytes: Uint8Array, generation: n
   return { ok: true, value: Object.freeze({ root, generation, entries: Object.freeze(entries), branch }) };
 }
 
-function entry(path: string, indexCode: string, worktreeCode: string): GitStatusEntry { const conflict = indexCode === 'U' || worktreeCode === 'U'; return Object.freeze({ path, state: stateFor(indexCode, worktreeCode), indexCode, worktreeCode, staged: indexCode !== ' ' && indexCode !== '?' && indexCode !== '!', unstaged: worktreeCode !== ' ' && worktreeCode !== '?' && worktreeCode !== '!', conflict }); }
+// `git status --porcelain=v2`'s XY codes use '.' (not a space, unlike porcelain v1) for the
+// unmodified side of an ordinary changed entry -- see `git-status(1)`'s porcelain v2 format.
+// `staged`/`unstaged` must treat '.' as "no change on this side", or an index-only change
+// ('A.') reads as also unstaged and a worktree-only change ('.M') reads as also staged.
+function entry(path: string, indexCode: string, worktreeCode: string): GitStatusEntry { const conflict = indexCode === 'U' || worktreeCode === 'U'; return Object.freeze({ path, state: stateFor(indexCode, worktreeCode), indexCode, worktreeCode, staged: indexCode !== '.' && indexCode !== ' ' && indexCode !== '?' && indexCode !== '!', unstaged: worktreeCode !== '.' && worktreeCode !== ' ' && worktreeCode !== '?' && worktreeCode !== '!', conflict }); }
 function stateFor(indexCode: string, worktreeCode: string): GitEntryState { if (indexCode === 'U' || worktreeCode === 'U') return 'conflicted'; if (indexCode === 'R' || worktreeCode === 'R') return 'renamed'; if (indexCode === 'D' || worktreeCode === 'D') return 'deleted'; if (indexCode === 'A' || worktreeCode === 'A') return 'added'; return 'modified'; }
 
 export class GitStatusCache implements Disposable {
@@ -175,7 +179,8 @@ export class GitStatusService implements Disposable {
 function parseBranch(bytes: Uint8Array): string | undefined {
   let text: string;
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { return undefined; }
-  const match = /# branch\.head (\S+)/u.exec(text);
+  // `-z` output: records end in NUL, which `\S` would swallow ("master\u00001 .M ...").
+  const match = /# branch\.head ([^\s\u0000]+)/u.exec(text);
   return match?.[1] === undefined || match[1] === '(detached)' ? undefined : match[1];
 }
 

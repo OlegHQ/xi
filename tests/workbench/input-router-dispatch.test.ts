@@ -129,13 +129,19 @@ function makeRecordingOverlays(): {
   };
 }
 
-function makeRouter(overlays: ReturnType<typeof makeRecordingOverlays>, bindings: readonly RouterBindingConfig[] = []): { readonly router: WorkbenchInputRouter; readonly vim: FakeVimSession; readonly explorerPort: FakeExplorer; readonly searchPort: FakeSearch } {
+function makeRouter(
+  overlays: ReturnType<typeof makeRecordingOverlays>,
+  bindings: readonly RouterBindingConfig[] = [],
+  withoutActiveView = false,
+  executeWorkbenchCommand?: (source: string) => 'handled' | 'unhandled' | 'quit',
+): { readonly router: WorkbenchInputRouter; readonly vim: FakeVimSession; readonly explorerPort: FakeExplorer; readonly searchPort: FakeSearch } {
   const explorerPort = new FakeExplorer();
   const searchPort = new FakeSearch();
   const host = new FakeHost();
   const session = new FakeSession();
   const vim = new FakeVimSession();
-  host.sessions.set('view-1', vim);
+  if (withoutActiveView) session.activeViewId = undefined;
+  else host.sessions.set('view-1', vim);
   const router = new WorkbenchInputRouter({
     host: host as never,
     session: session as never,
@@ -149,6 +155,7 @@ function makeRouter(overlays: ReturnType<typeof makeRecordingOverlays>, bindings
     overlays: noopOverlays,
     completion: noopCompletion,
     workspaceEdits: noopWorkspaceEdits,
+    ...(executeWorkbenchCommand === undefined ? {} : { executeWorkbenchCommand: (source: string) => executeWorkbenchCommand(source) }),
     isExplorerServiceLoaded: () => true,
     isSearchServiceLoaded: () => true,
     ensureOptionalServices: async () => {},
@@ -171,6 +178,24 @@ function makeRouter(overlays: ReturnType<typeof makeRecordingOverlays>, bindings
     overlaySignature: overlays.signature,
   });
   return { router, vim, explorerPort, searchPort };
+}
+
+// ROUTER-DISPATCH-06: a workbench with no active editable view still owns a usable Ex prompt.
+// Typing and submitting routes workbench commands through the fallback instead of dropping ':'
+// and every following key on the floor.
+{
+  const executed: string[] = [];
+  const overlays = makeRecordingOverlays();
+  const { router } = makeRouter(overlays, [], true, source => { executed.push(source); return 'quit'; });
+
+  assert.equal(await resolve(router.dispatchKey(key(':', ':'))), 'consumed');
+  assert.equal(router.isCommandLineActive(), true);
+  assert.equal(await resolve(router.dispatchKey(key('q', 'q'))), 'consumed');
+  assert.equal(await resolve(router.dispatchKey(key('enter', '\r'))), 'quit');
+  assert.deepEqual(executed, ['q']);
+  assert.equal(router.isCommandLineActive(), false);
+
+  router.dispose();
 }
 
 async function resolve<T>(value: T | Promise<T>): Promise<T> { return value; }

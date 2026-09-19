@@ -74,11 +74,12 @@ def run_picker() -> None:
             os.write(master, b"zztarget")
             read_until(master, captured, b"XI_PICKER_PREVIEW", 5)
             read_for(master, captured, 0.3)
-            # Picker panel: left=10, top=13 at 120x40; header row occupies screen row 14 (mouse y=14),
+            # Picker panel (Helix layout): left=6, top=5 at 120x40; header row occupies mouse y=6,
+            # the first entry row mouse y=7. (Previously: left=10, top=13; header row mouse y=14),
             # first (and only, filtered) entry occupies mouse y=15.
             before = len(captured)
-            os.write(master, mouse(0, 13, 15))
-            os.write(master, mouse(0, 13, 15, True))
+            os.write(master, mouse(0, 13, 7))
+            os.write(master, mouse(0, 13, 7, True))
             read_for(master, captured, 0.6)
             events = [json.loads(match.group(1)) for match in PANEL_POINTER.finditer(captured[before:])]
             hit = next((event for event in events if event.get("panel") == "picker" and event.get("action") == "activate"), None)
@@ -135,23 +136,27 @@ def run_search() -> None:
             # from the surrounding line text (`packages/ui/search/index.ts`'s restyle), so
             # the literal, unstyled "needle from disk" substring this used to wait for no
             # longer appears contiguous in the raw byte stream (an ANSI SGR sequence now sits
-            # between "needle" and " from disk"). Wait on the row's stable, unstyled path
-            # label instead, which the restyle left untouched.
-            read_until(master, captured, b"target.txt:1:1", 5)
+            # between "needle" and " from disk"). The file heading is now "target.txt  src/  1"
+            # (no ":line:col" suffix), so wait on the unstyled summary row instead.
+            read_until(master, captured, b"1 result in 1 file", 5)
             read_for(master, captured, 0.3)
-            # Search panel: header row occupies mouse y=14, the sole file heading occupies
-            # mouse y=15, its single match row occupies mouse y=16 starting at mouse x=11.
+            # Search panel is docked in the sidebar: query row mouse y=2, Replace row y=3, the
+            # summary row y=4, the sole file heading y=5, its single match row y=6 from x=11.
             before = len(captured)
-            os.write(master, mouse(0, 11, 16))
-            os.write(master, mouse(0, 11, 16, True))
+            os.write(master, mouse(0, 11, 6))
+            os.write(master, mouse(0, 11, 6, True))
             read_for(master, captured, 0.6)
             events = [json.loads(match.group(1)) for match in PANEL_POINTER.finditer(captured[before:])]
             hit = next((event for event in events if event.get("panel") == "search" and event.get("action") == "activate"), None)
             if hit is None:
                 raise SystemExit(f"no production search row activated by stable id: {captured[before:][-4000:]!r}")
+            # A click selects + previews (VS Code Search-view style); Enter promotes the
+            # selected row to a real open (`XI_SEARCH_OPENED` carries its path).
             read_for(master, captured, 0.5)
+            os.write(master, b"\r")
+            read_for(master, captured, 0.8)
             if b'"path":"src/target.txt"' not in captured:
-                raise SystemExit(f"src/target.txt was not opened after production search pointer activation: {captured[-4000:]!r}")
+                raise SystemExit(f"src/target.txt was not opened after production search pointer selection + Enter: {captured[-4000:]!r}")
         finally:
             if child.poll() is None:
                 child.terminate()

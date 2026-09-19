@@ -75,6 +75,8 @@ export type VimCommandIntent =
   | (VimCommandContext & { readonly kind: 'operator-motion'; readonly operator: VimOperatorPrefix; readonly motion: string; readonly operatorCount: VimCount; readonly motionCount: VimCount; readonly register?: string; readonly force?: VimOperatorForce })
   | (VimCommandContext & { readonly kind: 'operator-line'; readonly operator: VimOperatorPrefix; readonly count: VimCount; readonly register?: string })
   | (VimCommandContext & { readonly kind: 'operator-text-object'; readonly operator: VimOperatorPrefix; readonly textObject: string; readonly operatorCount: VimCount; readonly motionCount: VimCount; readonly register?: string })
+  /** Visual-mode `iw`/`a{`/... extends every Visual member by one text object (nvim v_iw, v_a{). */
+  | (VimCommandContext & { readonly kind: 'visual-text-object'; readonly textObject: string; readonly count: VimCount })
   | (VimCommandContext & { readonly kind: 'prefixed-key'; readonly prefix: VimGrammarPrefix; readonly key: string; readonly count: VimCount; readonly register?: string })
   | (VimCommandContext & { readonly kind: 'literal-command'; readonly command: VimLiteralCommand; readonly argument: string; readonly operator?: VimOperatorPrefix; readonly operatorCount?: VimCount; readonly motionCount?: VimCount; readonly count: VimCount; readonly register?: string })
   | (VimCommandContext & { readonly kind: 'mode-transition'; readonly from: VimMode; readonly to: VimMode; readonly key: string; readonly count: VimCount })
@@ -336,6 +338,11 @@ function parseRootWithContext(state: VimParserState, atMilliseconds: number, key
     selections: state.session.selections, atMilliseconds,
   });
 
+  // nvim v_iw/v_aw/v_i{...: in Visual mode `i`/`a` begin a text object, not Insert.
+  if (isVisualMode(state.session.mode) && (key === 'i' || key === 'a')) return pending(state, {
+    kind: 'command-prefix', prefix: key === 'i' ? 'text-object-inner' : 'text-object-around',
+    count: ctx.count, register: ctx.register, operator: undefined, operatorCount: undefined, motionCount: undefined,
+  });
   const modeIntent = modeKeyIntent(state.session.mode, key);
   if (modeIntent !== undefined) return command(state, NONE, {
     kind: 'mode-transition', from: state.session.mode, to: modeIntent, key,
@@ -403,6 +410,10 @@ function parsePrefixKey(
 ): VimParseOutcome {
   if (prefix.prefix === 'text-object-inner' || prefix.prefix === 'text-object-around') {
     if (prefix.operator !== undefined && TEXT_OBJECT_KEYS.includes(key)) return operatorTextObject(state, atMilliseconds, prefix, key);
+    if (prefix.operator === undefined && isVisualMode(state.session.mode) && TEXT_OBJECT_KEYS.includes(key)) return command(state, NONE, {
+      kind: 'visual-text-object', textObject: `${prefix.prefix === 'text-object-inner' ? 'i' : 'a'}${key}`,
+      count: prefix.count ?? oneCount(), selections: state.session.selections, atMilliseconds,
+    });
     return fail(state, { kind: 'invalid-continuation', key, pendingKind: prefix.kind });
   }
   if (prefix.prefix === 'left-bracket' || prefix.prefix === 'right-bracket') {
@@ -908,6 +919,7 @@ function freezeCommand(value: VimCommandIntent): VimCommandIntent {
     });
     case 'single-key':
     case 'mode-transition':
+    case 'visual-text-object':
     case 'prefixed-key': return Object.freeze({ ...value, count: freezeCount(value.count) });
     case 'insert-key': return Object.freeze({ ...value, modifiers: Object.freeze({ ...value.modifiers }) });
     case 'select-key': return Object.freeze({ ...value, modifiers: Object.freeze({ ...value.modifiers }) });

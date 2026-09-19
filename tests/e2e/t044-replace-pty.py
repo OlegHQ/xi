@@ -31,6 +31,17 @@ def read_until(master: int, captured: bytearray, predicate, timeout: float) -> N
     raise SystemExit(f"missing replacement marker; captured={captured[-4000:]!r}")
 
 
+def read_for(master: int, captured: bytearray, seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([master], [], [], 0.05)
+        if readable:
+            try:
+                captured.extend(os.read(master, 65536))
+            except OSError:
+                return
+
+
 def search_results(captured: bytearray) -> list[dict[str, object]]:
     return [json.loads(match.group(1)) for match in RESULT.finditer(captured)]
 
@@ -59,12 +70,18 @@ with tempfile.TemporaryDirectory(prefix="xi-t044-replace-") as temporary:
         read_until(master, captured, lambda data: b"XI_SEARCH_OPEN" in data, 5)
         os.write(master, b"needle")
         read_until(master, captured, lambda data: any(item.get("state") == "ready" and item.get("totalMatches") == 2 for item in search_results(data)), 5)
+        # Esc first leaves insert mode for normal mode, a second Esc closes the panel.
+        os.write(master, b"\x1b")
+        time.sleep(0.15)
         os.write(master, b"\x1b")
         read_until(master, captured, lambda data: b"XI_SEARCH_CANCELLED" in data, 5)
         second_result_count = len(search_results(captured))
         os.write(master, b" r")
         read_until(master, captured, lambda data: data.count(b"XI_SEARCH_OPEN") >= 2, 5)
         read_until(master, captured, lambda data: any(item.get("state") == "ready" and item.get("totalMatches") == 2 for item in search_results(data)[second_result_count:]), 5)
+        # The ready marker precedes the full-height result frame. Drain that frame before
+        # sending replacement input so a small PTY output buffer cannot stall the child.
+        read_for(master, captured, 0.2)
         os.write(master, b"done\r")
         read_until(master, captured, lambda data: b"XI_REPLACE_APPLIED" in data, 5)
         if target.read_text(encoding="utf-8") != "done one\ndone two\n":

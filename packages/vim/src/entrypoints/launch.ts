@@ -7,7 +7,7 @@ export { prepareVimOperator } from '../../operators/core';
 export { prepareVimDirectChange } from '../../operators/direct-changes';
 export { beginVimMultiInsert, planVimMultiInsertInput } from '../../insert/multi';
 export { parseVimExSequence, prepareVimEx } from '../../ex';
-export { prepareVimMultiOperator, resolveVimMultiVisualFind, resolveVimMultiVisualMotion } from '../../multi';
+export { prepareVimMultiOperator, resolveVimMultiVisualFind, resolveVimMultiVisualMotion, resolveVimMultiVisualTextObject } from '../../multi';
 export { beginVimVisualSelection, extendVimVisualSelection } from '../../visual';
 export { applyVimSelectionCommand } from '../../selections';
 export { resolveVimCharacterInfo } from '../../navigation/character-info';

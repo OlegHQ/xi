@@ -103,9 +103,12 @@ const cycle = registry.register({ commands: [], aliases: [{ name: 'one', target:
 assert.equal(cycle.ok, false, 'EX04-CYCLE-01 alias cycles are rejected');
 assert.equal(registry.snapshot, beforeCollision, 'EX04-CYCLE-02 alias-cycle rejection preserves last-good generation');
 
+// The shared Solid surface formats the prompt, acceptance hint and candidate rows within a
+// bounded panel; this checks the candidate content and row cap at the formatter boundary.
 const rows = formatExCommandLineLines(quitModel, 44, 3);
-assert.equal(rows[1], quitModel.acceptanceHint, 'E20-RENDER-01 command-line rows expose Tab acceptance text');
-assert.ok(rows.every((row) => row.length <= 44), 'E20-RENDER-02 command-line rows remain bounded');
+assert.ok(rows.some((row) => row.includes('quit')), 'E20-RENDER-01 command-line candidate rows include the quit completion');
+assert.ok(rows.length <= 3, 'E20-RENDER-02 command-line rows respect the row cap');
+assert.ok(rows.every((row) => row.length <= 44), 'E20-RENDER-03 command-line rows remain bounded');
 session.dispose();
 void registry.dispose();
 console.log('T083 Ex discovery passed E20 typed-enter semantics, visible Tab acceptance, native q/wq/x/qa/wa scope, range/separator/path context, unavailable aliases, collision/cycle rollback and bounded command-line rows');

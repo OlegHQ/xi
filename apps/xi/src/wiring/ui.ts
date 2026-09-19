@@ -1,5 +1,5 @@
 import type { ViewId } from '../../../../packages/primitives/src/entrypoints/launch';
-import type { WorkbenchTheme, DirectoryDraftReadPort, DirectoryDraftReadModel } from '../../../../packages/ui/src/entrypoints/launch';
+import type { DirectoryDraftReadPort, DirectoryDraftReadModel } from '../../../../packages/ui/src/entrypoints/launch';
 import { LIGHT_WORKBENCH_THEME } from '../../../../packages/ui/src/entrypoints/theme';
 import type { runOpenTuiWorkbench } from '../../../../packages/ui/src/entrypoints/launch';
 import type { PointerPanelEvent } from '../../../../packages/workbench/src/entrypoints/launch';
@@ -44,6 +44,25 @@ type RelaxedWorkbenchUiOptions = Omit<WorkbenchUiOptions, 'explorer' | 'search' 
   readonly output?: WorkbenchUiOptions['output'] | undefined;
 };
 
+/** Workspace-search matches painted in the editor while the Search panel is open. The
+ * controller memoizes its result per (generation, document, version), so the presentation
+ * object identity only changes when the highlights actually change (the renderer
+ * full-repaints on identity change, row-diffs otherwise). */
+function buildSearchPresentationPort(workbench: Controllers['workbench'], searchFeature: Controllers['searchFeature']): NonNullable<WorkbenchUiOptions['presentation']> {
+  const searchPresentations = new WeakMap<object, { readonly searchHighlight: NonNullable<ReturnType<typeof searchFeature.readPresentation>> }>();
+  return {
+    readPresentation: (viewId) => {
+      const view = workbench.readView(viewId as ViewId);
+      if (view === undefined) return undefined;
+      const highlight = searchFeature.readPresentation(String(view.document.id), view.document.version);
+      if (highlight === undefined) return undefined;
+      let presentation = searchPresentations.get(highlight);
+      if (presentation === undefined) { presentation = Object.freeze({ searchHighlight: highlight }); searchPresentations.set(highlight, presentation); }
+      return presentation;
+    },
+  };
+}
+
 /** Builds the (large) options object `runOpenTuiWorkbench` takes: frame callbacks, panel read
  * models/handlers, and the `onReady` deferred work -- all sourced from the controllers record
  * `wiring/controllers.ts` already constructed. Mechanical extraction of what used to be
@@ -52,8 +71,8 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
   const {
     host, inputRouter, pointerRouter, sidebarController, contextMenuStore, syntaxTracker, optionalServices,
     mouseMode, jobControlDisposables, workbench, picker, pickerModel, explorerFeature, searchFeature,
-    diagnostics, problemsFeature, taskWiring, directoryDraftController, overlayFeature, completionFeature,
-    fileIndexStarter,
+    gitPanelFeature, gitDiffFeature, diagnostics, problemsFeature, taskWiring, directoryDraftController, overlayFeature, completionFeature,
+    fileIndexStarter, pickerPreview, statusMessages,
   } = controllers;
   const { renderer, themeWiring, marker, startupTrace, installJobControl } = deps;
   const perfTraceEnabled = process.env.XI_PERF_TRACE === '1';
@@ -62,6 +81,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     renderer,
     theme: themeWiring.themeController.get(themeWiring.themeController.activeId) ?? LIGHT_WORKBENCH_THEME,
     syntax: syntaxTracker,
+    presentation: buildSearchPresentationPort(workbench, searchFeature),
     gitBranch: () => optionalServices.current?.gitStatusService.snapshot?.branch,
     registerMouseToggle: mouseMode.registered,
     registerThemeSwitch: (setTheme) => { themeWiring.themeController.bindSetTheme(setTheme); },
@@ -89,6 +109,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       read: inputRouter.commandLine.read,
       isOpen: () => inputRouter.isCommandLineActive(),
     },
+    statusMessage: { read: statusMessages },
     onReady: () => {
       startupTrace('ready-callback');
       if (!themeWiring.needsCustomThemeNow) void themeWiring.loadCustomThemes().finally(() => themeWiring.disposeStateCancellation());
@@ -97,6 +118,9 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       // work. Starting them before the first frame makes the editor compete
       // with filesystem streams during the user's first interaction.
       fileIndexStarter.schedule();
+      // The Files tree is visible by default; it loads in the background and never takes
+      // keyboard focus from the editor.
+      explorerFeature.show();
     },
     // H1-7: the router owns the ordered overlay-focus stack (and its own fallthrough) as the
     // one and only per-key dispatch `processKeypress` calls; the overlay port objects below
@@ -107,13 +131,18 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       read: pickerModel,
       isOpen: () => picker.isOpen,
       onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
+      preview: () => {
+        const selected = pickerModel.model.entries.find((entry) => entry.id === pickerModel.model.selectedId);
+        return selected?.mode === 'file' ? pickerPreview(selected.value) : undefined;
+      },
     },
     get explorer() {
       const explorerTree = optionalServices.current?.explorerTree;
       return explorerTree === undefined ? undefined : {
         read: explorerTree,
-        isOpen: () => explorerFeature.isOpen,
+        isOpen: () => explorerFeature.isVisible && sidebarController.readModel().panel === 'files',
         onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
+        prompt: () => explorerFeature.promptText,
       };
     },
     get search() {
@@ -122,14 +151,27 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
         read: searchService,
         isOpen: () => searchFeature.isOpen,
         selectedId: () => searchService.model.matches[searchFeature.selectedIndex]?.id,
+        state: () => searchFeature.uiState,
         onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
       };
+    },
+    git: {
+      read: gitPanelFeature,
+      isOpen: () => gitPanelFeature.isOpen,
+      onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
     },
     problems: {
       read: diagnostics,
       isOpen: () => problemsFeature.isProblemsOpen,
       selectedId: () => problemsFeature.selectedProblemId(),
       onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
+    },
+    gitDiff: {
+      read: gitDiffFeature,
+      isOpen: () => gitDiffFeature.isOpen,
+      onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
+      onScroll: (delta: number) => gitDiffFeature.onPointer(delta),
+      onViewportChange: (width: number, height: number) => gitDiffFeature.setViewport(width, height),
     },
     get output() {
       return taskWiring.taskController === undefined ? undefined : {

@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # Neon's background token (#000011 -> 0;0;17) as a real terminal truecolor SGR background
 # escape -- an unambiguous signal that this specific custom theme, and only it, is painting.
 NEON_BACKGROUND = b"\x1b[48;2;0;0;17m"
-LIGHT_BACKGROUND = b"\x1b[48;2;250;249;246m"
+LIGHT_BACKGROUND = b"\x1b[48;2;252;252;250m"
 
 
 def read_for(master: int, captured: bytearray, seconds: float) -> None:

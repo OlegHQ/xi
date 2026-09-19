@@ -1,8 +1,7 @@
 import {
   RGBA,
   Renderable,
-  TextAttributes,
-  type MouseEvent,
+  MouseEvent,
   type OptimizedBuffer,
   type RenderContext,
   type RenderableOptions,
@@ -191,12 +190,8 @@ interface SplitterRect {
  * when supplied (clamped to leave the editor at least 20 cells); omitting it keeps the old
  * terminal-width-derived default for callers with no sidebar controller (tests, `[No Name]`
  * launches before one exists). */
-// terminal.ts's per-key visibility sync (`syncSidebarSurfaceBounds`/`explorerShouldBeVisible`/
-// `outlineShouldBeVisible`/`getExplorerBounds`/`getSidebarOutlineBounds`) each independently
-// call this with the same (width, height, sidebar) for one keystroke -- roughly 8 calls per
-// key. A single-entry memo on the exact same arguments (the common case: nothing about the
-// shell moved between those calls) turns the repeats into a cache hit instead of threading one
-// geometry value through every call site.
+// Keep the pure geometry calculation cheap for the viewport and Solid chrome, which both read
+// the same terminal-cell layout during a frame.
 let lastWorkbenchLayout: { readonly width: number; readonly height: number; readonly showBottomPanel: boolean; readonly sidebarWidthOverride: number | undefined; readonly value: WorkbenchLayout } | undefined;
 
 export function calculateWorkbenchLayout(width: number, height: number, showBottomPanel = false, sidebarWidthOverride?: number): WorkbenchLayout {
@@ -226,7 +221,7 @@ export function calculateWorkbenchLayout(width: number, height: number, showBott
 }
 
 export interface SidebarSectionLayout {
-  /** Row 0, always -- the `▾ Files` chevron header. */
+  /** Row 1, below the Files/Search/Git tab bar -- the `▾ Files` chevron header. */
   readonly filesHeaderRow: number;
   readonly filesContentTop: number;
   /** 0 when Files is collapsed: no inline tree/explorer surface is shown. */
@@ -238,16 +233,40 @@ export interface SidebarSectionLayout {
   readonly outlineContentHeight: number;
 }
 
-/** Row bounds for the sidebar's two inline sections, shared by `#paintSidebar` (chevron
- * headers) and the composition root (Explorer/Outline surface placement) so both agree on
+export type SidebarTabId = 'files' | 'search' | 'git';
+
+export interface SidebarTabLayout {
+  readonly id: SidebarTabId;
+  readonly x: number;
+  readonly width: number;
+}
+
+/** Three full-cell sidebar targets. Search receives the odd cell first because its label is
+ * widest; the same rectangles are used by Solid presentation and native pointer routing. */
+export function computeSidebarTabLayout(width: number): readonly SidebarTabLayout[] {
+  const safeWidth = Math.max(0, Math.trunc(width));
+  const base = Math.floor(safeWidth / 3);
+  const remainder = safeWidth % 3;
+  const widths = [base + (remainder > 1 ? 1 : 0), base + (remainder > 0 ? 1 : 0), base] as const;
+  return Object.freeze([
+    Object.freeze({ id: 'files', x: 0, width: widths[0] }),
+    Object.freeze({ id: 'search', x: widths[0], width: widths[1] }),
+    Object.freeze({ id: 'git', x: widths[0] + widths[1], width: widths[2] }),
+  ]);
+}
+
+/** Row bounds for the sidebar's two inline sections, shared by Solid chrome and the
+ * composition root (Explorer/Outline surface placement) so both agree on
  * exactly where each section's content lives. Files takes all remaining rows when Outline is
  * collapsed; both expanded split 60/40 with a 3-row floor each (docs/plan sidebar contract).
  * `totalRows` is the sidebar's usable row count above the status row -- callers pass
  * `geometry.statusRow`, not the full terminal height, so inline content never gets bottom-row painted over by the status bar. */
 export function computeSidebarSectionLayout(sidebar: SidebarReadModel, totalRows: number): SidebarSectionLayout {
-  const filesExpanded = sidebar.sections.find((section) => section.id === 'files')?.expanded ?? false;
-  const outlineExpanded = sidebar.sections.find((section) => section.id === 'outline')?.expanded ?? false;
-  const available = Math.max(0, Math.trunc(totalRows) - 2);
+  // Only the Files tab hosts the inline sections; Search/Git own the whole column below row 0.
+  const filesExpanded = sidebar.panel === 'files' && (sidebar.sections.find((section) => section.id === 'files')?.expanded ?? false);
+  const outlineExpanded = sidebar.panel === 'files' && (sidebar.sections.find((section) => section.id === 'outline')?.expanded ?? false);
+  // Row 0 is the Files/Search/Git tab bar; the two section headers need one row each.
+  const available = Math.max(0, Math.trunc(totalRows) - 3);
   let filesContentHeight = 0;
   let outlineContentHeight = 0;
   if (filesExpanded && outlineExpanded) {
@@ -264,10 +283,10 @@ export function computeSidebarSectionLayout(sidebar: SidebarReadModel, totalRows
   } else if (outlineExpanded) {
     outlineContentHeight = available;
   }
-  const filesContentTop = 1;
+  const filesContentTop = 2;
   const outlineHeaderRow = filesContentTop + filesContentHeight;
   const outlineContentTop = outlineHeaderRow + 1;
-  return Object.freeze({ filesHeaderRow: 0, filesContentTop, filesContentHeight, outlineHeaderRow, outlineContentTop, outlineContentHeight });
+  return Object.freeze({ filesHeaderRow: 1, filesContentTop, filesContentHeight, outlineHeaderRow, outlineContentTop, outlineContentHeight });
 }
 
 /** A document-backed OpenTUI shell for the first Xi workbench surface. */
@@ -275,19 +294,11 @@ export class WorkbenchRenderable extends Renderable {
   readonly #workbench: WorkbenchReadPort;
   #theme: WorkbenchTheme;
   readonly #ascii: boolean;
-  readonly #fileLabel: string;
-  readonly #gitBranch: (() => string | undefined) | undefined;
   readonly #showBottomPanel: boolean;
   readonly #presentation: EditorPresentationReadPort | undefined;
   readonly #sidebar: (() => SidebarReadModel) | undefined;
   readonly #tabs: (() => readonly WorkbenchTabSnapshot[]) | undefined;
-  /** Tab-bar hit rects, recomputed by `#paintTabBar` every time the header row repaints;
-   * read back by `#tabControlAt` for pointer hit-testing (mirrors `#splitters`/`#paneRects`). */
-  #tabHitRects: readonly { readonly x: number; readonly width: number; readonly id: string; readonly hasClose: boolean }[] = [];
-  #hoverTabId: string | undefined;
   #sidebarSplitterCapture = false;
-  #hoverSidebarSplitter = false;
-  #lastSidebarSplitterHighlighted: boolean | undefined;
   readonly #syntax: SyntaxReadPort | undefined;
   readonly #motionTrail: MotionTrailMode;
   readonly #reducedMotion: boolean;
@@ -324,12 +335,11 @@ export class WorkbenchRenderable extends Renderable {
   #splitterCapture: string | undefined;
   #background: RGBA;
   #surface: RGBA;
-  #active: RGBA;
   #foreground: RGBA;
   #muted: RGBA;
   #border: RGBA;
   #accent: RGBA;
-  #lastShellSize: { readonly width: number; readonly height: number; readonly sidebarWidth: number } | undefined;
+  #lastViewportSize: { readonly width: number; readonly height: number; readonly editorWidth: number; readonly editorHeight: number } | undefined;
   #lastFrame: WorkbenchFrameRead | undefined;
   #lastPresentation: EditorPresentationRead | undefined;
   #lastSyntaxRead: SyntaxRead | undefined;
@@ -339,11 +349,10 @@ export class WorkbenchRenderable extends Renderable {
    * `SyntaxFallbackRow` and `rowSyntaxCursor` in editor/motion-paint.ts. */
   #lastCurrentSyntax: CurrentSyntaxSnapshot | undefined;
   #lastPaintStats: MotionPaintStats | undefined;
-  #lastHeaderText: string | undefined;
-  #lastSidebarSignature: string | undefined;
-  #lastStatusText: string | undefined;
-  #lastBottomPanelKey: string | undefined;
   #pointerFrameId: number | undefined;
+  /** Screen cell (0-based) of the active view's primary cursor as of the last paint, for
+   * anchoring popups (hover, completion, signature) next to it. */
+  #cursorCell: { readonly x: number; readonly y: number } | undefined;
 
   constructor(ctx: RenderContext, options: WorkbenchRenderableOptions) {
     const renderOptions: RenderableOptions<WorkbenchRenderable> = {
@@ -356,8 +365,6 @@ export class WorkbenchRenderable extends Renderable {
     this.#workbench = options.workbench;
     this.#ascii = options.ascii ?? false;
     this.#theme = options.theme ?? (this.#ascii ? ASCII_WORKBENCH_THEME : LIGHT_WORKBENCH_THEME);
-    this.#fileLabel = options.fileLabel ?? '[No Name]';
-    this.#gitBranch = options.gitBranch;
     this.#showBottomPanel = options.showBottomPanel ?? false;
     this.#presentation = options.presentation;
     this.#sidebar = options.sidebar;
@@ -372,7 +379,6 @@ export class WorkbenchRenderable extends Renderable {
     this.#onViewportSizeChange = options.onViewportSizeChange;
     this.#background = parseColor(this.#theme.background);
     this.#surface = parseColor(this.#theme.surface);
-    this.#active = parseColor(this.#theme.surfaceActive);
     this.#foreground = parseColor(this.#theme.foreground);
     this.#muted = parseColor(this.#theme.muted);
     this.#border = parseColor(this.#theme.border);
@@ -385,11 +391,13 @@ export class WorkbenchRenderable extends Renderable {
       const geometry = this.layout;
       const pane = this.paneAt(event.x, event.y);
       let frameColumn = pane === undefined ? event.x - geometry.editorX : event.x - pane.x;
-      let column = frameColumn - 6;
+      const activeViewForGutter = this.#workbench.readView((pane?.viewId ?? this.#workbench.activeViewId) as import('../../contracts/src/index').ViewId);
+      const gutter = gutterWidthFor(activeViewForGutter?.document.lineCount ?? 0);
+      let column = frameColumn - gutter;
       let row = pane === undefined ? event.y - geometry.editorTop : event.y - pane.y;
       const insideEditor = pane === undefined
-        ? column >= 0 && row >= 0 && column < Math.max(1, geometry.editorWidth - 6) && row < geometry.editorHeight
-        : column >= 0 && row >= 0 && column < Math.max(1, pane.width - 6) && row < pane.height;
+        ? column >= 0 && row >= 0 && column < Math.max(1, geometry.editorWidth - gutter) && row < geometry.editorHeight
+        : column >= 0 && row >= 0 && column < Math.max(1, pane.width - gutter) && row < pane.height;
       const activeViewId = pane?.viewId ?? this.#workbench.activeViewId;
       if (activeViewId === undefined) return;
       const currentFrame = pane === undefined ? this.#lastFrame?.frame : this.#paneFrames.get(String(activeViewId));
@@ -397,15 +405,6 @@ export class WorkbenchRenderable extends Renderable {
       const dispatchFrameId = phase === 'down' ? currentFrameId : this.#pointerFrameId ?? currentFrameId;
       const splitterControl = phase === 'wheel' ? undefined : this.splitterControlAt(event.x, event.y, phase) ?? this.#sidebarSplitterControlAt(event.x, event.y, phase);
       const control = phase === 'wheel' ? undefined : splitterControl ?? this.#chromeControlAt(event.x, event.y, geometry) ?? workbenchControlAt(geometry, event.x, event.y);
-      if (phase === 'move' || phase === 'up') {
-        const hoverSplitter = control?.kind === 'splitter' && control.id === 'splitter:sidebar';
-        const hoverTab = control?.kind === 'tab' || control?.kind === 'tab-close' ? control.id : undefined;
-        if (hoverSplitter !== this.#hoverSidebarSplitter || hoverTab !== this.#hoverTabId) {
-          this.#hoverSidebarSplitter = hoverSplitter;
-          this.#hoverTabId = hoverTab;
-          this.refresh();
-        }
-      }
       // A drag gesture already captured by this pointer (`#pointerFrameId` set) must keep
       // receiving 'move'/'up' even when the pointer strays into the gutter, past the last
       // shaped row/line-end, or below end-of-file (still inside the viewport, but over a
@@ -427,7 +426,7 @@ export class WorkbenchRenderable extends Renderable {
         row = lastTextRow >= 0 ? Math.min(Math.max(row, firstTextRow), lastTextRow) : Math.max(0, row);
         const lineLength = rows[row]?.text.length ?? 0;
         column = Math.min(Math.max(0, column), lineLength);
-        frameColumn = column + 6;
+        frameColumn = column + gutter;
       }
       const layout = pane === undefined ? this.#layout : this.#paneLayouts.get(String(activeViewId));
       const hit = phase === 'wheel' || layout === undefined
@@ -458,6 +457,12 @@ export class WorkbenchRenderable extends Renderable {
     this.requestRender();
   }
 
+  /** Forward pointer events received by the declarative chrome to the viewport's existing
+   * semantic hit testing and pointer router. */
+  forwardPointerEvent(event: MouseEvent): void {
+    this.processMouseEvent(new MouseEvent(this, event));
+  }
+
   get layout(): WorkbenchLayout {
     const sidebarWidth = this.#sidebar?.().width;
     const cached = this.#cachedLayout;
@@ -467,17 +472,8 @@ export class WorkbenchRenderable extends Renderable {
     return value;
   }
   get lastFrame(): WorkbenchFrameRead | undefined { return this.#lastFrame; }
+  get cursorCell(): { readonly x: number; readonly y: number } | undefined { return this.#cursorCell; }
   get lastPaintStats(): MotionPaintStats | undefined { return this.#lastPaintStats; }
-  /**
-   * Mark the renderable dirty without also asking the OpenTUI renderer to schedule
-   * its own frame (`requestRender()`'s renderer half runs a `process.nextTick`/timer
-   * callback later, outside this call). Every production caller (terminal.ts's
-   * `refreshAfterKey`/pointer/theme/resize paths) already performs one explicit
-   * synchronous `renderer.intermediateRender()` after calling this; letting `refresh()`
-   * also schedule the renderer's own frame produced a second, redundant render pass
-   * per key. Callers that render through a generic OpenTUI harness (tests) must drive
-   * that explicit render themselves too (see tests/ui/t111-render-scheduling.test.ts).
-   */
   /** State changed: resolve cursor-follow anchors (memoized per view state) and mark for paint. */
   refresh(): void { this.syncAnchors(); this.markDirty(); }
   get theme(): WorkbenchTheme { return this.#theme; }
@@ -488,23 +484,13 @@ export class WorkbenchRenderable extends Renderable {
     this.#theme = theme;
     this.#background = parseColor(theme.background);
     this.#surface = parseColor(theme.surface);
-    this.#active = parseColor(theme.surfaceActive);
     this.#foreground = parseColor(theme.foreground);
     this.#muted = parseColor(theme.muted);
     this.#border = parseColor(theme.border);
     this.#accent = parseColor(theme.accent);
     this.#motionPaintTokens = resolveMotionPaintTokens(theme);
-    // renderSelf only repaints the full background/sidebar/header on a genuine size change
-    // (`fullRepaint`, compared against #lastShellSize) -- clearing it here is what forces
-    // that same full-repaint path for a theme change too, not just a resize.
-    this.#lastShellSize = undefined;
-    this.#lastHeaderText = undefined;
-    this.#lastSidebarSignature = undefined;
-    this.#lastSidebarSplitterHighlighted = undefined;
-    this.#lastStatusText = undefined;
-    this.#lastBottomPanelKey = undefined;
-    // See `refresh()`'s comment: the caller (terminal.ts's `registerThemeSwitch`) drives
-    // the actual synchronous frame, so this only needs to mark the renderable dirty.
+    this.#lastViewportSize = undefined;
+    // The composition requests the frame after updating all themed surfaces.
     this.markDirty();
   }
   cancelPointerCapture(): void {
@@ -534,8 +520,7 @@ export class WorkbenchRenderable extends Renderable {
     // dimensions here, as part of OpenTUI's pre-paint layout pass, so `renderSelf`
     // never has to -- see its doc comment and `syncAnchors`'s doc comment.
     this.syncAnchors();
-    // See `refresh()`'s comment: terminal.ts's resize handler always performs one
-    // explicit synchronous render right after a resize, so this only marks dirty.
+    // Core is already laying out this frame; do not schedule another for the resize.
     this.markDirty();
   }
 
@@ -553,18 +538,12 @@ export class WorkbenchRenderable extends Renderable {
     this.#paneFrames.clear();
     this.#splitters.clear();
     this.#splitterCapture = undefined;
-    this.#lastShellSize = undefined;
     this.#lastFrame = undefined;
     this.#lastPresentation = undefined;
     this.#lastSyntaxRead = undefined;
     this.#lastCurrentSyntax = undefined;
     this.#resolvedAnchors.clear();
     this.#lastPaintStats = undefined;
-    this.#lastHeaderText = undefined;
-    this.#lastSidebarSignature = undefined;
-    this.#lastSidebarSplitterHighlighted = undefined;
-    this.#lastStatusText = undefined;
-    this.#lastBottomPanelKey = undefined;
     super.destroySelf();
   }
 
@@ -629,7 +608,7 @@ export class WorkbenchRenderable extends Renderable {
         const view = this.#workbench.readView(pane.viewId as import('../../contracts/src/index').ViewId);
         if (view === undefined) continue;
         liveViewIds.add(pane.viewId);
-        const anchor = this.#resolveAndReportAnchor(pane.viewId, view, pane.width - 6, pane.height);
+        const anchor = this.#resolveAndReportAnchor(pane.viewId, view, pane.width - gutterWidthFor(view.document.lineCount), pane.height);
         if (anchor !== undefined) this.#resolvedAnchors.set(pane.viewId, anchor);
       }
       for (const viewId of this.#resolvedAnchors.keys()) {
@@ -641,7 +620,7 @@ export class WorkbenchRenderable extends Renderable {
     const activeViewId = this.#workbench.activeViewId;
     const view = activeViewId === undefined ? undefined : this.#workbench.readView(activeViewId);
     if (activeViewId === undefined || view === undefined) return;
-    const anchor = this.#resolveAndReportAnchor(String(activeViewId), view, geometry.editorWidth - 6, geometry.editorHeight);
+    const anchor = this.#resolveAndReportAnchor(String(activeViewId), view, geometry.editorWidth - gutterWidthFor(view.document.lineCount), geometry.editorHeight);
     if (anchor !== undefined) this.#resolvedAnchors.set(String(activeViewId), anchor);
   }
 
@@ -662,15 +641,17 @@ export class WorkbenchRenderable extends Renderable {
 
   protected override renderSelf(buffer: OptimizedBuffer): void {
     const geometry = this.layout;
-    const fullRepaint = this.#lastShellSize?.width !== this.width || this.#lastShellSize?.height !== this.height || this.#lastShellSize?.sidebarWidth !== geometry.sidebarWidth;
+    const lastViewport = this.#lastViewportSize;
+    const fullRepaint = lastViewport?.width !== this.width || lastViewport?.height !== this.height
+      || lastViewport.editorWidth !== geometry.editorWidth || lastViewport.editorHeight !== geometry.editorHeight;
     // Anchors for a width/height change are re-resolved by `onResize` (OpenTUI's own
     // pre-paint layout hook, which fires before this method with the new dimensions
     // already applied), not here -- renderSelf only reads `#resolvedAnchors`, never
     // resolves or reports them, so painting never triggers the `onViewportAnchorChange`
     // business action as a side effect of rendering.
     if (fullRepaint) {
-      buffer.fillRect(0, 0, this.width, this.height, this.#background);
-      this.#lastShellSize = Object.freeze({ width: this.width, height: this.height, sidebarWidth: geometry.sidebarWidth });
+      buffer.fillRect(geometry.editorX, geometry.editorTop, geometry.editorWidth, geometry.editorHeight, this.#background);
+      this.#lastViewportSize = Object.freeze({ width: this.width, height: this.height, editorWidth: geometry.editorWidth, editorHeight: geometry.editorHeight });
     }
 
     const activeViewId = this.#workbench.activeViewId;
@@ -686,7 +667,7 @@ export class WorkbenchRenderable extends Renderable {
         selection: view.selections,
         widthCells: geometry.editorWidth,
         heightCells: geometry.editorHeight,
-        options: { wrap: false, gutterWidthCells: 6, horizontalScrollCells: anchor?.scrollLeft ?? 0 },
+        options: { wrap: false, gutterWidthCells: gutterWidthFor(view.document.lineCount), horizontalScrollCells: anchor?.scrollLeft ?? 0 },
         ...(anchor === undefined ? {} : { anchor: anchor.anchor }),
       });
     const frame = projected?.ok === true ? projected.value : undefined;
@@ -715,8 +696,6 @@ export class WorkbenchRenderable extends Renderable {
       return;
     }
 
-    if (geometry.sidebarVisible) this.#paintSidebar(buffer, geometry, fullRepaint);
-    this.#paintTabBar(buffer, geometry, fullRepaint);
     if (frame !== undefined && view !== undefined) {
       const syntaxFallbackRows = syntaxFallbackRowsFor(this.#lastCurrentSyntax, syntaxRead);
       const paintRanges = calculatePaintRanges(previous, frame, view, presentation, this.#lastPresentation, fullRepaint, syntaxRead, this.#lastSyntaxRead, this.#lastCurrentSyntax?.spans);
@@ -742,8 +721,10 @@ export class WorkbenchRenderable extends Renderable {
       if (point !== null && point !== undefined) {
         // The cursor is software-painted onto the cell (see motion-paint.ts), so the
         // terminal's own hardware cursor must stay hidden or the two would overlay.
+        this.#cursorCell = { x: geometry.editorX + point.column, y: geometry.editorTop + point.row };
         this.ctx.setCursorPosition(geometry.editorX + point.column + 1, geometry.editorTop + point.row + 1, false);
       } else {
+        this.#cursorCell = undefined;
         this.ctx.setCursorPosition(0, 0, false);
       }
     } else {
@@ -754,26 +735,6 @@ export class WorkbenchRenderable extends Renderable {
     this.#lastPresentation = presentation;
     this.#lastSyntaxRead = syntaxRead;
 
-    if (geometry.bottomHeight > 0) {
-      const bottomPanelKey = `${geometry.editorX},${geometry.bottomTop},${geometry.editorWidth},${geometry.bottomHeight}`;
-      if (this.#lastBottomPanelKey !== bottomPanelKey) {
-        buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, geometry.bottomHeight, this.#surface);
-        buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, 1, this.#border);
-        drawText(buffer, 'Problems 0   Output   Tasks', geometry.editorX + 1, geometry.bottomTop + 1, this.#foreground, this.#surface, geometry.editorWidth - 2);
-        this.#lastBottomPanelKey = bottomPanelKey;
-      }
-    } else {
-      this.#lastBottomPanelKey = undefined;
-    }
-    const count = view?.selections.members.length ?? 0;
-    const mode = view?.session.mode.toUpperCase() ?? 'NORMAL';
-    const branch = this.#gitBranch?.();
-    const statusText = ` ${mode}   ${this.#fileLabel}${branch === undefined ? '' : ` (${branch})`}   ${count} cursor${count === 1 ? '' : 's'}`;
-    if (fullRepaint || this.#lastStatusText !== statusText) {
-      buffer.fillRect(0, geometry.statusRow, this.width, 1, this.#surface);
-      drawText(buffer, statusText, 1, geometry.statusRow, this.#foreground, this.#surface, Math.max(0, this.width - 2));
-      this.#lastStatusText = statusText;
-    }
   }
 
   private renderSplit(buffer: OptimizedBuffer, geometry: WorkbenchLayout, layoutRead: WorkbenchLayoutRead, fullRepaint: boolean): void {
@@ -784,9 +745,10 @@ export class WorkbenchRenderable extends Renderable {
     for (const pane of panes) this.#paneRects.set(pane.viewId, pane);
     for (const splitter of splitters) this.#splitters.set(splitter.id, splitter);
 
-    if (fullRepaint) buffer.fillRect(geometry.editorX, 0, geometry.editorWidth, geometry.bottomTop, this.#background);
-    if (geometry.sidebarVisible) this.#paintSidebar(buffer, geometry, true);
-    this.#paintTabBar(buffer, geometry, true);
+    if (fullRepaint) {
+      buffer.fillRect(geometry.editorX, geometry.editorTop, geometry.editorWidth, geometry.editorHeight, this.#background);
+      this.#lastViewportSize = Object.freeze({ width: this.width, height: this.height, editorWidth: geometry.editorWidth, editorHeight: geometry.editorHeight });
+    }
 
     let activeFrame: VisibleFrame | undefined;
     let activeView: WorkbenchViewSnapshot | undefined;
@@ -808,7 +770,7 @@ export class WorkbenchRenderable extends Renderable {
         selection: view.selections,
         widthCells: pane.width,
         heightCells: pane.height,
-        options: { wrap: false, gutterWidthCells: 6, horizontalScrollCells: paneAnchor?.scrollLeft ?? 0 },
+        options: { wrap: false, gutterWidthCells: gutterWidthFor(view.document.lineCount), horizontalScrollCells: paneAnchor?.scrollLeft ?? 0 },
         ...(paneAnchor === undefined ? {} : { anchor: paneAnchor.anchor }),
       });
       if (!projected.ok) {
@@ -856,31 +818,12 @@ export class WorkbenchRenderable extends Renderable {
         activePaint = paint;
         const primary = frame.selections.find((selection) => selection.primary);
         const point = primary?.head.position;
+        this.#cursorCell = point === null || point === undefined ? undefined : { x: pane.x + point.column, y: pane.y + point.row };
         if (point !== null && point !== undefined) this.ctx.setCursorPosition(pane.x + point.column + 1, pane.y + point.row + 1, false);
       }
     }
     for (const splitter of splitters) {
       buffer.fillRect(splitter.x, splitter.y, splitter.width, splitter.height, this.#border);
-    }
-    if (geometry.bottomHeight > 0) {
-      const bottomPanelKey = `${geometry.editorX},${geometry.bottomTop},${geometry.editorWidth},${geometry.bottomHeight}`;
-      if (this.#lastBottomPanelKey !== bottomPanelKey) {
-        buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, geometry.bottomHeight, this.#surface);
-        buffer.fillRect(geometry.editorX, geometry.bottomTop, geometry.editorWidth, 1, this.#border);
-        drawText(buffer, 'Problems 0   Output   Tasks', geometry.editorX + 1, geometry.bottomTop + 1, this.#foreground, this.#surface, geometry.editorWidth - 2);
-        this.#lastBottomPanelKey = bottomPanelKey;
-      }
-    } else {
-      this.#lastBottomPanelKey = undefined;
-    }
-    const count = activeView?.selections.members.length ?? 0;
-    const mode = activeView?.session.mode.toUpperCase() ?? 'NORMAL';
-    const branch = this.#gitBranch?.();
-    const statusText = ` ${mode}   ${this.#fileLabel}${branch === undefined ? '' : ` (${branch})`}   ${count} cursor${count === 1 ? '' : 's'}`;
-    if (fullRepaint || this.#lastStatusText !== statusText) {
-      buffer.fillRect(0, geometry.statusRow, this.width, 1, this.#surface);
-      drawText(buffer, statusText, 1, geometry.statusRow, this.#foreground, this.#surface, Math.max(0, this.width - 2));
-      this.#lastStatusText = statusText;
     }
     this.#lastFrame = Object.freeze({ layout: geometry, frame: activeFrame, view: activeView });
     this.#lastPresentation = activePresentation;
@@ -906,6 +849,7 @@ export class WorkbenchRenderable extends Renderable {
       }
     }
     if (splitter === undefined) return undefined;
+    if (this.#splitterCapture === undefined && phase !== 'down') return undefined;
     const firstSize = splitter.axis === 'vertical'
       ? clampSplitSize(x - splitter.originX, splitter.availableCells)
       : clampSplitSize(y - splitter.originY, splitter.availableCells);
@@ -932,6 +876,9 @@ export class WorkbenchRenderable extends Renderable {
     const geometry = this.layout;
     if (!geometry.sidebarVisible) return undefined;
     if (!this.#sidebarSplitterCapture && (x !== geometry.sidebarWidth || y < 0 || y >= this.height)) return undefined;
+    // Only a button press begins a resize; a hover ('move') over the splitter column must not
+    // capture it, or moving the pointer across the sidebar would drag its width around.
+    if (!this.#sidebarSplitterCapture && phase !== 'down') return undefined;
     const availableCells = Math.max(23, this.width - 20);
     const firstSize = clampSplitSize(x, availableCells);
     const control: WorkbenchPointerEvent['control'] = {
@@ -958,6 +905,10 @@ export class WorkbenchRenderable extends Renderable {
   #chromeControlAt(x: number, y: number, geometry: WorkbenchLayout): WorkbenchPointerEvent['control'] | undefined {
     const sidebarModel = this.#sidebar?.();
     if (sidebarModel !== undefined && geometry.sidebarVisible) {
+      if (y === 0) {
+        const tab = computeSidebarTabLayout(geometry.sidebarWidth).find(entry => x >= entry.x && x < entry.x + entry.width);
+        if (tab !== undefined) return { id: `sidebar.${tab.id}`, kind: tab.id === 'files' ? 'tree' : 'button', action: 'activate' };
+      }
       const sections = computeSidebarSectionLayout(sidebarModel, geometry.statusRow);
       if (y === sections.outlineHeaderRow && x >= 0 && x < geometry.sidebarWidth) {
         return { id: 'sidebar-section.outline', kind: 'button', action: 'activate' };
@@ -970,92 +921,14 @@ export class WorkbenchRenderable extends Renderable {
   }
 
   #tabControlAt(column: number): WorkbenchPointerEvent['control'] | undefined {
-    for (const rect of this.#tabHitRects) {
-      if (column < rect.x || column >= rect.x + rect.width) continue;
-      if (rect.hasClose && column >= rect.x + rect.width - 2) return { id: rect.id, kind: 'tab-close', action: 'activate' };
-      return { id: rect.id, kind: 'tab', action: 'activate' };
+    const tabs = this.#tabs?.();
+    if (tabs === undefined) return undefined;
+    for (const entry of computeTabLayout(tabs, this.layout.editorWidth)) {
+      if (entry.tab === undefined || column < entry.x || column >= entry.x + entry.width) continue;
+      if (entry.hasClose && column >= entry.x + entry.width - 3) return { id: entry.tab.id, kind: 'tab-close', action: 'activate' };
+      return { id: entry.tab.id, kind: 'tab', action: 'activate' };
     }
     return undefined;
-  }
-
-  /** Paint the two chevron section headers (`▾ Files`/`▸ Outline`) plus the resizable
-   * splitter column; falls back to the legacy static "Files  Search  Git" header when no
-   * `sidebar` read model was supplied (older embedders/tests). */
-  #paintSidebar(buffer: OptimizedBuffer, geometry: WorkbenchLayout, fullRepaint: boolean): void {
-    const sidebar = this.#sidebar?.();
-    const signature = sidebar === undefined ? undefined : `${sidebar.sections.map((section) => `${section.id}:${section.expanded}`).join(',')}|${geometry.sidebarWidth}|${this.#hoverSidebarSplitter}`;
-    // The legacy (no `sidebar` model) branch only ever repaints on a genuine full repaint,
-    // exactly like the static header it replaces -- otherwise this would blank the sidebar
-    // column (including the status row's leftmost cells, which the column's full height
-    // covers) on every damage-limited frame even though nothing in it changed.
-    if (fullRepaint || (sidebar !== undefined && this.#lastSidebarSignature !== signature)) {
-      buffer.fillRect(0, 0, geometry.sidebarWidth, this.height, this.#surface);
-      if (sidebar === undefined) {
-        buffer.fillRect(0, 0, geometry.sidebarWidth, 1, this.#active);
-        drawText(buffer, 'Files  Search  Git', 1, 0, this.#foreground, this.#active, geometry.sidebarWidth - 2);
-        drawText(buffer, `${this.#ascii ? '> ' : '▾ '}${this.#fileLabel}`, 1, 2, this.#foreground, this.#surface, geometry.sidebarWidth - 2);
-        drawText(buffer, `${this.#ascii ? '> ' : '  '}Outline`, 1, 4, this.#muted, this.#surface, geometry.sidebarWidth - 2);
-      } else {
-        const files = sidebar.sections.find((section) => section.id === 'files');
-        const outline = sidebar.sections.find((section) => section.id === 'outline');
-        const chevron = (expanded: boolean): string => (this.#ascii ? (expanded ? 'v' : '>') : (expanded ? '▾' : '▸'));
-        const sections = computeSidebarSectionLayout(sidebar, geometry.statusRow);
-        buffer.fillRect(0, 0, geometry.sidebarWidth, 1, this.#active);
-        drawText(buffer, `${chevron(files?.expanded ?? false)} Files`, 1, 0, this.#foreground, this.#active, geometry.sidebarWidth - 2);
-        buffer.fillRect(0, sections.outlineHeaderRow, geometry.sidebarWidth, 1, this.#active);
-        drawText(buffer, `${chevron(outline?.expanded ?? false)} Outline`, 1, sections.outlineHeaderRow, this.#foreground, this.#active, geometry.sidebarWidth - 2);
-      }
-      this.#lastSidebarSignature = signature;
-    }
-    // Gated like every other damage-limited paint here: an unconditional redraw would blank
-    // whatever the status-bar row (drawn later, only when its own text changes) had already
-    // painted into this same column on a frame where nothing about the splitter changed.
-    const highlighted = this.#hoverSidebarSplitter || this.#sidebarSplitterCapture;
-    if (fullRepaint || this.#lastSidebarSplitterHighlighted !== highlighted) {
-      buffer.fillRect(geometry.sidebarWidth, 0, 1, this.height, highlighted ? this.#accent : this.#border);
-      this.#lastSidebarSplitterHighlighted = highlighted;
-    }
-  }
-
-  /** Paint the buffer tab strip, or fall back to the legacy single `<fileLabel> ●` header
-   * when no `tabs` read model was supplied. Populates `#tabHitRects` for `#tabControlAt`. */
-  #paintTabBar(buffer: OptimizedBuffer, geometry: WorkbenchLayout, fullRepaint: boolean): void {
-    const tabs = this.#tabs?.();
-    if (tabs === undefined) {
-      const headerText = `${this.#fileLabel}  ${this.#ascii ? '*' : '●'}`;
-      if (fullRepaint || this.#lastHeaderText !== headerText) {
-        buffer.fillRect(geometry.editorX, 0, geometry.editorWidth, 1, this.#active);
-        drawText(buffer, headerText, geometry.editorX + 1, 0, this.#foreground, this.#active, geometry.editorWidth - 2);
-        this.#lastHeaderText = headerText;
-      }
-      this.#tabHitRects = [];
-      return;
-    }
-    const signature = `${tabs.map((tab) => `${tab.id}:${tab.active}:${tab.dirty}:${tab.preview}:${tab.pinned}`).join(',')}|${geometry.editorWidth}|${this.#hoverTabId}`;
-    if (!fullRepaint && this.#lastHeaderText === signature) return;
-    this.#lastHeaderText = signature;
-    buffer.fillRect(geometry.editorX, 0, geometry.editorWidth, 1, this.#surface);
-    const entries = computeTabLayout(tabs, geometry.editorWidth);
-    const hitRects: { readonly x: number; readonly width: number; readonly id: string; readonly hasClose: boolean }[] = [];
-    for (const entry of entries) {
-      const x = geometry.editorX + entry.x;
-      if (entry.tab === undefined) {
-        drawText(buffer, '…', x, 0, this.#muted, this.#surface, entry.width);
-        continue;
-      }
-      const tab = entry.tab;
-      const hovered = this.#hoverTabId === tab.id;
-      const background = tab.active ? this.#accent : hovered ? this.#active : this.#surface;
-      const foreground = tab.active ? this.#background : tab.preview ? this.#muted : this.#foreground;
-      const attributes = tab.active ? TextAttributes.BOLD : tab.preview ? TextAttributes.ITALIC : 0;
-      buffer.fillRect(x, 0, entry.width, 1, background);
-      const closeWidth = entry.hasClose ? 2 : 0;
-      const label = tabLabelText(tab, this.#ascii, entry.width - closeWidth);
-      drawText(buffer, label, x, 0, foreground, background, entry.width - closeWidth, attributes);
-      if (entry.hasClose) drawText(buffer, ` ${this.#ascii ? 'x' : '×'}`, x + entry.width - closeWidth, 0, foreground, background, closeWidth);
-      hitRects.push({ x: entry.x, width: entry.width, id: tab.id, hasClose: entry.hasClose });
-    }
-    this.#tabHitRects = hitRects;
   }
 }
 
@@ -1144,8 +1017,8 @@ function workbenchControlAt(layout: WorkbenchLayout, x: number, y: number): Work
   if (y === layout.statusRow) return { id: 'status', kind: 'button', action: 'activate' };
   if (y !== 0) return undefined;
   if (layout.sidebarVisible && x >= 0 && x < layout.sidebarWidth) {
-    const section = x < Math.ceil(layout.sidebarWidth / 3) ? 'files' : x < Math.ceil(layout.sidebarWidth * 2 / 3) ? 'search' : 'git';
-    return { id: `sidebar.${section}`, kind: section === 'files' ? 'tree' : 'button', action: 'activate' };
+    const tab = computeSidebarTabLayout(layout.sidebarWidth).find(entry => x >= entry.x && x < entry.x + entry.width);
+    if (tab !== undefined) return { id: `sidebar.${tab.id}`, kind: tab.id === 'files' ? 'tree' : 'button', action: 'activate' };
   }
   if (x >= layout.editorX && x < layout.editorX + layout.editorWidth) return { id: 'tab.active', kind: 'tab', action: 'activate' };
   return undefined;
@@ -1338,6 +1211,11 @@ interface TabLayoutEntry {
   readonly hasClose: boolean;
 }
 
+/** Vim `numberwidth`-style gutter: at least three digits plus one blank separator column. */
+export function gutterWidthFor(lineCount: number): number {
+  return Math.max(3, String(Math.max(1, lineCount)).length) + 1;
+}
+
 const TAB_MIN_WIDTH = 8;
 const TAB_MAX_WIDTH = 22;
 
@@ -1346,7 +1224,7 @@ const TAB_MAX_WIDTH = 22;
  * out, replacing whatever's left over with a single `…` marker on each overflowing side. */
 export function computeTabLayout(tabs: readonly WorkbenchTabSnapshot[], availableWidth: number): readonly TabLayoutEntry[] {
   if (tabs.length === 0 || availableWidth <= 0) return [];
-  const widths = tabs.map((tab) => Math.max(TAB_MIN_WIDTH, Math.min(TAB_MAX_WIDTH, tab.label.length + (tab.dirty ? 2 : 0) + 5)));
+  const widths = tabs.map((tab) => Math.max(TAB_MIN_WIDTH, Math.min(TAB_MAX_WIDTH, tab.label.length + (tab.dirty ? 2 : 0) + 6)));
   const totalWidth = widths.reduce((sum, width) => sum + width, 0);
   if (totalWidth <= availableWidth) {
     let x = 0;

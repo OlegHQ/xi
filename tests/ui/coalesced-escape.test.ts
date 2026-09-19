@@ -14,4 +14,6 @@ assert.ok(upper !== undefined && upper[1].name === 'x' && upper[1].shift === tru
 assert.equal(splitCoalescedEscape({ ...base, name: 'up', sequence: `${ESC}[A`, raw: `${ESC}[A` }), undefined, 'COALESCED-ESC-04 CSI stays intact');
 assert.equal(splitCoalescedEscape({ ...base, name: 'escape', sequence: ESC, raw: ESC }), undefined, 'COALESCED-ESC-05 lone Escape untouched');
 assert.equal(splitCoalescedEscape({ ...base, name: 'f1', sequence: `${ESC}OP`, raw: `${ESC}OP` }), undefined, 'COALESCED-ESC-06 SS3 stays intact');
+const doubleEscape = splitCoalescedEscape({ ...base, name: 'escape', sequence: `${ESC}${ESC}`, raw: `${ESC}${ESC}` });
+assert.ok(doubleEscape !== undefined && doubleEscape[0].name === 'escape' && doubleEscape[1].name === 'escape', 'COALESCED-ESC-07 repeated Escape stays two presses');
 console.log('coalesced-escape passed');

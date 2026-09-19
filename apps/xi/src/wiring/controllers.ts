@@ -13,9 +13,12 @@ import type {
   FormatterPipeline,
 } from '../../../../packages/services/src/entrypoints/launch';
 import {
+  buildNavigationRequest,
   BufferHost,
   CompletionSnippetController,
+  DiffViewController,
   ExplorerController,
+  GitPanelController,
   languageIdForPath,
   LanguageOverlayController,
   PickerController,
@@ -46,6 +49,7 @@ import { resolveFormatOnSave, resolveFormatterSelection } from '../../../../pack
 import type { CompiledConfig, LanguageConfig, LanguageServerConfig, loadStartupXiConfig } from '../../../../packages/services/src/entrypoints/config';
 import { SyntaxDocumentTracker } from '../../../../packages/services/src/entrypoints/syntax';
 import { createBundledGrammarProvider, resolveTreeSitterRuntimeOptions } from '../syntax-assets';
+import type { StatusMessageController } from '../../../../packages/workbench/src/entrypoints/launch';
 import type { ThemeWiring } from './theme';
 import { createTaskWiring, type TaskWiring } from './tasks';
 import { createLanguageWiring, type LanguageWiring } from './language';
@@ -79,9 +83,11 @@ export interface ControllersDeps {
   readonly themeWiring: ThemeWiring;
   readonly coreServices: CoreServicesModule;
   readonly ContextMenuStore: UiModule['ContextMenuStore'];
+  readonly statusMessages: StatusMessageController;
 }
 
 export interface Controllers {
+  readonly statusMessages: StatusMessageController;
   readonly workbench: InstanceType<typeof WorkbenchSession>;
   readonly host: BufferHost;
   readonly saveCoordinator: SaveCoordinator;
@@ -93,6 +99,8 @@ export interface Controllers {
   readonly explorerFeature: ExplorerController;
   readonly directoryDraftController: DirectoryDraftController;
   readonly searchFeature: SearchController;
+  readonly gitPanelFeature: GitPanelController;
+  readonly gitDiffFeature: DiffViewController;
   readonly problemsFeature: ProblemsController;
   readonly overlayFeature: LanguageOverlayController;
   readonly sidebarController: SidebarController;
@@ -112,6 +120,9 @@ export interface Controllers {
   readonly syntaxResultSubscription: Disposable;
   readonly mouseMode: { readonly registered: (toggle: () => boolean) => void; readonly toggle: () => boolean };
   readonly jobControlDisposables: Disposable[];
+  /** Helix-style picker preview: leading lines of a file, read once in the background and
+   * cached; `undefined` while loading (a surface change re-renders once it lands). */
+  readonly pickerPreview: (path: string) => { readonly title: string; readonly lines: readonly string[] } | undefined;
   readonly fileIndexStarter: { readonly schedule: () => void; readonly cancel: () => void };
   readonly ensureGitAndOpenPicker: () => Promise<void>;
 }
@@ -246,7 +257,14 @@ interface ForwardRefs {
   languageWiring: LanguageWiring;
   completionFeature: CompletionSnippetController;
   explorerFeature: ExplorerController;
+  sidebarController: SidebarController;
+  overlayFeature: LanguageOverlayController;
+  gitPanelOpen: () => boolean;
   searchFeature: SearchController;
+  gitPanelFeature: GitPanelController;
+  /** Assigned by whichever wiring owns the diff view (unset until then); `GitPanelController`
+   * calls it to open a diff instead of the plain file when it is present. */
+  gitDiff?: { open(relativePath: string, target: 'index' | 'worktree'): Promise<void> };
   optionalServices: OptionalServicesWiring;
   directoryDraftController: DirectoryDraftController;
   startFileIndexPopulation: () => Promise<void>;
@@ -323,7 +341,7 @@ function createWorkbenchCore(ctx: BuildContext, forward: ForwardRefs, syntaxTrac
 async function loadStartupSettings(deps: ControllersDeps): Promise<{ readonly startupConfig: StartupConfig; readonly configuredLanguages: readonly LanguageConfig[] | undefined; readonly formatOnSave: boolean; readonly workspaceRoot: string }> {
   const workspaceRoot = process.cwd();
   const startupLoaded = await deps.startupConfigPromise;
-  for (const message of startupLoaded.diagnostics) process.stderr.write(`xi: config: ${message}\n`);
+  if (startupLoaded.diagnostics.length > 0) deps.statusMessages.publish(`xi: config: ${startupLoaded.diagnostics.join('; ')}`);
   const startupConfig = startupLoaded.config;
   const configuredLanguages = startupConfig?.languages;
   const formatOnSave = resolveFormatOnSave(process.env, deps.languageId !== undefined && (configuredLanguages?.find((entry) => entry.name === deps.languageId)?.autoFormat ?? false));
@@ -357,6 +375,7 @@ function createLanguageAndTaskWiring(
     readDocumentText,
     workbenchBuffers: () => workbench.buffers(),
     renameBufferPath: (bufferId, path) => workbench.renameBufferPath(bufferId, path),
+    statusMessages: deps.statusMessages,
   });
   forward.languageWiring = languageWiring;
   // On-demand rendering only paints after a keypress/resize/pointer event requests a frame.
@@ -457,7 +476,7 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
     marker,
     launchViewId: id<ViewId>('xi-launch-view'),
     ...(filePath?.line === undefined ? {} : { launchInitialLine: filePath.line }),
-    onMessage: (message) => process.stderr.write(message),
+    onMessage: (message) => ctx.deps.statusMessages.publish(message, 'info'),
     clock,
     onSave: async (sessionDocument, viewId, target) => {
       // T041/T042: `:w` on a directory draft compiles a plan and opens review instead of
@@ -466,7 +485,7 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
       const buffer = workbench.views().find((view) => view.viewId === viewId);
       const path = target ?? (buffer === undefined ? undefined : workbench.buffer(buffer.bufferId)?.path);
       if (path === undefined) {
-        process.stderr.write('xi: no file name\n');
+        ctx.deps.statusMessages.publish('xi: no file name');
         return false;
       }
       return forward.saveCoordinator.requestSave(sessionDocument, path, viewId);
@@ -522,7 +541,13 @@ function createOptionalServicesAndPicker(
     marker,
     startFileIndexPopulation: () => forward.startFileIndexPopulation(),
     toggleMouseMode: mouseMode.toggle,
-    openFile: (path, preview) => host.openBufferAtPath(path, { preview }),
+    openFile: async (path, preview) => {
+      const opened = await host.openBufferAtPath(path, { preview });
+      // The Files tree follows a picker commit (VS Code "reveal in explorer"); previews
+      // are transient and would churn the tree on every arrow key.
+      if (opened !== undefined && !preview) forward.explorerFeature.revealPath(path);
+      return opened;
+    },
     onSecondaryAction: (entry, action) => {
       const resolved = optionalServices.current;
       if (resolved === undefined) return;
@@ -562,10 +587,13 @@ function createExplorerAndDirectory(
     fileOperations: journaledFileOperations,
     clock,
     marker,
-    onError: (message) => process.stderr.write(message),
+    onError: (message) => ctx.deps.statusMessages.publish(message),
     workspaceRelativePath: (path) => filesystem.workspaceRelativePath(workspaceRoot, path),
     trashDirectory: `${workspaceRoot}/.xi-trash`,
     ensureServices: async () => { await forward.optionalServices.ensure(); },
+    onOpen: () => forward.sidebarController.expandSection('files'),
+    onCollapse: () => forward.sidebarController.collapseSection('files'),
+    focusOutline: () => forward.overlayFeature.openOutline(),
   });
   forward.explorerFeature = explorerFeature;
   const directoryDraftController = new DirectoryDraftController({
@@ -635,7 +663,7 @@ function createExplorerAndDirectory(
       }
     },
     openBuffer: async (path) => (await host.openBufferAtPath(path)) !== undefined,
-    onError: (message) => process.stderr.write(message),
+    onError: (message) => ctx.deps.statusMessages.publish(message),
     marker,
     notifySurfaceChange: () => host.notifySurfaceChange(),
   });
@@ -654,23 +682,63 @@ function createSearchProblemsOverlaySidebar(
   taskWiring: TaskWiring,
   fileUri: CoreServicesModule['fileUri'],
   workspacePathFromUri: CoreServicesModule['workspacePathFromUri'],
-): { readonly searchFeature: SearchController; readonly problemsFeature: ProblemsController; readonly overlayFeature: LanguageOverlayController; readonly sidebarController: SidebarController } {
+): { readonly searchFeature: SearchController; readonly gitPanelFeature: GitPanelController; readonly gitDiffFeature: DiffViewController; readonly problemsFeature: ProblemsController; readonly overlayFeature: LanguageOverlayController; readonly sidebarController: SidebarController } {
   const { filesystem, marker, workspaceRoot } = ctx;
   const searchFeature = new SearchController({
     host,
     session: workbench,
     filesystem,
     marker,
-    onError: (message) => process.stderr.write(message),
+    onError: (message) => ctx.deps.statusMessages.publish(message),
     workspaceRoot,
     ensureServices: async () => { await forward.optionalServices.ensure(); },
   });
   forward.searchFeature = searchFeature;
+  // Lazily bound to `optionalServices.current.gitStatusService`/`gitMutationCoordinator`,
+  // constructed on first use exactly like `searchFeature`'s own `ensureServices` -- this
+  // controller never touches the process/filesystem port directly.
+  const gitPanelFeature = new GitPanelController({
+    host,
+    status: {
+      get snapshot() { return forward.optionalServices.current?.gitStatusService.snapshot; },
+      subscribe: (listener) => {
+        let disposed = false;
+        let inner: { dispose(): void } | undefined;
+        void forward.optionalServices.ensure().then((resolved) => {
+          if (disposed) return;
+          inner = resolved.gitStatusService.subscribe(listener);
+          if (resolved.gitStatusService.snapshot !== undefined) listener(resolved.gitStatusService.snapshot);
+        });
+        return { dispose: () => { disposed = true; inner?.dispose(); } };
+      },
+      refresh: async () => { await (await forward.optionalServices.ensure()).gitStatusService.refresh(); },
+    },
+    mutations: {
+      stage: async (paths, context) => (await forward.optionalServices.ensure()).gitMutationCoordinator.stage(paths, context),
+      unstage: async (paths, context) => (await forward.optionalServices.ensure()).gitMutationCoordinator.unstage(paths, context),
+    },
+    filesystem,
+    workspaceRoot,
+    marker,
+    onError: (message) => ctx.deps.statusMessages.publish(message),
+    openDiff: (relativePath, target) => forward.gitDiff?.open(relativePath, target) ?? Promise.resolve(),
+  });
+  forward.gitPanelFeature = gitPanelFeature;
+  // Lazily bound to `optionalServices.current.gitDiffService`, constructed on first `open()`
+  // exactly like `gitPanelFeature`'s own status port -- never touches the process/filesystem
+  // port directly.
+  const gitDiffFeature = new DiffViewController({
+    host,
+    workspaceRoot,
+    marker,
+    service: { load: async (input) => (await forward.optionalServices.ensure()).gitDiffService.load(input) },
+  });
+  forward.gitDiff = gitDiffFeature;
   const problemsFeature = new ProblemsController({
     host,
     diagnostics,
     marker,
-    onError: (message) => process.stderr.write(message),
+    onError: (message) => ctx.deps.statusMessages.publish(message),
     workspaceRoot,
     resolvePath: (base, relative) => filesystem.resolvePath(base, relative),
     fileUri,
@@ -685,12 +753,14 @@ function createSearchProblemsOverlaySidebar(
     session: workbench,
     fileUri,
     marker,
+    focusExplorer: () => forward.explorerFeature.open(),
     ensureLanguage: () => forward.languageWiring.ensureLanguage(),
   });
   const sidebarController = new SidebarController({
+    panelState: () => (forward.searchFeature.isOpen ? 'search' : forward.gitPanelFeature.isOpen ? 'git' : 'files'),
     outline: { get hasSymbols() { return overlayFeature.outlineRead.model.symbols.length > 0; } },
   });
-  return { searchFeature, problemsFeature, overlayFeature, sidebarController };
+  return { searchFeature, gitPanelFeature, gitDiffFeature, problemsFeature, overlayFeature, sidebarController };
 }
 
 /** Completion/snippets and workspace-edit (rename/code-action) controllers, plus connecting
@@ -711,7 +781,7 @@ function createCompletionAndWorkspaceEdits(
     host,
     session: workbench,
     marker,
-    onError: (message) => process.stderr.write(message),
+    onError: (message) => ctx.deps.statusMessages.publish(message),
     fileUri,
     positionToOffset: deps.positionToOffset,
     ensureLanguage: () => forward.languageWiring.ensureLanguage(),
@@ -724,7 +794,7 @@ function createCompletionAndWorkspaceEdits(
     session: workbench,
     filesystem,
     marker,
-    onError: (message) => process.stderr.write(message),
+    onError: (message) => ctx.deps.statusMessages.publish(message),
     fileUri,
     workspaceRelativePathFromUri: (uri) => workspaceRelativePathFromUri(filesystem, workspaceRoot, uri),
     workspaceAbsolutePath: (relativePath) => filesystem.workspaceAbsolutePath(workspaceRoot, relativePath),
@@ -799,12 +869,12 @@ function createSaveAndHostCommands(
     persistence,
     clock,
     marker,
-    onError: (message) => process.stderr.write(message),
+    onError: (message) => ctx.deps.statusMessages.publish(message),
     formatOnSave,
     createFormatterPipeline: async () => {
       const { FormatterPipeline, createExternalFormatter } = await import('../../../../packages/services/src/entrypoints/formatting');
       const configuredFormatter = languageId === undefined ? undefined : configuredLanguages?.find((entry) => entry.name === languageId)?.formatter;
-      return createFormatterPipelineFromEnvironment(workspaceRoot, FormatterPipeline, createExternalFormatter, deps.NodeProcessPort, marker, configuredFormatter);
+      return createFormatterPipelineFromEnvironment(workspaceRoot, FormatterPipeline, createExternalFormatter, deps.NodeProcessPort, marker, ctx.deps.statusMessages, configuredFormatter);
     },
     onSaved: () => { void forward.optionalServices.current?.gitStatusService.refresh(); },
   });
@@ -814,7 +884,7 @@ function createSaveAndHostCommands(
     session: workbench,
     filesystem,
     marker,
-    onError: (message) => process.stderr.write(message),
+    onError: (message) => ctx.deps.statusMessages.publish(message),
     workspaceRoot,
     workspacePathFromUri,
     ensureHostNavigation: async () => { await forward.optionalServices.ensure(); },
@@ -823,6 +893,25 @@ function createSaveAndHostCommands(
     problems: problemsFeature,
     saveCoordinator,
     directoryDrafts: { open: (target, viewId) => forward.directoryDraftController.explore(target, viewId) },
+    lookupDefinition: async () => {
+      await forward.languageWiring.ensureLanguage();
+      const navigation = forward.languageWiring.navigationController;
+      const languageSession = forward.languageWiring.session;
+      if (navigation === undefined || languageSession === undefined) return { ok: false, message: 'no language server for this file' };
+      const request = buildNavigationRequest(workbench, ctx.deps.coreServices.fileUri);
+      if (request === undefined) return { ok: false, message: 'no active buffer' };
+      // The server for this buffer's language may still be initializing on the first `gd`;
+      // wait (bounded) for its readiness, not for whichever server was opened last.
+      const ready = await Promise.race([languageSession.waitForReady(request.uri), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8000))]);
+      if (ready !== undefined && !ready.ok) return { ok: false, message: ready.error.message };
+      const result = await navigation.definition(request);
+      if (!result.ok) return { ok: false, message: result.error.message };
+      // Servers may list the local import alias first; prefer the declaration in another file.
+      const first = result.value.find((location) => location.uri !== request.uri) ?? result.value[0];
+      if (first === undefined) return { ok: false, message: 'no definition found' };
+      return { ok: true, location: { uri: first.uri, line: first.startLine, utf16: first.startUtf16 } };
+    },
+    focusSidebar: () => { forward.explorerFeature.open(); return true; },
   });
   forward.hostCommands = hostCommands;
   return { saveCoordinator, hostCommands };
@@ -848,13 +937,15 @@ function createInputAndPointerRouters(
   diagnostics: InstanceType<CoreServicesModule['DiagnosticStore']>,
   mouseMode: ReturnType<typeof createMouseModeToggle>,
   directoryDraftController: DirectoryDraftController,
+  gitDiffFeature: DiffViewController,
 ): { readonly inputRouter: WorkbenchInputRouter; readonly pointerRouter: WorkbenchPointerRouter } {
+  forward.gitPanelOpen = () => picker.isOpen && picker.mode === 'git';
   const { marker, startupConfig, clock } = ctx;
   const inputRouter = new WorkbenchInputRouter({
     host,
     session: workbench,
     marker,
-    onError: (message) => process.stderr.write(message),
+    onError: (message) => ctx.deps.statusMessages.publish(message),
     commandRegistry,
     picker,
     explorer: forward.explorerFeature,
@@ -863,6 +954,7 @@ function createInputAndPointerRouters(
     overlays: overlayFeature,
     completion: forward.completionFeature,
     workspaceEdits: workspaceEditsFeature,
+    executeWorkbenchCommand: (source, viewId) => forward.hostCommands.handleWorkbenchCommand(source, viewId),
     isExplorerServiceLoaded: () => forward.optionalServices.current !== undefined,
     isSearchServiceLoaded: () => forward.optionalServices.current !== undefined,
     ensureOptionalServices: async () => { await forward.optionalServices.ensure(); },
@@ -882,8 +974,19 @@ function createInputAndPointerRouters(
     overlayContextMenu: contextMenuStore,
     overlayCompletion: { isOpen: () => forward.completionFeature.isCompletionOpen, onKeypress: (event) => forward.completionFeature.handleCompletionKeypress(event) },
     overlayPicker: { isOpen: () => picker.isOpen, onKeypress: (event) => picker.handleKeypress(event) },
-    overlayExplorer: { isOpen: () => forward.explorerFeature.isOpen, onKeypress: (event) => forward.explorerFeature.handleKeypress(event) },
-    overlaySearch: { isOpen: () => forward.searchFeature.isOpen, onKeypress: (event) => forward.searchFeature.handleKeypress(event) },
+    overlayExplorer: { isOpen: () => forward.explorerFeature.isOpen, onKeypress: (event) => forward.explorerFeature.handleKeypress(event), capturesTextInput: () => forward.explorerFeature.capturesTextInput },
+    overlaySearch: { isOpen: () => forward.searchFeature.isOpen, onKeypress: (event) => forward.searchFeature.handleKeypress(event), capturesTextInput: () => forward.searchFeature.capturesTextInput },
+    overlayGit: { isOpen: () => forward.gitPanelFeature.isOpen, onKeypress: (event) => forward.gitPanelFeature.handleKeypress(event) },
+    overlayGitDiff: { isOpen: () => gitDiffFeature.isOpen, onKeypress: (event) => gitDiffFeature.handleKeypress(event) },
+    openGitDiffForActiveBuffer: async () => {
+      const activeViewId = workbench.activeViewId;
+      const buffer = activeViewId === undefined ? undefined : workbench.buffers().find((candidate) => candidate.viewIds.includes(activeViewId));
+      const path = buffer?.path;
+      if (path === undefined) return;
+      const relativePath = ctx.filesystem.workspaceRelativePath(ctx.workspaceRoot, path);
+      if (relativePath === undefined) return;
+      await gitDiffFeature.open(relativePath, 'worktree');
+    },
     overlayProblems: { isOpen: () => problemsFeature.isProblemsOpen, onKeypress: (event) => problemsFeature.handleProblemsKeypress(event) },
     overlayOutput: { isOpen: () => problemsFeature.isOutputOpen, onKeypress: (event) => problemsFeature.handleOutputKeypress(event) },
     overlayOutline: { isOpen: () => overlayFeature.isOutlineOpen, onKeypress: (event) => overlayFeature.handleOutlineKeypress(event) },
@@ -897,6 +1000,9 @@ function createInputAndPointerRouters(
     marker,
     clock,
     onTabActivate: (bufferId) => { workbench.activateBuffer(id<DocumentId>(bufferId)); host.notifySurfaceChange(); },
+    onEditorPointerDown: () => {
+      if (forward.explorerFeature.isOpen || forward.searchFeature.isOpen) { host.closeAllPanels(); host.notifySurfaceChange(); }
+    },
     onTabPin: (bufferId) => { workbench.pinBuffer(id<DocumentId>(bufferId)); host.notifySurfaceChange(); },
     // `closeBuffer` with no decision closes a clean buffer immediately and returns a
     // `dirty-buffer` error (no side effect) for one with unsaved changes -- the tab close
@@ -921,7 +1027,12 @@ function createInputAndPointerRouters(
       readModel: () => forward.optionalServices.current?.searchService.model,
       setSelectedIndex: (index) => forward.searchFeature.setSelectedIndex(index),
       openMatch: (match) => forward.searchFeature.openMatch(match),
+      previewSelected: () => forward.searchFeature.previewSelected(),
+      focusQuery: () => forward.searchFeature.focusQuery(),
+      focusReplace: () => forward.searchFeature.focusReplace(),
+      toggleCollapsed: (path) => forward.searchFeature.toggleCollapsed(path),
     },
+    git: { onPointerActivate: (itemId) => forward.gitPanelFeature.onPointerActivate(itemId) },
     problems: {
       get model() { return diagnostics.model; },
       setSelectedProblemIndex: (index) => problemsFeature.setSelectedProblemIndex(index),
@@ -957,11 +1068,13 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const host = createHostController(ctx, forward, workbench, syntaxTracker);
   const { optionalServices, picker } = createOptionalServicesAndPicker(ctx, forward, host, pickerModel, mouseMode, fileUri);
   const { explorerFeature, directoryDraftController } = createExplorerAndDirectory(ctx, forward, host, workbench);
-  const { searchFeature, problemsFeature, overlayFeature, sidebarController } = createSearchProblemsOverlaySidebar(ctx, forward, host, workbench, diagnostics, taskWiring, fileUri, workspacePathFromUri);
+  const { searchFeature, gitPanelFeature, gitDiffFeature, problemsFeature, overlayFeature, sidebarController } = createSearchProblemsOverlaySidebar(ctx, forward, host, workbench, diagnostics, taskWiring, fileUri, workspacePathFromUri);
+  forward.sidebarController = sidebarController;
+  forward.overlayFeature = overlayFeature;
   const { completionFeature, workspaceEditsFeature } = createCompletionAndWorkspaceEdits(ctx, forward, host, workbench, diagnostics, overlayFeature, fileUri, workspaceRelativePathFromUri);
   const pointerCapture = createPointerCapture(ctx, host, workbench);
   createSaveAndHostCommands(ctx, forward, host, workbench, workspaceEditsFeature, problemsFeature, workspacePathFromUri);
-  const { inputRouter, pointerRouter } = createInputAndPointerRouters(ctx, forward, host, workbench, commandRegistry, picker, problemsFeature, overlayFeature, workspaceEditsFeature, sidebarController, pointerCapture, contextMenuStore, pickerModel, diagnostics, mouseMode, directoryDraftController);
+  const { inputRouter, pointerRouter } = createInputAndPointerRouters(ctx, forward, host, workbench, commandRegistry, picker, problemsFeature, overlayFeature, workspaceEditsFeature, sidebarController, pointerCapture, contextMenuStore, pickerModel, diagnostics, mouseMode, directoryDraftController, gitDiffFeature);
 
   // Deferred until every controller `onPrefixStateChange`/`onCommandLineChange` delegates to
   // (`inputRouter`, constructed above) exists: `createSession`'s initial state publish can
@@ -978,6 +1091,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   }
 
   return {
+    statusMessages: deps.statusMessages,
     workbench,
     host,
     saveCoordinator: forward.saveCoordinator,
@@ -989,6 +1103,8 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     explorerFeature,
     directoryDraftController,
     searchFeature,
+    gitPanelFeature,
+    gitDiffFeature,
     problemsFeature,
     overlayFeature,
     sidebarController,
@@ -1009,6 +1125,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     mouseMode,
     jobControlDisposables,
     fileIndexStarter,
+    pickerPreview: createPickerPreview(ctx, host),
     ensureGitAndOpenPicker,
   };
 }
@@ -1024,11 +1141,12 @@ function createFormatterPipelineFromEnvironment(
   createExternal: typeof import('../../../../packages/services/src/entrypoints/launch').createExternalFormatter,
   Process: typeof NodeProcessPort,
   marker: (name: string, payload?: unknown) => void,
+  statusMessages: StatusMessageController,
   configuredFormatter?: { readonly command: string; readonly args: readonly string[] },
 ): FormatterPipeline | undefined {
   const selection = resolveFormatterSelection(process.env, configuredFormatter);
   if (!selection.ok) {
-    process.stderr.write(`xi: formatter failed: ${selection.error.message}\n`);
+    statusMessages.publish(`xi: formatter failed: ${selection.error.message}`);
     marker('XI_FORMAT_ERROR', { kind: 'failed', message: selection.error.message });
     return undefined;
   }
@@ -1041,4 +1159,42 @@ function createFormatterPipelineFromEnvironment(
     cwd: workspaceRoot,
     env: processEnvironment(),
   })]);
+}
+
+/** Bounded (32 entries) preview cache for the file picker; reads go through the platform
+ * filesystem port off the input path and wake one frame via `notifySurfaceChange`. */
+function createPickerPreview(ctx: BuildContext, host: BufferHost): Controllers['pickerPreview'] {
+  const cache = new Map<string, { readonly title: string; readonly lines: readonly string[] } | 'loading'>();
+  // `fatal: true` mirrors `openTextDocument`'s own binary detection (packages/document/src/
+  // text-fidelity.ts): a picker preview must never hand raw/invalid-UTF-8 bytes to the
+  // renderer -- terminal control bytes (ESC, etc.) inside binary file content would
+  // otherwise be written straight to the pty and corrupt the whole screen, not just the
+  // preview pane.
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  return (path) => {
+    const cached = cache.get(path);
+    if (cached !== undefined) return cached === 'loading' ? undefined : cached;
+    cache.set(path, 'loading');
+    if (cache.size > 32) { const oldest = cache.keys().next().value; if (oldest !== undefined) cache.delete(oldest); }
+    const cancellation = new CancellationSource();
+    void ctx.filesystem.readFile(path, cancellation.token).then((read) => {
+      // ponytail: whole-file read capped by taking the first 200 lines after decoding; large
+      // binary/huge files still cost one read. Upgrade path: a bounded head read on the port.
+      const lines = read.ok ? decodePreviewLines(decoder, read.value) : [`(unreadable: ${read.ok ? '' : read.error.message})`];
+      cache.set(path, { title: ctx.filesystem.workspaceRelativePath(ctx.workspaceRoot, path) ?? path, lines });
+      host.notifySurfaceChange();
+    }).finally(() => cancellation.dispose());
+    return undefined;
+  };
+}
+
+function decodePreviewLines(decoder: TextDecoder, bytes: Uint8Array): readonly string[] {
+  let decoded: string;
+  try {
+    decoded = decoder.decode(bytes.subarray(0, 64 * 1024));
+  } catch {
+    return ['(binary file, no preview)'];
+  }
+  if (decoded.includes('\0')) return ['(binary file, no preview)'];
+  return decoded.split(/\r?\n/u).slice(0, 200);
 }

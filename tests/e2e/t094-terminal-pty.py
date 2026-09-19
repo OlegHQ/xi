@@ -17,8 +17,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MOUSE_ENTER = (b"\x1b[?1000h", b"\x1b[?1002h", b"\x1b[?1006h")
-MOUSE_LEAVE = (b"\x1b[?1000l", b"\x1b[?1002l", b"\x1b[?1006l")
+MOUSE_ENTER = (b"\x1b[?1000h", b"\x1b[?1002h", b"\x1b[?1003h", b"\x1b[?1006h")
+MOUSE_LEAVE = (b"\x1b[?1000l", b"\x1b[?1002l", b"\x1b[?1003l", b"\x1b[?1006l")
 RAW_BITS = termios.ICANON | termios.ECHO
 
 
@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t094-terminal-pty-") as temporary:
             "exitCode": clean_exit,
             "rawWhileRunning": clean_raw_while_running,
             "mouseEnabled": clean_enabled,
-            "allMotionDisabled": b"\x1b[?1003h" not in clean.output,
+            "allMotionRestored": b"\x1b[?1003l" in clean.output,
             "modesRestored": clean.modes_restored(),
             "rawRestored": termios.tcgetattr(clean.master)[3] == clean.initial_lflag,
         }
@@ -200,7 +200,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t094-terminal-pty-") as temporary:
         os.close(master)
 
 required = {
-    "cleanQuit": results["cleanQuit"]["exitCode"] == 0 and results["cleanQuit"]["rawWhileRunning"] and results["cleanQuit"]["mouseEnabled"] and results["cleanQuit"]["allMotionDisabled"] and results["cleanQuit"]["modesRestored"] and results["cleanQuit"]["rawRestored"],
+    "cleanQuit": results["cleanQuit"]["exitCode"] == 0 and results["cleanQuit"]["rawWhileRunning"] and results["cleanQuit"]["mouseEnabled"] and results["cleanQuit"]["allMotionRestored"] and results["cleanQuit"]["modesRestored"] and results["cleanQuit"]["rawRestored"],
     "sigterm": results["sigterm"]["exitCode"] == 0 and results["sigterm"]["rawBeforeSignal"] and results["sigterm"]["modesRestored"] and results["sigterm"]["rawRestored"],
     "suspendResume": results["suspendResume"]["stopped"] and results["suspendResume"]["rawRestoredBeforeStop"] and results["suspendResume"]["mouseDisabledBeforeStop"] and results["suspendResume"]["mouseReenabledAndRawAfterContinue"] and results["suspendResume"]["exitCode"] == 0 and results["suspendResume"]["finalModesRestored"] and results["suspendResume"]["finalRawRestored"],
     "partialStartupFailure": results["partialStartupFailure"]["rendererNeverEntered"] and results["partialStartupFailure"]["rawUnchanged"] and results["partialStartupFailure"]["diagnosed"],

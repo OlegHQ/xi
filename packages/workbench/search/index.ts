@@ -1,4 +1,4 @@
-import { asIdentifier, asUtf16Offset, CancellationSource, type CancellationToken, type Disposable, type DocumentId, type PlatformFailure, type Result, type UndoGroupId } from '../../contracts/src/index';
+import { asIdentifier, asLineIndex, asUtf16Offset, CancellationSource, type CancellationToken, type Disposable, type DocumentId, type PlatformFailure, type Result, type UndoGroupId } from '../../contracts/src/index';
 import type { DocumentEdit, DocumentSnapshot, EditOrigin } from '../../document/src/index';
 import type { OwnedVimKeyEvent } from '../vim-session';
 import type { BufferHost } from '../host';
@@ -180,6 +180,27 @@ export interface SearchFilesystemPort {
   makeDirectory(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
 }
 
+/** The Vim-like keyboard mode for the search panel: `insert` types into the query field
+ * (the mode right after opening), `replace` types into the replace field, `normal` navigates
+ * results without swallowing letter keys. Only `insert`/`replace` capture text input. */
+export type SearchPanelMode = 'insert' | 'replace' | 'normal';
+
+/** Read model for `ui/search`'s renderable: the parts of panel state the paint code needs
+ * beyond the search service's own `WorkbenchSearchModel`. */
+export interface SearchUiState {
+  readonly mode: SearchPanelMode;
+  readonly replaceInput: string;
+  readonly collapsed: ReadonlySet<string>;
+}
+
+/** Absolute UTF-16 offset ranges of every current match in one open document, for the editor's
+ * own highlight paint path. See `SearchController#readPresentation`. */
+export interface SearchPresentation {
+  readonly documentId: string;
+  readonly documentVersion: number;
+  readonly ranges: readonly { readonly start: number; readonly end: number }[];
+}
+
 export interface SearchControllerOptions {
   readonly host: BufferHost;
   readonly session: SearchSessionPort;
@@ -210,13 +231,24 @@ export class SearchController {
   #includeHidden = false;
   #selectedIndex = 0;
   #replaceInput = '';
-  #replaceInputActive = false;
+  #mode: SearchPanelMode = 'insert';
+  #collapsed = new Set<string>();
+  #normalPending: 'g' | 'z' | undefined;
+  #uiStateDirty = true;
+  #uiStateCache: SearchUiState | undefined;
+  // Keyed by `${documentId}:${documentVersion}`; cleared whenever the search generation moves
+  // on, so a stale generation's ranges are never handed back for a newer one.
+  readonly #presentationCache = new Map<string, SearchPresentation>();
+  #presentationGeneration = -1;
   #replaceOperationNumber = 0;
   #openGeneration = 0;
   #search: SearchServicePort | undefined;
   #replace: ReplaceServicePort | undefined;
   #applyReplacementEdits: ApplyReplacementEditsFn | undefined;
   #subscription: Disposable | undefined;
+  /** `path:line:column` of the last preview jump, so a re-run of the same query (or a result
+   * refresh that keeps the same first match) never re-opens the preview it already shows. */
+  #lastPreview: string | undefined;
   // Search runs once per query keystroke; materializing every dirty buffer's full text on
   // every query would repeat work an unchanged buffer already paid for on the prior keystroke.
   readonly #bufferTextCache = new Map<DocumentId, { readonly version: number; readonly text: string }>();
@@ -233,8 +265,22 @@ export class SearchController {
 
   get isOpen(): boolean { return this.#open; }
   get selectedIndex(): number { return this.#selectedIndex; }
-  get replaceInputActive(): boolean { return this.#replaceInputActive; }
+  get replaceInputActive(): boolean { return this.#mode === 'replace'; }
   get replaceInput(): string { return this.#replaceInput; }
+  get mode(): SearchPanelMode { return this.#mode; }
+  /** Only `insert`/`replace` mode types into a field; the router uses this to let `:` (and
+   * similar navigated-panel keys) fall through to the editor's command line in `normal` mode. */
+  get capturesTextInput(): boolean { return this.#mode === 'insert' || this.#mode === 'replace'; }
+
+  /** Memoized per-render read model for `ui/search`'s `SearchRenderable`; the same frozen
+   * object is returned across renders until mode/replaceInput/collapsed actually change. */
+  get uiState(): SearchUiState {
+    if (this.#uiStateDirty || this.#uiStateCache === undefined) {
+      this.#uiStateCache = Object.freeze({ mode: this.#mode, replaceInput: this.#replaceInput, collapsed: this.#collapsed });
+      this.#uiStateDirty = false;
+    }
+    return this.#uiStateCache;
+  }
 
   /** Binds the lazily-constructed search/replace services once the composition root has
    * created them, and starts forwarding search results as `XI_SEARCH_RESULT` markers. */
@@ -246,6 +292,10 @@ export class SearchController {
     this.#subscription = search.subscribe((model) => {
       this.#options.host.notifySurfaceChange();
       if (!this.#open || model.generation <= this.#openGeneration) return;
+      // VS Code-style live preview: as soon as a result set is ready the first (or currently
+      // selected) match is shown in the preview tab with every match highlighted; the same
+      // tab then follows j/k navigation.
+      if (model.state === 'ready' && model.matches.length > 0) this.previewSelected();
       const first = model.matches[0];
       this.#options.marker('XI_SEARCH_RESULT', {
         generation: model.generation,
@@ -404,6 +454,9 @@ export class SearchController {
     this.#options.host.closeAllPanels('search');
     this.#open = true;
     this.#selectedIndex = 0;
+    this.#mode = 'insert';
+    this.#normalPending = undefined;
+    this.#invalidateUiState();
     if (this.#search === undefined) {
       void this.#options.ensureServices().then(() => { if (this.#open) this.open(); }).catch((error: unknown) => {
         this.#open = false;
@@ -416,18 +469,29 @@ export class SearchController {
     this.#runQuery();
   }
 
+  #discardPreview(): void {
+    const viewId = this.#options.host.previewViewId;
+    if (viewId === undefined) return;
+    this.#options.host.previewViewId = undefined;
+    this.#options.host.discardPreviewView(viewId);
+    this.#lastPreview = undefined;
+  }
+
   close(): void {
     this.#search?.cancel();
     this.#open = false;
-    this.#replaceInputActive = false;
+    this.#discardPreview();
+    this.#mode = 'insert';
+    this.#invalidateUiState();
     this.#options.marker('XI_SEARCH_CANCELLED', { generation: this.#search?.model.generation });
   }
 
   /** Opens the panel (if not already open) and starts a replace-input draft. */
   startReplace(): void {
     if (!this.#open) this.open();
-    this.#replaceInputActive = true;
+    this.#mode = 'replace';
     this.#replaceInput = '';
+    this.#invalidateUiState();
   }
 
   async handleKeypress(event: OwnedVimKeyEvent): Promise<boolean> {
@@ -437,44 +501,51 @@ export class SearchController {
     }
     const search = this.#search;
     const key = event.name.toLowerCase();
-    if (key === 'escape' || event.raw === '') {
-      if (this.#replaceInputActive) { this.#replaceInputActive = false; this.#replaceInput = ''; return true; }
-      this.close();
+    if (key === 'escape' || event.raw === '\x1b') {
+      if (this.#mode === 'normal') { this.close(); return true; }
+      this.#mode = 'normal';
+      this.#normalPending = undefined;
+      this.#invalidateUiState();
       return true;
     }
-    if (this.#replaceInputActive) {
-      if (event.ctrl && (key === 'x' || key === 'r')) { this.#replaceInputActive = false; return true; }
-      if (key === 'enter' || key === 'return' || event.raw === '\r' || event.raw === '\n') { await this.applyReplacement(false); return true; }
-      if (key === 'backspace' || key === 'backspace2' || event.raw === '') { this.#replaceInput = this.#replaceInput.slice(0, -1); return true; }
-      if (event.ctrl || event.meta || event.option) return true;
-      if (event.raw.length === 1 && event.raw >= ' ' && event.raw !== '') { this.#replaceInput += event.raw; return true; }
-      return true;
-    }
+    if (this.#mode === 'replace') return this.#handleReplaceKey(event, key);
+    if (this.#mode === 'insert') return this.#handleInsertKey(event, key, search);
+    return this.#handleNormalKey(event, key, search);
+  }
+
+  #handleReplaceKey(event: OwnedVimKeyEvent, key: string): boolean {
+    if (key === 'tab' && event.shift) { this.#mode = 'insert'; this.#invalidateUiState(); return true; }
+    if (key === 'enter' || key === 'return' || event.raw === '\r' || event.raw === '\n') { void this.applyReplacement(false); return true; }
+    if (key === 'backspace' || key === 'backspace2' || event.raw === '\x7f') { this.#replaceInput = this.#replaceInput.slice(0, -1); this.#invalidateUiState(); return true; }
+    if (event.ctrl || event.meta || event.option) return true;
+    if (event.raw.length === 1 && event.raw >= ' ' && event.raw !== '\x7f') { this.#replaceInput += event.raw; this.#invalidateUiState(); }
+    return true;
+  }
+
+  #handleInsertKey(event: OwnedVimKeyEvent, key: string, search: SearchServicePort): boolean {
+    if (key === 'tab' && !event.shift) { this.#mode = 'replace'; this.#invalidateUiState(); return true; }
     if (event.ctrl) {
       if (key === 'r') { this.#regex = !this.#regex; this.#selectedIndex = 0; this.#runQuery(); return true; }
       if (key === 'i') { this.#caseSensitive = !this.#caseSensitive; this.#selectedIndex = 0; this.#runQuery(); return true; }
       if (key === 'w') { this.#wholeWord = !this.#wholeWord; this.#selectedIndex = 0; this.#runQuery(); return true; }
       if (key === 'h') { this.#includeHidden = !this.#includeHidden; this.#selectedIndex = 0; this.#runQuery(); return true; }
-      if (key === 'n' || key === 'p') {
-        this.#moveSelection(key === 'n' ? 1 : -1);
-        return true;
-      }
+      if (key === 'n' || key === 'p') { this.#moveSelection(key === 'n' ? 1 : -1); return true; }
     }
-    if (key === 'down' || key === 'j') { this.#moveSelection(1); return true; }
-    if (key === 'up' || key === 'k') { this.#moveSelection(-1); return true; }
+    if (key === 'down') { this.#moveSelection(1); return true; }
+    if (key === 'up') { this.#moveSelection(-1); return true; }
     if (key === 'enter' || key === 'return' || event.raw === '\r' || event.raw === '\n') {
       const match = search.model.matches[this.#selectedIndex];
-      if (match !== undefined) await this.openMatch(match);
+      if (match !== undefined) void this.openMatch(match);
       return true;
     }
-    if (key === 'backspace' || key === 'backspace2' || event.raw === '') {
+    if (key === 'backspace' || key === 'backspace2' || event.raw === '\x7f') {
       this.#query = this.#query.slice(0, -1);
       this.#selectedIndex = 0;
       this.#runQuery();
       return true;
     }
     if (event.ctrl || event.meta || event.option) return true;
-    if (event.raw.length === 1 && event.raw >= ' ' && event.raw !== '') {
+    if (event.raw.length === 1 && event.raw >= ' ' && event.raw !== '\x7f') {
       this.#query += event.raw;
       this.#selectedIndex = 0;
       this.#runQuery();
@@ -482,11 +553,156 @@ export class SearchController {
     return true;
   }
 
+  #handleNormalKey(event: OwnedVimKeyEvent, key: string, search: SearchServicePort): boolean {
+    const pending = this.#normalPending;
+    this.#normalPending = undefined;
+    if (key === 'i' || event.raw === '/') { this.#mode = 'insert'; this.#invalidateUiState(); return true; }
+    if (key === 'r') { this.#mode = 'replace'; this.#replaceInput = ''; this.#invalidateUiState(); return true; }
+    if (key === 'q') { this.close(); return true; }
+    if (event.ctrl && key === 'n') { this.#moveSelection(1); return true; }
+    if (event.ctrl && key === 'p') { this.#moveSelection(-1); return true; }
+    if (event.ctrl && key === 'd') { this.#moveSelection(5); return true; }
+    if (event.ctrl && key === 'u') { this.#moveSelection(-5); return true; }
+    if (key === 'down' || key === 'j') { this.#moveSelection(1); return true; }
+    if (key === 'up' || key === 'k') { this.#moveSelection(-1); return true; }
+    if (key === 'g' && event.shift) { this.#selectMatchIndex(search.model.matches.length - 1); return true; }
+    if (key === 'g') {
+      if (pending === 'g') { this.#selectMatchIndex(0); return true; }
+      this.#normalPending = 'g';
+      return true;
+    }
+    if (key === 'z') { this.#normalPending = 'z'; return true; }
+    if (pending === 'z' && (key === 'c' || key === 'o' || key === 'a')) {
+      this.#toggleGroupForSelected(key === 'c' ? 'collapse' : key === 'o' ? 'expand' : 'toggle');
+      return true;
+    }
+    if (key === 'h') { this.#toggleGroupForSelected('collapse'); return true; }
+    if (key === 'l') { this.#toggleGroupForSelected('expand'); return true; }
+    if (event.raw === ' ') { this.#toggleGroupForSelected('toggle'); return true; }
+    if (key === 'enter' || key === 'return' || key === 'o' || event.raw === '\r' || event.raw === '\n') {
+      const match = search.model.matches[this.#selectedIndex];
+      if (match !== undefined) void this.openMatch(match);
+      return true;
+    }
+    return true;
+  }
+
+  #selectMatchIndex(index: number): void {
+    const count = this.#search?.model.matches.length ?? 0;
+    if (count === 0) { this.#selectedIndex = 0; return; }
+    this.#selectedIndex = Math.max(0, Math.min(count - 1, index));
+    this.previewSelected();
+  }
+
+  #toggleGroupForSelected(action: 'collapse' | 'expand' | 'toggle'): void {
+    const match = this.#search?.model.matches[this.#selectedIndex];
+    if (match === undefined) return;
+    this.#applyCollapse(match.path, action);
+  }
+
+  /** Pointer-driven collapse toggle for a `file:<path>` heading row's click. */
+  toggleCollapsed(path: string): void {
+    this.#applyCollapse(path, 'toggle');
+  }
+
+  #applyCollapse(path: string, action: 'collapse' | 'expand' | 'toggle'): void {
+    if (action === 'collapse') this.#collapsed.add(path);
+    else if (action === 'expand') this.#collapsed.delete(path);
+    else if (this.#collapsed.has(path)) this.#collapsed.delete(path);
+    else this.#collapsed.add(path);
+    this.#invalidateUiState();
+  }
+
+  /** Pointer click on the query field (row 0): focuses insert mode. */
+  focusQuery(): void {
+    if (!this.#open) return;
+    this.#mode = 'insert';
+    this.#invalidateUiState();
+  }
+
+  /** Pointer click on the replace field (row 1): focuses replace mode. */
+  focusReplace(): void {
+    if (!this.#open) return;
+    this.#mode = 'replace';
+    this.#invalidateUiState();
+  }
+
+  /** Opens the currently selected match as a PREVIEW buffer (does not close the panel, does
+   * not steal keyboard focus -- the router still gates on `isOpen`). Called after every
+   * navigation (never while typing a query). No last-previewed-path cache: `openBufferAtPath`
+   * already reuses an open buffer for the same path, so re-issuing it on every navigation
+   * keystroke is cheap and still repositions the cursor when only the line changed. */
+  previewSelected(): void {
+    if (this.#search === undefined) return;
+    const match = this.#search.model.matches[this.#selectedIndex];
+    if (match === undefined || match.path.startsWith('base64:')) return;
+    const key = `${match.path}:${match.line}:${match.range.startUtf16}`;
+    if (key === this.#lastPreview) return;
+    const relativePath = this.#options.filesystem.workspaceRelativePath(this.#options.workspaceRoot, match.path);
+    if (relativePath === undefined) return;
+    const absolutePath = this.#options.filesystem.workspaceAbsolutePath(this.#options.workspaceRoot, relativePath);
+    if (absolutePath === undefined) return;
+    this.#lastPreview = key;
+    // `openBufferAtPath` reuses an already-open buffer (ignoring `line`), so the jump to the
+    // match is always made explicitly on the resulting session -- new file or not.
+    void this.#options.host.openBufferAtPath(absolutePath, { preview: true, line: match.line }).then((opened) => {
+      if (opened === undefined) return;
+      // Same transient preview slot the picker/Explorer use: cancelling the panel discards it
+      // (`close()`), so a browsed-but-never-opened result never leaves a buffer behind for
+      // `:q` to trip over; Enter (`openMatch`) keeps it.
+      if (opened.created) { this.#options.host.discardStalePreview(opened.viewId); this.#options.host.previewViewId = opened.viewId; }
+      if (!this.#open) { this.#discardPreview(); return; }
+      this.#options.host.sessions.get(opened.viewId)?.setCursorPosition(match.line, match.range.startUtf16);
+      this.#options.host.notifySurfaceChange();
+    });
+  }
+
   /** Direct pointer-driven selection, mirroring `handleKeypress`'s up/down clamp bypassed --
    * the caller has already validated `index` against the current model's generation. */
   setSelectedIndex(index: number): void {
     this.#selectedIndex = index;
   }
+
+  /** Absolute UTF-16 offset ranges of every current match in the document identified by
+   * `documentId` (a `DocumentId` compared as a plain string) at `documentVersion` -- for the
+   * editor's own highlight paint path. `undefined` when the panel is closed, the service isn't
+   * loaded, the document isn't open, its version doesn't match, or it has no matches. */
+  readPresentation(documentId: string, documentVersion: number): SearchPresentation | undefined {
+    if (!this.#open || this.#search === undefined) return undefined;
+    const model = this.#search.model;
+    if (model.matches.length === 0) return undefined;
+    const buffer = this.#options.session.buffers().find((candidate) => String(candidate.bufferId) === documentId);
+    if (buffer?.path === undefined) return undefined;
+    const documentForBuffer = this.#options.host.documents.get(buffer.bufferId);
+    if (documentForBuffer === undefined) return undefined;
+    const snapshot = documentForBuffer.snapshot();
+    if (Number(snapshot.version) !== documentVersion) return undefined;
+    const relativePath = this.#options.filesystem.workspaceRelativePath(this.#options.workspaceRoot, buffer.path);
+    if (relativePath === undefined) return undefined;
+    const matches = model.matches.filter((match) => match.path === relativePath);
+    if (matches.length === 0) return undefined;
+    if (this.#presentationGeneration !== model.generation) {
+      this.#presentationCache.clear();
+      this.#presentationGeneration = model.generation;
+    }
+    const cacheKey = `${documentId}:${String(documentVersion)}`;
+    const cached = this.#presentationCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const ranges: { readonly start: number; readonly end: number }[] = [];
+    for (const match of matches) {
+      const lineIndex = asLineIndex(match.line);
+      if (!lineIndex.ok) continue;
+      const lineStart = snapshot.lineStartOffset(lineIndex.value);
+      if (!lineStart.ok) continue;
+      ranges.push({ start: lineStart.value + match.range.startUtf16, end: lineStart.value + match.range.endUtf16 });
+    }
+    ranges.sort((left, right) => left.start - right.start);
+    const result: SearchPresentation = Object.freeze({ documentId, documentVersion, ranges: Object.freeze(ranges) });
+    this.#presentationCache.set(cacheKey, result);
+    return result;
+  }
+
+  #invalidateUiState(): void { this.#uiStateDirty = true; }
 
   async openMatch(match: WorkbenchSearchMatch): Promise<void> {
     if (match.path.startsWith('base64:')) return;
@@ -496,7 +712,13 @@ export class SearchController {
     if (absolutePath === undefined) return;
     const opened = await this.#options.host.openBufferAtPath(absolutePath);
     if (opened === undefined) return;
+    // The match is usually already showing as the transient preview; Enter promotes it to a
+    // real tab so `close()`'s preview discard keeps it.
+    this.#options.host.promoteBuffer(opened.bufferId, opened.viewId);
     this.close();
+    // Closed after an await: the keystroke's own frame already ran, so wake the renderer or
+    // the search surface stays painted over the sidebar until the next input.
+    this.#options.host.notifySurfaceChange();
     this.#options.marker('XI_SEARCH_OPENED', { path: relativePath, source: match.source });
   }
 
@@ -532,7 +754,8 @@ export class SearchController {
     const journal = applied.value.journal;
     this.#options.onError(`xi: replaced ${String(journal.entries.filter((entry) => entry.applied).length)} file(s)\n`);
     this.#options.marker('XI_REPLACE_APPLIED', { operationId: journal.operationId, files: journal.entries.filter((entry) => entry.applied).length, edits: plan.value.edits.length });
-    this.#replaceInputActive = false;
+    this.#mode = 'normal';
+    this.#invalidateUiState();
     this.#runQuery();
   }
 
@@ -547,6 +770,7 @@ export class SearchController {
     const count = this.#search?.model.matches.length ?? 0;
     if (count === 0) { this.#selectedIndex = 0; return; }
     this.#selectedIndex = Math.max(0, Math.min(count - 1, this.#selectedIndex + delta));
+    this.previewSelected();
   }
 
   #runQuery(): void {

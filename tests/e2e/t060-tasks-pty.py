@@ -43,7 +43,10 @@ def wait_for(master: int, captured: bytearray, marker: bytes, timeout: float) ->
 def launch(workspace: Path, argv_file: str = "notes.txt"):
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": str(workspace), "XI_UI_TEST_MARKERS": "1"})
+    environment.update({
+        "TERM": "xterm-256color", "HOME": str(workspace), "XI_UI_TEST_MARKERS": "1",
+        "XI_FORMATTER_COMMAND": "/bin/cat",
+    })
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), argv_file],
         cwd=workspace,

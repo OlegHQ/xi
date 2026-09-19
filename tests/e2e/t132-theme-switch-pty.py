@@ -43,8 +43,8 @@ ROOT = Path(__file__).resolve().parents[2]
 # with (RGBA background token from packages/ui/src/workbench.ts, as a 24-bit SGR background
 # escape: \x1b[48;2;R;G;Bm). Checking for these substrings in the raw terminal stream is a
 # direct, unambiguous signal of which theme is actually painting the screen right now.
-LIGHT_BACKGROUND = b"\x1b[48;2;250;249;246m"
-DARK_BACKGROUND = b"\x1b[48;2;30;33;38m"
+LIGHT_BACKGROUND = b"\x1b[48;2;252;252;250m"
+DARK_BACKGROUND = b"\x1b[48;2;30;30;46m"
 
 
 def mouse(button: int, x: int, y: int, release: bool = False) -> bytes:
@@ -151,8 +151,8 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
 
         # The context menu holds a fourth, independent theme (ContextMenuTheme) -- its own
         # background derives from theme.surface, not theme.background, so this checks a
-        # distinct color: Xi Dark's surface (#262A31 -> 38;42;49), not the editor background.
-        DARK_SURFACE = b"\x1b[48;2;38;42;49m"
+        # distinct color: Xi Dark's surface (#181825 -> 24;24;37), not the editor background.
+        DARK_SURFACE = b"\x1b[48;2;24;24;37m"
         os.write(master, b" vf")
         read_for(master, captured, 0.6)
         before_menu = len(captured)

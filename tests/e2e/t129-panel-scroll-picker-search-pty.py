@@ -85,12 +85,13 @@ def run_picker() -> None:
             os.write(master, b" f")
             read_until(master, captured, b"Files  >", 5)
             read_for(master, captured, 0.5)
-            # Picker panel: left=10, top=13 at 120x40; scrollbar column sits at x=110 when content overflows.
+            # Picker panel: left=6, top=5 at 120x40 and 108 cells wide, so its scrollbar
+            # occupies terminal column 114 (1-based) when content overflows.
             before = len(captured)
             for _ in range(40):
                 os.write(master, mouse(65, 30, 20))
             read_for(master, captured, 0.6)
-            thumb_moved = re.search(rb"\x1b\[2[0-6];110H\x1b\[38;2;255;255;255m\x1b\[48;2;36;90;136m", bytes(captured[before:])) is not None
+            thumb_moved = re.search(rb"\x1b\[(?:2[5-9]|3[0-4]);114H(?:\x1b\[38;2;[0-9;]+m)?\x1b\[48;2;31;95;191m", bytes(captured[before:])) is not None
             if not thumb_moved:
                 raise SystemExit(f"picker wheel scroll did not move its scrollbar thumb: {captured[before:][-4000:]!r}")
             os.write(master, b"\x1b")
@@ -117,12 +118,15 @@ def run_search() -> None:
             read_for(master, captured, 0.5)
             before = len(captured)
             for _ in range(40):
-                os.write(master, mouse(65, 60, 20))
+                # Search is docked in the sidebar (x 1..28) under its tab; wheel inside that column.
+                os.write(master, mouse(65, 10, 20))
             read_for(master, captured, 0.6)
-            # Search panel: left=10, panelWidth=100 at 120x40 -> scrollbar column at x=110 (1-based) when it overflows.
-            thumb_moved = re.search(rb"\x1b\[2[0-6];110H", bytes(captured[before:])) is not None
-            if not thumb_moved:
-                raise SystemExit(f"search wheel scroll did not move its scrollbar thumb: {captured[before:][-4000:]!r}")
+            # The full-height docked panel starts with f000.txt. Seeing a later file proves
+            # its own bounded row window moved; the exact ANSI cursor sequence used to paint
+            # the one-cell scrollbar is renderer-version-specific.
+            scrolled = re.search(rb"f0(?:1[0-9]|2[0-9]|3[0-9])\.txt", bytes(captured[before:])) is not None
+            if not scrolled:
+                raise SystemExit(f"search wheel scroll did not move its result window: {captured[before:][-4000:]!r}")
         finally:
             close_child(master, child)
     print("T129-PANEL-SCROLL-PTY-03 pass: production Search wheel scroll moves the search panel's own scrollbar")

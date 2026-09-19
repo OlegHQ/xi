@@ -271,8 +271,12 @@ export function prepareVimOperator(
 }
 
 function isEmptyInnerTextObjectMotion(motion: Omit<VimOperatorRangeInput, 'operator'>): boolean {
+  // A one-character object (`diw` on a lone space, `ciw` on `x`) also has origin ===
+  // target but is inclusive; only a truly empty object (`ci"` on `""`) is exclusive.
+  // nvim --headless --clean -c "call setline(1,['a b'])" -c 'normal! ciwX' -> ['X b']
   return motion.motionKind === 'characterwise'
     && motion.origin.offset === motion.target.offset
+    && !motion.inclusive
     && EMPTY_INNER_TEXT_OBJECT_KEYS.has(motion.motionKey);
 }
 

@@ -112,6 +112,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e05-") as temporary:
             raise SystemExit(f"a keystroke was not acknowledged promptly (max gap {max(keystroke_gaps):.3f}s): {keystroke_gaps!r}")
 
         # Cancel while a search may still be in flight; confirm clean cancellation and quit.
+        # Esc first leaves insert mode for normal mode, a second Esc closes the panel.
+        os.write(master, b"\x1b")
+        time.sleep(0.15)
         os.write(master, b"\x1b")
         read_until(master, captured, lambda data: b"XI_SEARCH_CANCELLED" in data, 5)
         os.write(master, b":q\r")

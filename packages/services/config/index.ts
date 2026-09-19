@@ -57,7 +57,7 @@ export interface ConfigCommandCatalog {
 export const DEFAULT_COMMAND_CATALOG: ConfigCommandCatalog = Object.freeze({
   commandIds: Object.freeze([
     'files.pick', 'buffers.pick', 'search.workspace', 'files.edit-directory', 'files.edit-buffer-directory', 'theme.pick',
-    'lsp.code-action', 'lsp.rename', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus',
+    'lsp.code-action', 'lsp.rename', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'git.diff',
     'selection.add-above', 'selection.add-below', 'selection.add-next-match', 'selection.skip-next-match',
     'selection.select-all-matches', 'selection.split-lines', 'selection.select-regex', 'selection.keep-matching',
     'selection.remove-primary', 'selection.keep-primary', 'selection.rotate-primary-next', 'selection.rotate-primary-previous',
@@ -650,6 +650,11 @@ export async function loadStartupXiConfig(
 ): Promise<LoadedStartupConfig> {
   const layers: ConfigLayer[] = [
     { name: 'defaults', kind: 'defaults', source: DEFAULT_CONFIG_TOML, fileName: 'config/default.toml' },
+    // Built-in languages.toml (typescript/pyright/...): without it, a user with no
+    // ~/.config/xi/languages.toml had no language server for anything but the hardcoded
+    // ts/js fallback. A user `[[language]]` array replaces this list wholesale (arrays do not
+    // merge); `[language-server.<name>]` tables merge by name.
+    { name: 'default-languages', kind: 'language', source: DEFAULT_LANGUAGES_TOML, fileName: 'config/languages.toml' },
   ];
   const configToml = await filesystem.readFile(`${configDirectory}/config.toml`, cancellation);
   if (configToml.ok) layers.push({ name: 'user', kind: 'user', source: new TextDecoder('utf-8').decode(configToml.value), fileName: 'config.toml' });
@@ -711,6 +716,7 @@ f = "panel.files.focus"
 s = "panel.search.focus"
 g = "panel.git.focus"
 o = "panel.outline.focus"
+d = "git.diff"
 
 [aliases]
 buffer-next = "buffer.next"
@@ -747,6 +753,11 @@ command = "typescript-language-server"
 args = ["--stdio"]
 root-markers = ["tsconfig.json", "package.json", ".git"]
 
+[language-server.pyright]
+command = "pyright-langserver"
+args = ["--stdio"]
+root-markers = ["pyproject.toml", "setup.py", "requirements.txt", ".git"]
+
 [[language]]
 name = "typescript"
 file-types = ["ts", "tsx"]
@@ -754,6 +765,27 @@ language-servers = ["typescript"]
 indent = { tab-width = 2, unit = "\\t" }
 formatter = { command = "biome", args = ["format", "--stdin-file-path", "{file}"] }
 auto-format = true
+
+[[language]]
+name = "python"
+file-types = ["py", "pyi"]
+language-servers = ["pyright"]
+indent = { tab-width = 4, unit = "    " }
+
+[[language]]
+name = "json"
+file-types = ["json", "jsonc"]
+indent = { tab-width = 2, unit = "  " }
+
+[[language]]
+name = "toml"
+file-types = ["toml"]
+indent = { tab-width = 2, unit = "  " }
+
+[[language]]
+name = "markdown"
+file-types = ["md", "markdown"]
+indent = { tab-width = 2, unit = "  " }
 `;
 
 export const DEFAULT_THEME_TOML = `schema-version = 1

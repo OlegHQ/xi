@@ -99,10 +99,14 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
       return;
     }
     const model = this.#options.model;
-    if (key === 'up' || key === 'down') {
+    // Result navigation: arrows, Ctrl-N/P, Ctrl-J/K and Ctrl-D/U step one result; PageDown/Up jump ten.
+    const step = key === 'up' || (event.ctrl && (key === 'p' || key === 'k' || key === 'u')) ? -1
+      : key === 'down' || (event.ctrl && (key === 'n' || key === 'j' || key === 'd')) ? 1
+      : key === 'pageup' ? -10 : key === 'pagedown' ? 10 : 0;
+    if (step !== 0) {
       const entries = model.model.entries;
       const selected = entries.findIndex((entry) => entry.id === model.model.selectedId);
-      const next = Math.max(0, Math.min(entries.length - 1, selected + (key === 'up' ? -1 : 1)));
+      const next = Math.max(0, Math.min(entries.length - 1, selected + step));
       const entry = entries[next];
       if (entry !== undefined && model.select(entry.id)) void this.#previewSelected(entry);
       return;
@@ -302,6 +306,8 @@ export class ThemeController<T> {
    * is being kept, before persisting. */
   commit(): void {
     this.#beforePicker = undefined;
+    const theme = this.#themes.get(this.#activeId);
+    if (theme !== undefined) this.#setTheme?.(theme);
   }
 
   async readPersistedId(cancellation: CancellationToken): Promise<string | undefined> {

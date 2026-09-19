@@ -63,6 +63,11 @@ class FakeFileOperations implements ExplorerFileOperationsPort {
     this.calls.push(`mkdir:${path}`);
     return ok(undefined);
   }
+  async writeFileAtomic(path: string, _contents: Uint8Array, _cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
+    this.calls.push(`write:${path}`);
+    this.existing.add(path);
+    return ok(undefined);
+  }
 }
 
 // -- A fake tree: enough state to drive open()/handleKeypress() without the real ExplorerTree. --
@@ -208,6 +213,7 @@ filesystem.existing.add('/workspace/a.txt');
 controller.attachTree(tree, navigation);
 controller.open();
 assert.equal(controller.isOpen, true, 'T116-EXPLORER-01a open() marks the controller open');
+assert.equal(controller.isVisible, true, 'T116-EXPLORER-01a2 open() shows the tree');
 assert.equal(ensureServicesCalls, 0, 'T116-EXPLORER-01b a bound tree never triggers ensureServices');
 assert.ok(tree.calls.includes('focus'), 'T116-EXPLORER-01c open() focuses the tree');
 assert.ok(tree.calls.some((call) => call.startsWith('expand:')), 'T116-EXPLORER-01d open() expands the first root');
@@ -252,7 +258,10 @@ assert.ok(markers.some((entry) => entry.name === 'XI_EXPLORER_RESTORE_APPLIED'),
 // T116-EXPLORER-06: dispose() clears the pending-g timer without throwing, and close() blurs.
 controller.close();
 assert.equal(controller.isOpen, false, 'T116-EXPLORER-06a close() marks the controller closed');
+assert.equal(controller.isVisible, true, 'T116-EXPLORER-06a2 returning focus to the editor keeps Files visible');
 assert.ok(tree.calls.includes('blur'), 'T116-EXPLORER-06b close() blurs the tree');
+controller.hide();
+assert.equal(controller.isVisible, false, 'T116-EXPLORER-06c only an explicit collapse hides Files');
 controller.dispose();
 
 // T116-EXPLORER-07: opening a file from the explorer opens it as a preview buffer (tab-strip
@@ -265,6 +274,21 @@ host.openBufferAtPath = ((path: string, options?: { readonly preview?: boolean }
 }) as typeof host.openBufferAtPath;
 await controller.openNode(tree.readNode(fileNode.id) as ExplorerTreeNode);
 assert.equal(capturedOpenOptions?.preview, true, 'T116-EXPLORER-07 explorer opens files as a preview buffer');
+
+// T116-EXPLORER-08: a pointer click on a file row takes keyboard focus for the tree (VS Code
+// single-click semantics), previews the file and leaves the panel open -- the cursor stays
+// in the sidebar the user just clicked.
+controller.attachTree(tree, navigation);
+tree.calls.length = 0;
+capturedOpenOptions = undefined;
+assert.equal(controller.isOpen, false, 'sanity: panel closed before the click');
+controller.handlePointerActivate(fileNode.id, tree.model.generation);
+assert.equal(controller.isOpen, true, 'T116-EXPLORER-08a a click focuses the explorer');
+assert.ok(tree.calls.includes('focus'), 'T116-EXPLORER-08b the tree is focused');
+assert.equal((capturedOpenOptions as { readonly preview?: boolean } | undefined)?.preview, true, 'T116-EXPLORER-08c the clicked file opens as a preview');
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(controller.isOpen, true, 'T116-EXPLORER-08d the panel stays open after the preview opened');
+controller.close();
 
 // F2-13: a rejected ensureServices() must surface via onError instead of an unhandled
 // rejection that leaves open() as a silent, permanently unresolved dead panel.

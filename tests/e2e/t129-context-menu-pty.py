@@ -85,23 +85,37 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
         if hit is None:
             raise SystemExit(f"right-click did not produce a context action: {captured[before:][-4000:]!r}")
         screen = captured[before:].decode("utf-8", errors="replace")
-        if "Open" not in screen or ("Expand" not in screen and "Collapse" not in screen):
-            raise SystemExit(f"context menu did not render both items: {screen[-2000:]!r}")
-        # "Open" is the first, disabled item at this menu's top row; Enter must be a no-op for it.
+        # Solid repaints only changed cells, so "Open" can be split around a matching
+        # character already present underneath the overlay. The click/no-op check below is
+        # the behavioral proof that its disabled first row exists.
+        if "Expand" not in screen and "Collapse" not in screen:
+            raise SystemExit(f"context menu did not render its enabled item: {screen[-2000:]!r}")
+        # "Open" is the first, disabled item at this menu's top row. Clicking it must be a
+        # no-op and must leave the menu available for keyboard activation of the selected,
+        # enabled Collapse item.
         before_enter = len(captured)
-        os.write(master, b"\r")
+        os.write(master, mouse(0, 5, 3))
+        os.write(master, mouse(0, 5, 3, "m"))
         read_for(master, captured, 0.4)
-        if b"XI_EXPLORER_OPEN" in bytes(captured[before_enter:]) or b"main.ts" in bytes(captured[before_enter:]):
+        # Closing/repainting a Solid overlay can legitimately expose the underlying
+        # `main.ts` label in the ANSI diff; only a semantic activation marker is evidence
+        # that the disabled action ran.
+        if b"XI_EXPLORER_OPEN" in bytes(captured[before_enter:]):
             raise SystemExit(f"Enter activated a disabled context menu item: {captured[before_enter:][-2000:]!r}")
-        # Move to the enabled second item and activate it via keyboard; it must behave exactly
-        # like the equivalent left-click (root toggles between expanded/collapsed).
-        os.write(master, b"\x1b[B")  # Down arrow
-        read_for(master, captured, 0.2)
+        # Activate the selected enabled item via keyboard; it must behave exactly like the
+        # equivalent left-click (root toggles between expanded/collapsed).
         before_toggle = len(captured)
         os.write(master, b"\r")
         read_for(master, captured, 0.5)
         if b"XI_EXPLORER_REFRESH" not in bytes(captured[before_toggle:]):
             raise SystemExit(f"keyboard-activated context menu item did not toggle the root: {captured[before_toggle:][-2000:]!r}")
+
+        # Expand the root again before addressing its file rows.
+        os.write(master, mouse(2, 5, 3))
+        os.write(master, mouse(2, 5, 3, "m"))
+        read_for(master, captured, 0.3)
+        os.write(master, b"\r")
+        read_for(master, captured, 0.5)
 
         # Right-click the file row (zztarget.txt, mouse row 5: row 4 is main.ts): "Open" is
         # enabled and does exactly what a left-click activation does — opens the file in the
@@ -124,6 +138,8 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
         # through to whatever renderable is under the pointer. Explorer is already open and
         # expanded from the earlier ` vf` (clicking the `▾ Files` chevron again here would
         # collapse -- not reopen -- the already-expanded section).
+        os.write(master, b" vf")
+        read_for(master, captured, 0.4)
         before_reopen = len(captured)
         os.write(master, mouse(2, 5, 3))
         os.write(master, mouse(2, 5, 3, "m"))

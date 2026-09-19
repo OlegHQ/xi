@@ -14,13 +14,18 @@ export function isViewCommandId(value: string): value is ViewCommandId {
   return (VIEW_COMMAND_IDS as readonly string[]).includes(value);
 }
 
-/** `<C-Up>`/`<C-Down>` line-scroll in Normal/Visual are on by default; `bindings` (compiled
- * from the user's config) is consulted first and can override or add to this. */
+/** `<C-Up>`/`<C-Down>` line-scroll and Vim's `<C-d>`/`<C-u>` half-page scroll in Normal/Visual
+ * are on by default; `bindings` (compiled from the user's config) is consulted first and can
+ * override or add to this. */
 export const DEFAULT_VIEW_BINDINGS: readonly { readonly mode: string; readonly token: string; readonly commandId: ViewCommandId }[] = Object.freeze([
   { mode: 'normal', token: '<c-up>', commandId: 'view.scroll-up' },
   { mode: 'normal', token: '<c-down>', commandId: 'view.scroll-down' },
   { mode: 'visual', token: '<c-up>', commandId: 'view.scroll-up' },
   { mode: 'visual', token: '<c-down>', commandId: 'view.scroll-down' },
+  { mode: 'normal', token: '<c-d>', commandId: 'view.half-page-down' },
+  { mode: 'normal', token: '<c-u>', commandId: 'view.half-page-up' },
+  { mode: 'visual', token: '<c-d>', commandId: 'view.half-page-down' },
+  { mode: 'visual', token: '<c-u>', commandId: 'view.half-page-up' },
 ]);
 
 export interface ViewCommandContext {
@@ -42,5 +47,22 @@ export function executeViewCommand(commandId: ViewCommandId, context: ViewComman
     : commandId === 'view.scroll-page-down' ? page
     : commandId === 'view.half-page-up' ? -Math.ceil(page / 2)
     : Math.ceil(page / 2); // view.half-page-down
-  return scrollViewBy(workbench, getSession, viewId, delta, viewportHeight) !== undefined;
+  const scrolled = scrollViewBy(workbench, getSession, viewId, delta, viewportHeight);
+  if (scrolled === undefined) return false;
+  // Vim CTRL-D/CTRL-U: the cursor moves the same number of lines as the window, not just
+  // far enough to stay on screen (`scrollViewBy`'s wheel semantics).
+  if (commandId === 'view.half-page-up' || commandId === 'view.half-page-down') moveCursorBy(workbench, getSession, viewId, delta);
+  return true;
+}
+
+function moveCursorBy(workbench: Pick<WorkbenchSession, 'readView'>, getSession: ViewCommandContext['getSession'], viewId: ViewId, delta: number): void {
+  const view = workbench.readView(viewId);
+  const session = getSession(viewId);
+  const primary = view?.selections.members.find((member) => member.id === view.selections.primaryId);
+  if (view === undefined || session === undefined || primary === undefined) return;
+  const line = view.document.lineIndexAt(primary.head.at.offset);
+  if (!line.ok) return;
+  const lineStart = view.document.lineStartOffset(line.value);
+  const column = lineStart.ok ? (primary.head.at.offset as number) - (lineStart.value as number) : 0;
+  session.setCursorPosition(Math.min(Math.max(0, (line.value as number) + delta), view.document.lineCount - 1), column);
 }

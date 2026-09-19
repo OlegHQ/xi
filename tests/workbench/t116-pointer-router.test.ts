@@ -54,7 +54,7 @@ const noopExplorer: PointerExplorerPort = {
   selectForContextMenu: () => undefined,
   activateContextMenuAction: () => {},
 };
-const noopSearch: PointerSearchPort = { readModel: () => undefined, setSelectedIndex: () => {}, openMatch: async () => {} };
+const noopSearch: PointerSearchPort = { readModel: () => undefined, setSelectedIndex: () => {}, openMatch: async () => {}, previewSelected: () => {}, focusQuery: () => {}, focusReplace: () => {}, toggleCollapsed: () => {} };
 const noopProblems: PointerProblemsPort = { model: { generation: 0, all: [] }, setSelectedProblemIndex: () => {}, openProblem: async () => {} };
 
 // T116-POINTER-01: a splitter drag begins, then a resize (e.g. terminal resize) cancels it and

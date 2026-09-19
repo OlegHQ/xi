@@ -19,7 +19,9 @@ export function canonicalKeyToken(event: OwnedVimKeyEvent): string {
   const isSpace = event.raw === ' ' || lowerName === 'space';
   const namedKey = isSpace ? 'space' : named[lowerName];
   const isNamed = namedKey !== undefined;
-  const bareKey = isNamed ? namedKey : (event.raw.length === 1 ? event.raw : lowerName);
+  // Ctrl/Meta combos: `raw` is the control byte (Ctrl-D arrives as name 'd', raw '\x04'),
+  // so only `name` yields a matchable token.
+  const bareKey = isNamed ? namedKey : (event.raw.length === 1 && !event.ctrl && !event.meta && !event.option ? event.raw : lowerName);
   if (event.ctrl) return `<c-${bareKey.length === 1 ? bareKey.toLowerCase() : bareKey}>`;
   if (event.meta || event.option) return `<m-${bareKey.length === 1 ? bareKey.toLowerCase() : bareKey}>`;
   return isNamed ? `<${bareKey}>` : bareKey;

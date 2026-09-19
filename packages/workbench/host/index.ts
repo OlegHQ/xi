@@ -305,10 +305,11 @@ export class BufferHost {
    * close the rest, not just the ones a given call site happened to remember. `keep` is the
    * panel being opened: an open*() that defers until services load re-enters itself, and
    * closing its own pending panel there would cancel it and emit a spurious close. */
-  closeAllPanels(keep?: string): void {
+  closeAllPanels(keep?: string | readonly string[]): void {
+    const kept = typeof keep === 'string' ? [keep] : keep ?? [];
     for (const [name, panel] of this.#panels) {
       if (!panel.isOpen()) continue;
-      if (panel.alwaysClose === true || name !== keep) panel.close();
+      if (panel.alwaysClose === true || !kept.includes(name)) panel.close();
     }
   }
 

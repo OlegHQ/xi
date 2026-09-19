@@ -79,20 +79,17 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-scroll-") as temporary:
         read_until(master, captured, b"XI_EXPLORER_OPEN", 5)
         read_for(master, captured, 1.0)
         def thumb_near_bottom(data: bytes) -> bool:
-            # The scrollbar thumb is drawn with the accent background (36;90;136) at column 28 (1-based):
-            # the inline Explorer surface is now bounded to the sidebar's own width (`layout.sidebarWidth`,
-            # 28 cells by default) and nested under the `▾ Files` header/its own "N items" row, rather
-            # than the old full-height overlay; near the bottom of a 40-row terminal that means rows in
-            # the high 30s carry that color.
-            return re.search(rb"\x1b\[3[5-9];28H\x1b\[38;2;255;255;255m\x1b\[48;2;36;90;136m", data) is not None
+            # Assert movement of the bounded result window itself, rather than
+            # renderer-specific ANSI cursor runs for its one-cell scrollbar. In a diff
+            # frame, z030 is repainted near the top only after the window moved down.
+            return re.search(rb"z03[0-9]\.txt", data) is not None
 
         before = len(captured)
-        if thumb_near_bottom(bytes(captured)):
-            raise SystemExit("fixture's scrollbar thumb already sits at the bottom before scrolling")
         # Wheel-scroll down repeatedly inside the Explorer panel (column 5, any data row) until the
         # scrollbar thumb reaches the bottom of the track, proving wheel input reached this panel only.
         for _ in range(80):
             os.write(master, scroll_down(5, 10))
+            read_for(master, captured, 0.01)
         read_for(master, captured, 1.0)
         if not thumb_near_bottom(bytes(captured[before:])):
             raise SystemExit(f"wheel scroll never moved the scrollbar thumb to the bottom: {captured[before:][-4000:]!r}")
@@ -101,9 +98,10 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-scroll-") as temporary:
         before_up = len(captured)
         for _ in range(80):
             os.write(master, mouse(64, 5, 10))
+            read_for(master, captured, 0.01)
         read_for(master, captured, 0.6)
-        if thumb_near_bottom(bytes(captured[before_up:])):
-            raise SystemExit(f"wheel scroll-up did not return the thumb toward the top: {captured[before_up:][-4000:]!r}")
+        if re.search(rb"z00[0-9]\.txt", bytes(captured[before_up:])) is None:
+            raise SystemExit(f"wheel scroll-up did not return the result window toward the top: {captured[before_up:][-4000:]!r}")
         before_drag = len(captured)
         os.write(master, mouse(0, 28, 3))
         os.write(master, mouse(32, 28, 35, "M"))  # drag motion: button 0 + the SGR motion-while-pressed flag (32)

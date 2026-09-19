@@ -31,6 +31,17 @@ def wait_for(master: int, captured: bytearray, marker: bytes, timeout: float) ->
         raise SystemExit(f"missing PTY marker: {marker!r}")
 
 
+def read_for(master: int, captured: bytearray, seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([master], [], [], 0.05)
+        if readable:
+            try:
+                captured.extend(os.read(master, 65536))
+            except OSError:
+                return
+
+
 def refreshes(captured: bytearray) -> list[dict[str, object]]:
     return [json.loads(match.group(1)) for match in MARKER.finditer(captured)]
 
@@ -102,7 +113,10 @@ with tempfile.TemporaryDirectory(prefix="xi-t040-explorer-") as temporary:
             raise SystemExit("external rename did not preserve Explorer selection identity")
 
         os.write(master, b"\x1b")
-        time.sleep(0.15)
+        # Closing a full-height panel repaints the cells it uncovered. Keep draining the PTY
+        # while that frame is written so the child cannot block on terminal backpressure
+        # before it receives the following quit key.
+        read_for(master, captured, 0.15)
         os.write(master, b"q")
         child.wait(timeout=5)
     finally:

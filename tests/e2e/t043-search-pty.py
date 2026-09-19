@@ -81,6 +81,10 @@ with tempfile.TemporaryDirectory(prefix="xi-t043-search-") as temporary:
             lambda data: any(item.get("query") == "needle" for item in results(data)[second_result_count:]),
             5,
         )
+        # Esc first leaves insert (query-editing) mode for normal (Vim-like result
+        # navigation); a second Esc closes the panel.
+        os.write(master, b"\x1b")
+        time.sleep(0.15)
         os.write(master, b"\x1b")
         read_until(master, captured, lambda data: data.count(b"XI_SEARCH_CANCELLED") >= 2, 5)
         # The earlier Enter opened src/target.txt in its own split (real single-window `:q`

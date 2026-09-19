@@ -5,5 +5,9 @@ export function languageIdForPath(path: string | undefined): string | undefined 
   const extension = path?.slice(path.lastIndexOf('.') + 1).toLowerCase();
   if (extension === 'ts' || extension === 'tsx') return 'typescript';
   if (extension === 'js' || extension === 'mjs' || extension === 'cjs' || extension === 'jsx') return 'javascript';
+  if (extension === 'py' || extension === 'pyi') return 'python';
+  if (extension === 'json' || extension === 'jsonc') return 'json';
+  if (extension === 'toml') return 'toml';
+  if (extension === 'md' || extension === 'markdown') return 'markdown';
   return undefined;
 }

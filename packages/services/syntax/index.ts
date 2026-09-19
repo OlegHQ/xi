@@ -266,7 +266,10 @@ export function preprocessHighlightsQuerySource(source: string): string {
 function captureNameToKind(name: string): SyntaxTokenKind | undefined {
   if (name === 'keyword.operator') return 'operator';
   if (name.startsWith('comment')) return 'comment';
-  if (name.startsWith('string') || name.startsWith('character')) return 'string';
+  // JSON object keys are `@string.special.key`; painting them as properties keeps keys and
+  // string values distinguishable (they would otherwise both fall into the `string` prefix).
+  if (name === 'string.special.key') return 'property';
+  if (name.startsWith('string') || name.startsWith('character') || name === 'escape') return 'string';
   if (name.startsWith('number') || name === 'float') return 'number';
   if (name.startsWith('keyword') || name === 'include' || name === 'conditional' || name === 'repeat' || name === 'exception') return 'keyword';
   if (name === 'boolean') return 'boolean';
@@ -277,6 +280,12 @@ function captureNameToKind(name: string): SyntaxTokenKind | undefined {
   if (name === 'variable.member' || name === 'property') return 'property';
   if (name === 'variable' || name === 'variable.parameter' || name === 'variable.builtin') return 'variable';
   if (name.startsWith('constant')) return 'constant';
+  // Markdown (`markup.*`) has no dedicated token kinds; it reuses the closest existing ones.
+  if (name.startsWith('markup.heading')) return 'keyword';
+  if (name.startsWith('markup.raw') || name.startsWith('markup.quote')) return 'string';
+  if (name.startsWith('markup.link')) return 'property';
+  if (name.startsWith('markup.list')) return 'punctuation';
+  if (name === 'markup.italic' || name === 'markup.strong' || name === 'markup.strikethrough' || name === 'label') return 'type';
   return undefined;
 }
 

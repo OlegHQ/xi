@@ -69,7 +69,9 @@ export function pointerVisualCursor(snapshot: DocumentSnapshot, target: NonNulla
     || !Number.isSafeInteger(target.offset) || target.offset < 0 || target.offset > snapshot.lengthUtf16
     || !Number.isSafeInteger(target.displayCellColumn) || target.displayCellColumn < 0
     || !Number.isSafeInteger(target.virtualCell) || target.virtualCell < 0) return undefined;
-  const safeOffset = target.cellPart === 'padding' ? pointerPreviousCharacter(snapshot, target.offset) : target.offset;
+  // Padding past a line's end snaps to that line's last character, never across the line
+  // break onto the previous line (an empty line's only cell is padding at its own start).
+  const safeOffset = target.cellPart === 'padding' ? Math.max(pointerLineStart(snapshot, target.offset), pointerPreviousCharacter(snapshot, target.offset)) : target.offset;
   const offsetValue = asUtf16Offset(safeOffset);
   const displayValue = asCellColumn(target.displayCellColumn);
   if (!offsetValue.ok || !displayValue.ok) return undefined;
@@ -145,6 +147,15 @@ export function pointerTargetAt(snapshot: DocumentSnapshot, offsetValue: number,
     virtualCell: 0,
     cellPart: 'glyph',
   };
+}
+
+function pointerLineStart(snapshot: DocumentSnapshot, offsetValue: number): number {
+  const offset = asUtf16Offset(offsetValue);
+  if (!offset.ok) return 0;
+  const line = snapshot.lineIndexAt(offset.value);
+  if (!line.ok) return 0;
+  const start = snapshot.lineStartOffset(line.value);
+  return start.ok ? (start.value as number) : 0;
 }
 
 export function pointerPreviousCharacter(snapshot: DocumentSnapshot, offsetValue: number): number {

@@ -1,6 +1,4 @@
-import type { MouseEvent, Renderable } from '@opentui/core/renderer';
-
-export type WorkbenchPanel = 'explorer' | 'picker' | 'search' | 'problems';
+export type WorkbenchPanel = 'explorer' | 'picker' | 'search' | 'problems' | 'git' | 'git-diff';
 
 /** Stable row identity from the immutable panel model actually painted. */
 export interface WorkbenchPanelPointerEvent {
@@ -38,6 +36,7 @@ export class PanelHitMap {
 export class PanelScroll {
   #offset = 0;
   #dragAnchor: { readonly startRow: number; readonly startOffset: number } | undefined;
+  #followedId: string | undefined;
 
   get offset(): number { return this.#offset; }
   get dragging(): boolean { return this.#dragAnchor !== undefined; }
@@ -52,6 +51,18 @@ export class PanelScroll {
     const changed = next !== this.#offset;
     this.#offset = next;
     return changed;
+  }
+
+  /** Reveals the selected row only when the selection changes, so wheel/drag scrolling
+   * away from it is not snapped back on the next paint. Always clamps. */
+  follow(selectedId: string | undefined, indexOf: () => number, total: number, viewport: number): void {
+    if (selectedId !== this.#followedId) {
+      this.#followedId = selectedId;
+      const index = selectedId === undefined ? -1 : indexOf();
+      if (index >= 0 && index < this.#offset) this.#offset = index;
+      else if (index >= this.#offset + viewport) this.#offset = index - viewport + 1;
+    }
+    this.clamp(total, viewport);
   }
 
   beginDrag(row: number): void {
@@ -76,6 +87,7 @@ export class PanelScroll {
   reset(): void {
     this.#offset = 0;
     this.#dragAnchor = undefined;
+    this.#followedId = undefined;
   }
 
   /** Thumb bounds within the viewport track, or undefined when content fits without scrolling. */
@@ -87,80 +99,4 @@ export class PanelScroll {
     const start = Math.round((this.#offset / max) * trackSpace);
     return { start, size };
   }
-}
-
-export interface PanelScrollHooks {
-  /** Column occupied by the scrollbar track, or undefined when no scrollbar is shown. */
-  readonly scrollbarColumn: () => number | undefined;
-  readonly isDragging: () => boolean;
-  readonly scrollBy: (delta: number) => void;
-  readonly beginDrag: (row: number) => void;
-  readonly dragTo: (row: number) => void;
-  readonly endDrag: () => void;
-}
-
-export function installPanelPointerHandler(
-  renderable: Renderable,
-  panel: WorkbenchPanel,
-  hitMap: PanelHitMap,
-  currentGeneration: () => number,
-  onPointer: ((event: WorkbenchPanelPointerEvent) => boolean) | undefined,
-  scroll?: PanelScrollHooks,
-  /** Row under the pointer while it is over this panel without a button held (`'move'`
-   * and the enter/leave-shaped `'over'`/`'out'` types), or `undefined` once it leaves --
-   * lets a panel paint a hover highlight distinct from the click-selected row. */
-  onHover?: (row: number | undefined) => void,
-): void {
-  if (onPointer === undefined && scroll === undefined && onHover === undefined) return;
-  renderable.onMouse = (event: MouseEvent): void => {
-    const row = event.y - renderable.screenY;
-    const column = event.x - renderable.screenX;
-    if (onHover !== undefined && (event.type === 'move' || event.type === 'over')) onHover(row);
-    else if (onHover !== undefined && event.type === 'out') onHover(undefined);
-    if (event.type === 'move' || event.type === 'over' || event.type === 'out') return;
-    if (event.type === 'scroll') {
-      if (scroll === undefined) return;
-      const delta = event.scroll === undefined ? 0 : Math.max(1, event.scroll.delta) * (event.scroll.direction === 'up' ? -1 : 1);
-      if (delta !== 0) scroll.scrollBy(delta);
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (scroll !== undefined && scroll.isDragging() && (event.type === 'drag' || event.type === 'drag-end' || event.type === 'up') && event.target === renderable) {
-      if (event.type === 'drag') scroll.dragTo(row);
-      else scroll.endDrag();
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (event.type !== 'down' || (event.button !== 0 && event.button !== 2)) return;
-    if (scroll !== undefined && event.button === 0 && column === scroll.scrollbarColumn()) {
-      scroll.beginDrag(row);
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (onPointer === undefined) return;
-    const itemId = hitMap.resolve(row, currentGeneration());
-    if (itemId === undefined) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    const handled = onPointer({
-      panel,
-      action: event.button === 0 ? 'activate' : 'context',
-      itemId,
-      generation: hitMap.generation,
-      row,
-      column,
-      button: event.button,
-      screenX: event.x,
-      screenY: event.y,
-    });
-    if (handled) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  };
 }
