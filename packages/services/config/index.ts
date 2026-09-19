@@ -56,8 +56,8 @@ export interface ConfigCommandCatalog {
 
 export const DEFAULT_COMMAND_CATALOG: ConfigCommandCatalog = Object.freeze({
   commandIds: Object.freeze([
-    'files.pick', 'buffers.pick', 'search.workspace', 'files.edit-directory', 'files.edit-buffer-directory', 'theme.pick',
-    'lsp.code-action', 'lsp.rename', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'git.diff',
+    'files.pick', 'buffers.pick', 'command.pick', 'search.workspace', 'search.replace', 'files.edit-directory', 'files.edit-buffer-directory', 'theme.pick',
+    'lsp.hover', 'lsp.code-action', 'lsp.rename', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'panel.problems.focus', 'panel.preview', 'panel.open', 'panel.close', 'git.diff', 'editor.mouse.toggle',
     'selection.add-above', 'selection.add-below', 'selection.add-next-match', 'selection.skip-next-match',
     'selection.select-all-matches', 'selection.split-lines', 'selection.select-regex', 'selection.keep-matching',
     'selection.remove-primary', 'selection.keep-primary', 'selection.rotate-primary-next', 'selection.rotate-primary-previous',
@@ -704,12 +704,17 @@ follow-symlinks = false
 [keys.normal.space]
 f = "files.pick"
 b = "buffers.pick"
+";" = "command.pick"
 "/" = "search.workspace"
 o = "files.edit-directory"
 O = "files.edit-buffer-directory"
 t = "theme.pick"
+k = "lsp.hover"
 a = "lsp.code-action"
-r = "lsp.rename"
+d = "panel.problems.focus"
+e = "panel.problems.focus"
+m = "editor.mouse.toggle"
+r = "search.replace"
 
 [keys.normal.space.v]
 f = "panel.files.focus"
@@ -718,7 +723,30 @@ g = "panel.git.focus"
 o = "panel.outline.focus"
 d = "git.diff"
 
+[keys.files-panel.space]
+l = "panel.preview"
+o = "panel.open"
+q = "panel.close"
+
+[keys.search-panel.space]
+l = "panel.preview"
+o = "panel.open"
+q = "panel.close"
+
+[keys.git-panel.space]
+l = "panel.preview"
+o = "panel.open"
+q = "panel.close"
+
+[keys.diff-panel.space]
+l = "panel.preview"
+o = "panel.open"
+q = "panel.close"
+
 [aliases]
+files = "files.pick"
+buffers = "buffers.pick"
+commands = "command.pick"
 buffer-next = "buffer.next"
 buffer-previous = "buffer.previous"
 theme = "theme.pick"
@@ -869,7 +897,8 @@ function compileBindings(value: TomlValue | undefined, profile: ConfigProfile, c
         const commandPath = [...path, key].join('.');
         if (!commandIds.has(child)) { diagnostics.push(issue(commandPath, 'unknown-command', `unknown command ${child}`, locations)); continue; }
         const mode = path[0] ?? 'normal';
-        if (profile === 'strict' && mode !== 'normal' && mode !== 'visual' && mode !== 'insert' && mode !== 'replace' && mode !== 'operator-pending' && mode !== 'command-line') {
+        if (profile === 'strict' && mode !== 'normal' && mode !== 'visual' && mode !== 'insert' && mode !== 'replace' && mode !== 'operator-pending' && mode !== 'command-line'
+          && mode !== 'files-panel' && mode !== 'search-panel' && mode !== 'git-panel' && mode !== 'diff-panel') {
           diagnostics.push(issue(commandPath, 'invalid-value', `unknown mapping mode ${mode}`, locations));
         }
         const token = normalizeKeyToken(key);

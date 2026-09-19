@@ -61,6 +61,7 @@ export interface WorkbenchBufferSnapshot {
 
 /** Read model for a tab strip: one row per open buffer, in open order. */
 export interface WorkbenchTabSnapshot {
+  readonly kind?: 'file' | 'comparison';
   readonly id: DocumentId;
   readonly label: string;
   readonly dirty: boolean;
@@ -151,6 +152,8 @@ interface BufferRecord {
 }
 
 interface ViewRecord {
+  /** A comparison is a separate editor tab sharing this view's authoritative document. */
+  comparisonLabel?: string;
   readonly viewId: ViewId;
   readonly bufferId: DocumentId;
   readonly paneId: string;
@@ -325,29 +328,42 @@ export class WorkbenchSession implements VimSessionReader {
   /** Activate (focus) a buffer for a tab-strip click: focuses one of its existing views,
    * preferring the currently active view if it already shows the buffer. */
   activateBuffer(bufferId: DocumentId): Result<void, WorkbenchSessionFailure> {
+    const comparison = this.#views.get(bufferId as unknown as ViewId);
+    if (comparison?.comparisonLabel !== undefined) return this.focus(comparison.viewId);
     const buffer = this.#buffers.get(bufferId);
     if (buffer === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId } };
     const activeView = this.#activeViewId === undefined ? undefined : this.#views.get(this.#activeViewId);
-    const viewId = activeView?.bufferId === bufferId ? this.#activeViewId : [...buffer.viewIds][0];
+    const viewId = activeView?.bufferId === bufferId && activeView.comparisonLabel === undefined
+      ? this.#activeViewId : [...buffer.viewIds].find(id => this.#views.get(id)?.comparisonLabel === undefined);
     if (viewId === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId } };
     return this.focus(viewId);
   }
 
   /** Ordered read model for a tab strip; another agent's UI renders it. */
   readTabs(): readonly WorkbenchTabSnapshot[] {
-    const activeBufferId = this.#activeViewId === undefined ? undefined : this.#views.get(this.#activeViewId)?.bufferId;
+    const activeView = this.#activeViewId === undefined ? undefined : this.#views.get(this.#activeViewId);
+    const activeBufferId = activeView?.comparisonLabel === undefined ? activeView?.bufferId : undefined;
     const buffers = [...this.#buffers.values()];
-    let key = String(activeBufferId);
+    let key = String(this.#activeViewId);
     for (const buffer of buffers) key += `|${buffer.bufferId}:${buffer.path ?? ''}:${buffer.document.isDirty}:${buffer.preview}:${buffer.pinned}`;
+    for (const view of this.#views.values()) if (view.comparisonLabel !== undefined) key += `|${view.viewId}:${view.comparisonLabel}`;
     if (this.#tabsReadCache !== undefined && this.#tabsReadCacheKey === key) return this.#tabsReadCache;
-    const tabs = Object.freeze(buffers.map((buffer) => Object.freeze({
+    const tabs = Object.freeze([...buffers.map((buffer) => Object.freeze({
       id: buffer.bufferId,
       label: buffer.path === undefined ? '[No Name]' : (buffer.path.split('/').pop() ?? buffer.path),
       dirty: buffer.document.isDirty,
       preview: buffer.preview,
       pinned: buffer.pinned,
       active: buffer.bufferId === activeBufferId,
-    })));
+    })), ...[...this.#views.values()].filter(view => view.comparisonLabel !== undefined).map(view => Object.freeze({
+      id: view.viewId as unknown as DocumentId,
+      kind: 'comparison' as const,
+      label: view.comparisonLabel!,
+      dirty: this.#buffers.get(view.bufferId)?.document.isDirty ?? false,
+      preview: false,
+      pinned: true,
+      active: view.viewId === this.#activeViewId,
+    }))]);
     this.#tabsReadCache = tabs;
     this.#tabsReadCacheKey = key;
     return tabs;
@@ -363,7 +379,7 @@ export class WorkbenchSession implements VimSessionReader {
   }
 
   /** Create a second view sharing the same coordinator, document and undo tree. */
-  splitView(viewId: ViewId, orientation: SplitOrientation, requestedViewId?: ViewId): Result<WorkbenchViewStateSnapshot, WorkbenchSessionFailure> {
+  splitView(viewId: ViewId, orientation: SplitOrientation | undefined, requestedViewId?: ViewId): Result<WorkbenchViewStateSnapshot, WorkbenchSessionFailure> {
     const source = this.#views.get(viewId);
     if (source === undefined) return { ok: false, error: { kind: 'view-not-found', viewId } };
     const buffer = this.#buffers.get(source.bufferId);
@@ -384,7 +400,7 @@ export class WorkbenchSession implements VimSessionReader {
     buffer.viewIds.add(newViewId);
     const leaf = findLeaf(this.#root, viewId);
     if (leaf === undefined) return { ok: false, error: { kind: 'invalid-layout', message: `view ${viewId} is not in split tree` } };
-    this.#root = replaceNode(this.#root, leaf.nodeId, {
+    this.#root = orientation === undefined ? replaceLeafView(this.#root, viewId, newViewId) : replaceNode(this.#root, leaf.nodeId, {
       kind: 'split', nodeId: this.newNodeId('split'), orientation, ratio: 0.5,
       first: leaf, second: { kind: 'leaf', nodeId: this.newNodeId('leaf'), viewId: newViewId },
     });
@@ -395,6 +411,16 @@ export class WorkbenchSession implements VimSessionReader {
 
   createSplit(viewId: ViewId, orientation: SplitOrientation, requestedViewId?: ViewId): Result<WorkbenchViewStateSnapshot, WorkbenchSessionFailure> {
     return this.splitView(viewId, orientation, requestedViewId);
+  }
+
+  openComparisonView(viewId: ViewId, label: string): Result<WorkbenchViewStateSnapshot, WorkbenchSessionFailure> {
+    const created = this.splitView(viewId, undefined);
+    if (created.ok) {
+      const view = this.#views.get(created.value.viewId)!;
+      view.comparisonLabel = label;
+      this.#views.set(view.viewId, { ...view, returnViewId: viewId });
+    }
+    return created;
   }
 
   focus(viewId: ViewId): Result<void, WorkbenchSessionFailure> {
@@ -531,6 +557,9 @@ export class WorkbenchSession implements VimSessionReader {
   }
 
   closeBuffer(bufferId: DocumentId, decision?: CloseDecision): Result<{ readonly closed: boolean; readonly activeViewId: ViewId | undefined }, WorkbenchSessionFailure> {
+    const comparison = this.#views.get(bufferId as unknown as ViewId);
+    // Closing this tab only releases its view. The file tab still owns all unsaved edits.
+    if (comparison?.comparisonLabel !== undefined) return this.closeView(comparison.viewId, 'discard');
     const buffer = this.#buffers.get(bufferId);
     if (buffer === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId } };
     if (buffer.document.isDirty && decision === undefined) return { ok: false, error: { kind: 'dirty-buffer', bufferId, choices: ['save', 'keep-open', 'discard'] } };

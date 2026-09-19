@@ -290,17 +290,21 @@ export class GitPanelController {
   async openRow(id: string): Promise<void> {
     const row = this.#rowFor(id);
     if (row === undefined) return;
-    const entry = this.#entryFor(row.path);
     const relativePath = this.#options.filesystem.workspaceRelativePath(this.#options.workspaceRoot, row.path) ?? row.path;
-    if (this.#options.openDiff !== undefined) {
-      const target: 'index' | 'worktree' = entry !== undefined && entry.staged && !entry.unstaged ? 'index' : 'worktree';
-      await this.#options.openDiff(relativePath, target);
-      return;
-    }
     const absolutePath = this.#options.filesystem.workspaceAbsolutePath(this.#options.workspaceRoot, relativePath);
     if (absolutePath === undefined) return;
     this.#options.openEntry?.(absolutePath);
     if (this.#options.openEntry === undefined) await this.#options.host.openBufferAtPath(absolutePath);
+    this.close();
+  }
+
+  async openDiffRow(id: string): Promise<void> {
+    const row = this.#rowFor(id);
+    const entry = row === undefined ? undefined : this.#entryFor(row.path);
+    if (row === undefined || this.#options.openDiff === undefined) return;
+    const relativePath = this.#options.filesystem.workspaceRelativePath(this.#options.workspaceRoot, row.path) ?? row.path;
+    const target: 'index' | 'worktree' = entry !== undefined && entry.staged && !entry.unstaged ? 'index' : 'worktree';
+    await this.#options.openDiff(relativePath, target);
   }
 
   toggleCollapsed(sectionId: GitSectionId): void {
@@ -336,11 +340,11 @@ export class GitPanelController {
     this.#options.host.notifySurfaceChange();
   }
 
-  /** Pointer activate (Enter equivalent, or double-click): opens the row. */
+  /** Pointer activate previews the row's diff while the Git panel stays docked. */
   onPointerActivate(itemId: string): void {
     if (itemId.startsWith('git-section:')) { this.onPointer(itemId); return; }
     this.setSelectedId(itemId);
-    void this.openRow(itemId);
+    void this.openDiffRow(itemId);
   }
 
   async handleKeypress(event: OwnedVimKeyEvent): Promise<boolean> {
@@ -360,11 +364,16 @@ export class GitPanelController {
     if (key === 's') { void this.stageSelected(); return true; }
     if (key === 'u') { void this.unstageSelected(); return true; }
     if (key === 'r') { this.refresh(); return true; }
+    if (key === 'l') {
+      const id = this.#selectedId;
+      if (id !== undefined && !id.startsWith('git-section:')) void this.openDiffRow(id);
+      return true;
+    }
     if (key === 'enter' || key === 'return' || event.raw === '\r' || event.raw === '\n') {
       const id = this.#selectedId;
       if (id !== undefined) {
         if (id.startsWith('git-section:')) this.onPointer(id);
-        else void this.openRow(id);
+        else void this.openDiffRow(id);
       }
       return true;
     }

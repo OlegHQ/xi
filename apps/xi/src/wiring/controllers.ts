@@ -113,6 +113,7 @@ export interface Controllers {
   readonly fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>;
   readonly commandRegistry: CommandRegistry;
   readonly contributionRegistry: ContributionRegistry;
+  readonly commandAliasRegistration: Disposable | undefined;
   readonly taskWiring: TaskWiring;
   readonly languageWiring: LanguageWiring;
   readonly syntaxTracker: SyntaxDocumentTracker;
@@ -250,6 +251,7 @@ function createExplorerFilesystem(filesystem: NodeFilesystemPort, root: string, 
  * whichever earlier helper's closure needs it -- same forward-reference shape, just crossing
  * function boundaries instead of `let` bindings in one function body. */
 interface ForwardRefs {
+  syntaxTracker: SyntaxDocumentTracker;
   host: BufferHost;
   saveCoordinator: SaveCoordinator;
   hostCommands: WorkbenchHostCommands;
@@ -376,6 +378,7 @@ function createLanguageAndTaskWiring(
     workbenchBuffers: () => workbench.buffers(),
     renameBufferPath: (bufferId, path) => workbench.renameBufferPath(bufferId, path),
     statusMessages: deps.statusMessages,
+    marker,
   });
   forward.languageWiring = languageWiring;
   // On-demand rendering only paints after a keypress/resize/pointer event requests a frame.
@@ -398,6 +401,7 @@ async function createRegistries(ctx: BuildContext): Promise<{
   readonly fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>;
   readonly commandRegistry: CommandRegistry;
   readonly contributionRegistry: ContributionRegistry;
+  readonly commandAliasRegistration: Disposable | undefined;
 }> {
   const { deps, workspaceRoot } = ctx;
   const { FilePathIndex, createNavigationContributionModule } = deps.coreServices;
@@ -411,7 +415,18 @@ async function createRegistries(ctx: BuildContext): Promise<{
   });
   const navigationActivation = await contributionRegistry.activate(createNavigationContributionModule({ fileIndex }));
   if (!navigationActivation.ok) throw new Error(`xi-navigation-contributions:${navigationActivation.error.kind}`);
-  return { fileIndex, commandRegistry, contributionRegistry };
+  const registeredCommandIds = new Set(commandRegistry.snapshot.commands.map((entry) => String(entry.descriptor.id)));
+  const configuredAliases = (ctx.startupConfig?.aliases ?? []).filter((alias) => registeredCommandIds.has(String(alias.commandId)));
+  let commandAliasRegistration: Disposable | undefined;
+  if (configuredAliases.length > 0) {
+    const aliases = commandRegistry.register({
+      commands: [],
+      aliases: configuredAliases.map((alias) => ({ name: alias.name, target: { kind: 'command' as const, id: alias.commandId } })),
+    });
+    if (!aliases.ok) throw new Error(`xi-command-aliases:${aliases.error.kind}`);
+    commandAliasRegistration = aliases.value;
+  }
+  return { fileIndex, commandRegistry, contributionRegistry, commandAliasRegistration };
 }
 
 /** The buffers/commands/themes/config/git picker providers. The git provider reads
@@ -729,9 +744,17 @@ function createSearchProblemsOverlaySidebar(
   // port directly.
   const gitDiffFeature = new DiffViewController({
     host,
+    workbench,
     workspaceRoot,
     marker,
-    service: { load: async (input) => (await forward.optionalServices.ensure()).gitDiffService.load(input) },
+    openSyntax: (snapshot, path) => forward.syntaxTracker.openDocument({ documentId: snapshot.id, languageId: languageIdForPath(path), snapshot }),
+    closeSyntax: (documentId) => forward.syntaxTracker.closeDocument(documentId),
+    onError: (message) => ctx.deps.statusMessages.publish(message),
+    service: {
+      load: async (input) => (await forward.optionalServices.ensure()).gitDiffService.load(input),
+      compare: async (left, right, cancellation) => (await forward.optionalServices.ensure()).gitDiffService.compare(left, right, cancellation),
+      align: async (lines) => (await forward.optionalServices.ensure()).gitDiffService.align(lines),
+    },
   });
   forward.gitDiff = gitDiffFeature;
   const problemsFeature = new ProblemsController({
@@ -977,7 +1000,7 @@ function createInputAndPointerRouters(
     overlayExplorer: { isOpen: () => forward.explorerFeature.isOpen, onKeypress: (event) => forward.explorerFeature.handleKeypress(event), capturesTextInput: () => forward.explorerFeature.capturesTextInput },
     overlaySearch: { isOpen: () => forward.searchFeature.isOpen, onKeypress: (event) => forward.searchFeature.handleKeypress(event), capturesTextInput: () => forward.searchFeature.capturesTextInput },
     overlayGit: { isOpen: () => forward.gitPanelFeature.isOpen, onKeypress: (event) => forward.gitPanelFeature.handleKeypress(event) },
-    overlayGitDiff: { isOpen: () => gitDiffFeature.isOpen, onKeypress: (event) => gitDiffFeature.handleKeypress(event) },
+    overlayGitDiff: { isOpen: () => gitDiffFeature.isOpen, isReadOnly: () => gitDiffFeature.readComparison()?.editable === false, onKeypress: (event) => gitDiffFeature.handleKeypress(event) },
     openGitDiffForActiveBuffer: async () => {
       const activeViewId = workbench.activeViewId;
       const buffer = activeViewId === undefined ? undefined : workbench.buffers().find((candidate) => candidate.viewIds.includes(activeViewId));
@@ -987,6 +1010,7 @@ function createInputAndPointerRouters(
       if (relativePath === undefined) return;
       await gitDiffFeature.open(relativePath, 'worktree');
     },
+    openGitPanel: async () => { forward.gitPanelFeature.open(); },
     overlayProblems: { isOpen: () => problemsFeature.isProblemsOpen, onKeypress: (event) => problemsFeature.handleProblemsKeypress(event) },
     overlayOutput: { isOpen: () => problemsFeature.isOutputOpen, onKeypress: (event) => problemsFeature.handleOutputKeypress(event) },
     overlayOutline: { isOpen: () => overlayFeature.isOutlineOpen, onKeypress: (event) => overlayFeature.handleOutlineKeypress(event) },
@@ -1001,13 +1025,17 @@ function createInputAndPointerRouters(
     clock,
     onTabActivate: (bufferId) => { workbench.activateBuffer(id<DocumentId>(bufferId)); host.notifySurfaceChange(); },
     onEditorPointerDown: () => {
+      inputRouter.focusEditor();
       if (forward.explorerFeature.isOpen || forward.searchFeature.isOpen) { host.closeAllPanels(); host.notifySurfaceChange(); }
     },
     onTabPin: (bufferId) => { workbench.pinBuffer(id<DocumentId>(bufferId)); host.notifySurfaceChange(); },
     // `closeBuffer` with no decision closes a clean buffer immediately and returns a
     // `dirty-buffer` error (no side effect) for one with unsaved changes -- the tab close
     // glyph never silently discards edits; a dirty buffer just stays open until saved.
-    onTabClose: (bufferId) => { if (workbench.closeBuffer(id<DocumentId>(bufferId)).ok) host.notifySurfaceChange(); },
+    onTabClose: (bufferId) => {
+      if (gitDiffFeature.readComparison(id<ViewId>(bufferId)) !== undefined) { workbench.focus(id<ViewId>(bufferId)); gitDiffFeature.close(); }
+      else if (workbench.closeBuffer(id<DocumentId>(bufferId)).ok) host.notifySurfaceChange();
+    },
     sidebar: {
       beginResize: () => sidebarController.beginResize(),
       moveResize: (width) => { sidebarController.moveResize(width); host.notifySurfaceChange(); },
@@ -1056,6 +1084,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const jobControlDisposables: Disposable[] = [];
 
   const { syntaxAssetsCancellation, syntaxTracker } = createSyntaxTracker(filesystem);
+  forward.syntaxTracker = syntaxTracker;
   const settings = await loadStartupSettings(deps);
   const ctx: BuildContext = { deps, filesystem, clock, persistence, marker, ...settings };
 
@@ -1063,7 +1092,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const diagnostics = new ctx.deps.coreServices.DiagnosticStore();
   const contextMenuStore = new deps.ContextMenuStore();
   const { languageWiring, taskWiring, syntaxResultSubscription } = createLanguageAndTaskWiring(ctx, forward, workbench, syntaxTracker, diagnostics, fileUri);
-  const { fileIndex, commandRegistry, contributionRegistry } = await createRegistries(ctx);
+  const { fileIndex, commandRegistry, contributionRegistry, commandAliasRegistration } = await createRegistries(ctx);
   const pickerModel = createPickerModel(ctx, forward, workbench, fileIndex);
   const host = createHostController(ctx, forward, workbench, syntaxTracker);
   const { optionalServices, picker } = createOptionalServicesAndPicker(ctx, forward, host, pickerModel, mouseMode, fileUri);
@@ -1117,6 +1146,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     fileIndex,
     commandRegistry,
     contributionRegistry,
+    commandAliasRegistration,
     taskWiring,
     languageWiring,
     syntaxTracker,

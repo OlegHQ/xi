@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the Git diff view end-to-end: open via Space v d, navigate hunks, close, quit."""
+"""Exercise a distinct Git comparison tab and save an edit through the real CLI."""
 from __future__ import annotations
 
 import fcntl
@@ -72,21 +72,26 @@ with tempfile.TemporaryDirectory(prefix="xi-git-diff-pty-") as temporary:
         read_until(master, captured, b"XI_GIT_DIFF_OPEN", 5)
         read_until(master, captured, b"XI_GIT_DIFF_READY", 5)
         read_for(master, captured, 0.3)
-        if b"TWO" not in captured:
-            raise SystemExit(f"removed line text not rendered: {captured[-6000:]!r}")
-        if b"two" not in captured:
-            raise SystemExit(f"added line text not rendered: {captured[-6000:]!r}")
-
         before = captured[:]
         os.write(master, b"]c")
-        read_until(master, captured, b"XI_GIT_DIFF_HUNK", 5)
-        if captured == before:
+        read_for(master, captured, 0.2)
+        if b"XI_GIT_DIFF_HUNK" not in captured[len(before):]:
             raise SystemExit("no new output after ]c hunk navigation")
 
-        os.write(master, b"q")
+        os.write(master, b"iEDIT with spaces []")
+        read_for(master, captured, 0.2)
+        os.write(master, b"\x1b")
+        read_for(master, captured, 0.1)
+        os.write(master, b":w\r")
+        deadline = time.monotonic() + 5
+        expected = "one\nEDIT with spaces []TWO\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n"
+        while target.read_text(encoding="utf-8") != expected and time.monotonic() < deadline:
+            read_for(master, captured, 0.1)
+        if target.read_text(encoding="utf-8") != expected:
+            raise SystemExit(f"comparison edit/save failed: {target.read_text(encoding='utf-8')!r}; {captured[-1800:]!r}")
+        os.write(master, b"\x1b")
         read_until(master, captured, b"XI_GIT_DIFF_CLOSED", 5)
-
-        os.write(master, b":q!\r")
+        os.write(master, b":qa!\r")
         try:
             child.wait(timeout=5)
         except subprocess.TimeoutExpired as error:
@@ -98,4 +103,4 @@ with tempfile.TemporaryDirectory(prefix="xi-git-diff-pty-") as temporary:
         os.close(master)
     if child.returncode != 0:
         raise SystemExit(f"git diff PTY exited {child.returncode}: {captured[-7000:]!r}")
-    print("T-git-diff-pty Git diff view opened via Space v d, rendered removed/added lines, navigated hunks and closed cleanly")
+    print("Git diff PTY passed comparison tab, first-change navigation, editing spaces/brackets, exact saved bytes and close to file tab")

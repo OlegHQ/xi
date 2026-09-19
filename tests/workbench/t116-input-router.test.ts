@@ -41,9 +41,10 @@ const noopProblems: RouterProblemsPort = { isProblemsOpen: false, openProblems: 
 class FakeExplorer implements RouterExplorerPort {
   opened = false;
   isOpen = false;
+  handledKeys: RouterKeyEvent[] = [];
   open(): void { this.opened = true; this.isOpen = true; }
   close(): void { this.isOpen = false; }
-  handleKeypress(): boolean { return true; }
+  handleKeypress(event: RouterKeyEvent): boolean { this.handledKeys.push(event); return true; }
 }
 
 class FakeSearch implements RouterSearchPort {
@@ -101,7 +102,14 @@ class FakeScrollSession {
   }
 }
 
-function makeRouter(explorer: FakeExplorer, search: FakeSearch, host: FakeHost, session: FakeSession, bindings: readonly RouterBindingConfig[] = []): WorkbenchInputRouter {
+function makeRouter(
+  explorer: FakeExplorer,
+  search: FakeSearch,
+  host: FakeHost,
+  session: FakeSession,
+  bindings: readonly RouterBindingConfig[] = [],
+  git?: { readonly panel: { readonly isOpen: () => boolean; readonly onKeypress: (event: RouterKeyEvent) => boolean }; readonly diff: { readonly isOpen: () => boolean; readonly onKeypress: (event: RouterKeyEvent) => boolean } },
+): WorkbenchInputRouter {
   return new WorkbenchInputRouter({
     host: host as never,
     session: session as never,
@@ -124,6 +132,8 @@ function makeRouter(explorer: FakeExplorer, search: FakeSearch, host: FakeHost, 
     scrollLines: 1,
     getViewportHeight: () => 10,
     clock: testClock,
+    overlayExplorer: { isOpen: () => explorer.isOpen, onKeypress: (event) => explorer.handleKeypress(event) },
+    ...(git === undefined ? {} : { overlayGit: git.panel, overlayGitDiff: git.diff }),
   });
 }
 
@@ -150,6 +160,35 @@ function makeRouter(explorer: FakeExplorer, search: FakeSearch, host: FakeHost, 
   assert.equal(explorer.opened, true, 'T116-ROUTER-01 leader v f opened the explorer through the port');
   assert.equal(router.leaderPending, false, 'leader-pending state clears after the leader chord resolves');
 
+  router.dispose();
+}
+
+// Opening a comparison focuses its editor. Ctrl-W explicitly transfers focus to/from Git.
+{
+  const explorer = new FakeExplorer();
+  const search = new FakeSearch();
+  const host = new FakeHost();
+  host.session = new FakeVimSession();
+  host.sessions.set('view-1', host.session);
+  const session = new FakeSession();
+  let diffOpen = false;
+  const panelKeys: string[] = [];
+  const diffKeys: string[] = [];
+  const router = makeRouter(explorer, search, host, session, [], {
+    panel: { isOpen: () => true, onKeypress: (event) => { panelKeys.push(event.raw); return true; } },
+    diff: { isOpen: () => diffOpen, onKeypress: () => false },
+  });
+
+  diffOpen = true;
+  assert.equal(router.dispatchKey(key('j', 'j')), 'consumed');
+  assert.deepEqual(panelKeys, [], 'T116-ROUTER-GIT-01a a newly opened comparison focuses its editor');
+  assert.deepEqual(host.session.handledKeys.map(event => event.raw), ['j']);
+  assert.deepEqual(diffKeys, []);
+
+  assert.equal(router.dispatchKey(key('w', '\u0017', { ctrl: true })), 'consumed');
+  assert.equal(router.dispatchKey(key('j', 'j')), 'consumed');
+  assert.deepEqual(diffKeys, [], 'T116-ROUTER-GIT-01b the old read-only diff controller no longer captures editing keys');
+  assert.deepEqual(panelKeys, ['j'], 'T116-ROUTER-GIT-01c Ctrl-W transfers focus back into Git');
   router.dispose();
 }
 
@@ -217,6 +256,28 @@ function makeRouter(explorer: FakeExplorer, search: FakeSearch, host: FakeHost, 
   const configResult = router.handleKeypress(key('g', 'g'));
   assert.equal(configResult, true, 'T116-ROUTER-04c a config-bound plain key is also consumed');
   assert.deepEqual(session.setViewScrollCalls[1], { viewId: 'view-1', scrollTop: 5, scrollLeft: 0 }, 'T116-ROUTER-04d the config binding resolved to view.scroll-down');
+
+  router.dispose();
+}
+
+// T116-ROUTER-05: panel leader help comes from that panel's configurable bindings, and the
+// resolved command is routed back to the focused panel without moving focus.
+{
+  const explorer = new FakeExplorer();
+  const search = new FakeSearch();
+  const host = new FakeHost();
+  const session = new FakeSession();
+  const router = makeRouter(explorer, search, host, session, [
+    { mode: 'files-panel', keys: ['<Space>', 'l'], commandId: 'panel.preview' },
+  ]);
+  explorer.open();
+
+  assert.equal(await router.dispatchKey(key('space', ' ')), 'consumed');
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(router.prefixHelp.model?.hints[0]?.commandId, 'panel.preview', 'T116-ROUTER-05a panel help uses files-panel bindings');
+  assert.equal(await router.dispatchKey(key('l', 'l')), 'consumed');
+  assert.equal(explorer.handledKeys.at(-1)?.name, 'l', 'T116-ROUTER-05b configurable preview dispatches to the focused panel');
+  assert.equal(explorer.isOpen, true, 'T116-ROUTER-05c preview keeps panel focus');
 
   router.dispose();
 }

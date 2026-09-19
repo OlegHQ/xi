@@ -89,6 +89,20 @@ with tempfile.TemporaryDirectory(prefix="xi-git-panel-") as temporary:
             if needed not in text:
                 raise SystemExit(f"git panel missing {needed!r} in rendered output: {text[-4000:]!r}")
 
+        # Click alpha.ts in the staged section. A Git-row click previews its diff in the
+        # editor area while keeping the Git sidebar docked; it must not open the plain file
+        # and expose the Files panel.
+        os.write(master, mouse(0, 8, 5))
+        os.write(master, mouse(0, 8, 5, True))
+        read_until(master, captured, b'XI_GIT_DIFF_OPEN {"path":"alpha.ts","target":"index"}', 5)
+        read_until(master, captured, b"XI_GIT_DIFF_READY", 5)
+        if b"XI_GIT_PANEL_CLOSED" in captured:
+            raise SystemExit("clicking a Git file closed the Git panel")
+        # Opening focuses the first change in the comparison. q closes the read-only
+        # index view and returns focus to Git without touching the working file.
+        os.write(master, b"q")
+        read_until(master, captured, b"XI_GIT_DIFF_CLOSED", 5)
+
         # Selection defaults to the first data row (staged.ts's alpha.ts); two `j` presses
         # move it to the second section's row (the unstaged beta.ts).
         os.write(master, b"jj")
@@ -119,4 +133,4 @@ with tempfile.TemporaryDirectory(prefix="xi-git-panel-") as temporary:
     if child.returncode != 0:
         raise SystemExit(f"xi exited {child.returncode}: {captured[-7000:]!r}")
 
-print("git-panel-pty passed: Git tab opens the docked panel, Staged/Changes/Untracked sections render, and 's' stages the selected file")
+print("git-panel-pty passed: Git row click previews a diff without closing the docked panel, and 's' stages the selected file")

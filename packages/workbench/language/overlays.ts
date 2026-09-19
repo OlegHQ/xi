@@ -124,8 +124,6 @@ export interface LanguageOverlayControllerOptions {
 
 const UNAVAILABLE_OUTLINE_MODEL: OutlineOverlayModel = Object.freeze({ state: 'unavailable', symbols: Object.freeze([]), message: 'No language server available' });
 const UNAVAILABLE_HOVER_MODEL: HoverOverlayModel = Object.freeze({ state: 'unavailable', hover: undefined, message: 'No language server available' });
-const NOOP_DISPOSABLE: Disposable = Object.freeze({ dispose: () => {} });
-
 /**
  * Owns the Outline and Hover overlay panels: open/close/keypress and the language-navigation
  * request/response plumbing shared by both (they read the same `NavigationReadModel`). Moved out
@@ -141,6 +139,8 @@ export class LanguageOverlayController {
   #session: LanguageServerSessionPort | undefined;
   #outlineRead: LanguageOverlayReadPort<OutlineOverlayModel> | undefined;
   #hoverRead: LanguageOverlayReadPort<HoverOverlayModel> | undefined;
+  readonly #outlineListeners = new Set<(model: OutlineOverlayModel) => void>();
+  readonly #hoverListeners = new Set<(model: HoverOverlayModel) => void>();
   readonly #options: LanguageOverlayControllerOptions;
 
   constructor(options: LanguageOverlayControllerOptions) {
@@ -154,7 +154,10 @@ export class LanguageOverlayController {
     const self = this;
     this.#outlineRead ??= {
       get model(): OutlineOverlayModel { return self.#navigation?.model ?? UNAVAILABLE_OUTLINE_MODEL; },
-      subscribe: (listener) => self.#navigation?.subscribe(() => listener(self.outlineRead.model)) ?? NOOP_DISPOSABLE,
+      subscribe: (listener) => {
+        self.#outlineListeners.add(listener);
+        return { dispose: () => { self.#outlineListeners.delete(listener); } };
+      },
     };
     return this.#outlineRead;
   }
@@ -163,7 +166,10 @@ export class LanguageOverlayController {
     const self = this;
     this.#hoverRead ??= {
       get model(): HoverOverlayModel { return self.#navigation?.model ?? UNAVAILABLE_HOVER_MODEL; },
-      subscribe: (listener) => self.#navigation?.subscribe(() => listener(self.hoverRead.model)) ?? NOOP_DISPOSABLE,
+      subscribe: (listener) => {
+        self.#hoverListeners.add(listener);
+        return { dispose: () => { self.#hoverListeners.delete(listener); } };
+      },
     };
     return this.#hoverRead;
   }
@@ -176,6 +182,8 @@ export class LanguageOverlayController {
     this.#navigation = navigation;
     this.#session = session;
     return navigation.subscribe((model) => {
+      for (const listener of this.#outlineListeners) listener(model);
+      for (const listener of this.#hoverListeners) listener(model);
       this.#options.host.notifySurfaceChange();
       if (this.#outlineOpen) this.#options.marker('XI_OUTLINE_STATE', { state: model.state, generation: model.generation, symbols: model.symbols.length, message: model.message });
       if (this.#hoverOpen) this.#options.marker('XI_HOVER_STATE', { state: model.state, generation: model.generation, hasText: model.hover !== undefined && model.hover.length > 0, message: model.message });
@@ -197,16 +205,13 @@ export class LanguageOverlayController {
   }
 
   openHover(): void {
-    this.#options.host.closeAllPanels('hover');
-    this.#hoverOpen = true;
-    if (this.#navigation === undefined) void this.#options.ensureLanguage().then(() => { if (this.#hoverOpen) this.#requestHover(); });
-    else this.#requestHover();
-    this.#options.marker('XI_HOVER_OPEN', { state: 'loading' });
+    void this.#openHoverWhenAvailable();
   }
 
   closeHover(): void {
     this.#hoverOpen = false;
     this.#navigation?.returnToOrigin();
+    this.#options.host.notifySurfaceChange();
     this.#options.marker('XI_HOVER_CLOSED');
   }
 
@@ -234,6 +239,8 @@ export class LanguageOverlayController {
   dispose(): void {
     this.#navigation = undefined;
     this.#session = undefined;
+    this.#outlineListeners.clear();
+    this.#hoverListeners.clear();
   }
 
   #requestOutline(): void {
@@ -246,13 +253,17 @@ export class LanguageOverlayController {
     });
   }
 
-  #requestHover(): void {
+  async #openHoverWhenAvailable(): Promise<void> {
+    await this.#options.ensureLanguage();
     const request = buildNavigationRequest(this.#options.session, this.#options.fileUri);
     const navigation = this.#navigation;
     const session = this.#session;
     if (navigation === undefined || request === undefined || session === undefined) return;
-    void session.waitForReady().then((ready) => {
-      if (this.#hoverOpen && ready.ok === true) void navigation.requestHover(request);
-    });
+    const ready = await session.waitForReady();
+    if (!ready.ok || !session.supportsRequest('textDocument/hover', request.uri)) return;
+    this.#options.host.closeAllPanels('hover');
+    this.#hoverOpen = true;
+    this.#options.marker('XI_HOVER_OPEN', { state: 'loading' });
+    void navigation.requestHover(request);
   }
 }

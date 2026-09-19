@@ -401,6 +401,11 @@ export class ExplorerController {
       return true;
     }
     this.#clearPendingG();
+    const selected = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
+    if ((key === 'right' || key === 'l') && selected?.kind === 'file') {
+      await this.previewNode(selected);
+      return true;
+    }
     const action = key === 'up' || key === 'k' ? 'up'
       : key === 'down' || key === 'j' ? 'down'
       : key === 'left' || key === 'h' ? 'left'
@@ -414,9 +419,18 @@ export class ExplorerController {
 
   async openNode(node: ExplorerTreeNode): Promise<void> {
     if (node.kind === 'directory' || node.kind === 'root') return;
+    const opened = await this.#options.host.openBufferAtPath(node.path);
+    if (opened === undefined) return;
+    this.#options.host.promoteBuffer(opened.bufferId, opened.viewId);
+    this.close();
+  }
+
+  async previewNode(node: ExplorerTreeNode): Promise<void> {
+    if (node.kind === 'directory' || node.kind === 'root') return;
     const opened = await this.#options.host.openBufferAtPath(node.path, { preview: true });
     if (opened === undefined) return;
-    this.close();
+    this.#options.marker('XI_EXPLORER_PREVIEW', { path: node.relativePath });
+    this.#options.host.notifySurfaceChange();
   }
 
   /** Selects `absolutePath` in the visible tree (expanding its parents) without taking

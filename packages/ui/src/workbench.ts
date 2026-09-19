@@ -14,6 +14,7 @@ import type {
   WorkbenchViewSnapshot,
 } from '../../workbench/src/index.ts';
 import type { SidebarReadModel, WorkbenchTabSnapshot } from '../../workbench/src/entrypoints/launch';
+import { ComparisonEditor, type ComparisonReadPort, type ComparisonPaint } from '../git/editor';
 import { resolveScrollAnchor, ViewportLayout, type CellHitTarget, type ProjectedSelection, type ViewportAnchor, type VisibleFrame } from '../../layout/src/index';
 import type { SyntaxRead, SyntaxReadPort, SyntaxSpan } from '../../contracts/src/index';
 import {
@@ -79,6 +80,7 @@ export interface WorkbenchPointerEvent {
 }
 
 export interface WorkbenchRenderableOptions extends RenderableOptions<WorkbenchRenderable> {
+  readonly comparison?: ComparisonReadPort;
   readonly workbench: WorkbenchReadPort;
   readonly theme?: WorkbenchTheme;
   readonly ascii?: boolean;
@@ -291,6 +293,9 @@ export function computeSidebarSectionLayout(sidebar: SidebarReadModel, totalRows
 
 /** A document-backed OpenTUI shell for the first Xi workbench surface. */
 export class WorkbenchRenderable extends Renderable {
+  readonly #comparison: ComparisonReadPort | undefined;
+  readonly #comparisonEditor = new ComparisonEditor();
+  #comparisonPaint: ComparisonPaint | undefined;
   readonly #workbench: WorkbenchReadPort;
   #theme: WorkbenchTheme;
   readonly #ascii: boolean;
@@ -363,6 +368,7 @@ export class WorkbenchRenderable extends Renderable {
     };
     super(ctx, renderOptions);
     this.#workbench = options.workbench;
+    this.#comparison = options.comparison;
     this.#ascii = options.ascii ?? false;
     this.#theme = options.theme ?? (this.#ascii ? ASCII_WORKBENCH_THEME : LIGHT_WORKBENCH_THEME);
     this.#showBottomPanel = options.showBottomPanel ?? false;
@@ -389,6 +395,26 @@ export class WorkbenchRenderable extends Renderable {
       const phase = pointerPhase(event.type);
       if (phase === undefined) return;
       const geometry = this.layout;
+      const comparison = this.#comparisonPaint;
+      if (comparison !== undefined && event.y >= geometry.editorTop && event.y < geometry.editorTop + geometry.editorHeight && event.x >= geometry.editorX) {
+        if (phase === 'wheel') {
+          this.#comparison?.onPointer(event.scroll === undefined ? 0 : (event.scroll.direction === 'up' ? -event.scroll.delta : event.scroll.delta));
+          event.preventDefault();
+          this.refresh();
+          return;
+        }
+        const row = event.y - comparison.y;
+        const column = event.x - comparison.x;
+        const frame = comparison.frame;
+        const target = frame?.rows[row]?.cells[column]?.target;
+        if (target?.kind !== 'text' || frame === undefined) return;
+        const frameId = phase === 'down' ? Number(frame.identity.frameId) : this.#pointerFrameId ?? Number(frame.identity.frameId);
+        const handled = this.#onPointer({ phase, viewId: String(frame.identity.viewId), cell: { row, column: Math.max(0, column - comparison.gutter) }, target: pointerTarget(target)!, button: event.button, modifiers: { ...event.modifiers, meta: false }, wheelDelta: 0, frameId, viewportHeight: comparison.height, timestampMilliseconds: performance.now() });
+        if (phase === 'down' && handled) this.#pointerFrameId = frameId;
+        if (phase === 'up') this.#pointerFrameId = undefined;
+        if (handled) { event.preventDefault(); this.refresh(); }
+        return;
+      }
       const pane = this.paneAt(event.x, event.y);
       let frameColumn = pane === undefined ? event.x - geometry.editorX : event.x - pane.x;
       const activeViewForGutter = this.#workbench.readView((pane?.viewId ?? this.#workbench.activeViewId) as import('../../contracts/src/index').ViewId);
@@ -525,6 +551,7 @@ export class WorkbenchRenderable extends Renderable {
   }
 
   protected override destroySelf(): void {
+    this.#comparisonEditor.dispose();
     this.#onPointerCancel?.('dispose');
     this.#pointerFrameId = undefined;
     this.#layout.dispose();
@@ -600,6 +627,16 @@ export class WorkbenchRenderable extends Renderable {
       this.#resolvedAnchors.clear();
       return;
     }
+    const comparison = this.#comparison?.readComparison();
+    if (comparison !== undefined) {
+      const view = this.#workbench.readView(comparison.viewId);
+      if (view !== undefined) {
+        const width = geometry.editorWidth >= 110 ? Math.ceil((geometry.editorWidth - 1) / 2) : geometry.editorWidth;
+        const gutter = Math.max(5, String(Math.max(comparison.left.lineCount, comparison.right.lineCount)).length + 2);
+        this.#resolveAndReportAnchor(String(comparison.viewId), view, width - gutter, Math.max(1, geometry.editorHeight - 1));
+      }
+      return;
+    }
     const layoutRead = this.#workbench.readLayout?.();
     if (layoutRead?.split.root?.kind === 'split' && this.width >= 80) {
       const { panes } = this.#collectPanes(geometry, layoutRead);
@@ -659,6 +696,15 @@ export class WorkbenchRenderable extends Renderable {
     // Read-only: the anchor itself is resolved (and reported back through
     // `onViewportAnchorChange`) by `syncAnchors()` before this render, not here.
     const anchor = activeViewId === undefined ? undefined : this.#resolvedAnchors.get(String(activeViewId));
+    const comparison = this.#comparison?.readComparison();
+    if (comparison !== undefined && view !== undefined && !geometry.compact) {
+      this.#comparisonPaint = this.#comparisonEditor.paint(buffer, comparison, view, { x: geometry.editorX, y: geometry.editorTop, width: geometry.editorWidth, height: geometry.editorHeight }, this.#theme, this.#syntax, this.#ascii, this.#colorMode);
+      this.#cursorCell = this.#comparisonPaint.cursor;
+      this.#lastFrame = undefined;
+      this.ctx.setCursorPosition(0, 0, false);
+      return;
+    }
+    this.#comparisonPaint = undefined;
     const projected = activeViewId === undefined || view === undefined || geometry.compact
       ? undefined
       : this.#layout.project({
@@ -1224,7 +1270,7 @@ const TAB_MAX_WIDTH = 22;
  * out, replacing whatever's left over with a single `…` marker on each overflowing side. */
 export function computeTabLayout(tabs: readonly WorkbenchTabSnapshot[], availableWidth: number): readonly TabLayoutEntry[] {
   if (tabs.length === 0 || availableWidth <= 0) return [];
-  const widths = tabs.map((tab) => Math.max(TAB_MIN_WIDTH, Math.min(TAB_MAX_WIDTH, tab.label.length + (tab.dirty ? 2 : 0) + 6)));
+  const widths = tabs.map((tab) => Math.max(TAB_MIN_WIDTH, Math.min(tab.kind === 'comparison' ? 40 : TAB_MAX_WIDTH, tab.label.length + (tab.dirty ? 2 : 0) + 6)));
   const totalWidth = widths.reduce((sum, width) => sum + width, 0);
   if (totalWidth <= availableWidth) {
     let x = 0;

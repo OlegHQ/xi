@@ -51,6 +51,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t050-outline-") as temporary:
     captured = bytearray()
     try:
         read_until(master, captured, b"XI_WORKBENCH_READY", 10)
+        read_until(master, captured, b"XI_LANGUAGE_STARTED", 10)
         os.write(master, b" vo")
         read_until(master, captured, b"XI_OUTLINE_OPEN", 5)
         deadline = time.monotonic() + 10
@@ -83,9 +84,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t050-outline-") as temporary:
                     break
         else:
             raise SystemExit(f"Hover never reached ready state: {hover_states!r}")
-        os.write(master, b"\x1b")
+        os.write(master, b"\x1b[A")
         read_until(master, captured, b"XI_HOVER_CLOSED", 5)
-        os.write(master, b"q")
+        os.write(master, b":q!\r")
         child.wait(timeout=5)
     finally:
         if child.poll() is None:
@@ -93,6 +94,6 @@ with tempfile.TemporaryDirectory(prefix="xi-t050-outline-") as temporary:
             child.wait()
         os.close(master)
     if child.returncode != 0:
-        raise SystemExit(f"production Outline exited {child.returncode}")
+        raise SystemExit(f"production Outline exited {child.returncode}: {captured[-6000:]!r}")
 
-print("T050 production PTY passed live TS language-server Outline load, ready state, close and focus return")
+print("T050 production PTY passed live TS language-server Outline/hover load, arrow-key hover dismissal and focus return")

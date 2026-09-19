@@ -30,3 +30,4 @@ export type {
 } from './types';
 export { defaultCellWidthPolicy } from './graphemes';
 export { ViewportLayout, resolveScrollAnchor } from './viewport';
+export { projectComparisonSide, type ComparisonRow } from './comparison';

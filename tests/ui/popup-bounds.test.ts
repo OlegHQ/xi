@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { popupBoundsAtCursor } from '../../packages/ui/src/terminal';
+import { popupBoundsAtCursor, popupBoundsInEditor } from '../../packages/ui/src/terminal';
 
 // Popups (hover, completion, signature) anchor to the editor cursor and never cover the status
 // row or run past the terminal edge; they flip sides when the preferred side has no room.
@@ -23,5 +23,8 @@ assert.deepEqual(noCursor, { width: 50, height: 5, left: 35, top: 17 }, 'POPUP-0
 
 const tall = popupBoundsAtCursor(120, 10, { x: 0, y: 4 }, { width: 200, height: 30 }, 'below');
 assert.ok(tall.width <= 118 && tall.top + tall.height <= 9, 'POPUP-07 oversized content is clamped inside the usable area');
+
+const besideSidebar = popupBoundsInEditor(120, 40, { x: 110, y: 10 }, { width: 100, height: 5 }, 'below', 30);
+assert.ok(besideSidebar.left >= 31 && besideSidebar.left + besideSidebar.width <= 120, 'POPUP-08 editor popups never overlap the sidebar or terminal edge');
 
 console.log('popup-bounds passed cursor anchoring, side flipping, edge clamping and centered fallback fixtures');

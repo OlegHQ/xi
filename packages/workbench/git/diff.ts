@@ -1,28 +1,29 @@
-import type { Disposable, Result } from '../../contracts/src/index';
+import { CancellationSource, asIdentifier, type Disposable, type Result, type ViewId, type DocumentId, type Utf16Offset } from '../../contracts/src/index';
+import { openTextDocument, type DocumentSnapshot } from '../../document/src/entrypoints/launch';
 import type { OwnedVimKeyEvent } from '../vim-session';
 import type { BufferHost } from '../host';
+import type { WorkbenchSession } from '../session';
+export interface ComparisonAlignment { readonly rows: readonly { readonly left: number | null; readonly right: number | null; readonly added: boolean; readonly removed: boolean }[]; readonly rowForRightLine: readonly number[]; }
 
 export type { OwnedVimKeyEvent as GitDiffKeyEvent };
-
-/** Mirrors `packages/services/git/diff`'s line-diff shapes, subset actually read here --
- * workbench cannot import `packages/services`, not even types. */
 export interface GitDiffLine { readonly kind: 'context' | 'added' | 'removed'; readonly oldLine?: number; readonly newLine?: number; readonly text: string; }
 export interface GitDiffHunk { readonly index: number; readonly oldStart: number; readonly oldCount: number; readonly newStart: number; readonly newCount: number; readonly firstLineIndex: number; }
+export interface GitLineDiff { readonly lines: readonly GitDiffLine[]; readonly hunks: readonly GitDiffHunk[]; }
 export type GitDiffTarget = 'index' | 'worktree';
 export type GitDiffLoadResult =
-  | { readonly kind: 'ready'; readonly leftLabel: string; readonly rightLabel: string; readonly diff: { readonly lines: readonly GitDiffLine[]; readonly hunks: readonly GitDiffHunk[] } }
+  | { readonly kind: 'ready'; readonly leftLabel: string; readonly rightLabel: string; readonly leftText: string; readonly rightText: string; readonly diff: GitLineDiff }
   | { readonly kind: 'binary'; readonly leftLabel: string; readonly rightLabel: string }
   | { readonly kind: 'unavailable'; readonly message: string };
-
-/** Narrow port onto the composition root's (lazily constructed) `GitDiffService`. */
 export interface GitDiffServicePort {
-  load(input: { readonly root: string; readonly relativePath: string; readonly target: GitDiffTarget }): Promise<Result<GitDiffLoadResult, { readonly message: string }>>;
+  align(lines: readonly GitDiffLine[]): Promise<{ readonly unified: ComparisonAlignment; readonly split: ComparisonAlignment }>;
+  load(input: { readonly root: string; readonly relativePath: string; readonly target: GitDiffTarget; readonly cancellation?: CancellationSource['token'] }): Promise<Result<GitDiffLoadResult, { readonly message: string }>>;
+  compare(leftText: string, rightText: string, cancellation?: CancellationSource['token']): Promise<GitLineDiff>;
 }
-
 export type DiffLayout = 'unified' | 'side-by-side';
 export type DiffViewState = 'loading' | 'ready' | 'unavailable';
-
+/** A comparison editor shares the worktree's document, undo and save identity. */
 export interface DiffViewReadModel {
+  readonly viewId: ViewId;
   readonly path: string;
   readonly target: GitDiffTarget;
   readonly leftLabel: string;
@@ -35,208 +36,211 @@ export interface DiffViewReadModel {
   readonly state: DiffViewState;
   readonly message: string | undefined;
   readonly generation: number;
+  readonly left: DocumentSnapshot;
+  readonly right: DocumentSnapshot;
+  readonly editable: boolean;
+  readonly unified: ComparisonAlignment;
+  readonly split: ComparisonAlignment;
 }
-
-const SIDE_BY_SIDE_MIN_WIDTH = 110;
-
+interface Comparison {
+  model: DiffViewReadModel;
+  readonly leftText: string;
+  readonly documentId: DocumentId;
+  readonly subscription: Disposable;
+  pending: ReturnType<typeof setTimeout> | undefined;
+  running: boolean;
+  disposed: boolean;
+  cancellation: CancellationSource | undefined;
+}
 export interface DiffViewControllerOptions {
   readonly host: BufferHost;
+  readonly workbench: WorkbenchSession;
   readonly service: GitDiffServicePort;
   readonly workspaceRoot: string;
   readonly marker: (name: string, payload?: unknown) => void;
+  readonly openSyntax: (snapshot: DocumentSnapshot, path: string) => void;
+  readonly closeSyntax: (documentId: DocumentId) => void;
+  readonly onError: (message: string) => void;
 }
 
-/**
- * Owns the Git diff view: async/cancellable load of a `GitDiffService` result into a
- * memoized read model, hunk navigation, scrolling, unified/side-by-side layout selection by
- * viewport width and opening the diffed file at the selected hunk. Never mutates buffers --
- * `Enter`/`o` only navigates an already-open (or newly opened) buffer's cursor.
- */
 export class DiffViewController implements Disposable {
   readonly #options: DiffViewControllerOptions;
-  #open = false;
-  #path = '';
-  #target: GitDiffTarget = 'worktree';
-  #layout: DiffLayout = 'unified';
-  #lines: readonly GitDiffLine[] = [];
-  #hunks: readonly GitDiffHunk[] = [];
-  #selectedHunk = 0;
-  #scrollTop = 0;
-  #state: DiffViewState = 'loading';
-  #message: string | undefined;
-  #leftLabel = 'BASE';
-  #rightLabel = 'WORKTREE';
-  #generation = 0;
-  #loadToken = 0;
-  #viewportHeight = 20;
-  #model: DiffViewReadModel | undefined;
-  #modelGeneration = -1;
-  #pendingBracket: '[' | ']' | undefined;
+  readonly #entries = new Map<ViewId, Comparison>();
   readonly #listeners = new Set<() => void>();
+  #load: CancellationSource | undefined;
+  #sequence = 0;
+  #pendingBracket: '[' | ']' | undefined;
 
-  constructor(options: DiffViewControllerOptions) {
-    this.#options = options;
+  constructor(options: DiffViewControllerOptions) { this.#options = options; }
+  get isOpen(): boolean { return this.readComparison() !== undefined; }
+  subscribe(listener: () => void): Disposable { this.#listeners.add(listener); return { dispose: () => { this.#listeners.delete(listener); } }; }
+  #emit(): void { for (const listener of this.#listeners) listener(); this.#options.host.notifySurfaceChange(); }
+  readComparison(viewId = this.#options.workbench.activeViewId): DiffViewReadModel | undefined {
+    if (viewId === undefined) return undefined;
+    const entry = this.#entries.get(viewId);
+    if (entry === undefined) return undefined;
+    if (this.#options.workbench.readView(viewId) === undefined) { this.#release(entry); this.#entries.delete(viewId); return undefined; }
+    const document = this.#options.host.documents.get(entry.documentId);
+    if (entry.model.editable && document !== undefined) {
+      const snapshot = document.snapshot();
+      if (snapshot.version !== entry.model.right.version || document.isDirty !== (entry.model.rightLabel === 'BUFFER (unsaved)')) {
+        return { ...entry.model, right: snapshot, state: snapshot.version === entry.model.right.version ? 'ready' : 'loading', rightLabel: document.isDirty ? 'BUFFER (unsaved)' : 'WORKTREE' };
+      }
+    }
+    return entry.model;
   }
 
-  get isOpen(): boolean { return this.#open; }
-
-  /** For `DiffRenderable`: repaint whenever the read model's generation advances. */
-  subscribe(listener: () => void): Disposable {
-    this.#listeners.add(listener);
-    return { dispose: () => { this.#listeners.delete(listener); } };
-  }
-
-  #bump(): void {
-    this.#generation += 1;
-    for (const listener of this.#listeners) listener();
-  }
-
-  async open(relativePath: string, target: GitDiffTarget): Promise<void> {
-    // The status panel stays docked beside the diff (VS Code Source Control shape): `q` in
-    // the diff returns focus to the still-open panel so `s`/`u` keep working.
-    this.#options.host.closeAllPanels(['git-diff', 'git']);
-    this.#open = true;
-    this.#path = relativePath;
-    this.#target = target;
-    this.#state = 'loading';
-    this.#message = undefined;
-    this.#lines = [];
-    this.#hunks = [];
-    this.#selectedHunk = 0;
-    this.#scrollTop = 0;
-    this.#bump();
-    this.#loadToken += 1;
-    const token = this.#loadToken;
-    this.#options.marker('XI_GIT_DIFF_OPEN', { path: relativePath, target });
-    this.#options.host.notifySurfaceChange();
-    const result = await this.#options.service.load({ root: this.#options.workspaceRoot, relativePath, target });
-    if (token !== this.#loadToken || !this.#open) return;
-    if (!result.ok) { this.#state = 'unavailable'; this.#message = result.error.message; this.#bump(); this.#options.host.notifySurfaceChange(); return; }
-    if (result.value.kind === 'unavailable') { this.#state = 'unavailable'; this.#message = result.value.message; this.#bump(); this.#options.host.notifySurfaceChange(); return; }
-    if (result.value.kind === 'binary') {
-      this.#state = 'unavailable';
-      this.#message = 'binary file';
-      this.#leftLabel = result.value.leftLabel;
-      this.#rightLabel = result.value.rightLabel;
-      this.#bump();
-      this.#options.host.notifySurfaceChange();
+  async open(path: string, target: GitDiffTarget): Promise<void> {
+    const o = this.#options;
+    for (const [viewId, entry] of this.#entries) {
+      if (o.workbench.readView(viewId) === undefined) { this.#release(entry); this.#entries.delete(viewId); continue; }
+      if (entry.model.path === path && entry.model.target === target) { o.workbench.focus(viewId); this.#emit(); return; }
+    }
+    this.#load?.dispose();
+    const cancellation = new CancellationSource();
+    this.#load = cancellation;
+    o.marker('XI_GIT_DIFF_OPEN', { path, target });
+    const loaded = await o.service.load({ root: o.workspaceRoot, relativePath: path, target, cancellation: cancellation.token });
+    if (cancellation.token.isCancelled || this.#load !== cancellation) return;
+    if (!loaded.ok || loaded.value.kind !== 'ready') {
+      o.onError(!loaded.ok ? loaded.error.message : loaded.value.kind === 'unavailable' ? loaded.value.message : 'Binary comparison: no editable text');
       return;
     }
-    this.#state = 'ready';
-    this.#leftLabel = result.value.leftLabel;
-    this.#rightLabel = result.value.rightLabel;
-    this.#lines = result.value.diff.lines;
-    this.#hunks = result.value.diff.hunks;
-    this.#bump();
-    this.#options.marker('XI_GIT_DIFF_READY', { hunks: this.#hunks.length, selectedHunk: this.#selectedHunk });
-    this.#options.host.notifySurfaceChange();
+    const { unified, split } = await o.service.align(loaded.value.diff.lines);
+    if (cancellation.token.isCancelled) return;
+    const opened = await o.host.openBufferAtPath(`${o.workspaceRoot}/${path}`);
+    if (opened === undefined || cancellation.token.isCancelled) return;
+    const document = o.host.documents.get(opened.bufferId);
+    if (document === undefined) return;
+    const label = `${path.split('/').pop() ?? path} (${target === 'index' ? 'Index' : 'Working Tree'})`;
+    const created = o.workbench.openComparisonView(opened.viewId, label);
+    if (!created.ok) { o.onError(created.error.kind); return; }
+    const viewId = created.value.viewId;
+    o.host.createSession(document, viewId, created.value.session.selections);
+    const left = this.#snapshot(loaded.value.leftText, path);
+    const right = target === 'index' ? this.#snapshot(loaded.value.rightText, path) : document.snapshot();
+    const model: DiffViewReadModel = {
+      viewId, path, target, leftLabel: loaded.value.leftLabel,
+      rightLabel: target === 'worktree' && document.isDirty ? 'BUFFER (unsaved)' : loaded.value.rightLabel,
+      layout: 'side-by-side', lines: loaded.value.diff.lines, hunks: loaded.value.diff.hunks,
+      selectedHunk: 0, scrollTop: 0, state: 'ready', message: undefined, generation: 1,
+      left, right, editable: target === 'worktree', unified, split,
+    };
+    const entry: Comparison = {
+      model, leftText: loaded.value.leftText.replace(/\r\n/g, '\n'), documentId: opened.bufferId,
+      subscription: document.subscribeChanges(() => { if (target === 'worktree') this.#schedule(entry); }),
+      pending: undefined, running: false, disposed: false, cancellation: undefined,
+    };
+    this.#entries.set(viewId, entry);
+    if (target === 'worktree' && document.isDirty) await this.#refresh(entry);
+    o.host.closeAllPanels(['git', 'git-diff']);
+    this.#jump(entry, 0);
+    o.marker('XI_GIT_DIFF_READY', { hunks: entry.model.hunks.length, selectedHunk: 0, viewId });
+    this.#emit();
   }
-
-  close(): void {
-    if (!this.#open) return;
-    this.#open = false;
-    this.#loadToken += 1;
-    this.#bump();
-    this.#options.marker('XI_GIT_DIFF_CLOSED', {});
-    this.#options.host.notifySurfaceChange();
+  #snapshot(text: string, path: string): DocumentSnapshot {
+    const id = asIdentifier<DocumentId>(`xi-diff-original-${++this.#sequence}`, 'diff snapshot');
+    if (!id.ok) throw new Error(id.error.message);
+    const opened = openTextDocument(id.value, new TextEncoder().encode(text));
+    if (opened.kind !== 'editable') throw new Error(`Cannot decode comparison: ${opened.kind}`);
+    const snapshot = opened.document.snapshot();
+    this.#options.openSyntax(snapshot, path);
+    return snapshot;
   }
-
-  setViewport(width: number, height: number): void {
-    this.#viewportHeight = Math.max(1, height);
-    const nextLayout: DiffLayout = width < SIDE_BY_SIDE_MIN_WIDTH ? 'unified' : 'side-by-side';
-    if (nextLayout !== this.#layout) { this.#layout = nextLayout; this.#bump(); }
+  #schedule(entry: Comparison): void {
+    entry.cancellation?.cancel();
+    if (entry.disposed || entry.pending !== undefined || entry.running) return;
+    entry.pending = setTimeout(() => { entry.pending = undefined; void this.#refresh(entry).catch(error => this.#options.onError(String(error))); }, 0);
   }
-
-  readModel(): DiffViewReadModel {
-    if (this.#model !== undefined && this.#modelGeneration === this.#generation) return this.#model;
-    const model: DiffViewReadModel = Object.freeze({
-      path: this.#path,
-      target: this.#target,
-      leftLabel: this.#leftLabel,
-      rightLabel: this.#rightLabel,
-      layout: this.#layout,
-      lines: this.#lines,
-      hunks: this.#hunks,
-      selectedHunk: this.#selectedHunk,
-      scrollTop: this.#scrollTop,
-      state: this.#state,
-      message: this.#message,
-      generation: this.#generation,
-    });
-    this.#model = model;
-    this.#modelGeneration = this.#generation;
-    return model;
+  async #refresh(entry: Comparison): Promise<void> {
+    const document = this.#options.host.documents.get(entry.documentId);
+    if (document === undefined || entry.disposed) return;
+    entry.running = true;
+    const cancellation = new CancellationSource();
+    entry.cancellation = cancellation;
+    const snapshot = document.snapshot();
+    const text = snapshot.slice(0 as Utf16Offset, snapshot.lengthUtf16 as Utf16Offset);
+    try {
+      if (!text.ok) return;
+      const diff = await this.#options.service.compare(entry.leftText, text.value, cancellation.token);
+      if (entry.disposed || document.snapshot().version !== snapshot.version) return;
+      const { unified, split } = await this.#options.service.align(diff.lines);
+      if (entry.disposed || document.snapshot().version !== snapshot.version) return;
+      entry.model = { ...entry.model, ...diff, unified, split, right: snapshot, rightLabel: document.isDirty ? 'BUFFER (unsaved)' : 'WORKTREE', generation: entry.model.generation + 1 };
+      this.#emit();
+    } finally {
+      cancellation.dispose();
+      entry.cancellation = undefined;
+      entry.running = false;
+      if (!entry.disposed && document.snapshot().version !== snapshot.version) this.#schedule(entry);
+    }
   }
-
-  #scrollToHunk(index: number): void {
-    const hunk = this.#hunks[index];
+  #jump(entry: Comparison, index: number): void {
+    const hunk = entry.model.hunks[index];
     if (hunk === undefined) return;
-    this.#selectedHunk = index;
+    const end = entry.model.hunks[index + 1]?.firstLineIndex ?? entry.model.lines.length;
+    let changedIndex = hunk.firstLineIndex;
+    while (changedIndex < end && entry.model.lines[changedIndex]?.kind === 'context') changedIndex += 1;
+    let line = Math.max(1, entry.model.right.lineCount);
+    for (let row = changedIndex; row < entry.model.lines.length; row += 1) {
+      const candidate = entry.model.lines[row]?.newLine;
+      if (candidate !== undefined) { line = candidate; break; }
+    }
+    this.#options.host.sessions.get(entry.model.viewId)?.setCursorPosition(Math.max(0, line - 1), 0);
+    entry.model = { ...entry.model, selectedHunk: index, scrollTop: Math.max(0, line - 3), generation: entry.model.generation + 1 };
     this.#options.marker('XI_GIT_DIFF_HUNK', { selectedHunk: index });
-    if (hunk.firstLineIndex < this.#scrollTop) this.#scrollTop = hunk.firstLineIndex;
-    else if (hunk.firstLineIndex >= this.#scrollTop + this.#viewportHeight) this.#scrollTop = Math.max(0, hunk.firstLineIndex - Math.floor(this.#viewportHeight / 2));
-    this.#bump();
   }
-
-  #clampScroll(): void {
-    const max = Math.max(0, this.#lines.length - Math.max(1, this.#viewportHeight - 1));
-    this.#scrollTop = Math.max(0, Math.min(max, this.#scrollTop));
-  }
-
   handleKeypress(event: OwnedVimKeyEvent): boolean {
-    const key = event.name.toLowerCase();
-    if (key === 'q' || key === 'escape' || event.raw === '') { this.#pendingBracket = undefined; this.close(); return true; }
-    // `]c`/`[c` arrive as two keystrokes (bracket, then 'c'); track the pending bracket
-    // across one keypress the way the Vim engine's own multi-key sequences do.
-    if (event.raw === ']' || event.raw === '[') { this.#pendingBracket = event.raw; return true; }
+    const model = this.readComparison();
+    if (model === undefined) return false;
+    const entry = this.#entries.get(model.viewId)!;
+    const session = this.#options.host.activeSession();
+    const mode = this.#options.workbench.readView(model.viewId)?.session.mode;
+    if (mode !== 'normal' || session?.commandLineActive) return !model.editable;
     if (this.#pendingBracket !== undefined) {
       const bracket = this.#pendingBracket;
       this.#pendingBracket = undefined;
-      if (key === 'c') {
-        if (bracket === ']') this.#scrollToHunk(Math.min(this.#hunks.length - 1, this.#selectedHunk + 1));
-        else this.#scrollToHunk(Math.max(0, this.#selectedHunk - 1));
-        return true;
-      }
+      if (event.raw === 'c') { this.#jump(entry, Math.max(0, Math.min(model.hunks.length - 1, model.selectedHunk + (bracket === ']' ? 1 : -1)))); this.#emit(); return true; }
+      void session?.handleKey({ ...event, name: bracket, raw: bracket });
+      return false;
     }
-    if (key === 'j' || key === 'down') { this.#scrollTop += 1; this.#clampScroll(); this.#bump(); return true; }
-    if (key === 'k' || key === 'up') { this.#scrollTop -= 1; this.#clampScroll(); this.#bump(); return true; }
-    if (event.ctrl && key === 'd') { this.#scrollTop += Math.floor(this.#viewportHeight / 2); this.#clampScroll(); this.#bump(); return true; }
-    if (event.ctrl && key === 'u') { this.#scrollTop -= Math.floor(this.#viewportHeight / 2); this.#clampScroll(); this.#bump(); return true; }
-    if (key === 'g' && !event.shift) { this.#scrollTop = 0; this.#bump(); return true; }
-    if (key === 'g' && event.shift) { this.#scrollTop = Math.max(0, this.#lines.length - Math.max(1, this.#viewportHeight - 1)); this.#bump(); return true; }
-    if (key === 't') { this.#layout = this.#layout === 'unified' ? 'side-by-side' : 'unified'; this.#bump(); return true; }
-    if (key === 'enter' || key === 'return' || key === 'o' || event.raw === '\r' || event.raw === '\n') { void this.#openAtSelectedHunk(); return true; }
-    return true;
+    if ((event.raw === '[' || event.raw === ']') && session?.prefixHelp.pendingKeys.length === 0) { this.#pendingBracket = event.raw; return true; }
+    if (event.name === 'escape') { this.close(); return true; }
+    if (!model.editable) {
+      if (event.raw === 'q') { this.close(); return true; }
+      if (event.raw === 'j' || event.name === 'down') this.onPointer(1);
+      if (event.raw === 'k' || event.name === 'up') this.onPointer(-1);
+      return true;
+    }
+    return false;
   }
-
-  selectHunkAt(index: number): void {
-    if (index < 0 || index >= this.#hunks.length) return;
-    this.#scrollToHunk(index);
-    this.#options.host.notifySurfaceChange();
-  }
-
   onPointer(delta: number): void {
-    if (delta === 0) return;
-    this.#scrollTop += delta;
-    this.#clampScroll();
-    this.#bump();
-    this.#options.host.notifySurfaceChange();
+    const model = this.readComparison();
+    if (model === undefined) return;
+    const entry = this.#entries.get(model.viewId)!;
+    entry.model = { ...model, scrollTop: Math.max(0, Math.min(Math.max(model.left.lineCount, model.right.lineCount) - 1, model.scrollTop + delta)), generation: model.generation + 1 };
+    this.#emit();
   }
-
-  async #openAtSelectedHunk(): Promise<void> {
-    const hunk = this.#hunks[this.#selectedHunk];
-    const absolutePath = `${this.#options.workspaceRoot}/${this.#path}`;
-    const opened = await this.#options.host.openBufferAtPath(absolutePath);
-    if (opened === undefined) return;
-    const session = this.#options.host.sessions.get(opened.viewId);
-    const line = hunk?.newStart !== undefined && hunk.newStart > 0 ? hunk.newStart - 1 : 0;
-    session?.setCursorPosition(line, 0);
-    this.close();
+  close(): void {
+    this.#load?.dispose();
+    const id = this.#options.workbench.activeViewId;
+    const entry = id === undefined ? undefined : this.#entries.get(id);
+    if (entry === undefined) return;
+    this.#options.workbench.closeView(entry.model.viewId, 'discard');
+    this.#options.host.sessions.get(entry.model.viewId)?.dispose();
+    this.#options.host.sessions.delete(entry.model.viewId);
+    this.#release(entry);
+    this.#entries.delete(entry.model.viewId);
+    this.#options.marker('XI_GIT_DIFF_CLOSED', {});
+    this.#emit();
   }
-
-  dispose(): void {
-    this.#open = false;
-    this.#loadToken += 1;
-    this.#listeners.clear();
+  #release(entry: Comparison): void {
+    entry.disposed = true;
+    entry.cancellation?.dispose();
+    entry.subscription.dispose();
+    if (entry.pending !== undefined) clearTimeout(entry.pending);
+    this.#options.closeSyntax(entry.model.left.id);
+    if (!entry.model.editable) this.#options.closeSyntax(entry.model.right.id);
   }
+  dispose(): void { this.#load?.dispose(); for (const entry of this.#entries.values()) this.#release(entry); this.#entries.clear(); this.#listeners.clear(); }
 }

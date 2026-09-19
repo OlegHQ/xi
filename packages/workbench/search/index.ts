@@ -577,7 +577,7 @@ export class SearchController {
       return true;
     }
     if (key === 'h') { this.#toggleGroupForSelected('collapse'); return true; }
-    if (key === 'l') { this.#toggleGroupForSelected('expand'); return true; }
+    if (key === 'l') { this.previewSelected(); return true; }
     if (event.raw === ' ') { this.#toggleGroupForSelected('toggle'); return true; }
     if (key === 'enter' || key === 'return' || key === 'o' || event.raw === '\r' || event.raw === '\n') {
       const match = search.model.matches[this.#selectedIndex];

@@ -1,5 +1,6 @@
 import { CancellationSource } from '../../contracts/src/index';
 import type { CancellationToken, FilesystemPort, ProcessPort, Result } from '../../contracts/src/index';
+import { prepareComparison } from './alignment';
 
 export type DiffLineKind = 'context' | 'added' | 'removed';
 export interface DiffLine { readonly kind: DiffLineKind; readonly oldLine?: number; readonly newLine?: number; readonly text: string; }
@@ -27,7 +28,7 @@ function splitLinesPreserving(text: string): readonly string[] {
 }
 
 /** Myers O(ND) shortest-edit-script diff over line arrays, bounded by `MYERS_STEP_BUDGET`. */
-function myersDiff(oldLines: readonly string[], newLines: readonly string[]): { readonly ops: readonly ('equal' | 'delete' | 'insert')[]; readonly indices: readonly { old: number; next: number }[] } | undefined {
+function* myersDiff(oldLines: readonly string[], newLines: readonly string[]): Generator<void, { readonly ops: readonly ('equal' | 'delete' | 'insert')[]; readonly indices: readonly { old: number; next: number }[] } | undefined> {
   const n = oldLines.length;
   const m = newLines.length;
   const max = n + m;
@@ -41,15 +42,19 @@ function myersDiff(oldLines: readonly string[], newLines: readonly string[]): { 
   let v = new Int32Array(size);
   v[offset + 1] = 0;
   outer: for (let d = 0; d <= max; d += 1) {
+    // Bound retained backtracking arrays as well as CPU steps.
+    if ((trace.length + 2) * size * 4 > 8 * 1024 * 1024) return undefined;
+    yield;
     const snapshot = v.slice();
     for (let k = -d; k <= d; k += 2) {
       steps += 1;
+      if (steps % 1024 === 0) yield;
       if (steps > MYERS_STEP_BUDGET) return undefined;
       let x: number;
       if (k === -d || (k !== d && (v[offset + k - 1] ?? 0) < (v[offset + k + 1] ?? 0))) x = v[offset + k + 1] ?? 0;
       else x = (v[offset + k - 1] ?? 0) + 1;
       let y = x - k;
-      while (x < n && y < m && oldLines[x] === newLines[y]) { x += 1; y += 1; }
+      while (x < n && y < m && oldLines[x] === newLines[y]) { x += 1; y += 1; if (x % 1024 === 0) yield; }
       v[offset + k] = x;
       if (x >= n && y >= m) { trace.push(snapshot); vFinal = v.slice(); dFinal = d; break outer; }
     }
@@ -68,47 +73,56 @@ function myersDiff(oldLines: readonly string[], newLines: readonly string[]): { 
     else prevK = k - 1;
     const prevX = prevV[offset + prevK] ?? 0;
     const prevY = prevX - prevK;
-    while (x > prevX && y > prevY) { ops.push('equal'); x -= 1; y -= 1; }
+    while (x > prevX && y > prevY) { ops.push('equal'); x -= 1; y -= 1; if (x % 1024 === 0) yield; }
     if (x === prevX) { ops.push('insert'); y -= 1; } else { ops.push('delete'); x -= 1; }
   }
-  while (x > 0 && y > 0) { ops.push('equal'); x -= 1; y -= 1; }
-  while (x > 0) { ops.push('delete'); x -= 1; }
-  while (y > 0) { ops.push('insert'); y -= 1; }
+  while (x > 0 && y > 0) { ops.push('equal'); x -= 1; y -= 1; if (x % 1024 === 0) yield; }
+  while (x > 0) { ops.push('delete'); x -= 1; if (x % 1024 === 0) yield; }
+  while (y > 0) { ops.push('insert'); y -= 1; if (y % 1024 === 0) yield; }
   ops.reverse();
   return { ops, indices: [] };
 }
 
 /** Pure line diff: Myers edit script within budget, else a whole-file replace fallback.
  * Produces context-trimmed hunks with `CONTEXT_LINES` of surrounding unchanged lines. */
-export function computeLineDiff(oldLines: readonly string[], newLines: readonly string[]): LineDiff {
-  const script = myersDiff(oldLines, newLines);
+export function computeLineDiff(oldLines: readonly string[], newLines: readonly string[], fullFile = false): LineDiff {
+  const work = lineDiffSteps(oldLines, newLines, fullFile);
+  let result = work.next();
+  while (!result.done) result = work.next();
+  return result.value;
+}
+
+function* lineDiffSteps(oldLines: readonly string[], newLines: readonly string[], fullFile: boolean): Generator<void, LineDiff> {
+  const script = yield* myersDiff(oldLines, newLines);
   const rawLines: DiffLine[] = [];
   if (script === undefined) {
     // Budget exceeded: whole-file replace.
-    for (let i = 0; i < oldLines.length; i += 1) rawLines.push({ kind: 'removed', oldLine: i + 1, text: oldLines[i]! });
-    for (let i = 0; i < newLines.length; i += 1) rawLines.push({ kind: 'added', newLine: i + 1, text: newLines[i]! });
+    for (let i = 0; i < oldLines.length; i += 1) { rawLines.push({ kind: 'removed', oldLine: i + 1, text: oldLines[i]! }); if (i % 1024 === 0) yield; }
+    for (let i = 0; i < newLines.length; i += 1) { rawLines.push({ kind: 'added', newLine: i + 1, text: newLines[i]! }); if (i % 1024 === 0) yield; }
   } else {
     let oldIndex = 0;
     let newIndex = 0;
     for (const op of script.ops) {
+      if (rawLines.length % 1024 === 0) yield;
       if (op === 'equal') { rawLines.push({ kind: 'context', oldLine: oldIndex + 1, newLine: newIndex + 1, text: oldLines[oldIndex]! }); oldIndex += 1; newIndex += 1; }
       else if (op === 'delete') { rawLines.push({ kind: 'removed', oldLine: oldIndex + 1, text: oldLines[oldIndex]! }); oldIndex += 1; }
       else { rawLines.push({ kind: 'added', newLine: newIndex + 1, text: newLines[newIndex]! }); newIndex += 1; }
     }
   }
-  return trimToHunks(rawLines);
+  return yield* trimToHunks(rawLines, fullFile);
 }
 
 /** Collapses long unchanged runs to `CONTEXT_LINES` at each side of a change, grouping the
  * remainder into hunks with stable old/new start+count metadata. */
-function trimToHunks(rawLines: readonly DiffLine[]): LineDiff {
+function* trimToHunks(rawLines: readonly DiffLine[], fullFile: boolean): Generator<void, LineDiff> {
   // Identify indices of changed lines to find hunk boundaries with context windows.
   const changedIndices: number[] = [];
-  for (let i = 0; i < rawLines.length; i += 1) if (rawLines[i]!.kind !== 'context') changedIndices.push(i);
-  if (changedIndices.length === 0) return { lines: [], hunks: [] };
+  for (let i = 0; i < rawLines.length; i += 1) { if (rawLines[i]!.kind !== 'context') changedIndices.push(i); if (i % 1024 === 0) yield; }
+  if (changedIndices.length === 0) return { lines: fullFile ? Object.freeze(rawLines) : [], hunks: [] };
 
   const ranges: Array<{ start: number; end: number }> = [];
   for (const index of changedIndices) {
+    if (index % 1024 === 0) yield;
     const start = Math.max(0, index - CONTEXT_LINES);
     const end = Math.min(rawLines.length - 1, index + CONTEXT_LINES);
     const last = ranges[ranges.length - 1];
@@ -121,12 +135,13 @@ function trimToHunks(rawLines: readonly DiffLine[]): LineDiff {
   let hunkIndex = 0;
   for (const range of ranges) {
     const slice = rawLines.slice(range.start, range.end + 1);
-    const firstLineIndex = lines.length;
+    const firstLineIndex = fullFile ? range.start : lines.length;
     let oldStart = 0;
     let newStart = 0;
     let oldCount = 0;
     let newCount = 0;
     for (const line of slice) {
+      if (lines.length % 1024 === 0) yield;
       if (line.oldLine !== undefined && oldStart === 0) oldStart = line.oldLine;
       if (line.newLine !== undefined && newStart === 0) newStart = line.newLine;
       if (line.kind !== 'added') oldCount += 1;
@@ -136,13 +151,24 @@ function trimToHunks(rawLines: readonly DiffLine[]): LineDiff {
     hunks.push({ index: hunkIndex, oldStart, oldCount, newStart, newCount, firstLineIndex });
     hunkIndex += 1;
   }
-  return { lines: Object.freeze(lines), hunks: Object.freeze(hunks) };
+  return { lines: Object.freeze(fullFile ? rawLines : lines), hunks: Object.freeze(hunks) };
+}
+
+async function compareAsync(oldLines: readonly string[], newLines: readonly string[], cancellation?: CancellationToken): Promise<LineDiff> {
+  const work = lineDiffSteps(oldLines, newLines, true);
+  let result = work.next();
+  while (!result.done) {
+    if (cancellation?.isCancelled) return { lines: [], hunks: [] };
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    result = work.next();
+  }
+  return result.value;
 }
 
 export type GitDiffTarget = 'index' | 'worktree';
 export type GitDiffSideKind = 'text' | 'binary' | 'missing' | 'unavailable';
 export interface GitDiffSide { readonly kind: GitDiffSideKind; readonly lines?: readonly string[]; }
-export interface GitDiffReady { readonly kind: 'ready'; readonly leftLabel: string; readonly rightLabel: string; readonly diff: LineDiff; }
+export interface GitDiffReady { readonly kind: 'ready'; readonly leftLabel: string; readonly rightLabel: string; readonly leftText: string; readonly rightText: string; readonly diff: LineDiff; }
 export interface GitDiffBinary { readonly kind: 'binary'; readonly leftLabel: string; readonly rightLabel: string; }
 export interface GitDiffUnavailable { readonly kind: 'unavailable'; readonly message: string; }
 export type GitDiffResult = GitDiffReady | GitDiffBinary | GitDiffUnavailable;
@@ -177,6 +203,10 @@ function looksBinary(bytes: Uint8Array): boolean {
  * line diff between them via `computeLineDiff`. Labels are exactly BASE/INDEX/WORKTREE.
  */
 export class GitDiffService {
+  async align(lines: readonly DiffLine[]): Promise<{ readonly unified: import('./alignment').ComparisonAlignment; readonly split: import('./alignment').ComparisonAlignment }> {
+    const [unified, split] = await Promise.all([prepareComparison(lines, false), prepareComparison(lines, true)]);
+    return { unified, split };
+  }
   readonly #process: ProcessPort;
   readonly #filesystem: FilesystemPort;
   readonly #env: Readonly<Record<string, string>>;
@@ -206,8 +236,13 @@ export class GitDiffService {
     }
     const oldLines = left.kind === 'missing' ? [] : left.lines ?? [];
     const newLines = right.kind === 'missing' ? [] : right.lines ?? [];
-    const diff = computeLineDiff(oldLines, newLines);
-    return { ok: true, value: { kind: 'ready', leftLabel, rightLabel, diff } };
+    const diff = await compareAsync(oldLines, newLines, cancellation);
+    if (cancellation.isCancelled) return { ok: false, error: { message: 'cancelled' } };
+    return { ok: true, value: { kind: 'ready', leftLabel, rightLabel, leftText: oldLines.join(''), rightText: newLines.join(''), diff } };
+  }
+
+  async compare(leftText: string, rightText: string, cancellation?: CancellationToken): Promise<LineDiff> {
+    return compareAsync(splitLinesPreserving(leftText), splitLinesPreserving(rightText), cancellation);
   }
 
   async #readGitObject(root: string, spec: string, cancellation: CancellationToken): Promise<GitDiffSide> {

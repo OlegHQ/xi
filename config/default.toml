@@ -36,20 +36,49 @@ follow-symlinks = false
 [keys.normal.space]
 f = "files.pick"
 b = "buffers.pick"
+";" = "command.pick"
 "/" = "search.workspace"
 o = "files.edit-directory"
 O = "files.edit-buffer-directory"
 t = "theme.pick"
+k = "lsp.hover"
 a = "lsp.code-action"
-r = "lsp.rename"
+d = "panel.problems.focus"
+e = "panel.problems.focus"
+m = "editor.mouse.toggle"
+r = "search.replace"
 
 [keys.normal.space.v]
 f = "panel.files.focus"
 s = "panel.search.focus"
 g = "panel.git.focus"
 o = "panel.outline.focus"
+d = "git.diff"
+
+[keys.files-panel.space]
+l = "panel.preview"
+o = "panel.open"
+q = "panel.close"
+
+[keys.search-panel.space]
+l = "panel.preview"
+o = "panel.open"
+q = "panel.close"
+
+[keys.git-panel.space]
+l = "panel.preview"
+o = "panel.open"
+q = "panel.close"
+
+[keys.diff-panel.space]
+l = "panel.preview"
+o = "panel.open"
+q = "panel.close"
 
 [aliases]
+files = "files.pick"
+buffers = "buffers.pick"
+commands = "command.pick"
 buffer-next = "buffer.next"
 buffer-previous = "buffer.previous"
 theme = "theme.pick"

@@ -587,6 +587,7 @@ function pickerCommands() {
   return [
     command('files.pick', 'File picker', 'Open the multi-root file picker.', schema),
     command('buffers.pick', 'Buffer picker', 'Open the open-buffer picker.', schema),
+    command('command.pick', 'Command picker', 'Search every available command and alias.', schema),
     command('theme.pick', 'Theme picker', 'Preview and choose a theme.', schema),
     command('config.open', 'Open config', 'Open a configuration document.', schema),
     command('config.reload', 'Reload config', 'Reload configuration after validation.', schema),

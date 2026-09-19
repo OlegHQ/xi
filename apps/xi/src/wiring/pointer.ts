@@ -6,7 +6,7 @@ import type { Controllers } from './controllers';
  * Pulled out of ARCH-COMPOSITION-ROOT-01's composition root into its own call so `main()`
  * only has to invoke it once controllers exist. */
 export function wireControllerPanels(controllers: Controllers): void {
-  const { pointerRouter, host, sidebarController, explorerFeature, searchFeature, gitPanelFeature, problemsFeature, overlayFeature, completionFeature, directoryDraftController, workbench, picker, gitDiffFeature } = controllers;
+  const { pointerRouter, host, sidebarController, explorerFeature, searchFeature, gitPanelFeature, problemsFeature, overlayFeature, completionFeature, directoryDraftController, workbench, picker } = controllers;
 
   pointerRouter.publishControls([
     // `sidebar.files` is still the Files chevron's own click target (the legacy row-0
@@ -55,5 +55,5 @@ export function wireControllerPanels(controllers: Controllers): void {
   host.registerPanel('signature', { isOpen: () => completionFeature.isSignatureOpen, close: () => completionFeature.closeSignature(), alwaysClose: true });
   host.registerPanel('output', { isOpen: () => problemsFeature.isOutputOpen, close: () => problemsFeature.closeOutput() });
   host.registerPanel('directory-review', { isOpen: () => directoryDraftController.isReviewOpen, close: () => directoryDraftController.closeReview() });
-  host.registerPanel('git-diff', { isOpen: () => gitDiffFeature.isOpen, close: () => gitDiffFeature.close() });
+  // Comparison editors are tabs. Opening a panel must not close or discard their views.
 }

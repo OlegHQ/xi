@@ -1,9 +1,9 @@
-import type { ClockPort, Disposable, ViewId } from '../../contracts/src/index';
+import type { ClockPort, CommandId, Disposable, ViewId } from '../../contracts/src/index';
 import type { BufferHost } from '../host';
 import type { WorkbenchSession } from '../session';
 import { CommandRegistry } from '../commands/registry';
 import { ExCommandLineSession, type ExCommandLineInput } from '../commands/ex-command-line';
-import { PrefixHelpController, buildPrefixHelpReadModel, type PrefixHelpReadModel, type PrefixHelpRequest } from '../commands/prefix-help';
+import { PrefixHelpController, buildPrefixHelpReadModel, type PrefixHelpBinding, type PrefixHelpReadModel, type PrefixHelpRequest } from '../commands/prefix-help';
 import type { OwnedVimKeyEvent, VimPrefixHelpState } from '../vim-session';
 import { canonicalKeyToken } from './key-token';
 import { DEFAULT_VIEW_BINDINGS, executeViewCommand, isViewCommandId } from './view-commands';
@@ -160,7 +160,7 @@ export interface WorkbenchInputRouterOptions {
   readonly overlayExplorer?: RouterOverlayKeypressPort;
   readonly overlaySearch?: RouterOverlayKeypressPort;
   readonly overlayGit?: RouterOverlayKeypressPort;
-  readonly overlayGitDiff?: RouterOverlayKeypressPort;
+  readonly overlayGitDiff?: RouterOverlayKeypressPort & { readonly isReadOnly?: () => boolean };
   readonly overlayProblems?: RouterOverlayKeypressPort;
   readonly overlayOutput?: RouterOverlayKeypressPort;
   readonly overlayOutline?: RouterOverlayKeypressPort;
@@ -173,6 +173,7 @@ export interface WorkbenchInputRouterOptions {
   /** `Space v d`: opens the worktree diff for the active buffer's workspace-relative path.
    * Composition-root work (path resolution, `GitDiffService`) this router never duplicates. */
   readonly openGitDiffForActiveBuffer?: () => Promise<void> | void;
+  readonly openGitPanel?: () => Promise<void> | void;
 }
 
 /**
@@ -189,6 +190,7 @@ export class WorkbenchInputRouter implements Disposable {
   readonly #bindings: ReadonlyMap<string, string>;
   #leaderPending = false;
   #leaderPanelPending = false;
+  #leaderKeys: readonly string[] = Object.freeze([]);
   #macroRegisterPending = false;
   #prefixGeneration = 0;
   // schedulePrefixHelp fires on every key via onPrefixStateChange. vim-session hands back
@@ -222,10 +224,13 @@ export class WorkbenchInputRouter implements Disposable {
         registry: options.commandRegistry,
         registrySnapshot: options.commandRegistry.snapshot,
         focusGeneration: this.#prefixGeneration,
-        // Leader/macro pending-key sequences only; config key bindings are ordinary
-        // mode+key -> commandId mappings (resolved directly in `handleKeypress`), not
-        // pending-sequence discovery hints, so there is nothing config-sourced to add here.
-        bindings: [],
+        bindings: options.bindings.filter((binding) => binding.mode === this.#bindingMode()).map((binding): PrefixHelpBinding => Object.freeze({
+          targetId: request.targetId ?? '',
+          keys: binding.keys,
+          command: { kind: 'command' as const, id: binding.commandId as CommandId },
+          contexts: Object.freeze([]),
+          description: undefined,
+        })),
       }),
     }, {
       clock: {
@@ -297,7 +302,8 @@ export class WorkbenchInputRouter implements Disposable {
 
   scheduleLeaderHelp(): void {
     const targetViewId = this.#options.session.activeViewId ?? this.#options.launchViewId;
-    this.schedulePrefixHelp(targetViewId, ['<Space>'], [{ kind: 'keys', keys: ['v', 'f', 'b', 's', 'p', 'o', 'k', 'a', 'd', 'e', '/', 'r'], label: 'Leader workbench command' }]);
+    const pendingKeys = this.#leaderKeys.length === 0 ? Object.freeze(['<Space>']) : this.#leaderKeys;
+    this.schedulePrefixHelp(targetViewId, pendingKeys, []);
   }
 
   /** Reproduces the original `onKeypress` chain exactly, except that it no longer forces a
@@ -339,9 +345,11 @@ export class WorkbenchInputRouter implements Disposable {
    */
   dispatchKey(event: OwnedVimKeyEvent): RouterDispatchOutcome | Promise<RouterDispatchOutcome> {
     const o = this.#options;
+    if (o.overlayGitDiff?.isReadOnly?.() === true && !this.#gitPanelFocused && !(event.ctrl && event.name.toLowerCase() === 'w')) return finishOverlay(o.overlayGitDiff.onKeypress(event));
     // The leader key is global even while a navigational panel is focused: it is how users
     // reach terminal controls such as mouse-mode toggle without first dismissing the panel.
-    if (event.raw === ' ' || this.#leaderPending) return finishOverlay(this.handleKeypress(event));
+    const activeMode = o.session.activeViewId === undefined ? undefined : o.session.readView(o.session.activeViewId)?.session.mode;
+    if ((event.raw === ' ' && activeMode === 'normal') || this.#leaderPending) return finishOverlay(this.handleKeypress(event));
     if (o.overlayContextMenu?.open === true) return finishOverlay(o.overlayContextMenu.handleKey(event));
     if (this.isCommandLineActive()) return finishOverlay(this.handleCommandLineKeypress(event));
     if (o.overlayCompletion?.isOpen() === true) return finishOverlay(o.overlayCompletion.onKeypress(event));
@@ -349,7 +357,7 @@ export class WorkbenchInputRouter implements Disposable {
     // `:` works everywhere a panel is only navigated, not typed into (explorer, problems,
     // output, outline, hierarchy, hover): it opens the editor's command line so `:q`, `:w`
     // and friends never depend on which panel has focus.
-    if (event.raw === ':' && !event.ctrl && !event.meta && !event.option && this.#colonPanelOpen()) return finishOverlay(this.handleKeypress(event));
+    if (event.raw === ':' && !event.ctrl && !event.meta && !event.option && o.overlayGitDiff?.isOpen() !== true && this.#colonPanelOpen()) return finishOverlay(this.handleKeypress(event));
     if (o.overlayExplorer?.isOpen() === true) return finishOverlay(o.overlayExplorer.onKeypress(event));
     if (o.overlaySearch?.isOpen() === true) return finishOverlay(o.overlaySearch.onKeypress(event));
     {
@@ -362,8 +370,11 @@ export class WorkbenchInputRouter implements Disposable {
         this.#gitPanelFocused = !this.#gitPanelFocused;
         return finishOverlay(true);
       }
-      if (gitDiffOpen && !this.#gitPanelFocused) return finishOverlay(o.overlayGitDiff!.onKeypress(event));
-      if (gitPanelOpen) return finishOverlay(o.overlayGit!.onKeypress(event));
+      if (gitDiffOpen && !this.#gitPanelFocused) {
+        const handled = o.overlayGitDiff!.onKeypress(event);
+        if (handled !== false) return finishOverlay(handled);
+      }
+      if (gitPanelOpen && (!gitDiffOpen || this.#gitPanelFocused)) return finishOverlay(o.overlayGit!.onKeypress(event));
     }
     if (o.overlayProblems?.isOpen() === true) return finishOverlay(o.overlayProblems.onKeypress(event));
     if (o.overlayOutput?.isOpen() === true) return finishOverlay(o.overlayOutput.onKeypress(event));
@@ -413,9 +424,10 @@ export class WorkbenchInputRouter implements Disposable {
     if (completion.isCompletionTrigger(event, activeMode)) return completion.openCompletion();
     if (completion.isSignatureTrigger(event, activeMode)) return completion.openSignature();
     if (completion.isSnippetActive) return completion.handleSnippetKeypress(event);
-    if (isNormalSpace(event, activeMode)) {
+    if ((activeMode === 'normal' || activeMode === undefined) && ((this.#bindingMode() !== 'normal' && (event.raw === ' ' || event.name.toLowerCase() === 'space')) || isNormalSpace(event, activeMode))) {
       this.#leaderPending = true;
       this.#leaderPanelPending = false;
+      this.#leaderKeys = Object.freeze(['<Space>']);
       this.scheduleLeaderHelp();
       return true;
     }
@@ -456,6 +468,7 @@ export class WorkbenchInputRouter implements Disposable {
   }
 
   handlePaste(bytes: Uint8Array): void {
+    if (this.#options.overlayGitDiff?.isReadOnly?.() === true || this.#gitPanelFocused) return;
     const { explorer, search, problems, overlays, picker, host } = this.#options;
     // Only the editor's own Insert/Replace/Virtual-replace mode consumes paste today;
     // pasting while any overlay/panel is focused is a disclosed, un-wired gap (T045/E12).
@@ -465,6 +478,8 @@ export class WorkbenchInputRouter implements Disposable {
     active?.handlePaste(bytes);
     this.#options.marker('XI_PASTE', { length: bytes.length });
   }
+
+  focusEditor(): void { this.#gitPanelFocused = false; }
 
   async handleLeaderKeypress(event: OwnedVimKeyEvent): Promise<boolean> {
     const { picker, explorer, search, problems, overlays, workspaceEdits, host } = this.#options;
@@ -485,8 +500,20 @@ export class WorkbenchInputRouter implements Disposable {
       if (!started) this.#options.onError('xi: invalid macro register\n');
       return true;
     }
+    const token = canonicalKeyToken(event);
+    const configured = this.#options.bindings.find((binding) => binding.mode === this.#bindingMode()
+      && binding.keys.length === this.#leaderKeys.length + 1
+      && binding.keys.every((key, index) => normalizeConfigToken(key) === normalizeConfigToken(index === this.#leaderKeys.length ? token : this.#leaderKeys[index] ?? '')));
+    if (configured !== undefined) {
+      this.#leaderPending = false;
+      this.#leaderPanelPending = false;
+      this.#leaderKeys = Object.freeze([]);
+      return this.#executeWorkbenchCommandId(configured.commandId);
+    }
     if (!this.#leaderPanelPending && event.name.toLowerCase() === 'v') {
       this.#leaderPanelPending = true;
+      this.#leaderKeys = Object.freeze([...this.#leaderKeys, event.raw]);
+      this.scheduleLeaderHelp();
       return true;
     }
     if (!this.#leaderPanelPending && event.name.toLowerCase() === 'q') {
@@ -496,6 +523,7 @@ export class WorkbenchInputRouter implements Disposable {
     const panelPrefix = this.#leaderPanelPending;
     this.#leaderPending = false;
     this.#leaderPanelPending = false;
+    this.#leaderKeys = Object.freeze([]);
     if (panelPrefix && event.name.toLowerCase() === 'f') {
       if (picker.isOpen) await picker.close(true);
       if (search.isOpen) search.close();
@@ -571,6 +599,61 @@ export class WorkbenchInputRouter implements Disposable {
     return true;
   }
 
+  async #executeWorkbenchCommandId(commandId: string): Promise<boolean> {
+    const { picker, explorer, search, problems, overlays, workspaceEdits } = this.#options;
+    switch (commandId) {
+      case 'files.pick': picker.open('file'); return true;
+      case 'buffers.pick': picker.open('buffer'); return true;
+      case 'command.pick': picker.open('command'); return true;
+      case 'theme.pick': picker.open('theme'); return true;
+      case 'config.open': picker.open('config'); return true;
+      case 'config.reload': this.#options.onError('xi: config reload is unavailable in this session\n'); return true;
+      case 'search.workspace': search.open(); return true;
+      case 'search.replace': search.startReplace(); return true;
+      case 'panel.files.focus': explorer.open(); return true;
+      case 'panel.search.focus': search.open(); return true;
+      case 'panel.git.focus': await this.#options.openGitPanel?.(); return true;
+      case 'panel.outline.focus': overlays.openOutline(); return true;
+      case 'panel.problems.focus': problems.openProblems(); return true;
+      case 'git.diff': await this.#options.openGitDiffForActiveBuffer?.(); return true;
+      case 'lsp.hover': overlays.openHover(); return true;
+      case 'lsp.code-action': return workspaceEdits.requestCodeActions();
+      case 'editor.mouse.toggle': this.#options.toggleMouseMode(); return true;
+      case 'panel.preview': return this.#dispatchPanelKey('l', 'l');
+      case 'panel.open': return this.#dispatchPanelKey('enter', '\r');
+      case 'panel.close': return this.#dispatchPanelKey('q', 'q');
+      case 'files.edit-directory':
+      case 'files.edit-buffer-directory': {
+        const viewId = this.#options.session.activeViewId ?? this.#options.launchViewId;
+        await this.#options.executeWorkbenchCommand?.('Explore', viewId);
+        return true;
+      }
+      default: return false;
+    }
+  }
+
+  #bindingMode(): string {
+    const o = this.#options;
+    if (o.overlayExplorer?.isOpen() === true) return 'files-panel';
+    if (o.overlaySearch?.isOpen() === true) return 'search-panel';
+    if (o.overlayGitDiff?.isOpen() === true && !this.#gitPanelFocused) return 'normal';
+    if (o.overlayGit?.isOpen() === true) return 'git-panel';
+    return 'normal';
+  }
+
+  async #dispatchPanelKey(name: string, raw: string): Promise<boolean> {
+    const event = keyEvent(raw, { name, shift: false, option: false, ctrl: false, meta: false });
+    const o = this.#options;
+    const port = o.overlayExplorer?.isOpen() === true ? o.overlayExplorer
+      : o.overlaySearch?.isOpen() === true ? o.overlaySearch
+        : o.overlayGitDiff?.isOpen() === true ? o.overlayGitDiff
+          : o.overlayGit?.isOpen() === true ? o.overlayGit
+            : undefined;
+    if (port === undefined) return false;
+    await port.onKeypress(event);
+    return true;
+  }
+
   async handleCommandLineKeypress(event: OwnedVimKeyEvent): Promise<boolean | 'quit'> {
     const active = this.#options.host.activeSession();
     if (active === undefined && !this.#commandLineWithoutSession) return false;
@@ -590,6 +673,11 @@ export class WorkbenchInputRouter implements Disposable {
       return true;
     }
     if (result.kind === 'execute' || result.kind === 'error') {
+      if (result.kind === 'execute' && (result.execution.kind === 'xi-alias' || result.execution.kind === 'xi-command')) {
+        if (active !== undefined) await active.handleKey(keyEvent('\x1b', { name: 'escape', shift: false, option: false, ctrl: false, meta: false }));
+        else this.#closeStandaloneCommandLine();
+        return this.#executeWorkbenchCommandId(String(result.execution.commandId));
+      }
       if (active !== undefined) return active.submitCommandLine(result.source);
       const source = result.source.startsWith(':') ? result.source.slice(1) : result.source;
       this.#closeStandaloneCommandLine();

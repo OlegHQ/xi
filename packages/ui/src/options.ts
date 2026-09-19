@@ -21,6 +21,7 @@ import type { ContextMenuStore } from './context-menu';
 import type { WorkbenchPointerEvent, WorkbenchTheme } from './workbench';
 
 export interface OpenTuiWorkbenchOptions {
+  readonly comparison?: import('../git/editor').ComparisonReadPort;
   /** Renderer creation may begin while the application composes its workbench. */
   readonly renderer?: Promise<CliRenderer>;
   /** Called after the first frame starts; nonessential services may activate here. */
@@ -99,6 +100,7 @@ export interface OpenTuiWorkbenchOptions {
   readonly explorer?: {
     readonly read: ExplorerReadPort;
     readonly isOpen: () => boolean;
+    readonly isFocused?: () => boolean;
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
     readonly prompt?: () => string | undefined;
   };

@@ -170,6 +170,7 @@ async function teardownControllers(controllers: Controllers, persistence: Persis
   await controllers.languageWiring.session?.dispose();
   marker('XI_TEARDOWN', { step: 'language-disposed' });
   controllers.syntaxResultSubscription.dispose();
+  controllers.gitDiffFeature.dispose();
   controllers.syntaxTracker.dispose();
   controllers.syntaxAssetsCancellation.dispose();
   resolvedOptionalServices?.hostNavigation.dispose();
@@ -182,7 +183,6 @@ async function teardownControllers(controllers: Controllers, persistence: Persis
   controllers.workspaceEditsFeature.dispose();
   controllers.diagnostics.dispose();
   controllers.problemsFeature.dispose();
-  controllers.gitDiffFeature.dispose();
   controllers.taskWiring.dispose();
   resolvedOptionalServices?.explorerController.dispose();
   resolvedOptionalServices?.explorerTree.dispose();
@@ -191,6 +191,7 @@ async function teardownControllers(controllers: Controllers, persistence: Persis
   // gitStatusService/gitMutationCoordinator, none of which any other dispose call above
   // touches (H2-5).
   controllers.optionalServices.dispose();
+  controllers.commandAliasRegistration?.dispose();
   marker('XI_TEARDOWN', { step: 'contributions-dispose' });
   await controllers.contributionRegistry.dispose();
   marker('XI_TEARDOWN', { step: 'contributions-disposed' });

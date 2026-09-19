@@ -87,8 +87,8 @@ export function buildPrefixHelpReadModel(input: PrefixHelpBuildInput): PrefixHel
   for (const binding of targetBindings) {
     if (!isPrefix(pendingKeys, binding.keys) || binding.keys.length <= pendingKeys.length) continue;
     const inspection = input.registry.inspect(binding.command, request.availability);
-    if (inspection === undefined) continue;
-    const commandId = String(inspection.descriptor.id);
+    const commandId = binding.command.kind === 'command' ? String(binding.command.id) : inspection === undefined ? undefined : String(inspection.descriptor.id);
+    if (commandId === undefined) continue;
     const aliases = aliasesFor(input.registrySnapshot ?? input.registry.snapshot, commandId);
     const keys = Object.freeze(binding.keys.slice(pendingKeys.length));
     hints.push(Object.freeze({
@@ -96,12 +96,12 @@ export function buildPrefixHelpReadModel(input: PrefixHelpBuildInput): PrefixHel
       keys,
       keyLabel: formatKeys(keys),
       sequence: Object.freeze([...binding.keys]),
-      title: inspection.descriptor.title,
-      description: binding.description ?? inspection.descriptor.help,
+      title: inspection?.descriptor.title ?? commandTitle(commandId),
+      description: binding.description ?? inspection?.descriptor.help ?? commandTitle(commandId),
       commandId,
       aliases,
-      available: inspection.available,
-      disabledReason: inspection.disabledReason,
+      available: inspection?.available ?? true,
+      disabledReason: inspection?.disabledReason,
     }));
   }
 
@@ -122,6 +122,10 @@ export function buildPrefixHelpReadModel(input: PrefixHelpBuildInput): PrefixHel
     hints: Object.freeze(deduped),
     compactHint,
   });
+}
+
+function commandTitle(commandId: string): string {
+  return commandId.split(/[.-]/u).map((part) => part.length === 0 ? part : `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`).join(' ');
 }
 
 function parserHint(continuation: PrefixHelpParserContinuation, pendingKeys: readonly string[]): PrefixHelpHint {

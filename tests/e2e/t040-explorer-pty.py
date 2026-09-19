@@ -112,12 +112,22 @@ with tempfile.TemporaryDirectory(prefix="xi-t040-explorer-") as temporary:
         if selected_after_rename is None or selected_after_rename.get("selectedId") != selected_before.get("selectedId"):
             raise SystemExit("external rename did not preserve Explorer selection identity")
 
+        # `l` previews the selected file in the editor without handing keyboard focus to it:
+        # the following `j` must still navigate the tree.
+        os.write(master, b"k")
+        wait_for_refresh(master, captured, lambda item: item.get("selectedPath") == "other.txt", 5, len(after_rename))
+        before_preview = len(refreshes(captured))
+        os.write(master, b"l")
+        wait_for(master, captured, b'XI_EXPLORER_PREVIEW {"path":"other.txt"}', 5)
+        os.write(master, b"j")
+        wait_for_refresh(master, captured, lambda item: item.get("selectedPath") == "renamed.txt", 5, before_preview)
+
         os.write(master, b"\x1b")
         # Closing a full-height panel repaints the cells it uncovered. Keep draining the PTY
         # while that frame is written so the child cannot block on terminal backpressure
         # before it receives the following quit key.
         read_for(master, captured, 0.15)
-        os.write(master, b"q")
+        os.write(master, b":qa!\r")
         child.wait(timeout=5)
     finally:
         if child.poll() is None:
@@ -127,4 +137,4 @@ with tempfile.TemporaryDirectory(prefix="xi-t040-explorer-") as temporary:
     if child.returncode != 0:
         raise SystemExit(f"production Explorer exited {child.returncode}")
 
-print("T040 production PTY passed Explorer focus, external insertion and stable rename selection")
+print("T040 production PTY passed Explorer focus, non-focusing l preview, external insertion and stable rename selection")

@@ -121,6 +121,8 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
         {sidebarTabs()}
         <text position="absolute" left={0} top={1} fg={theme().foreground}>{sidebarSections()}</text>
       </box>
+      <box position="absolute" left={layout().sidebarWidth} top={0} width={1} height={layout().statusRow}
+        visible={layout().sidebarVisible} backgroundColor={theme().border} />
       <box position="absolute" left={layout().editorX} top={0} width={layout().editorWidth} height={1} backgroundColor={theme().surfaceActive}>
         <text fg={theme().foreground}>{tabContent()}</text>
       </box>

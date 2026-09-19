@@ -82,6 +82,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     theme: themeWiring.themeController.get(themeWiring.themeController.activeId) ?? LIGHT_WORKBENCH_THEME,
     syntax: syntaxTracker,
     presentation: buildSearchPresentationPort(workbench, searchFeature),
+    comparison: gitDiffFeature,
     gitBranch: () => optionalServices.current?.gitStatusService.snapshot?.branch,
     registerMouseToggle: mouseMode.registered,
     registerThemeSwitch: (setTheme) => { themeWiring.themeController.bindSetTheme(setTheme); },
@@ -112,6 +113,11 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     statusMessage: { read: statusMessages },
     onReady: () => {
       startupTrace('ready-callback');
+      // Start configured language support after the first frame instead of waiting for the
+      // first hover/completion command. Initialization remains off the editable startup path.
+      void controllers.languageWiring.ensureLanguage().catch((error: unknown) => {
+        statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      });
       if (!themeWiring.needsCustomThemeNow) void themeWiring.loadCustomThemes().finally(() => themeWiring.disposeStateCancellation());
       else themeWiring.disposeStateCancellation();
       // Directory enumeration, watching and picker indexing are background
@@ -141,6 +147,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       return explorerTree === undefined ? undefined : {
         read: explorerTree,
         isOpen: () => explorerFeature.isVisible && sidebarController.readModel().panel === 'files',
+        isFocused: () => explorerFeature.isOpen,
         onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
         prompt: () => explorerFeature.promptText,
       };
@@ -165,13 +172,6 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       isOpen: () => problemsFeature.isProblemsOpen,
       selectedId: () => problemsFeature.selectedProblemId(),
       onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
-    },
-    gitDiff: {
-      read: gitDiffFeature,
-      isOpen: () => gitDiffFeature.isOpen,
-      onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
-      onScroll: (delta: number) => gitDiffFeature.onPointer(delta),
-      onViewportChange: (width: number, height: number) => gitDiffFeature.setViewport(width, height),
     },
     get output() {
       return taskWiring.taskController === undefined ? undefined : {

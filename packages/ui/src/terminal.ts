@@ -25,7 +25,7 @@ import type { WorkbenchPanelPointerEvent } from './panel-pointer';
 import type { ContextMenuStore } from './context-menu';
 import { createChromeSurfaceNode, createRowsSurfaceNode, createThemeBridge, mountSolidRoot, type SolidNode } from './solid/composition';
 import { createWorkbenchAppNode } from './solid/workbench';
-export { popupBoundsAtCursor } from './solid/layout';
+export { popupBoundsAtCursor, popupBoundsInEditor } from './solid/layout';
 
 
 export interface OpenTuiTerminalAdapterOptions {
@@ -201,6 +201,7 @@ export async function runOpenTuiWorkbench(
   });
   const viewport = new WorkbenchRenderable(renderer.root.ctx, {
     workbench,
+    ...(options.comparison === undefined ? {} : { comparison: options.comparison }),
     fileLabel,
     ...(options.theme === undefined ? {} : { theme: options.theme }),
     ...(options.syntax === undefined ? {} : { syntax: options.syntax }),

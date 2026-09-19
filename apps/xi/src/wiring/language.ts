@@ -40,6 +40,7 @@ export interface LanguageWiringDeps {
   readonly workbenchBuffers: () => readonly { readonly bufferId: DocumentId; readonly documentId: DocumentId; readonly path: string | undefined }[];
   readonly renameBufferPath: (bufferId: DocumentId, path: string) => void;
   readonly statusMessages: StatusMessageController;
+  readonly marker?: (name: string, payload?: unknown) => void;
 }
 
 /** Late-bound: constructed after `host`/`overlayFeature`/`completionFeature`/`workspaceEditsFeature`
@@ -131,6 +132,7 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
     if (text === undefined) return;
     const admitted = languageSession.openDocument({ uri: deps.fileUri(path), documentId: String(documentId), languageId: bufferLanguageId, version: document.version, text });
     if (!admitted.ok) deps.statusMessages.publish(`xi: language document unavailable: ${admitted.error.message}`);
+    else deps.marker?.('XI_LANGUAGE_STARTED', { languageId: bufferLanguageId, path });
   }
 
   // One router for the whole workbench, with one server session per configured server

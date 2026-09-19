@@ -88,6 +88,25 @@ export function popupBoundsAtCursor(
   return { width: panelWidth, height: panelHeight, left, top };
 }
 
+export function popupBoundsInEditor(
+  width: number,
+  height: number,
+  cursor: { readonly x: number; readonly y: number } | undefined,
+  size: { readonly width: number; readonly height: number },
+  prefer: 'below' | 'above',
+  sidebarWidth?: number,
+): SurfaceBounds {
+  const layout = calculateWorkbenchLayout(width, height, false, sidebarWidth);
+  const bounds = popupBoundsAtCursor(
+    layout.editorWidth,
+    height,
+    cursor === undefined ? undefined : { x: cursor.x - layout.editorX, y: cursor.y },
+    size,
+    prefer,
+  );
+  return { ...bounds, left: bounds.left + layout.editorX };
+}
+
 export function getCommandLineBounds(width: number, height: number, model: ExCommandLineReadModel | undefined): SurfaceBounds {
   const panelHeight = Math.max(1, Math.min(height, commandLineContentHeight(model)));
   return { width: Math.max(1, width), height: panelHeight, left: 0, top: Math.max(0, height - panelHeight) };
@@ -95,14 +114,13 @@ export function getCommandLineBounds(width: number, height: number, model: ExCom
 
 function commandLineContentHeight(model: ExCommandLineReadModel | undefined): number {
   if (model === undefined) return 1;
-  if (model.parseFailure !== undefined) return 2;
-  const candidateRows = Math.min(model.candidates.length, 8);
-  if (candidateRows === 0) return 1;
+  const candidateRows = Math.min(model.candidates.length, 16);
+  if (candidateRows === 0) return model.parseFailure === undefined ? 1 : 2;
   const selected = model.candidates[model.selectedIndex];
-  return 1 + candidateRows + (selected !== undefined && selected.detail.length > 0 ? 2 : 0);
+  return 2 + candidateRows + (selected !== undefined && selected.detail.length > 0 ? 1 : 0);
 }
 
-export function getPrefixHelpBounds(width: number, height: number): SurfaceBounds {
-  const panelHeight = Math.max(1, Math.min(6, Math.max(1, height - 1)));
+export function getPrefixHelpBounds(width: number, height: number, hintCount = 5): SurfaceBounds {
+  const panelHeight = Math.max(1, Math.min(hintCount + 1, Math.max(1, height - 1)));
   return { width: Math.max(1, width), height: panelHeight, left: 0, top: Math.max(0, height - panelHeight - 1) };
 }

@@ -156,12 +156,13 @@ assert.equal(controller.readModel().selectedId, 'git-section:staged', 'gg select
 await controller.handleKeypress(key('g', 'G', { shift: true }));
 assert.equal(controller.readModel().selectedId, 'git:conflicted.ts', 'G selects the last visible row');
 
-// GIT-PANEL-04: Enter opens the file via the fallback openEntry when no openDiff is configured.
+// GIT-PANEL-04: without a diff provider, Enter does not silently switch to the Files view.
 controller.setSelectedId('git:unstaged.ts');
 await controller.handleKeypress(key('enter', '\r'));
-assert.deepEqual(openedPaths, ['/workspace/unstaged.ts'], 'GIT-PANEL-04 Enter opens the plain file when openDiff is absent');
+assert.deepEqual(openedPaths, [], 'GIT-PANEL-04a Enter never falls back to opening a plain file');
+assert.equal(controller.isOpen, true, 'GIT-PANEL-04b Enter keeps the Git panel open');
 
-// GIT-PANEL-05: with openDiff configured, Enter routes to it with the right target instead.
+// GIT-PANEL-05: l, Enter, and pointer activation open the selected change diff.
 const diffCalls: { readonly path: string; readonly target: 'index' | 'worktree' }[] = [];
 const diffController = new GitPanelController({
   host,
@@ -175,11 +176,15 @@ const diffController = new GitPanelController({
 });
 diffController.open();
 diffController.setSelectedId('git:staged.ts');
-await diffController.handleKeypress(key('enter', '\r'));
-assert.deepEqual(diffCalls, [{ path: 'staged.ts', target: 'index' }], 'GIT-PANEL-05a a fully-staged entry diffs against the index');
+await diffController.handleKeypress(key('l', 'l'));
+assert.deepEqual(diffCalls, [{ path: 'staged.ts', target: 'index' }], 'GIT-PANEL-05a l opens a fully-staged entry against the index');
 diffController.setSelectedId('git:unstaged.ts');
 await diffController.handleKeypress(key('enter', '\r'));
-assert.deepEqual(diffCalls[1], { path: 'unstaged.ts', target: 'worktree' }, 'GIT-PANEL-05b an unstaged entry diffs against the worktree');
+assert.deepEqual(diffCalls[1], { path: 'unstaged.ts', target: 'worktree' }, 'GIT-PANEL-05b Enter opens an unstaged entry against the worktree');
+diffController.onPointerActivate('git:unstaged.ts');
+await Promise.resolve();
+assert.deepEqual(diffCalls[2], { path: 'unstaged.ts', target: 'worktree' }, 'GIT-PANEL-05c clicking a file previews its diff');
+assert.equal(diffController.isOpen, true, 'GIT-PANEL-05d clicking a file keeps the Git panel docked');
 diffController.dispose();
 
 // GIT-PANEL-06: collapsing a section via a header toggle hides its rows from navigation.

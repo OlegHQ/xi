@@ -25,9 +25,9 @@ assert.ok(parsed.value.entries.some((entry) => entry.path.join('.') === 'keys.no
 const initial = compileInitialConfig();
 assert.equal(initial.ok, true, 'T036-CONFIG-01 shipped example validates');
 if (!initial.ok) throw new Error('default config did not compile');
-assert.equal(initial.value.bindings.length, 12, 'T036-CONFIG-02 every shipped key declaration compiles');
+assert.equal(initial.value.bindings.length, 30, 'T036-CONFIG-02 every shipped editor and panel key declaration compiles');
 assert.ok(initial.value.bindings.every((binding) => DEFAULT_COMMAND_CATALOG.commandIds.includes(binding.commandId)), 'T036-CONFIG-03 every binding command resolves in the catalog');
-assert.equal(initial.value.aliases.length, 8, 'T036-CONFIG-04 friendly aliases compile to stable command IDs');
+assert.equal(initial.value.aliases.length, 11, 'T036-CONFIG-04 friendly aliases compile to stable command IDs');
 assert.equal(initial.value.editor.selection.limit, 10_000, 'T036-CONFIG-05 selection limit is validated and retained');
 assert.equal(initial.value.editor.selection.historyLimit, 100, 'T036-CONFIG-06 selection history limit is validated and retained');
 assert.equal(initial.value.editor.hintsDelayMs, 250, 'T036-CONFIG-07 hint delay is validated and retained');

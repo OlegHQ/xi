@@ -160,7 +160,10 @@ export class BufferHost {
       // Preview-buffer promotion only needs to run when an edit actually lands, not on
       // every key (most keys are cursor/mode moves that can never change `dirty`).
       // `onDocumentChange` fires exactly when this session commits a document edit.
-      onDocumentChange: () => {
+      onDocumentChange: (change) => {
+        // Other views of this same document (including comparison tabs) must advance
+        // their private Vim cursors before they receive another key.
+        for (const [otherViewId, other] of this.sessions) if (otherViewId !== viewId) other.applyExternalChange(change);
         if (this.#session.buffer(document.id)?.dirty === true) {
           this.#session.promoteBuffer(document.id);
           if (this.previewViewId === viewId) this.previewViewId = undefined;

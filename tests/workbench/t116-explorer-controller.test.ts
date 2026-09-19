@@ -264,16 +264,22 @@ controller.hide();
 assert.equal(controller.isVisible, false, 'T116-EXPLORER-06c only an explicit collapse hides Files');
 controller.dispose();
 
-// T116-EXPLORER-07: opening a file from the explorer opens it as a preview buffer (tab-strip
-// semantics: a single-click explorer open replaces the preview slot, not a new pinned tab).
+// T116-EXPLORER-07: l previews without leaving Files; Enter/open commits and focuses the file.
 let capturedOpenOptions: { readonly preview?: boolean } | undefined;
 const originalOpenBufferAtPath = host.openBufferAtPath.bind(host);
 host.openBufferAtPath = ((path: string, options?: { readonly preview?: boolean }) => {
   capturedOpenOptions = options;
   return originalOpenBufferAtPath(path, options);
 }) as typeof host.openBufferAtPath;
+controller.attachTree(tree, navigation);
+controller.open();
+await controller.handleKeypress(key('l', 'l'));
+assert.equal(capturedOpenOptions?.preview, true, 'T116-EXPLORER-07a l opens a preview buffer');
+assert.equal(controller.isOpen, true, 'T116-EXPLORER-07b l keeps keyboard focus in Files');
+capturedOpenOptions = undefined;
 await controller.openNode(tree.readNode(fileNode.id) as ExplorerTreeNode);
-assert.equal(capturedOpenOptions?.preview, true, 'T116-EXPLORER-07 explorer opens files as a preview buffer');
+assert.equal((capturedOpenOptions as { readonly preview?: boolean } | undefined)?.preview, undefined, 'T116-EXPLORER-07c Enter/open commits the file instead of leaving it transient');
+controller.close();
 
 // T116-EXPLORER-08: a pointer click on a file row takes keyboard focus for the tree (VS Code
 // single-click semantics), previews the file and leaves the panel open -- the cursor stays

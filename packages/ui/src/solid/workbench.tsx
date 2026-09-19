@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import type { JSX } from '@opentui/solid';
+import { useTerminalDimensions, type JSX } from '@opentui/solid';
 import type { MouseEvent } from '@opentui/core/renderer';
 import { createSignal, onCleanup } from 'solid-js';
 import type { Disposable } from '../../../contracts/src/index.ts';
@@ -39,7 +39,7 @@ import {
   getProblemsBounds,
   getSearchBounds,
   getSidebarOutlineBounds,
-  popupBoundsAtCursor,
+  popupBoundsInEditor,
 } from './layout';
 
 export interface WorkbenchAppProps {
@@ -244,27 +244,43 @@ function gitDiffRows(model: ReturnType<GitDiffReadPort['readModel']>, width: num
 }
 
 function hoverRows(model: HoverReadPort['model'], width: number, maxRows: number, _offset: number, _hoveredId: string | undefined, theme: WorkbenchTheme): readonly SurfaceRow[] {
-  const innerWidth = Math.max(1, width - 4);
-  const content = formatHoverLines(model, innerWidth, Math.max(1, maxRows - 2));
-  const edge = Math.max(0, width - 2);
-  const rows: SurfaceRow[] = [{
-    segments: clipSegments([
-      { text: '╭─ ', foreground: theme.border },
-      { text: 'Hover', foreground: theme.accent, bold: true },
-      { text: ` ${'─'.repeat(Math.max(0, width - 10))}╮`, foreground: theme.border },
-    ], width),
-    background: theme.surface,
-  }];
-  for (const line of content) rows.push({
-    segments: [
-      { text: '│ ', foreground: theme.border },
-      { text: line.padEnd(innerWidth), foreground: theme.foreground },
-      { text: ' │', foreground: theme.border },
-    ],
-    background: theme.surface,
-  });
-  rows.push({ text: `╰${'─'.repeat(edge)}╯`, foreground: theme.border, background: theme.surface });
+  const padding = (): SurfaceRow => ({ text: '', background: theme.surface });
+  if (model.state !== 'ready' || model.hover === undefined || model.hover.length === 0) {
+    return [padding(), ...formatHoverLines(model, Math.max(1, width - 4), Math.max(1, maxRows - 2)).map(text => ({ text: `  ${text}`, foreground: theme.muted, background: theme.surface })), padding()];
+  }
+  const rows: SurfaceRow[] = [padding()];
+  let code = false;
+  for (const source of model.hover.split(/\r?\n/u)) {
+    if (rows.length >= maxRows - 1) break;
+    if (source.trimStart().startsWith('```')) { code = !code; continue; }
+    if (rows.length === 1 && source.trim() === '') continue;
+    const heading = /^#{1,6}\s+(.+)$/u.exec(source);
+    const segments = code ? highlightHoverCode(source, theme) : heading === null
+      ? [{ text: `  ${source}`, foreground: theme.foreground }]
+      : [{ text: `  ${heading[1] ?? ''}`, foreground: theme.accent, bold: true }];
+    rows.push({ segments: clipSegments(segments, width), background: theme.surface });
+  }
+  while (rows.length > 1 && rows.at(-1)?.segments?.every(segment => segment.text.trim() === '') === true) rows.pop();
+  rows.push(padding());
   return rows;
+}
+
+function highlightHoverCode(source: string, theme: WorkbenchTheme): readonly SurfaceRowSegment[] {
+  const segments: SurfaceRowSegment[] = [{ text: '  ', foreground: theme.foreground }];
+  const token = /(\/\/.*$|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:async|await|class|const|else|extends|function|if|import|interface|let|new|return|type|typeof|var)\b|\b\d+(?:\.\d+)?\b)/gu;
+  let offset = 0;
+  for (const match of source.matchAll(token)) {
+    const index = match.index;
+    if (index > offset) segments.push({ text: source.slice(offset, index), foreground: theme.foreground });
+    const value = match[0];
+    const foreground = value.startsWith('//') || value.startsWith('/*') ? theme.muted
+      : /^["'`]/u.test(value) ? '#B56A3B'
+        : /^\d/u.test(value) ? '#8A5CB5' : theme.accent;
+    segments.push({ text: value, foreground, italic: value.startsWith('/') });
+    offset = index + value.length;
+  }
+  if (offset < source.length) segments.push({ text: source.slice(offset), foreground: theme.foreground });
+  return segments;
 }
 
 function commandLineRows(model: ExCommandLineReadModel | undefined, width: number, maxRows: number, theme: WorkbenchTheme): readonly SurfaceRow[] {
@@ -274,6 +290,16 @@ function commandLineRows(model: ExCommandLineReadModel | undefined, width: numbe
     const detail = 'reason' in model.parseFailure ? model.parseFailure.reason : model.parseFailure.kind;
     rows.push({ text: detail, foreground: theme.error, background: theme.surface });
   } else if (rows.length < maxRows) rows.push({ text: model.acceptanceHint, foreground: theme.muted, background: theme.surface });
+  const selectedCandidate = model.candidates[model.selectedIndex];
+  if (model.position.typedName.length > 0 && selectedCandidate !== undefined && rows.length < maxRows) {
+    rows.push({
+      segments: clipSegments([
+        { text: `${selectedCandidate.label}  `, foreground: theme.accent, bold: true },
+        { text: selectedCandidate.detail, foreground: selectedCandidate.available ? theme.foreground : theme.error },
+      ], width),
+      background: theme.surfaceActive,
+    });
+  }
   for (let index = 0; index < model.candidates.length && rows.length < maxRows; index += 1) {
     const candidate = model.candidates[index];
     if (candidate === undefined) continue;
@@ -282,7 +308,7 @@ function commandLineRows(model: ExCommandLineReadModel | undefined, width: numbe
       segments: clipSegments([
         { text: selected ? '▸ ' : '  ', foreground: selected ? theme.accent : theme.muted },
         { text: candidate.label, foreground: candidate.available ? theme.foreground : theme.muted, bold: selected && candidate.available },
-        { text: `  ${candidate.detail}`, foreground: candidate.available ? theme.muted : theme.error },
+        ...(candidate.alias === undefined ? [] : [{ text: `  → ${String(candidate.commandId ?? '')}`, foreground: theme.muted }]),
       ], width),
       background: selected ? theme.surfaceActive : theme.surface,
     });
@@ -424,6 +450,7 @@ function ContextMenuBackdrop(props: { readonly store: NonNullable<OpenTuiWorkben
 }
 
 export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
+  const dimensions = useTerminalDimensions();
   const options = props.options;
   const panelProps = visibilitySubscription(options);
   const rows = <T,>(spec: RowsSurfaceSpec<T>, colors?: (theme: WorkbenchTheme) => { readonly background: string; readonly foreground: string }): JSX.Element => (
@@ -487,7 +514,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
       />}
       {rows({
         read: explorerSurface.read,
-        isOpen: explorerSurface.isOpen,
+        isOpen: () => explorerSurface.isOpen() && (dimensions().width >= 100 || options.explorer?.isFocused?.() !== false),
         format: (model, width, maxRows, offset) => formatExplorerLines(model, width, maxRows, false, offset, props.themeBridge.current() === ASCII_WORKBENCH_THEME),
         formatRows: (model, width, maxRows, offset, hoveredId) => explorerRows(model, width, maxRows, offset, hoveredId, props.themeBridge.current() === ASCII_WORKBENCH_THEME, props.themeBridge.current()),
         maxRows: Number.MAX_SAFE_INTEGER,
@@ -628,7 +655,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         maxRows: 12,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: (width, height) => popupBoundsAtCursor(width, height, props.viewport.cursorCell, measureHover(options.hover!.read.model, Math.max(1, width - 2), 12), 'below'),
+        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, measureHover(options.hover!.read.model, Math.max(1, width - 2), 12), 'below', options.sidebar?.().width),
         zIndex: 110,
       })}
       {options.directoryReview !== undefined && rows({
@@ -648,7 +675,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         maxRows: 10,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: (width, height) => popupBoundsAtCursor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(60, width - 2)), height: 10 }, 'below'),
+        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(60, width - 2)), height: 10 }, 'below', options.sidebar?.().width),
         zIndex: 120,
       })}
       {options.signature !== undefined && rows({
@@ -658,7 +685,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         maxRows: 10,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: (width, height) => popupBoundsAtCursor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(100, width - 2)), height: 8 }, 'above'),
+        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(100, width - 2)), height: 8 }, 'above', options.sidebar?.().width),
         zIndex: 115,
       })}
       {options.commandLine !== undefined && commandLineRead !== undefined && rows({
@@ -666,7 +693,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         isOpen: options.commandLine.isOpen,
         format: (model, width) => model === undefined ? [] : formatExCommandLineLines(model, width, 10),
         formatRows: (model, width, maxRows) => commandLineRows(model, width, maxRows, props.themeBridge.current()),
-        maxRows: 10,
+        maxRows: 18,
         background: props.theme.surface,
         foreground: props.theme.foreground,
         bounds: (width, height) => getCommandLineBounds(width, height, options.commandLine!.read.model),
@@ -676,11 +703,11 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         read: options.prefixHelp,
         isOpen: () => options.prefixHelp?.model !== undefined,
         format: formatPrefixHelpLines,
-        maxRows: 12,
+        maxRows: Number.MAX_SAFE_INTEGER,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: getPrefixHelpBounds,
-        zIndex: 10,
+        bounds: (width, height) => getPrefixHelpBounds(width, height, options.prefixHelp?.model?.hints.length ?? 0),
+        zIndex: 125,
       })}
       {options.contextMenu !== undefined && <ContextMenuBackdrop store={options.contextMenu} />}
       {options.contextMenu !== undefined && contextMenuRead !== undefined && rows({

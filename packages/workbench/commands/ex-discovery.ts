@@ -221,7 +221,7 @@ export function buildExCommandLineReadModel(context: ExCommandLineContext, selec
     registryGeneration: context.registry.snapshot.generation,
     position,
     parsed,
-    parseFailure,
+    parseFailure: execution.ok ? undefined : parseFailure,
     candidates: Object.freeze(candidates),
     selectedIndex: safeSelected,
     acceptanceHint: 'Enter: execute · Tab: complete · Esc: cancel',

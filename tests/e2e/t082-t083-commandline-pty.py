@@ -55,10 +55,8 @@ def launch(source: Path, keys: tuple[bytes, ...], expected: tuple[bytes, ...], l
         for key in keys:
             os.write(master, key)
             read_for(master, captured, 0.08)
-        read_for(master, captured, 0.5)
         for marker in expected:
-            if marker not in captured:
-                raise SystemExit(f"{label}: missing {marker!r}: {captured[-5000:]!r}")
+            read_until(master, captured, marker, 3)
         for key in cleanup:
             os.write(master, key)
             read_for(master, captured, 0.15)
@@ -79,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t082-t083-pty-") as temporary:
     tab_capture = launch(
         source,
         (b" ",),
-        (b"Leader workbench command",),
+        (b"Prefix <Sp", b"  /  Search"),
         "T082 visible prefix-help surface",
         (b"\x1b", b"q"),
     )
@@ -118,6 +116,20 @@ with tempfile.TemporaryDirectory(prefix="xi-t082-t083-pty-") as temporary:
         "T083 visible command-line surface",
         (b"\x1b", b"q"),
     )
+    narrowed_capture = launch(
+        source,
+        (b":", b"fi"),
+        (b"files", b"Open the multi-root file picker."),
+        "T083 narrowed alias suggestions",
+        (b"\x1b", b"q"),
+    )
+    alias_capture = launch(
+        source,
+        (b":", b"files", b"\r"),
+        (b"Files ",),
+        "T083 executable configured alias",
+        (b"\x1b", b"\x1b", b"q"),
+    )
     enter_capture = launch(
         source,
         (b":", b"q", b"\x1b[B", b"\r"),
@@ -129,13 +141,15 @@ with tempfile.TemporaryDirectory(prefix="xi-t082-t083-pty-") as temporary:
     artifact.write_text(json.dumps({
         "schema_version": 1,
         "fixture": "T082/T083-production-commandline",
-        "prefix_help_text": "Leader workbench command" in tab_capture.decode("utf-8", "replace"),
+        "prefix_help_text": b"Prefix <Sp" in tab_capture and b"  /  Search" in tab_capture,
         "vim_parser_prefix_help_text": b"Motion" in parser_capture and b"Choose motion" in parser_capture,
         "literal_prefix_help_text": b"Literal input" in literal_capture and b"one character" in literal_capture,
         "g_prefix_help_text": b"Continue g command" in g_capture,
         "ctrl_w_prefix_help_text": b"Continue ctrl-w command" in ctrl_w_capture,
         "commandline_acceptance_text": "Enter: execute" in tab_capture.decode("utf-8", "replace"),
         "tab_replacement_text": b"XI_EX_COMMANDLINE_STATE {\"source\":\":qa\"" in tab_capture or b"XI_EX_COMMANDLINE_STATE {\"source\":\":quit\"" in tab_capture,
+        "narrowed_alias_detail": b"files" in narrowed_capture and b"Open the multi-root file picker." in narrowed_capture,
+        "configured_alias_executed": b"Files " in alias_capture,
         "typed_enter_exited_cleanly": True,
     }, indent=2) + "\n", encoding="utf-8")
 
