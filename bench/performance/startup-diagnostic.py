@@ -111,9 +111,8 @@ def trial(name: str, command: list[str], root: Path, output: Path, index: int,
             else:
                 ready = (visible_marker(captured, "startup_probe_7Q")
                          and visible_marker(captured, "second line")
-                         # Both editors paint their own cursor cell and keep the terminal's
-                         # hardware cursor hidden while the buffer has focus.
-                         and b"\x1b[?25l" in captured
+                         # Neovim uses the terminal cursor; Xi/Helix paint their own.
+                         and (b"\x1b[?25h" if name == "neovim" else b"\x1b[?25l") in captured
                          and captured.rfind(b"\x1b[?2026l") >= captured.rfind(b"\x1b[?2026h"))
             if ready:
                 break
@@ -186,6 +185,7 @@ def main() -> None:
     parser.add_argument("--baseline-compiled", type=Path)
     parser.add_argument("--baseline-source", type=Path)
     parser.add_argument("--trace", action="store_true")
+    parser.add_argument("--extra-command", nargs=2, action="append", default=[], metavar=("NAME", "ARGV_JSON"))
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     result_path = args.output / "comparison.json"
@@ -206,8 +206,16 @@ def main() -> None:
         commands["xi-baseline-source"] = [shutil.which("bun"), "run", str(args.baseline_source.resolve())]
     if args.baseline_compiled:
         commands["xi-baseline-compiled"] = [str(args.baseline_compiled.resolve())]
-    paths = [*ROOT.glob("apps/**/*.ts"), *ROOT.glob("packages/**/*.ts"),
-             ROOT / "bun.lock", *ROOT.glob("node_modules/@opentui/core/*bun*.js")]
+    for name, argv_json in args.extra_command:
+        argv = json.loads(argv_json)
+        if name in commands or not re.fullmatch(r"[a-z0-9-]+", name) or not isinstance(argv, list) or not argv or not all(isinstance(arg, str) for arg in argv):
+            raise ValueError("extra commands require a unique safe name and nonempty JSON string array")
+        commands[name] = argv
+    paths = [*ROOT.glob("apps/**/*.ts"), *ROOT.glob("packages/**/*.ts"), *ROOT.glob("packages/**/*.tsx"),
+             ROOT / "bun.lock", *ROOT.glob("tools/*build*.ts"),
+             *ROOT.glob("node_modules/@opentui/core/*bun*.js"),
+             *ROOT.glob("node_modules/@opentui/solid/scripts/*.js"),
+             ROOT / "node_modules/@opentui/solid/index.bun.js"]
     hashes = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
     rng = random.Random(20260916)
     rows = []
@@ -230,7 +238,10 @@ def main() -> None:
                               "Shared host; fresh process, warm filesystem; not a release gate",
                               "CPU from proc stat at boundary has scheduler tick resolution",
                               "RSS is main process at boundary; allocations and worker memory not measured"],
-              "commands": commands, "source_hashes": hashes, "warmups": warmups, "trials": rows,
+              "commands": commands, "source_hashes": hashes,
+              "binary_hashes": {str(path.resolve()): hashlib.sha256(path.read_bytes()).hexdigest()
+                                for path in (args.compiled, args.baseline_compiled) if path is not None},
+              "warmups": warmups, "trials": rows,
               "summary_ms": {name: summary([r["wall_ms"] for r in rows if r["name"] == name]) for name in commands}}
     result_path.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report["summary_ms"], indent=2))

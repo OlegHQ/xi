@@ -9,6 +9,14 @@ spec.loader.exec_module(proof)
 
 
 class VisibleState(unittest.TestCase):
+    def test_pre_solid_cursor_color(self):
+        screen = proof.Screen(120, 40)
+        stream = proof.pyte.ByteStream(screen)
+        stream.feed(b'\x1b[2;36HROW00000\x1b[2;36H\x1b[48;2;26;40;53mR\x1b[0m')
+        self.assertEqual(screen.editor_state(), (0, '', 'normal'))
+        stream.feed(b'\x1b[2;36H\x1b[48;2;250;249;246mR\x1b[0m')
+        self.assertIsNone(screen.editor_state())
+
     def test_cells_not_hardware_cursor_or_unrelated_output(self):
         screen = proof.Screen(120, 40)
         stream = proof.pyte.ByteStream(screen)

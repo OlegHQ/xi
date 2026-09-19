@@ -33,7 +33,7 @@ if (audit.assets.length === 0) fail(`no OpenTUI native asset was found for ${aud
 
 mkdirSync(output, { recursive: true });
 const executable = join(output, 'xi');
-const build = spawnSync('bun', ['build', '--compile', '--bytecode', '--format=esm', '--minify', '--define', 'process.env.NODE_ENV="production"', '--define', 'process.env.DEV="false"', 'apps/xi/src/main.ts', '--outfile', executable], {
+const build = spawnSync('bun', ['run', 'tools/package-build.ts', executable], {
   cwd: root,
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -82,6 +82,8 @@ function copyDependencyLicenses(outputDirectory: string, audit: PackageAuditOutp
   mkdirSync(licensesDirectory, { recursive: true });
   const packageNames = [
     '@opentui/core',
+    '@opentui/solid',
+    'solid-js',
     ...audit.assets.map((asset) => `@opentui/${asset.packageName}`),
     'bun-ffi-structs',
     'diff',

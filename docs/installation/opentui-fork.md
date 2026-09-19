@@ -19,6 +19,12 @@ published Bun and Node chunks consume the same source change. Official native
 binaries, optional dependencies, grammar assets and licenses are retained. No
 Zig or upstream monorepo build is needed to install Xi.
 
+The pinned Solid 0.5.11 package also receives
+`patches/opentui-solid-0.5.11.patch`. It defers Babel until an actual TSX transform
+is needed and supports Xi's disposable `.cache/solid` transform cache. Source
+changes and compiler/runtime changes invalidate that cache. A fresh cache still
+pays compilation cost; it is not an instant cold-source launch.
+
 The generator transpiles the fork's `lazy-library.ts` and
 `materialize-library.ts`, appends them to the published bundles, and updates
 native initialization. It does not maintain a second handwritten implementation.
@@ -48,6 +54,18 @@ Xi and its dependencies use top-level await. Run `./dist/xi [file]` after a buil
 `bun run apps/xi/src/main.ts [file]` remains the source development command.
 Bytecode reduces runtime parsing at the cost of a larger executable. Rebuild
 after source or dependency changes.
+
+Both distribution builds and the cached development build use
+`tools/solid-build-plugin.ts`: TSX is transformed at build time and the source
+compiler preload is omitted from output. `bun run xi` checks and reuses its dev
+bundle; it is measured separately from direct source execution. Tests install the
+source plugin through Bun's `[test].preload` so TSX is transformed before test
+module loading, rather than relying on sibling-import evaluation order.
+
+To regenerate the Solid patch, run
+`bun vendor/opentui/scripts/xi-solid-patch.ts /path/to/pristine/solid` (or append
+`--check`). Use a fresh Bun installation cache after changing patches, as described
+in `vendor/opentui/XI-STARTUP.md`, and verify installed file hashes before timing.
 
 The first native binding opens the library and owns callbacks. Other bindings
 load on first access and become cached direct functions. Closing releases every

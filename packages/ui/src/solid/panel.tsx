@@ -2,7 +2,7 @@
 import { useTerminalDimensions } from '@opentui/solid';
 import type { JSX } from '@opentui/solid';
 import type { MouseEvent } from '@opentui/core/renderer';
-import { For, createMemo, createSignal, onCleanup } from 'solid-js';
+import { For, Show, createMemo, createSignal, onCleanup } from 'solid-js';
 import type { BoxRenderable } from '@opentui/core';
 import type { Disposable } from '../../../contracts/src/index';
 import { PanelHitMap, PanelScroll, type WorkbenchPanel, type WorkbenchPanelPointerEvent } from '../panel-pointer';
@@ -206,6 +206,7 @@ export function RowsSurface<T>(spec: RowsSurfaceSpec<T>): JSX.Element {
   });
 
   return (
+    <Show when={open()}>
     <box ref={node => { box = node; }} onMouse={onMouse} position="absolute" zIndex={spec.zIndex ?? 80}
       left={layout().left} top={layout().top} width={layout().width} height={layout().height}
       visible={open()} backgroundColor={theme().background}>
@@ -233,5 +234,6 @@ export function RowsSurface<T>(spec: RowsSurfaceSpec<T>): JSX.Element {
         width={1} height={scrollbar()?.height ?? 1} visible={scrollbar() !== undefined}
         selectable={false} content={' '.repeat(scrollbar()?.height ?? 0)} fg="#FFFFFF" style={{ bg: theme().accent }} />
     </box>
+    </Show>
   );
 }

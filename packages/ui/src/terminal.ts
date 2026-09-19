@@ -1,4 +1,4 @@
-import '@opentui/solid/preload';
+import './entrypoints/preload';
 import { createCliRenderer, type CliRenderer, type CliRendererConfig, type KeyEvent } from '@opentui/core/renderer';
 import { splitCoalescedEscape } from '../input/coalesced-escape';
 import type { PasteEvent } from '@opentui/core';

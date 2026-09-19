@@ -54,6 +54,7 @@
     "vscode-languageserver-protocol": "3.17.5"
   },
   "patchedDependencies": {
-    "@opentui/core@0.5.11": "vendor/opentui/patches/opentui-core-0.5.11.patch"
+    "@opentui/core@0.5.11": "vendor/opentui/patches/opentui-core-0.5.11.patch",
+    "@opentui/solid@0.5.11": "vendor/opentui/patches/opentui-solid-0.5.11.patch"
   }
 }

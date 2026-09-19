@@ -68,7 +68,7 @@ class Screen(pyte.Screen):
 
     def editor_state(self):
         # Xi paints its cursor into cells; the terminal's hardware cursor is hidden.
-        # This fixture uses Xi Light's pinned block color and Insert's underline.
+        # Pin both Xi Light and the pre-Solid default token for revision comparisons.
         if self.oracle:
             if self.cursor.hidden:
                 return None
@@ -81,7 +81,7 @@ class Screen(pyte.Screen):
         candidates = []
         for y, cells in self.buffer.items():
             for column, cell in cells.items():
-                if cell.data != 'R' or not (cell.bg == '14202e' or cell.underscore):
+                if cell.data != 'R' or not (cell.bg in ('14202e', '1a2835') or cell.underscore):
                     continue
                 row = self.row_text(y)
                 match = ROW.search(row)
