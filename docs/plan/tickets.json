@@ -6432,6 +6432,50 @@
       ],
       "gate": null,
       "report": "docs/evidence/T140.md"
+    },
+    {
+      "id": "T141",
+      "title": "Remove unnecessary fork startup initialization and measure compiled CLI impact",
+      "status": "in_progress",
+      "depends_on": [
+        "T140"
+      ],
+      "owner": "ui",
+      "paths": [
+        "vendor/opentui/",
+        "spikes/ui-solid/",
+        "docs/evidence/",
+        "docs/plan/tickets.json",
+        "tests/distribution/t141-startup-smoke.ts"
+      ],
+      "specs": [
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Profile fork initialization and remove unnecessary eager work without changing supported behavior",
+        "Verify Bun and Node behavior and compiled package consumption",
+        "Compare identical compiled CLI sources before and after the fork change"
+      ],
+      "acceptance": [
+        "Bun native helpers avoid initializing unused Node fallbacks; Node behavior remains available",
+        "Unused timing-widget import does not construct a grapheme segmenter; Unicode truncation behavior remains correct",
+        "Unused Markdown import defers parser initialization on Bun; source and compiled initial/incremental Markdown remain correct",
+        "Matched compiled startup and idle/task correctness checks retain first-key and per-action latency results",
+        "Record all failed or unmeasured mandatory performance gates without weakening budgets"
+      ],
+      "failure_cases": [
+        "Unbundled fallback breaks compiled executables",
+        "Deferred initialization moves cost into ordinary input",
+        "Runtime-specific change breaks Node"
+      ],
+      "evidence": [
+        "docs/evidence/T141.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T141.md"
     }
   ]
 }

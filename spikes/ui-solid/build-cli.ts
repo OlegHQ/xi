@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
 const repository = resolve(import.meta.dir, '../..');
+const coreRoot = resolve(repository, process.env['XI_UI_CORE_ROOT'] ?? '.');
+const profileDirectory = process.env['XI_UI_PROFILE_DIR'];
 const destination = resolve(repository, process.env['XI_UI_PROOF_OUTDIR'] ?? '.artifacts/ui-solid/build');
 await mkdir(destination, { recursive: true });
 const sources: Record<string, string> = {};
@@ -14,12 +16,18 @@ for (const mode of ['core', 'react', 'solid']) {
     entrypoints: [resolve(repository, 'apps/xi/src/main.ts')],
     target: 'bun', format: 'esm', bytecode: true, minify: true,
     define: { 'process.env.NODE_ENV': '"production"', 'process.env.DEV': '"false"' },
-    compile: { outfile: resolve(destination, `xi-${mode}`) },
+    compile: { outfile: resolve(destination, `xi-${mode}`), ...(profileDirectory === undefined ? {} : {
+      execArgv: ['--cpu-prof', '--cpu-prof-interval=100', `--cpu-prof-dir=${resolve(repository, profileDirectory)}`, `--cpu-prof-name=${mode}.cpuprofile`],
+    }) },
     plugins: [{
       name: 'same-core-ui-comparison',
       setup(build) {
-        build.onResolve({ filter: /^@opentui\/core(?:\/|$)/ }, args => ({ path: Bun.resolveSync(args.path, repository) }));
+        build.onResolve({ filter: /^@opentui\/core(?:\/|$)/ }, args => ({ path: Bun.resolveSync(args.path, coreRoot) }));
         if (mode !== 'core') build.onResolve({ filter: /packages\/ui\/src\/entrypoints\/launch$/ }, () => ({ path: resolve(repository, `spikes/ui-${mode}/launch.tsx`) }));
+        build.onLoad({ filter: /node_modules\/@opentui\/core\/.*\.js$/ }, async args => {
+          sources[`${mode}:${args.path}`] = createHash('sha256').update(await readFile(args.path)).digest('hex');
+          return undefined;
+        });
         build.onLoad({ filter: /\.(?:ts|tsx)$/ }, async args => {
           const contents = await readFile(args.path, 'utf8');
           sources[`${mode}:${args.path}`] = createHash('sha256').update(contents).digest('hex');
@@ -36,4 +44,4 @@ for (const mode of ['core', 'react', 'solid']) {
   binaries[mode] = createHash('sha256').update(await readFile(binary)).digest('hex');
   console.log(`${mode}: ${binary}`);
 }
-await writeFile(resolve(destination, 'build-manifest.json'), JSON.stringify({ bun: Bun.version, minify: true, nodeEnv: 'production', sources, binaries }, null, 2) + '\n');
+await writeFile(resolve(destination, 'build-manifest.json'), JSON.stringify({ bun: Bun.version, coreRoot, profileDirectory, minify: true, nodeEnv: 'production', sources, binaries }, null, 2) + '\n');

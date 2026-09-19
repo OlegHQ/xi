@@ -16,7 +16,11 @@ The builder compiles Core, React and Solid from the same application sources wit
 production definitions, minification and bytecode. Solid's official JSX transform
 runs during the build and selects its reactive client runtime. Babel is build tooling;
 the application does not install a runtime JSX loader. All Core imports resolve to
-the root patched dependency. Source and binary hashes are retained in the build manifest.
+the root patched dependency. Source, installed Core JavaScript and binary hashes are retained in the build manifest.
+`XI_UI_CORE_ROOT` can select a separate installed Core package root for comparisons.
+`XI_UI_PROFILE_DIR` enables CPU profiling in compiled executables; those instrumented
+runs must not be used as startup or input-latency evidence. See [T141](../../docs/evidence/T141.md)
+for the fork initialization comparison and its remaining qualification failures.
 
 Both framework candidates mount the same stable hidden box/text nodes before the
 usable editor frame. The editor keeps its existing custom renderer. Updating status
