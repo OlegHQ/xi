@@ -10,6 +10,12 @@ source themes; adapt their tokens at Xi's surface boundary.
 - `Ctrl-W s` and `Ctrl-W v` must split from normal editor and comparison views. Each pane
   must have its own usable buffer strip, with activation and close scoped to that pane.
   Closing a pane restores focus to a visible surviving pane; failures must be atomic.
+- `Ctrl-W h/j/k/l` uses one spatial focus graph for editor panes and the visible sidebar.
+  Moving left from the leftmost editor enters the sidebar; moving right from the sidebar
+  restores the preserved editor pane. Prefix routing must not depend on help-panel timing.
+- A horizontal pane's buffer strip is also its split handle. A click activates its tab;
+  movement promotes the same press into ratio resizing without activating or closing a tab.
+  When no strip occupies a boundary, retain the one-cell splitter hit target.
 - `<leader>s` toggles the whole sidebar on/off, including when the sidebar has focus.
 - `~/.xi.toml` persists user state/overrides (including visible panels) over defaults across
   restarts. Preserve unrelated user settings; validate invalid input, report write failures,

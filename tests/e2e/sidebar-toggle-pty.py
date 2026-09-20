@@ -55,6 +55,13 @@ with tempfile.TemporaryDirectory(prefix='xi-quit-buffer-') as temporary:
         while b'XI_WORKBENCH_READY' not in captured and time.monotonic() < deadline:
             read_for(0.05)
         assert b'XI_WORKBENCH_READY' in captured, captured[-2000:]
+        # The sidebar participates in the same Vim window graph: left from the leftmost
+        # editor enters it, right returns to the preserved editor pane.
+        send(b'\x17h')
+        assert b'XI_EXPLORER_OPEN' in captured, captured[-2500:]
+        send(b'\x17l')
+        send(b'iNAV')
+        send(b'\x1b')
         send(chord)
         assert b'XI_SIDEBAR_VISIBILITY {"visible":false}' in captured, captured[-2500:]
         send(chord)
@@ -66,9 +73,9 @@ with tempfile.TemporaryDirectory(prefix='xi-quit-buffer-') as temporary:
         send(b'\x1b')
         send(b':w\r')
         save_deadline = time.monotonic() + 5
-        while target.read_text() != 'EDITunchanged\n' and child.poll() is None and time.monotonic() < save_deadline:
+        while target.read_text() != 'NAEDITVunchanged\n' and child.poll() is None and time.monotonic() < save_deadline:
             read_for(.05)
-        assert target.read_text() == 'EDITunchanged\n', f'hidden sidebar edit/save mismatch: {target.read_text()!r}'
+        assert target.read_text() == 'NAEDITVunchanged\n', f'unified sidebar/editor focus or hidden-sidebar edit mismatch: {target.read_text()!r}'
         send(b':qa\r')
         child.wait(timeout=5)
         assert child.returncode == 0

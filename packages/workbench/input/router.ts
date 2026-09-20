@@ -202,6 +202,7 @@ export class WorkbenchInputRouter implements Disposable {
   #lastPrefixContinuations: VimPrefixHelpState['parserContinuations'] | undefined;
   // Comparison editors and the Git panel can remain open together.
   #gitPanelFocused = false;
+  #windowPrefixFromPanel = false;
   #lastGitDiffOpen = false;
   #exCommandLineSession: ExCommandLineSession | undefined;
   #commandLineWithoutSession = false;
@@ -355,8 +356,13 @@ export class WorkbenchInputRouter implements Disposable {
     if (o.overlayPicker?.isOpen() === true) return finishOverlay(o.overlayPicker.onKeypress(event));
     // Window commands belong to the Vim prefix parser. A sidebar must not consume the
     // prefix or its continuation (in particular Ctrl-W s/v while a diff is open).
-    if ((activeMode === 'normal' && event.ctrl && event.name.toLowerCase() === 'w')
+    const startsWindowPrefix = activeMode === 'normal' && event.ctrl && event.name.toLowerCase() === 'w';
+    if (startsWindowPrefix && (o.overlayExplorer?.isOpen() === true || o.overlaySearch?.isOpen() === true || o.overlayGit?.isOpen() === true)) {
+      this.#windowPrefixFromPanel = true;
+    }
+    if (startsWindowPrefix || this.#windowPrefixFromPanel
       || o.host.activeSession()?.prefixHelp?.pendingKeys.includes('<C-w>') === true) {
+      if (!startsWindowPrefix) this.#windowPrefixFromPanel = false;
       this.#gitPanelFocused = false;
       return this.dispatch(event);
     }

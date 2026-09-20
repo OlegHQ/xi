@@ -951,7 +951,21 @@ function createSaveAndHostCommands(
       if (first === undefined) return { ok: false, message: 'no definition found' };
       return { ok: true, location: { uri: first.uri, line: first.startLine, utf16: first.startUtf16 } };
     },
-    focusSidebar: () => { forward.explorerFeature.open(); return true; },
+    focusSidebar: () => {
+      const panel = forward.sidebarController.lastPanel;
+      if (panel === 'search') forward.searchFeature.open();
+      else if (panel === 'git') forward.gitPanelFeature.open();
+      else forward.explorerFeature.open();
+      return true;
+    },
+    focusEditorFromSidebar: (direction) => {
+      const focused = forward.explorerFeature.isOpen || forward.searchFeature.isOpen || forward.gitPanelFeature.isOpen;
+      if (!focused || (direction !== 'right' && direction !== 'next' && direction !== 'previous')) return false;
+      host.closeAllPanels();
+      forward.inputRouter?.focusEditor();
+      host.notifySurfaceChange();
+      return true;
+    },
   });
   forward.hostCommands = hostCommands;
   return { saveCoordinator, hostCommands };

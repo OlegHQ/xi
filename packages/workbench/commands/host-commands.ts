@@ -3,7 +3,7 @@ import { CancellationSource } from '../../contracts/src/index';
 import type { TextFileDocument } from '../../document/src/entrypoints/launch';
 import type { VimHostCommand } from '../../vim/src/index';
 import type { BufferHost } from '../host';
-import type { WorkbenchSession } from '../session';
+import type { WorkbenchSession, WorkbenchWindowDirection } from '../session';
 
 /** Mirrors the location shape `packages/services/navigation`'s `HostNavigationController`
  * resolves to; workbench cannot import `packages/services`, not even types. */
@@ -78,6 +78,9 @@ export interface HostCommandsOptions {
   /** `Ctrl-W h`/`Ctrl-W w` past the leftmost pane: hand focus to the sidebar panel; returns
    * whether a sidebar took it. */
   readonly focusSidebar?: () => boolean;
+  /** Complete a window command that starts in the sidebar. The sidebar is a peer in the
+   * focus graph, so only directions with an editor neighbour should consume it. */
+  readonly focusEditorFromSidebar?: (direction: WorkbenchWindowDirection) => boolean;
 }
 
 /**
@@ -242,6 +245,7 @@ export class WorkbenchHostCommands {
     const repeats = Math.max(1, Math.min(100, Number.isSafeInteger(count) ? count : 1));
     const direction = action === 'focus-left' ? 'left' : action === 'focus-right' ? 'right' : action === 'focus-up' ? 'up' : action === 'focus-down' ? 'down' : action === 'focus-next' ? 'next' : action === 'focus-previous' ? 'previous' : action === 'focus-first' ? 'first' : action === 'focus-last' ? 'last' : undefined;
     if (direction !== undefined) {
+      if (this.#options.focusEditorFromSidebar?.(direction) === true) return;
       let current = sourceViewId;
       for (let index = 0; index < repeats; index += 1) {
         const moved = session.focusAdjacent(current, direction);

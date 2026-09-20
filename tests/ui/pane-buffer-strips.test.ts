@@ -21,7 +21,7 @@ for (const orientation of ['horizontal', 'vertical'] as const) {
   const tabs = (viewId?: string) => session.readTabs(viewId as ViewId | undefined);
   const setup = await createTestRenderer({ width: 120, height: 40, bufferedOutput: 'memory' });
   const controls: string[] = [];
-  const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench: session, fileLabel: 'first.txt', tabs, onPointer: event => { if (event.phase === 'down' && event.control !== undefined) controls.push(event.control.kind); return true; } });
+  const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench: session, fileLabel: 'first.txt', tabs, onPointer: event => { if (event.control !== undefined) controls.push(`${event.phase}:${event.control.kind}:${event.control.action}`); return true; } });
   setup.renderer.root.add(viewport);
   let notify = () => {};
   await mountSolidRoot(setup.renderer, [createChromeSurfaceNode({
@@ -37,9 +37,13 @@ for (const orientation of ['horizontal', 'vertical'] as const) {
     if (orientation === 'horizontal') {
       assert.equal(strips[1]!.y, 19, 'the lower buffer strip occupies the split boundary with no extra separator row');
       await setup.mockMouse.click(strips[1]!.x + 2, strips[1]!.y);
-      assert.equal(controls.at(-1), 'tab', 'the shared boundary keeps tab clicks');
+      assert.equal(controls.at(-1), 'up:tab:activate', 'the shared boundary keeps tab clicks');
+      controls.length = 0;
+      await setup.mockMouse.drag(strips[1]!.x + 2, strips[1]!.y, strips[1]!.x + 2, strips[1]!.y + 3, undefined, { delayMs: 0 });
+      assert.ok(controls.includes('move:splitter:begin') && controls.includes('move:splitter:move') && controls.includes('up:splitter:commit'), 'dragging a populated tab strip resizes its split');
+      assert.ok(!controls.includes('up:tab:activate'), 'a resize gesture does not activate its pressed tab');
       await setup.mockMouse.click(strips[1]!.x + strips[1]!.width - 2, strips[1]!.y);
-      assert.equal(controls.at(-1), 'splitter', 'unused tab-strip space still resizes the split');
+      assert.equal(controls.at(-1), 'up:splitter:commit', 'unused tab-strip space still resizes the split');
     }
     const frame = setup.captureCharFrame().split('\n');
     for (const strip of strips) {

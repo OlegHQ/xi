@@ -59,6 +59,10 @@ try:
                 mouse(59, 10); xdo('mousedown', '1'); mouse(39, 10); time.sleep(.1); xdo('mouseup', '1')
                 capture('split-after-drag')
                 key('ctrl+w'); type_keys('s'); capture('nested-after-drag')
+                # The lower pane's populated buffer strip is also the horizontal split
+                # handle: a drag over its tab text resizes instead of activating the tab.
+                mouse(42, 19); xdo('mousedown', '1'); mouse(42, 22); time.sleep(.1); mouse(42, 25); xdo('mouseup', '1')
+                capture('nested-after-tab-drag')
                 xdo('windowsize', window, '1100', '820'); capture('terminal-resized')
                 type_keys(':qa!'); key('Return'); terminal.wait(timeout=5)
             finally:

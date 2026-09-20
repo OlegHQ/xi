@@ -163,6 +163,7 @@ export class WorkbenchPointerRouter implements Disposable {
   readonly #options: WorkbenchPointerRouterOptions;
   readonly #controlRegistry = new WorkbenchControlRegistry();
   readonly #splitterDrag: SplitterDragController;
+  #pressedTab: { readonly id: string; readonly close: boolean; readonly row: number; readonly column: number } | undefined;
   #activeSplitter: { readonly nodeId: string; readonly availableCells: number } | undefined;
   #lastClick: { readonly kind: string; readonly row: number; readonly column: number; readonly time: number; readonly count: number } | undefined;
   #disposed = false;
@@ -207,23 +208,33 @@ export class WorkbenchPointerRouter implements Disposable {
     const control = event.control;
     if (control?.kind === 'tab') {
       if (event.phase === 'down' && event.button === 0) {
-        const count = this.#clickCount('tab', event.cell.row, event.cell.column);
+        this.#pressedTab = { id: control.id, close: false, row: event.cell.row, column: event.cell.column };
+        return true;
+      }
+      if (event.phase === 'up' && this.#pressedTab?.id === control.id && this.#pressedTab.close === false) {
+        const pressed = this.#pressedTab;
+        this.#pressedTab = undefined;
+        const count = this.#clickCount('tab', pressed.row, pressed.column);
         this.#options.onTabActivate?.(control.id, control.viewId);
         if (count >= 2) this.#options.onTabPin?.(control.id);
         this.#options.marker('XI_TAB_POINTER', { id: control.id, clickCount: count });
-        return true;
       }
       return event.phase === 'up' || event.phase === 'move';
     }
     if (control?.kind === 'tab-close') {
       if (event.phase === 'down' && event.button === 0) {
+        this.#pressedTab = { id: control.id, close: true, row: event.cell.row, column: event.cell.column };
+        return true;
+      }
+      if (event.phase === 'up' && this.#pressedTab?.id === control.id && this.#pressedTab.close === true) {
+        this.#pressedTab = undefined;
         this.#options.onTabClose?.(control.id, control.viewId);
         this.#options.marker('XI_TAB_CLOSE_POINTER', { id: control.id });
-        return true;
       }
       return event.phase === 'up' || event.phase === 'move';
     }
     if (control?.kind === 'splitter') {
+      this.#pressedTab = undefined;
       const nodeId = control.id.startsWith('splitter:') ? control.id.slice('splitter:'.length) : '';
       const isSidebar = nodeId === 'sidebar';
       if (nodeId.length === 0 || control.firstSize === undefined || control.secondSize === undefined || control.availableCells === undefined) return true;

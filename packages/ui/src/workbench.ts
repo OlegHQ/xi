@@ -341,6 +341,7 @@ export class WorkbenchRenderable extends Renderable {
    * from every `renderSelf`/pointer-hit-test access at up to 30x/s while idle. */
   #cachedLayout: { readonly width: number; readonly height: number; readonly sidebarWidth: number | undefined; readonly showSidebar: boolean; readonly value: WorkbenchLayout } | undefined;
   #splitterCapture: string | undefined;
+  #tabPress: { readonly control: NonNullable<WorkbenchPointerEvent['control']>; readonly x: number; readonly y: number; dragging: boolean } | undefined;
   #background: RGBA;
   #surface: RGBA;
   #foreground: RGBA;
@@ -433,9 +434,31 @@ export class WorkbenchRenderable extends Renderable {
       const currentFrame = pane === undefined ? this.#lastFrame?.frame : this.#paneFrames.get(String(activeViewId));
       const currentFrameId = Number(currentFrame?.identity.frameId ?? 0);
       const dispatchFrameId = phase === 'down' ? currentFrameId : this.#pointerFrameId ?? currentFrameId;
-      const chromeControl = phase === 'wheel' || this.#splitterCapture !== undefined || this.#sidebarSplitterCapture ? undefined : this.#chromeControlAt(event.x, event.y, geometry);
-      const splitterControl = phase === 'wheel' || chromeControl !== undefined ? undefined : this.splitterControlAt(event.x, event.y, phase) ?? this.#sidebarSplitterControlAt(event.x, event.y, phase);
+      let chromeControl = phase === 'wheel' || this.#splitterCapture !== undefined || this.#sidebarSplitterCapture ? undefined : this.#chromeControlAt(event.x, event.y, geometry);
+      if (phase === 'down' && (chromeControl?.kind === 'tab' || chromeControl?.kind === 'tab-close')) {
+        const splitter = [...this.#splitters.values()].find(candidate => candidate.axis === 'horizontal'
+          && event.x >= candidate.x && event.x < candidate.x + candidate.width && event.y === candidate.y);
+        if (splitter !== undefined) this.#tabPress = { control: chromeControl, x: event.x, y: event.y, dragging: false };
+      }
+      const tabPress = this.#tabPress;
+      let splitterControl: WorkbenchPointerEvent['control'] | undefined;
+      if (tabPress !== undefined && phase === 'move' && (event.x !== tabPress.x || event.y !== tabPress.y)) {
+        tabPress.dragging = true;
+        chromeControl = undefined;
+        splitterControl = this.splitterControlAt(
+          this.#splitterCapture === undefined ? tabPress.x : event.x,
+          this.#splitterCapture === undefined ? tabPress.y : event.y,
+          this.#splitterCapture === undefined ? 'down' : 'move',
+        );
+      } else if (tabPress?.dragging === true && phase === 'up') {
+        chromeControl = undefined;
+        splitterControl = this.splitterControlAt(event.x, event.y, 'up');
+      } else if (tabPress !== undefined && phase === 'up') {
+        chromeControl = tabPress.control;
+      }
+      splitterControl ??= phase === 'wheel' || chromeControl !== undefined ? undefined : this.splitterControlAt(event.x, event.y, phase) ?? this.#sidebarSplitterControlAt(event.x, event.y, phase);
       const control = phase === 'wheel' ? undefined : chromeControl ?? splitterControl ?? workbenchControlAt(geometry, event.x, event.y);
+      if (phase === 'up') this.#tabPress = undefined;
       // A drag gesture already captured by this pointer (`#pointerFrameId` set) must keep
       // receiving 'move'/'up' even when the pointer strays into the gutter, past the last
       // shaped row/line-end, or below end-of-file (still inside the viewport, but over a

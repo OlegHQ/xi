@@ -151,14 +151,17 @@ const noopProblems: PointerProblemsPort = { model: { generation: 0, all: [] }, s
     problems: noopProblems,
   });
   const tabDown: PointerWorkbenchEvent = { phase: 'down', viewId: 'view-1', cell: { row: 0, column: 3 }, button: 0, control: { id: 'doc-1', kind: 'tab', action: 'activate' } };
+  const tabUp: PointerWorkbenchEvent = { ...tabDown, phase: 'up', button: null };
 
   clock.now = 0;
   router.handleControl(tabDown);
+  router.handleControl(tabUp);
   assert.deepEqual(activated, ['doc-1'], 'T116-POINTER-03a a single tab click activates it');
   assert.deepEqual(pinned, [], 'T116-POINTER-03b a single tab click does not pin it');
 
   clock.now = 150;
   router.handleControl(tabDown);
+  router.handleControl(tabUp);
   assert.deepEqual(activated, ['doc-1', 'doc-1'], 'T116-POINTER-03c a double click activates again');
   assert.deepEqual(pinned, ['doc-1'], 'T116-POINTER-03d a double tab click within the window pins it');
 
