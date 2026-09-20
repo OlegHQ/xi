@@ -284,6 +284,12 @@ export class WorkbenchInputRouter implements Disposable {
 
   /** Called from `BufferHostOptions.onPrefixStateChange`. */
   schedulePrefixHelp(viewId: ViewId, pendingKeys: readonly string[], parserContinuations: VimPrefixHelpState['parserContinuations']): void {
+    if (this.#windowPrefixFromPanel && pendingKeys.length > 0) {
+      this.#lastPrefixPendingKeys = pendingKeys;
+      this.#lastPrefixContinuations = parserContinuations;
+      this.#prefixHelp.cancel();
+      return;
+    }
     if (pendingKeys === this.#lastPrefixPendingKeys && parserContinuations === this.#lastPrefixContinuations) return;
     this.#lastPrefixPendingKeys = pendingKeys;
     this.#lastPrefixContinuations = parserContinuations;

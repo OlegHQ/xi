@@ -59,7 +59,10 @@ with tempfile.TemporaryDirectory(prefix='xi-quit-buffer-') as temporary:
         # editor enters it, right returns to the preserved editor pane.
         send(b'\x17h')
         assert b'XI_EXPLORER_OPEN' in captured, captured[-2500:]
-        send(b'\x17l')
+        prefix_start = len(captured)
+        send(b'\x17')  # send() waits 350 ms, longer than the 250 ms help delay
+        assert b'Prefix' not in captured[prefix_start:], captured[prefix_start:]
+        send(b'l')
         send(b'iNAV')
         send(b'\x1b')
         send(chord)

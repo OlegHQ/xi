@@ -194,6 +194,9 @@ function makeRouter(
   assert.deepEqual(diffKeys, []);
 
   assert.equal(router.dispatchKey(key('w', '\u0017', { ctrl: true })), 'consumed');
+  router.schedulePrefixHelp('view-1' as never, ['<C-w>'], [{ kind: 'motions', label: 'Window', keys: ['h', 'j', 'k', 'l'] }]);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(router.prefixHelp.model, undefined, 'a sidebar-originated window chord does not paint editor prefix help');
   host.session.prefixHelp.pendingKeys = ['<C-w>'];
   const clearsBeforeVisual = host.session.ghostClears;
   assert.ok(clearsBeforeVisual > 0, 'non-v workbench input invalidates the old ghost');
