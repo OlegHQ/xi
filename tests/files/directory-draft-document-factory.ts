@@ -1,5 +1,5 @@
 // DirectoryDraft (a service) no longer opens documents itself
-// (docs/plan/01-architecture.md); tests stand in for the workbench/composition root that owns
+// (docs/architecture.md); tests stand in for the workbench/composition root that owns
 // the real document the way `apps/xi/src/wiring/controllers.ts`'s `createDraft` does.
 import { openTextDocument } from '../../packages/document/src/index';
 import type { DirectoryDraftDocumentOpener } from '../../packages/services/files/directory-draft';

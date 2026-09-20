@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("startup", ROOT / "bench/performance/startup-diagnostic.py")
+spec = importlib.util.spec_from_file_location("startup", ROOT / "tests/support/startup-pty.py")
 startup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(startup)
 binary = Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / "dist/xi").resolve()

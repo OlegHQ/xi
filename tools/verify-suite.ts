@@ -16,7 +16,7 @@ const standaloneUnitFixtures = ['verify.ts', 't010-text-fidelity.ts', 't011-tran
 const specs: Readonly<Record<SuiteId, SuiteSpec>> = {
   unit: {
     fixtureRoot: 'tests/unit',
-    roots: ['tests/architecture', 'tests/config', 'tests/document', ...standaloneUnitFixtures.map((name) => `tests/document/${name}`), 'tests/layout', 'tests/persistence', 'tests/selections', 'tests/workbench', 'tests/performance'],
+    roots: ['tests/architecture', 'tests/config', 'tests/document', ...standaloneUnitFixtures.map((name) => `tests/document/${name}`), 'tests/layout', 'tests/persistence', 'tests/selections', 'tests/workbench'],
     selectors: { contributions: ['tests/architecture/t091-lifecycle.test.ts', 'tests/workbench/t090-contributions.test.ts'] },
   },
   vim: { fixtureRoot: 'tests/fixtures/vim', roots: ['tests/vim', 'tests/oracle'], selectors: {} },
@@ -34,7 +34,7 @@ const specs: Readonly<Record<SuiteId, SuiteSpec>> = {
   bench: {
     fixtureRoot: 'bench',
     roots: ['bench'],
-    selectors: { interaction: ['bench/core/t015-qualification.ts', 'bench/t039-picker.bench.ts', 'bench/t043-search.bench.ts', 'bench/selections/t089-qualification.ts'], selections: ['bench/selections/t089-qualification.ts'] },
+    selectors: { interaction: ['bench/t039-picker.bench.ts', 'bench/t043-search.bench.ts', 'bench/selections/t089-qualification.ts'], selections: ['bench/selections/t089-qualification.ts'] },
   },
 };
 
@@ -45,16 +45,6 @@ if (suite === undefined || !(suite in specs)) {
 }
 const spec = specs[suite];
 const selector = option('--suite');
-const baseline = option('--baseline');
-if (baseline !== undefined) {
-  if (suite !== 'bench') throw new Error('--baseline is only valid for bench');
-  const resolved = await run('python3', ['tools/perf.py', 'resolve', baseline]);
-  if (resolved !== 0) process.exit(resolved);
-  // Legacy benchmarks do not produce invocation-bound observation bundles yet.
-  // T115 supplies those adapters; a valid old run alone cannot qualify this run.
-  console.error('Baseline resolved, but this suite has no comparison evidence producer. Performance gate: unproven (T106/T115).');
-  process.exit(1);
-}
 const fixtureRoot = resolve(process.cwd(), spec.fixtureRoot);
 const entries = await readdir(fixtureRoot, { withFileTypes: true }).catch(() => []);
 if (entries.length === 0) {

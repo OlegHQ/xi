@@ -923,7 +923,7 @@ export class WorkbenchSession implements VimSessionReader {
     // followed, synchronously within the same handleKey call, by that view's
     // own syncViewSession publishing the authoritative post-command
     // selections/mode. Mapping and replacing state here would just be
-    // discarded work (see docs/plan/15-keystroke-latency.md). A buffer with
+    // discarded work (see docs/performance.md). A buffer with
     // more than one view still needs every stale view mapped below, since
     // only the active view gets an authoritative sync.
     if (change.origin === 'vim' && state.views.length <= 1) {

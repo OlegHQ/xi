@@ -120,7 +120,7 @@ function checkCoordinateRoundTrips(): void {
 }
 
 /**
- * T7 (docs/plan performance audit): `getLineBase` in coordinates.ts used to memoize each
+ * Regression: `getLineBase` in coordinates.ts used to memoize each
  * line's UTF-8/UTF-32 base offsets in a `WeakMap<DocumentSnapshot, ...>`, keyed on the
  * snapshot wrapper itself. That cache is gone -- `utf8OffsetAt`/`utf32OffsetAt` are already
  * O(log n) tree descents through the rope's precomputed subtree byte-length aggregates, so

@@ -120,7 +120,7 @@ export function positionToOffset(
 // when the underlying rope was unchanged -- while buying nothing the rope's own aggregates
 // didn't already provide in the same O(log n) budget. Measured: a 100x file-size increase
 // (100 KiB -> 10 MiB) changed the average `utf8OffsetAt` call from ~3.4us to ~5.2us, not
-// ~100x -- see the T7 benchmark referenced in docs/evidence.
+// ~100x in the retained coordinate benchmark.
 function getLineBase(snapshot: DocumentSnapshot, line: LineIndex): Result<LineBaseOffsets, DocumentReadFailure> {
   const utf16Start = snapshot.lineStartOffset(line);
   if (!utf16Start.ok) return utf16Start;

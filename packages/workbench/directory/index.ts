@@ -19,7 +19,7 @@ export type DirectoryDraftPortResult = { readonly ok: true } | { readonly ok: fa
  * model directly through `activeReviewPort()` -- the composition root, which already
  * knows the real `packages/services/files` and `packages/ui/directory` shapes, is the only
  * place that ever needs those extra fields; workbench cannot import `packages/services`,
- * not even types (see `docs/plan/01-architecture.md`). */
+ * not even types (see `docs/architecture.md`). */
 export interface DirectoryDraftModel {
   readonly focus: 'edit' | 'review';
   readonly directoryPath: string;
@@ -73,7 +73,7 @@ export interface DirectoryDraftControllerOptions {
  * the directory back into the same buffer. The composition root (`apps/xi/src/main.ts`)
  * only constructs this with structural ports (list/stat, create-draft, apply-plan,
  * open-buffer, message/marker sinks) -- it never inlines this logic into `main()` itself
- * (see `docs/plan/01-architecture.md`, "workbench owns commands/focus").
+ * (see `docs/architecture.md`, "workbench owns commands/focus").
  */
 export class DirectoryDraftController {
   readonly #options: DirectoryDraftControllerOptions;
@@ -136,7 +136,7 @@ export class DirectoryDraftController {
     return true;
   }
 
-  /** `:Explore [path]` (`Space O`/`Space o`, docs/plan/03-ux.md, route here too). */
+  /** `:Explore [path]` (`Space O`/`Space o`, docs/architecture.md, route here too). */
   async explore(target: string | undefined, viewId: ViewId): Promise<void> {
     const { filesystem, workspaceRoot, activeBufferPath, openBuffer, onError } = this.#options;
     const trimmed = target?.trim();

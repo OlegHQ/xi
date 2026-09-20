@@ -135,7 +135,7 @@ def run_command_palette_toggle() -> None:
         try:
             read_until(master, captured, b"XI_WORKBENCH_READY", 10)
             # Open the searchable command palette (`;`) and confirm "Toggle Mouse" is listed —
-            # this is the "searchable Toggle mouse command" docs/plan/09-interaction.md calls for,
+            # this is the "searchable Toggle mouse command" docs/architecture.md calls for,
             # not just a bare keybinding.
             before = len(captured)
             os.write(master, b" ;")

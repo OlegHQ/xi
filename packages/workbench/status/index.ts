@@ -11,7 +11,7 @@ export interface StatusMessageReadPort {
 }
 
 /** Owns the single most-recent status/error message every feature controller reports through
- * `onError`/`onMessage` (docs/plan/01-architecture.md: platform effects pass through typed
+ * `onError`/`onMessage` (docs/architecture.md: platform effects pass through typed
  * ports, never raw process I/O). Replaces `process.stderr.write` at those call sites so a
  * live-session failure renders in the OpenTUI-owned status row instead of writing bytes
  * underneath the renderer's alt-screen buffer. Messages expire so a one-time warning cannot

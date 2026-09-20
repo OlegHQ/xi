@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   const filesystem = new NodeFilesystemPort();
   const clock = createNodeClock();
   // PersistenceService (a service) never constructs documents itself
-  // (docs/plan/01-architecture.md); this composition root owns that and hands it a factory.
+  // (docs/architecture.md); this composition root owns that and hands it a factory.
   const persistence = new PersistenceService(filesystem, undefined, {
     openText: (documentId, bytes, seed, options) => openTextDocument(documentId, bytes, seed, options),
     openTextChunks: (documentId, chunks, seed, options) => openTextDocumentChunks(documentId, chunks, seed, options),

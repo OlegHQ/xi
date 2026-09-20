@@ -124,7 +124,7 @@ function testReplaceStacksAndFailedBackspaceIsolation(): void {
   let open = apply(document, entered.value.plan, false);
   // nvim --clean oracle (0.12.4): entering Replace and immediately pressing <BS> with
   // nothing yet typed never deletes original buffer text, even past the entry column --
-  // it only repositions the cursor (see docs/evidence for T078's repro). member 0 is
+  // it only repositions the cursor. Member 0 is
   // additionally blocked outright (already at the buffer start); member 1 moves left one
   // column with no edit of its own.
   const failedAndSuccessful = planVimMultiInsertInput(document.snapshot(), session, { kind: 'key', key: '<BS>' });

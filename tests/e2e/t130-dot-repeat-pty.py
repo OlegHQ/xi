@@ -5,7 +5,7 @@ Root cause of the original gap: packages/vim/repeat/index.ts's semantic dot-repe
 (T024, oracle-verified) and packages/workbench/vim-session/index.ts (the production
 dispatcher every keystroke actually goes through) never called each other at all -- bare '.'
 silently did nothing, and macro record/playback ('q'/'@') is separately still unwired (that
-remains open T130 scope; see docs/plan/tickets.json).
+remains open T130 scope; see docs/vim.md).
 
 This fixture proves the wired subset through real production PTY sessions, single cursor
 only, matching exactly what T024's own model supports:

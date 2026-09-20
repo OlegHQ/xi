@@ -48,8 +48,7 @@ async function pump(stream: AsyncIterable<Uint8Array>, listeners: Set<(bytes: Ui
 }
 
 /** Strip ANSI/VT escape sequences (CSI/OSC and bare control bytes) from task output before
- * it is retained -- a bounded scrollback of raw ANSI is not a terminal emulator (per
- * docs/plan/04-services.md), so task output is sanitized to plain text at ingestion. */
+ * it is retained: bounded plain-text scrollback is not a terminal emulator. */
 export function stripAnsiEscapes(text: string): string {
   return text.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;:?]*[a-zA-Z]/g, '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
 }

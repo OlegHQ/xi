@@ -109,7 +109,7 @@ export function analyzePackageSources(units: readonly SourceUnit[]): string[] {
 /**
  * (a) Services may only see a read-only document surface. `openTextDocument`/
  * `TextFileDocument`/`applyBatch` are the mutating/constructing document APIs
- * (docs/plan/01-architecture.md: "Services never mutate buffers directly"); importing any of
+ * (docs/architecture.md: "Services never mutate buffers directly"); importing any of
  * them as a *value* (not `import type`) from `packages/services/**` is forbidden except through
  * this explicit allowlist, which must end empty once every violation is fixed.
  */
@@ -216,7 +216,7 @@ function checkAppFunctionLength(units: readonly SourceUnit[]): string[] {
 
 /** (c) `packages/ui` render callbacks (`renderSelf`) must stay read-only: OpenTUI is confined
  * to rendering, never mutating workbench state from inside a paint callback
- * (docs/plan/01-architecture.md: "UI never implements motion/range/edit semantics"). This
+ * (docs/architecture.md: "UI never implements motion/range/edit semantics"). This
  * flags calls that reach a workbench/session/host port -- `this.#workbench.foo(`,
  * `workbench.foo(`, `session.foo(`, `.setViewScroll(`, `.applyXxx(`, `.dispatch(`,
  * `.commit(`, or an `on<X>Change?.(` callback invocation -- but not an OpenTUI render-context
@@ -251,7 +251,7 @@ function checkUiRenderSelfIsReadOnly(units: readonly SourceUnit[]): string[] {
 }
 
 /** (d) `new Intl.Segmenter(...)`/`new GRAPHEME_SEGMENTER(...)` must be a module-level `const`,
- * never constructed inside a function body -- docs/plan/15-keystroke-latency.md's keystroke
+ * never constructed inside a function body -- docs/performance.md's keystroke
  * budget cannot afford re-allocating a segmenter per keystroke/render. */
 function checkModuleLevelSegmenterConstruction(units: readonly SourceUnit[]): string[] {
   const failures: string[] = [];

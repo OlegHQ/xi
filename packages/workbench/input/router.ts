@@ -319,7 +319,7 @@ export class WorkbenchInputRouter implements Disposable {
    * (`canHandleSynchronously`) reaches the caller without an added `await`. */
   /**
    * Typed wrapper for the eventual ordered-focus-stack contract (H1-7,
-   * docs/plan/01-architecture.md's UI/workbench boundary): today this only covers what
+   * docs/architecture.md's UI/workbench boundary): today this only covers what
    * this router actually owns -- its own fallthrough key handling (`handleKeypress`) --
    * because the higher-priority overlay ports (context menu, command line, completion,
    * picker, explorer, search, problems, output, outline, hierarchy, hover, directory
@@ -508,7 +508,7 @@ export class WorkbenchInputRouter implements Disposable {
     this.#prefixGeneration += 1;
     // <space>q<register> starts a macro recording. This uses the leader-key layer rather
     // than bare Normal-mode 'q' (real Vim's own trigger) because 'q' alone already means
-    // "quick quit" in Xi (docs/evidence/T038.md) and that shipped, widely-tested shortcut
+    // "quick quit" in Xi and that shipped, widely-tested shortcut
     // is out of scope to remove here; stopping (bare 'q' while recording) and playback
     // (real '@'/'@@') have no such conflict and use their natural Vim keys directly.
     if (this.#macroRegisterPending) {

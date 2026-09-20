@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """T045/E11: resize 160x50 -> 80x24 -> 60x18 -> restore, through the production CLI.
-docs/plan/05-validation.md's E11 row: "No text loss or orphan focus; unified diff; hidden
+docs/testing.md's E11 row: "No text loss or orphan focus; unified diff; hidden
 layout restored." Existing coverage of this exact row was component-level only
 (tests/e2e/t038-session.test.ts calls WorkbenchSession.resizeSplit() directly, not through a
 real PTY resize signal); tests/e2e/t094-splitter-pty.py and t128-e22-splitter-xterm-pty.py do

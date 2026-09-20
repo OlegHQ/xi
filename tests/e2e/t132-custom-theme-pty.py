@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """T132: custom theme.toml discovery, selection and invalid-file rejection through the
 production CLI.
-docs/plan/05-validation.md's E16 row: "Theme preview/cancel..." -> "Token consistency...";
+docs/testing.md's E16 row: "Theme preview/cancel..." -> "Token consistency...";
 T132's own acceptance also requires "an invalid or missing theme.toml is rejected with a clear
 message and never partially applies".
 

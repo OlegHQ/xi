@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """T045/E12: bracketed paste through the production CLI.
-docs/plan/05-validation.md's E12 row: "Legacy/enhanced keys, bracketed paste, required
+docs/testing.md's E12 row: "Legacy/enhanced keys, bracketed paste, required
 supported mouse protocols" -> "One event delivery, no pasted commands, no Ctrl-C accidental
 exit." Before this fixture, Xi never consumed OpenTUI's own `paste` event at all -- pasted
 bytes had zero effect (safe, but non-functional). This exercises the new wiring

@@ -1,5 +1,0 @@
-a45d0736e7c32d7dcc497daa3edf5a9d55d712ad14a92a9d3e9989fb6517e66a  packages/vim/macros/index.ts
-8023796dce0d425cd10254785fb305237ebfe8d673c37ad334e9c9efc8be6a13  packages/vim/src/index.ts
-c9dc3bf671ec95244b71df6d0bdd579c25ea44af85a1c91d13fd95d621c5d739  tests/vim/macros/t025-fixtures.json
-7cebd2ba7083304b7e81a040d1b8caee01524cccf4c990407c84ad557719c3c1  tests/vim/macros/t025-macros.test.ts
-b0610333d8e3edabddba209629b44bf4e3ed343f2cb2e280eb94a9a2ff1aa2e6  tests/vim/macros/t025-oracle-traces.json

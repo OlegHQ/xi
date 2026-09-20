@@ -1,7 +1,0 @@
-de1a02ddc1783033094590ed130bf6f23f159c28641eda064d94aa9b4927bee0  docs/compatibility/t017-word.json
-d2e0c66d7591732fcfea571689e4af5edf9a09c0f7a9f794300d84f11b291c49  packages/vim/motions/word.ts
-8023796dce0d425cd10254785fb305237ebfe8d673c37ad334e9c9efc8be6a13  packages/vim/src/index.ts
-dcef05f4f45664c033a39420985cadda08bd0e57ceeb674ca788e8b83f7c74ca  tests/oracle/manifest.json
-6f248726c385ffa655b8390bfa7309186cf88f10da2760df014423d6fe619fb3  tests/vim/motions/t017-fixtures.json
-dd0dced0ddf69c41b51a285e42ad2f7a2785fd5ed52e6f9fe1ad6c20358bcffd  tests/vim/motions/t017-oracle.test.ts
-54f4aeb1e6d4fbff1d6aa28ce808deae51b0fc10a471b783697395a916d63026  tests/vim/motions/t017.test.ts

@@ -19,7 +19,7 @@ import type {
 } from '../../document/src/entrypoints/launch';
 
 /**
- * Services never construct or mutate documents themselves (docs/plan/01-architecture.md
+ * Services never construct or mutate documents themselves (docs/architecture.md
  * ownership table): opening a file's bytes/chunks into a `TextFileDocument`, and restoring
  * one from a recovery checkpoint, are the composition root's job. This service only asks
  * for one through this port, injected at construction (`apps/xi/src/main.ts`).

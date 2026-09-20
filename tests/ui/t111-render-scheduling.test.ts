@@ -74,7 +74,7 @@ function makeMutableWorkbench(text: string): {
 
 /**
  * T111-IDLE-01/02: Xi renders on demand, not on a permanent frame-rate loop
- * (docs/plan/15-keystroke-latency.md). This mirrors production exactly: the
+ * (docs/performance.md). This mirrors production exactly: the
  * production renderer (packages/ui/src/terminal.ts) never calls `renderer.start()`
  * any more -- it renders once up front and thereafter only via `requestRender`
  * on key/resize/pointer/state-change paths. This test never calls `.start()`
@@ -118,7 +118,7 @@ async function testNoIdleLoop(): Promise<void> {
 
 /**
  * T111-SCROLL-01: the viewport must follow the cursor past the first screen
- * (docs/plan/01-architecture.md "Input, effects and rendering"). Before this
+ * (docs/architecture.md "Input, effects and rendering"). Before this
  * fix, `project()` always fell back to `defaultAnchor` (line 0), so a cursor
  * below the fold projected to `position: null` and the requested line was
  * never painted.

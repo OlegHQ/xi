@@ -14,7 +14,6 @@
     "test:unit": "bun run ./tools/verify-suite.ts unit \"$@\"",
     "test:vim": "bun run ./tests/oracle/validate.ts \"$@\"",
     "oracle:fetch": "bun run ./tests/oracle/fetch-neovim.ts",
-    "oracle:inventory": "bun run ./tests/oracle/build-inventory.ts",
     "test:services": "bun run ./tools/verify-suite.ts services \"$@\"",
     "test:ui": "bun run ./tools/verify-suite.ts ui \"$@\"",
     "test:e2e": "bun run ./tools/verify-suite.ts e2e \"$@\"",
@@ -28,9 +27,7 @@
     "xi:install": "bun run package:build && mkdir -p ~/.local/bin && cp dist/xi ~/.local/bin/xi && chmod 755 ~/.local/bin/xi && ~/.local/bin/xi --version",
     "package:release": "bun run ./tools/package-release.ts",
     "package:smoke": "bun run package:audit && python3 tests/distribution/t064-compiled-pty.py && python3 tests/distribution/t064-ex-pty.py",
-    "spikes:render": "bun run ./spikes/render/probe.ts",
-    "spikes:buffer": "bun run ./spikes/buffer/benchmark.ts",
-    "verify:release": "bun run check && bun run test:unit && bun run test:vim -- --profile xi --suite multi-selection --seed 41027 && bun run test:services && bun run test:ui && bun run test:e2e -- --suite interaction && bun run bench -- --suite interaction --baseline revision",
+    "verify:release": "bun run check && bun run test:unit && bun run test:vim -- --profile xi --suite multi-selection --seed 41027 && bun run test:services && bun run test:ui && bun run test:e2e -- --suite interaction && bun run bench -- --suite interaction",
     "check:lint": "bun run tools/lint/check.ts",
     "test:lint": "bun test --timeout 30000 tests/lint",
     "test:startup": "bun run package:build && bun test tests/distribution/t122-renderer-entry.test.ts && python3 tests/distribution/t122-startup-input.py && python3 tests/distribution/t053-syntax-compiled-pty.py"

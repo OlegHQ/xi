@@ -266,7 +266,7 @@ export function computeSidebarTabLayout(width: number): readonly SidebarTabLayou
 /** Row bounds for the sidebar's two inline sections, shared by Solid chrome and the
  * composition root (Explorer/Outline surface placement) so both agree on
  * exactly where each section's content lives. Files takes all remaining rows when Outline is
- * collapsed; both expanded split 60/40 with a 3-row floor each (docs/plan sidebar contract).
+ * collapsed; both expanded split 60/40 with a 3-row floor each.
  * `totalRows` is the sidebar's usable row count above the status row -- callers pass
  * `geometry.statusRow`, not the full terminal height, so inline content never gets bottom-row painted over by the status bar. */
 export function computeSidebarSectionLayout(sidebar: SidebarReadModel, totalRows: number): SidebarSectionLayout {
@@ -618,7 +618,7 @@ export class WorkbenchRenderable extends Renderable {
   }
 
   /**
-   * Cursor-follow scroll anchor for one view (docs/plan/01-architecture.md "Input,
+   * Cursor-follow scroll anchor for one view (docs/architecture.md "Input,
    * effects and rendering"; fixes the viewport never scrolling past the first
    * screen). Seeds from the read model's `scrollTop` (authoritative, written by
    * wheel scroll and restored layouts through `WorkbenchSession.setViewScroll`) so

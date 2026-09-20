@@ -44,7 +44,7 @@ export interface PointerWorkbenchEvent {
   readonly button: number | null;
   readonly control?: PointerControlEvent;
   /** Single/double/triple click, derived by `WorkbenchPointerRouter` on `phase: 'down'` from
-   * same-cell clicks within ~400ms (docs/plan/09-interaction.md); `undefined` for other
+   * same-cell clicks within ~400ms (docs/architecture.md); `undefined` for other
    * phases. Capped at 3 (a click beyond triple still counts as triple). */
   readonly clickCount?: number;
 }

@@ -4,7 +4,6 @@ import { TextFileDocument } from '../../packages/document/src/index';
 import { createOwnedVimSession, type OwnedVimKeyEvent } from '../../packages/workbench/vim-session/index';
 
 // Oracle: nvim --headless --clean -u NONE 0.12.4 (default 'backspace=indent,eol,start').
-// Repros for each fixture are recorded in docs/evidence/insert-leftovers.md.
 
 function id<T extends string>(value: string): T {
   const result = asIdentifier<T>(value, 'insert-leftovers-id');

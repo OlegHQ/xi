@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`T-BUFFER-SCAN-LATENCY 8 MiB dirty-buffer search took ${elapsedMilliseconds.toFixed(1)}ms total, max single event-loop gap ${maxGapMilliseconds.toFixed(2)}ms`);
-  // The repository's ordinary-stall budget is 8ms (docs/plan/15-keystroke-latency.md); the scan
+  // The repository's ordinary-stall budget is 8ms (docs/performance.md); the scan
   // yields every ~2ms (`BUFFER_SCAN_YIELD_BUDGET_MS`), leaving headroom under 8ms for one run of
   // lines plus `setTimeout(resolve, 0)` scheduling jitter, while still catching the old behavior
   // (one synchronous multi-hundred-ms pass with no yield at all).

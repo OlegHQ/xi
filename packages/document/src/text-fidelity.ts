@@ -215,7 +215,7 @@ export async function openTextDocumentChunks(
   const appendDecoded = (decoded: string): void => {
     if (decoded.length === 0) return;
     if (decoded.includes('\0')) sawNul = true;
-    // 'unix' keeps every CR byte as literal content (docs/plan/01-architecture.md): only LF is a
+    // 'unix' keeps every CR byte as literal content (docs/architecture.md): only LF is a
     // line ending, and CR is never inspected for a following LF, so no cross-chunk CR state is
     // needed here at all. This mirrors the sync open path's normalizeLineEndings 'unix' branch.
     if (fileFormat === 'unix') {

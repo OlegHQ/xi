@@ -40,7 +40,7 @@ export interface SidebarControllerOptions {
   readonly onVisibilityChange?: (visible: boolean) => void;
   /** Which top tab is active; defaults to 'files' when absent. */
   readonly panelState?: () => SidebarPanelId;
-  /** Clamped 22-40 cells (docs/plan/03-ux.md:11). */
+  /** Clamped 22-40 cells (docs/architecture.md:11). */
   readonly minimumWidth?: number;
   readonly maximumWidth?: number;
 }

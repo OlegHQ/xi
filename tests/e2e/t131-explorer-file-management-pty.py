@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """T131: Explorer rename/copy/delete with draft/cancel/apply/restore, through the production
-CLI. docs/plan/05-validation.md's E04 row: "Directory rename/copy/delete draft -> cancel ->
+CLI. docs/testing.md's E04 row: "Directory rename/copy/delete draft -> cancel ->
 apply -> restore" -> "Exact filesystem diff, journal, no unintended deletion".
 
 Before this ticket, apps/xi/src/main.ts's handleExplorerKeypress had no rename/copy/delete

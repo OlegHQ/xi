@@ -1,5 +1,5 @@
 /** Last-resort crash handling: OpenTUI's own uncaughtException handler only logs and leaves
- * raw mode/the alt screen on (docs/plan/01-architecture.md, ARCH-TERMINAL-RESTORE-01). Any
+ * raw mode/the alt screen on (docs/architecture.md, ARCH-TERMINAL-RESTORE-01). Any
  * error that escapes every local try/catch and promise chain still needs the terminal restored
  * before the process exits, so this installs a process-wide last resort. */
 

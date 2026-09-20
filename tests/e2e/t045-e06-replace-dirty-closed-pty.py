@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """T045/E06: replace selected matches across a dirty (open, unsaved) buffer and a closed
 (disk-only) file in the same operation, through the production CLI.
-docs/plan/05-validation.md's E06 row: "Replace selected matches in dirty and closed files" ->
+docs/testing.md's E06 row: "Replace selected matches in dirty and closed files" ->
 "Preview matches applied bytes, stale file blocked, partial failure explained."
 tests/e2e/t044-replace-pty.py already covers the closed-file half (a file never opened as a
 buffer, replaced directly on disk); this fixture adds the dirty-buffer half in the same

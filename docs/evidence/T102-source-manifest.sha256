@@ -1,4 +1,0 @@
-747eeb7a010b439f3d275301524da98406545efd2654c7c35582d0c148bde039  docs/compatibility/t102-structural.json
-0c20b477824417f7d2321ba2c29aa54f040812c94772583ffc769fefd45a31e3  packages/vim/motions/structural.ts
-8023796dce0d425cd10254785fb305237ebfe8d673c37ad334e9c9efc8be6a13  packages/vim/src/index.ts
-d59c4d7bf55d18bc466e6f8e1719d1b6b34db684be2bf4e00df951a41e6bdd44  tests/vim/motions/t102-structural.test.ts

@@ -615,7 +615,7 @@ function bufferOwnedPaths(buffers: readonly SearchBufferSource[]): Set<string> {
   return owned;
 }
 
-// Kept well under the repository's 8ms ordinary-stall budget (docs/plan/15-keystroke-latency.md)
+// Kept well under the repository's 8ms ordinary-stall budget (docs/performance.md)
 // so a run of lines between yields, plus `setTimeout(resolve, 0)` scheduling jitter, still lands
 // inside that budget rather than merely under the old, looser 15ms test tolerance.
 const BUFFER_SCAN_YIELD_BUDGET_MS = 2;

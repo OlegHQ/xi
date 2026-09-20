@@ -46,7 +46,7 @@ const repeatTarget = Object.freeze({
 });
 
 // 8 views (a realistic multi-window/multi-cursor session), 26 registers (a-z plus specials),
-// each holding a moderately sized string -- named per docs/plan/12-performance.md's ordinary
+// each holding a moderately sized string -- named per docs/performance.md's ordinary
 // engine-step budget (p95 <= 1ms), this must stay far under that for a selection-changing
 // keystroke that runs many such calls per key.
 const views: AtomicViewState[] = Array.from({ length: 8 }, (_v, index) => Object.freeze({

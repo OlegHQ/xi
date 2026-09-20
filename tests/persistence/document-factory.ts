@@ -1,5 +1,5 @@
 // PersistenceService (a service) no longer constructs documents itself
-// (docs/plan/01-architecture.md); every test that opens/recovers a real file must inject a
+// (docs/architecture.md); every test that opens/recovers a real file must inject a
 // `PersistenceDocumentFactory` the way the composition root (`apps/xi/src/main.ts`) does.
 import { openTextDocument, openTextDocumentChunks, TextFileDocument } from '../../packages/document/src/index';
 import type { PersistenceDocumentFactory } from '../../packages/services/persistence/index';

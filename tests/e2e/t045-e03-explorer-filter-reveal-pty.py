@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """T045/E03: Explorer expand/filter/reveal through the production CLI.
-docs/plan/05-validation.md's E03 row: "Tree expand/filter/reveal and watcher insertion" ->
+docs/testing.md's E03 row: "Tree expand/filter/reveal and watcher insertion" ->
 "Stable selected path, no unsolicited focus/scroll." tests/e2e/t040-explorer-pty.py already
 exercises real-watcher insertion/rename with stable selection identity through the launched
 Explorer panel -- but not reveal-on-open, filter narrowing/restore, or "no unsolicited focus"

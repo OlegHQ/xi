@@ -10,7 +10,7 @@ import type {
 
 /**
  * Narrow structural slice of `TextFileDocument` this draft needs. Services never own or
- * construct documents (docs/plan/01-architecture.md ownership table): the workbench/app
+ * construct documents (docs/architecture.md ownership table): the workbench/app
  * opens the real document and hands it in through `DirectoryDraftDocumentOpener` below.
  */
 export interface DirectoryDraftDocumentPort {
@@ -202,7 +202,7 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
    * O(rows after the old pivot); ponytail: that fold is the documented ceiling -- a workload
    * that alternates single-character edits between rows on opposite ends of a large draft
    * every keystroke would hit it every time. Revisit with a Fenwick tree if that shape proves
-   * real (docs/plan/15-keystroke-latency.md).
+   * real (docs/performance.md).
    */
   #shiftPivotIndex = -1;
   #shiftDelta = 0;

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """T132: theme picker live preview/cancel/commit through the production CLI.
-docs/plan/05-validation.md's E16 row: "Theme preview/cancel..." -> "Token consistency...".
+docs/testing.md's E16 row: "Theme preview/cancel..." -> "Token consistency...".
 
 Before T132, the theme picker had exactly one static entry ('Xi Light') with no
 activatePickerEntry branch at all -- selecting it did nothing. This exercises the real wiring:

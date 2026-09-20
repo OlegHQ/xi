@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """T045/E02: file picker preview/commit/cancel through the production CLI.
-docs/plan/05-validation.md's E02 row: "File picker preview/cancel/pin, switch split, return"
+docs/testing.md's E02 row: "File picker preview/cancel/pin, switch split, return"
 -> "Source view restored, no dirty preview discarded, same buffer text in two views."
 
 Investigating this surfaced two genuine, previously undiscovered bugs in
@@ -12,7 +12,7 @@ per AGENTS.md since this ticket's own dependency, T038, owns packages/workbench/
    whatever it still pointed to via `workbench.closeView(id, 'discard')` -- which bypasses
    the dirty-buffer guard entirely (a `decision` argument is supplied) -- silently destroying
    real, already-promoted/pinned edits that merely happened to share the stale pointer.
-   Empirically confirmed with a throwaway debug probe before the fix (see docs/evidence/T045.md):
+   Empirically confirmed with a throwaway debug probe before the fix:
    preview a file, commit it, edit it (auto-promoting it to pinned/dirty), preview a
    *different, brand-new* file, and press Escape -- the pinned, dirty buffer got discarded.
 2. Duplicate documents: the picker's file-index entries always use absolute paths, but a

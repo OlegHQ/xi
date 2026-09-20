@@ -8,7 +8,6 @@
     "vim"
   ],
   "executables": [
-    "bench/core/t015-qualification.ts",
     "bench/document/t009-fragmentation-probe.ts",
     "bench/document/t009-storage.ts",
     "bench/layout/t014-viewport.ts",

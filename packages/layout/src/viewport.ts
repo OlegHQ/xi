@@ -141,8 +141,8 @@ const MAX_REBASED_ROW_CELL_COST = 200_000;
 /**
  * Byte budget for `#lineLayouts`' retained `text` (the cache key is a hash, not the
  * text -- see `CachedLineLayout`). 1,048,576 UTF-16 units * 2 bytes/unit = 2 MiB,
- * a modest slice of the 8 MiB workspace-wide layout-cache budget (docs/plan/12-
- * performance.md) alongside the materialized-row, gutter and frame caches. At the
+ * a modest slice of the workspace-wide layout-cache budget alongside the
+ * materialized-row, gutter and frame caches. At the
  * 65,536-unit-per-line worst case this still retains 16 such lines before evicting;
  * ordinary short lines fill far more entries within the same byte budget.
  */
@@ -809,7 +809,7 @@ function defaultAnchor(snapshot: DocumentSnapshot): { readonly ok: true; readonl
 }
 
 /**
- * Cursor-following scroll anchor (docs/plan/01-architecture.md "Input, effects and
+ * Cursor-following scroll anchor (docs/architecture.md "Input, effects and
  * rendering"): clamps a stored `scrollTop` line to the document, then keeps the
  * primary selection's head line inside `[top, top + heightCells)` the way Vim does --
  * scroll up to the cursor line when it is above the viewport, or to

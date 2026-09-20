@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """T045/E16: a narrow real-terminal resize while a popup (LSP completion) is open, through the
 production CLI.
-docs/plan/05-validation.md's E16 row: "Theme preview/cancel, ASCII/256-color, narrow popups" ->
+docs/testing.md's E16 row: "Theme preview/cancel, ASCII/256-color, narrow popups" ->
 "Token consistency, cursor visible, no layout corruption."
 
 Investigating this ticket's "theme preview/cancel" verb found it is a genuine missing product

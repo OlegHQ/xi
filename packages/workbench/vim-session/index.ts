@@ -333,7 +333,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   // Macro record/playback (T130). Starting a recording is exposed through
   // beginMacroRecording (see the leader-key wiring in apps/xi/src/main.ts) rather than
   // through the parser's own 'q'+register literal-command, because bare 'q' in Normal mode
-  // is already Xi's documented quick-quit shortcut (docs/evidence/T038.md) and that
+  // is already Xi's shipped quick-quit shortcut and that
   // extensively-relied-upon, already-shipped behavior is out of scope to remove here.
   // Stopping (bare 'q' while a recording is active) and playback (real '@'/'@@' keys) have
   // no such conflict and are wired to their natural Vim keys below.

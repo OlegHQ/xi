@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """T045/E15: read-only/permission errors, missing rg/Git/server -- through the production CLI.
-docs/plan/05-validation.md's E15 row: "Clear degraded state; plain editing works." This
+docs/testing.md's E15 row: "Clear degraded state; plain editing works." This
 fixture covers the "missing rg" case specifically: launches the real production CLI with an
 empty PATH (so the search service's ripgrep spawn genuinely fails with ENOENT, not a mocked
 error), confirms the resulting degraded state is reported clearly (not a crash, not a silent

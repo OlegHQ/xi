@@ -291,7 +291,7 @@ export class WorkbenchHostCommands {
     if (command === 'format') return this.formatCurrentDocument(viewId).then(() => 'handled' as const);
     const tag = /^(?:tag|tjump|tj)\s+(\S+)$/iu.exec(normalized);
     if (tag?.[1] !== undefined) return this.handleVimHostCommand({ kind: 'open-tag', name: tag[1], split: false }, viewId).then(() => 'handled' as const);
-    // `Space O`/`Space o` (docs/plan/03-ux.md "Directory as editable text") route through
+    // `Space O`/`Space o` (docs/architecture.md "Directory as editable text") route through
     // this same Ex dispatch once a leader binding calls `:Explore [path]`.
     const explore = /^(?:explore|expl)(?:\s+(\S.*))?$/iu.exec(normalized);
     if (explore) return this.#options.directoryDrafts.open(explore[1]?.trim(), viewId).then(() => 'handled' as const);

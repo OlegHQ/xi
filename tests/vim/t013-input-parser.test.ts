@@ -506,7 +506,7 @@ function checkAuditFindingE1_8ContinuationsPerf(): void {
   if (first.kind !== 'pending' || second.kind !== 'pending') throw new Error('T013-E1-8-IDENTITY expected pending');
   assert.equal(first.continuations, second.continuations, 'T013-E1-8-IDENTITY same operator/force shape reuses the same frozen continuations array');
 
-  // Engine-step budget (docs/plan/15-keystroke-latency.md, AGENTS.md): ordinary engine
+  // Engine-step budget (docs/performance.md, AGENTS.md): ordinary engine
   // steps must meet p95 <=1ms / p99 <=2ms. Measure parseVimInput producing a 'pending'
   // continuation list (the path continuationsFor runs on) over many iterations.
   const samples: number[] = [];

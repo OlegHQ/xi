@@ -1,4 +1,0 @@
-3c42f885c865a0e278d4e64414d839e3be76e4e0f4bd2c8142f8b2f5f0acefb7  docs/plan/04-services.md
-9c261a3e3538baffaa7f90f9e9e530b1fa64130e350f25387b46103059e6fe15  packages/services/git/index.ts
-7229f0ae29f3402434498ed51e877fa6259b5bb55fd3d788564866c870da9054  packages/services/src/index.ts
-6e2f3051285bfb2576cd9a152e9c61b740e7939700f9c887ad8ac5b204936a1a  tests/git/t057-status.test.ts

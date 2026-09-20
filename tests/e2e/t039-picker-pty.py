@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t039-picker-") as temporary:
         # Query a file distinct from the one already open (README.md itself), so this
         # exercises a real, still-discardable preview rather than the picker's dedup path
         # (navigating back onto an already-open file correctly reuses it without a preview
-        # to cancel -- see docs/evidence/T045.md's E02 addendum).
+        # to cancel, matching the regression captured by this fixture.
         os.write(master, b"AGENTS.md")
         wait_for(master, captured, b"XI_PICKER_PREVIEW", 5)
         os.write(master, b"\x1b")

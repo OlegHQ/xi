@@ -10,7 +10,7 @@
  * `FilesystemPort`), not `node:fs` directly, so this file stays a plain `app`
  * module under the import-graph rules in tools/check-import-graph.ts. NOTE:
  * that checker has no allowance yet for the `type: "file"` embedded-asset
- * specifiers themselves (relative `node_modules` paths); see docs/evidence/T053.md.
+ * specifiers themselves (relative `node_modules` paths).
  */
 import type { CancellationToken, Result } from '../../../packages/primitives/src/entrypoints/launch';
 import type { PlatformFailure } from '../../../packages/platform/src/entrypoints/launch';

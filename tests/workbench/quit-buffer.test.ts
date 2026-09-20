@@ -63,7 +63,7 @@ assert.equal(await commands.handleWorkbenchCommand('q', comparison.value.viewId)
 assert.equal(session.activeViewId, viewId, 'closing a dirty comparison preserves its editable file buffer');
 assert.deepEqual(released, ['quit-second'], 'closing shared views retains document services');
 const before = session.readLayout();
-assert.equal(await commands.handleWorkbenchCommand('q!', viewId), 'handled', ':q! closes last buffer without exiting');
+assert.equal(await commands.handleWorkbenchCommand('q!', viewId), 'quit', ':q! closes the last buffer and exits');
 assert.equal(session.buffers().length, 0);
 assert.equal(host.sessions.size, 0);
 assert.equal(host.documents.size, 0);

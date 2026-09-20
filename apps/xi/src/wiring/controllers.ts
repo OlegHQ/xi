@@ -611,7 +611,7 @@ function createExplorerAndDirectory(
   workbench: WorkbenchSession,
 ): { readonly explorerFeature: ExplorerController; readonly directoryDraftController: DirectoryDraftController; readonly journaledFileOperations: JournaledFilesystemOperations } {
   const { filesystem, clock, marker, workspaceRoot } = ctx;
-  // T041/T042: directory-as-editable-text ("Space O", docs/plan/03-ux.md). All orchestration
+  // T041/T042: directory-as-editable-text ("Space O", docs/architecture.md). All orchestration
   // (map of open drafts, review-plan apply, Enter/Esc routing) lives in the workbench
   // controller below -- this composition root only constructs it with structural ports
   // (ARCH-COMPOSITION-ROOT-01 forbids feature-state/handlers living inside `main()` itself).
@@ -675,7 +675,7 @@ function createExplorerAndDirectory(
     },
     createDraft: (path, documentId, entries) => {
       // DirectoryDraft (a service) never opens documents itself; this composition root owns
-      // that (docs/plan/01-architecture.md), and hands the opened document back to the draft
+      // that (docs/architecture.md), and hands the opened document back to the draft
       // through the narrow `DirectoryDraftDocumentPort` it declares.
       let openedDocument: TextFileDocument | undefined;
       const draft = DirectoryDraft.create(path, entries, (draftId, text) => {

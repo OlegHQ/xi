@@ -15,7 +15,7 @@ import { openTextDocument } from '../../packages/document/src/index';
 import type { DocumentId } from '../../packages/contracts/src/index';
 
 // DirectoryDraft (a service) never opens documents itself; tests stand in for the
-// workbench/composition root that owns the real document (docs/plan/01-architecture.md).
+// workbench/composition root that owns the real document (docs/architecture.md).
 const openDraftDocument: DirectoryDraftDocumentOpener = (id, text) => {
   const opened = openTextDocument(id as DocumentId, new TextEncoder().encode(text), 41027, { fileFormat: 'unix' });
   if (opened.kind !== 'editable') return { ok: false, error: `document open failed: ${opened.kind}` };

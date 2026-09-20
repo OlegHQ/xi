@@ -60,7 +60,7 @@ function p95(samples: readonly number[]): number {
  * UTF-16 units and `shapeLine` walked every cluster from column 0, even the ones
  * scrolled off-screen, so a large horizontal scroll on a long line re-walked tens of
  * thousands of characters every frame. Budget: p95 <= 8 ms (keystroke path budget,
- * docs/plan/15-keystroke-latency.md / AGENTS.md), measured over 50 distinct scroll
+ * docs/performance.md / AGENTS.md), measured over 50 distinct scroll
  * positions (continuous horizontal scroll never repeats one `geometryKey`, so every
  * call actually re-reads/re-shapes instead of hitting `#lastRows`). 30 unmeasured
  * warmup frames (matching bench/layout/t014-viewport.ts's convention) run first so

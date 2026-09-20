@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """T045/E13: crash recovery through the production CLI.
-docs/plan/05-validation.md's E13 row: "Crash after edit/save/directory-step then restart" ->
+docs/testing.md's E13 row: "Crash after edit/save/directory-step then restart" ->
 "Bounded recovery loss, external disk changes preserved, journal actionable."
 
 Root cause of the gap this closes: packages/services/persistence/index.ts's

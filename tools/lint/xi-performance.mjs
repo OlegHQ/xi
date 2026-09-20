@@ -1,6 +1,4 @@
-import { readFileSync } from 'node:fs';
-
-const budgets = new Set(JSON.parse(readFileSync(new URL('../../docs/plan/performance-budgets.json', import.meta.url), 'utf8')).budgets.map(row => row.id));
+const budgets = new Set(['DOC-COORDINATES', 'ENGINE-MOVE-ALLOC', 'ENGINE-STEP', 'RENDER-120', 'SELECTION-MAP']);
 const codes = new Set(['allocation', 'strings', 'sync', 'materialize', 'microtask', 'segmenter']);
 const functions = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
 const loops = new Set(['ForStatement', 'ForOfStatement', 'ForInStatement', 'WhileStatement', 'DoWhileStatement']);

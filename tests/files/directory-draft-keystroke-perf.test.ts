@@ -10,7 +10,7 @@ import { openTextDocument } from '../../packages/document/src/index';
 import type { DocumentId } from '../../packages/contracts/src/index';
 
 // DirectoryDraft (a service) never opens documents itself; this test stands in for the
-// workbench/composition root that owns the real document (docs/plan/01-architecture.md).
+// workbench/composition root that owns the real document (docs/architecture.md).
 const openDraftDocument: DirectoryDraftDocumentOpener = (id, text) => {
   const opened = openTextDocument(id as DocumentId, new TextEncoder().encode(text), 41027, { fileFormat: 'unix' });
   if (opened.kind !== 'editable') return { ok: false, error: `document open failed: ${opened.kind}` };
@@ -76,7 +76,7 @@ function p95(samples: readonly number[]): number {
 }
 
 async function testRemapLatencyBudget(): Promise<void> {
-  // The keystroke budget (docs/plan/15-keystroke-latency.md) is an engine step p95 <=1ms.
+  // The keystroke budget (docs/performance.md) is an engine step p95 <=1ms.
   // `publish()` used to rebuild and Object.freeze() every row *and* the whole rows array on
   // every committed keystroke, an O(rows) cost regardless of how many rows actually changed
   // (~4-6ms at 10k rows). `buildModel` now keeps the previously frozen row object for any row

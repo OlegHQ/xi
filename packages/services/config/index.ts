@@ -407,8 +407,8 @@ export interface TaskConfig {
   readonly problemMatcher: 'generic-compiler' | 'none';
 }
 
-/** Configured argv tasks (docs/plan/04-services.md's "basic tasks" contract): explicit argv,
- * cwd/env, and an optional built-in problem matcher -- never automatic shell evaluation. */
+/** Configured argv tasks: explicit argv, cwd/env and an optional built-in problem matcher;
+ * never automatic shell evaluation. */
 export function parseTasksConfig(source: string, fileName = 'tasks.toml'): Result<readonly TaskConfig[], ConfigCompileFailure> {
   const parsed = parseToml(source, fileName);
   if (!parsed.ok) return parsed;

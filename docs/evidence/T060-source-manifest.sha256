@@ -1,6 +1,0 @@
-3c42f885c865a0e278d4e64414d839e3be76e4e0f4bd2c8142f8b2f5f0acefb7  docs/plan/04-services.md
-7229f0ae29f3402434498ed51e877fa6259b5bb55fd3d788564866c870da9054  packages/services/src/index.ts
-36da4ba35388acd6f8422fdc02168b8d35d45f14eb46ba1a982b8d73c92b77cc  packages/services/tasks/index.ts
-2ab3715ae6cba1fd36aa6db54d2f1a3d863a6ffa431c55389c0f7edcc6b88893  packages/ui/output/index.ts
-319b7d5a51c3b6773c4a2e142a79bcb7bce2912e44024cc18e28da7e4f86043d  packages/ui/src/index.ts
-dd1666f1bb7d99ccf1348089ef10315e5c661b4b0147ba093b45e5d580c2a6a6  tests/tasks/t060-tasks.test.ts

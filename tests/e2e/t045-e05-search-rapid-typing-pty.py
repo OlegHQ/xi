@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """T045/E05: search rapid typing, cancel, late old output through the production CLI.
-docs/plan/05-validation.md's E05 row: "Only latest generation displayed, typing remains
+docs/testing.md's E05 row: "Only latest generation displayed, typing remains
 responsive." tests/search/t043-search.test.ts already proves the generation/staleness model
 at the component level; tests/e2e/t043-search-pty.py exercises the production CLI but only
 with deliberate, spaced-out edits (delete-then-retype with a settle wait between). Neither

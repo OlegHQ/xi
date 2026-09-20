@@ -562,7 +562,7 @@ export function buildRelativeMaterializedRows(layout: RelativeLineLayout, width:
  * everything above an edit, or any edit that doesn't change the document's total
  * length before this line -- now reuse the exact same `ScreenRow`/`ScreenCell`
  * objects instead of reallocating ~2 objects per cell every keystroke (see
- * `docs/plan/15-keystroke-latency.md`; profiled cost was ~1 MB/keystroke on a
+ * `docs/performance.md`; profiled cost was ~1 MB/keystroke on a
  * production-shaped viewport). `indexRebasedRows` below still runs every frame,
  * cache hit or not, since `positions` is a fresh per-frame index.
  */

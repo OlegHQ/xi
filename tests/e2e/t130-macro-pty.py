@@ -2,8 +2,7 @@
 """T130: macro record/playback ('q'/'@') through the production CLI.
 
 Real Vim starts a recording with bare 'q'+register and stops with bare 'q' alone. Xi's own
-'q' is already a documented, shipped, extensively-tested quick-quit shortcut (see
-docs/evidence/T038.md's 2026-09-17 addendum) -- removing it to make room for real Vim's
+'q' is already a shipped, extensively-tested quick-quit shortcut; removing it for real Vim's
 start-recording trigger would be a much larger, riskier change than this ticket's own scope
 ("wire the existing tested engine in"), so starting a recording is exposed through the
 leader-key layer instead: '<space>q<register>'. Stopping (bare 'q' while a recording is
@@ -12,7 +11,7 @@ real, unmodified Vim keys and are unaffected by that substitution.
 
 This fixture proves, through real production PTY sessions:
   - a clean-buffer bare 'q' still quits immediately (the pre-existing shortcut, unchanged).
-  - a dirty-buffer bare 'q' still refuses (docs/evidence/T038.md's fix, unchanged).
+  - a dirty-buffer bare 'q' still refuses.
   - '<space>q' + an invalid "register" key (Escape) does not start a recording or crash.
   - '<space>qa' records into register a; 'x' during recording is both applied live and
     captured; bare 'q' stops it; '@a' replays the captured keys at a new cursor position.
@@ -101,7 +100,7 @@ def check(name: str, actual, expected) -> None:
 _, still_running = run("hello\n", [b"q"], quit_keys=b"")
 check("clean-buffer bare q quits", still_running, False)
 
-# Dirty-buffer bare 'q' still refuses -- docs/evidence/T038.md's fix is unchanged.
+# Dirty-buffer bare 'q' still refuses.
 _, still_running = run("hello\n", [b"iXXX\x1b", b"q"], quit_keys=b"")
 check("dirty-buffer bare q refuses", still_running, True)
 

@@ -145,7 +145,7 @@ def run_tmux() -> str:
         # fish/tmux-specific pty job-control interaction, not a defect in Xi's own suspend/resume
         # (which is 100% reliable here, on a bare PTY, and on a real xterm). Naming bash explicitly
         # is the one named, reliable tmux configuration this ticket qualifies; fish-as-default-shell
-        # is a documented, unsupported capability limit — see docs/evidence/T128.md.
+        # is a documented, unsupported capability limit.
         command = (
             f"cd {workspace} && HOME={workspace} XI_UI_TEST_MARKERS=1 "
             f"bun run {ROOT / 'apps/xi/src/main.ts'} main.ts 2>{stderr_path}"
@@ -167,14 +167,14 @@ def run_tmux() -> str:
             # Query a file distinct from the one already open (main.ts itself), so this
             # exercises a real, freshly opened preview rather than the picker's own dedup path
             # (navigating back onto an already-open file correctly reuses it without emitting
-            # a new preview -- see docs/evidence/T045.md's E02 addendum).
+            # a new preview, matching the picker-cancel regression.
             subprocess.run(["tmux", "send-keys", "-t", session, "other.txt"], check=True)
             wait_for(stderr_path, offset, b"XI_PICKER_PREVIEW", 5)
             subprocess.run(["tmux", "send-keys", "-t", session, "Escape"], check=True)
             time.sleep(0.3)
 
             # Mouse toggle through tmux: verified via the marker; live click gating through an
-            # actual attached terminal is exercised manually (see docs/evidence/T128.md) because
+            # actual attached terminal is exercised manually because
             # tmux only forwards real mouse bytes from an attached, X11-driven terminal.
             offset = stderr_path.stat().st_size
             subprocess.run(["tmux", "send-keys", "-t", session, " m"], check=True)

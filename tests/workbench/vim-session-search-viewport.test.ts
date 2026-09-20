@@ -3,8 +3,7 @@ import { asIdentifier, type DocumentId, type ViewId } from '../../packages/primi
 import { TextFileDocument } from '../../packages/document/src/index';
 import { createOwnedVimSession, type OwnedVimKeyEvent, type OwnedVimSessionOptions } from '../../packages/workbench/vim-session/index';
 
-// Oracle: nvim --headless --clean -u NONE 0.12.4. Repros are recorded in
-// docs/evidence/vim-session-search-viewport.md.
+// Oracle: nvim --headless --clean -u NONE 0.12.4.
 
 function id<T extends string>(value: string): T {
   const result = asIdentifier<T>(value, 'vim-session-search-viewport-id');
