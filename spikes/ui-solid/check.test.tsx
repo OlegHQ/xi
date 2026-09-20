@@ -4,7 +4,7 @@ import { StatusMessageController } from '../../packages/workbench/status';
 import { runOpenTuiWorkbench } from './launch';
 
 const setup = await createTestRenderer({ width: 120, height: 40, bufferedOutput: 'memory' });
-const messages = new StatusMessageController();
+const messages = new StatusMessageController({ schedule: (delay, callback) => { const timer = setTimeout(callback, delay); return { dispose: () => clearTimeout(timer) }; } });
 let subscriptions = 0;
 const running = runOpenTuiWorkbench({ activeViewId: undefined, readView: () => undefined, readDocument: () => undefined }, 'fixture', {
   renderer: Promise.resolve(setup.renderer),

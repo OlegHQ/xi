@@ -7,7 +7,7 @@ import { DARK_WORKBENCH_THEME, LIGHT_WORKBENCH_THEME } from '../../packages/ui/t
 import { Shell } from './components';
 
 const problems = new DiagnosticStore();
-const messages = new StatusMessageController();
+const messages = new StatusMessageController({ schedule: (delay, callback) => { const timer = setTimeout(callback, delay); return { dispose: () => clearTimeout(timer) }; } });
 problems.publish({ serverId: 'evaluation', uri: 'example.ts', generation: 1, diagnostics: Array.from({ length: 20 }, (_, i) => ({
   range: { startLine: i, startUtf16: 0, endLine: i, endUtf16: 1 },
   message: `Diagnostic ${i + 1} — shared panel row`, severity: i % 2 === 0 ? 1 as const : 2 as const,

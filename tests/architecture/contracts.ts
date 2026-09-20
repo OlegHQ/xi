@@ -68,7 +68,7 @@ async function verifyWiringModulesCompose(failures: string[]): Promise<void> {
     readDocumentText: () => '',
     workbenchBuffers: () => [],
     renameBufferPath: () => {},
-    statusMessages: new StatusMessageController(),
+    statusMessages: new StatusMessageController({ schedule: () => ({ dispose() {} }) }),
   });
   await languageWiring.ensureLanguage();
   await languageWiring.ensureLanguage();

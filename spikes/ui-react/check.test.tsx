@@ -11,7 +11,7 @@ import { DARK_WORKBENCH_THEME, LIGHT_WORKBENCH_THEME } from '../../packages/ui/t
 import { Shell } from './components';
 
 const problems = new DiagnosticStore();
-const messages = new StatusMessageController();
+const messages = new StatusMessageController({ schedule: (delay, callback) => { const timer = setTimeout(callback, delay); return { dispose: () => clearTimeout(timer) }; } });
 let problemReads = 0, subscriptions = 0;
 const problemPort: ProblemsReadPort = {
   get model() { problemReads++; return problems.model; },

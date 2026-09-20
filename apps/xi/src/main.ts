@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   // before the renderer exists (recovery notices below): the OpenTUI status row picks up
   // whatever is already published the moment it mounts, so nothing is lost, and nothing is
   // written to stderr underneath the alt-screen buffer once the renderer is live.
-  const statusMessages = new StatusMessageController();
+  const statusMessages = new StatusMessageController(clock);
   // Kicked off now, alongside the other startup filesystem work, so the awaits below (once,
   // before it's first needed) do not add a second sequential round-trip on top of it.
   const startupConfigPromise = loadStartupXiConfig(filesystem, themeStateDirectory(), configCancellation.token, VIEW_COMMAND_IDS, `${process.env.HOME ?? process.cwd()}/.xi.toml`);
@@ -84,6 +84,7 @@ async function main(): Promise<void> {
     // `openDocument`'s failure message never mounts to display it -- flush it to stderr here
     // as the one case where that message must still reach the user.
     if (statusMessages.model !== undefined) process.stderr.write(`${statusMessages.model.text}\n`);
+    statusMessages.dispose();
     return;
   }
   startupTrace('document');
@@ -133,12 +134,14 @@ async function main(): Promise<void> {
     }));
     marker('XI_TEARDOWN', { step: 'workbench-returned' });
     await teardownControllers(controllers, persistence, marker);
+    statusMessages.dispose();
     // Bun can retain the PTY stdin reference after OpenTUI has restored the terminal. Every
     // Xi-owned disposable is closed above, so finish the successful process boundary here.
     process.exit(0);
   } catch (error) {
     const created = await renderer.catch(() => undefined);
     if (created !== undefined && !created.isDestroyed) created.destroy();
+    statusMessages.dispose();
     throw error;
   }
 }
