@@ -15,6 +15,7 @@ export interface SidebarReadModel {
   /** Derived from the open panels (search open -> 'search', git picker -> 'git', else 'files'). */
   readonly panel: SidebarPanelId;
   readonly width: number;
+  readonly visible?: boolean;
 }
 
 /** Narrow port onto whatever tracks outline symbols (the language overlay feature); only
@@ -23,10 +24,7 @@ export interface SidebarOutlineModelPort {
   readonly hasSymbols: boolean;
 }
 
-/** Optional narrow port for persisting the sidebar width across sessions (mirrors
- * `packages/workbench/session`'s own persisted-state fields). Left unwired by default --
- * no existing persistence slot for this was trivial to hook up, so the width is in-memory
- * only (defaults to `initialWidth`) unless a caller supplies one. */
+/** Persist only committed widths, never transient drag positions. */
 export interface SidebarWidthPersistencePort {
   readonly width: number | undefined;
   setWidth(width: number): void;
@@ -36,6 +34,10 @@ export interface SidebarControllerOptions {
   readonly outline: SidebarOutlineModelPort;
   readonly persistence?: SidebarWidthPersistencePort;
   readonly initialWidth?: number;
+  readonly initiallyVisible?: boolean;
+  readonly initialPanel?: SidebarPanelId;
+  readonly onPanelChange?: (panel: SidebarPanelId) => void;
+  readonly onVisibilityChange?: (visible: boolean) => void;
   /** Which top tab is active; defaults to 'files' when absent. */
   readonly panelState?: () => SidebarPanelId;
   /** Clamped 22-40 cells (docs/plan/03-ux.md:11). */
@@ -66,6 +68,8 @@ export class SidebarController {
   #hadSymbols: boolean;
   #width: number;
   #resizing = false;
+  #visible = true;
+  #lastPanel: SidebarPanelId = 'files';
   // readModel() is called many times per keystroke (layout, sidebar paint, ...); memoize by a
   // cheap key of the fields it reads so unchanged state returns the same frozen object instead
   // of allocating four new ones every call.
@@ -75,6 +79,8 @@ export class SidebarController {
 
   constructor(options: SidebarControllerOptions) {
     this.#options = options;
+    this.#visible = options.initiallyVisible ?? true;
+    this.#lastPanel = options.initialPanel ?? 'files';
     this.#minimumWidth = options.minimumWidth ?? 22;
     this.#maximumWidth = options.maximumWidth ?? 40;
     const initial = options.persistence?.width ?? options.initialWidth ?? 28;
@@ -85,6 +91,19 @@ export class SidebarController {
 
   get activeSection(): SidebarSectionId { return this.#activeSection; }
   get width(): number { return this.#width; }
+  get visible(): boolean { return this.#visible; }
+  get lastPanel(): SidebarPanelId { return this.#lastPanel; }
+  setPanel(panel: SidebarPanelId): void {
+    if (panel === this.#lastPanel) return;
+    this.#lastPanel = panel;
+    this.#options.onPanelChange?.(panel);
+  }
+  setVisible(visible: boolean): void {
+    if (visible === this.#visible) return;
+    if (!visible && this.#visible) this.setPanel(this.#options.panelState?.() ?? this.#lastPanel);
+    this.#visible = visible;
+    this.#options.onVisibilityChange?.(visible);
+  }
 
   setActiveSection(id: SidebarSectionId): void {
     this.#activeSection = id;
@@ -134,8 +153,8 @@ export class SidebarController {
   }
 
   readModel(): SidebarReadModel {
-    const panel = this.#options.panelState?.() ?? 'files';
-    const key = `${this.#filesExpanded}|${this.#outlineExpanded}|${this.#activeSection}|${this.#width}|${panel}`;
+    const panel = this.#visible ? this.#options.panelState?.() ?? 'files' : this.#lastPanel;
+    const key = `${this.#visible}|${this.#filesExpanded}|${this.#outlineExpanded}|${this.#activeSection}|${this.#width}|${panel}`;
     if (this.#cachedModel !== undefined && this.#cachedModelKey === key) return this.#cachedModel;
     const model = Object.freeze({
       sections: Object.freeze([
@@ -145,6 +164,7 @@ export class SidebarController {
       activeSection: this.#activeSection,
       panel,
       width: this.#width,
+      visible: this.#visible,
     });
     this.#cachedModel = model;
     this.#cachedModelKey = key;

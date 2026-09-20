@@ -1,16 +1,22 @@
-import { TextAttributes, type OptimizedBuffer, type RGBA } from '@opentui/core/renderer';
-import type { CellPoint, ProjectedSelection, ScreenRow, VisibleFrame } from '../../layout/src/index';
-import type { MotionPaintTokens, EditorColorMode } from '../theme/motion-tokens';
-import { resolvePaintColor, pickCursorForeground } from '../theme/motion-tokens';
-import type { SyntaxRead, SyntaxSpan, SyntaxTokenKind } from '../../contracts/src/index';
+import { TextAttributes, type OptimizedBuffer, type RGBA } from "@opentui/core/renderer";
+import type {
+  CellPoint,
+  ProjectedSelection,
+  ScreenRow,
+  VisibleFrame,
+} from "../../layout/src/index";
+import type { MotionPaintTokens, EditorColorMode } from "../theme/motion-tokens";
+import { resolvePaintColor, pickCursorForeground } from "../theme/motion-tokens";
+import type { HelixThemeStyle, ThemeColor } from "../theme/workbench-themes";
+import type { SyntaxRead, SyntaxSpan, SyntaxTokenKind } from "../../contracts/src/index";
 
 /** Structural read of Vim's immutable presentation output. The UI never imports Vim. */
 export interface MotionPreviewRead {
   readonly documentId: string;
   readonly documentVersion: number;
   readonly selectionGeneration: number;
-  readonly operatorKey: string;
-  readonly count: number;
+  readonly operatorKey?: string;
+  readonly count?: number;
   readonly members: readonly MotionPreviewMemberRead[];
 }
 
@@ -20,7 +26,7 @@ export interface MotionPreviewMemberRead {
   readonly destination: number;
   readonly moved: boolean;
   readonly extent: {
-    readonly kind: 'characterwise' | 'linewise';
+    readonly kind: "characterwise" | "linewise";
     readonly start: number;
     readonly end: number;
   };
@@ -36,7 +42,7 @@ export interface OperatorPreviewRead {
 
 export interface OperatorPreviewMemberRead {
   readonly memberId: string;
-  readonly kind: 'characterwise' | 'linewise' | 'blockwise';
+  readonly kind: "characterwise" | "linewise" | "blockwise";
   readonly start: number;
   readonly end: number;
 }
@@ -54,7 +60,7 @@ export interface EditorPresentationRead {
   readonly motionPreview?: MotionPreviewRead | null;
   readonly operatorPreview?: OperatorPreviewRead | null;
   readonly searchHighlight?: SearchHighlightRead | null;
-  readonly motionTrail?: 'off' | 'last-motion';
+  readonly motionTrail?: "off" | "last-motion";
   readonly reducedMotion?: boolean;
   readonly colorMode?: EditorColorMode;
 }
@@ -66,7 +72,7 @@ export interface EditorPresentationReadPort {
 export interface MotionPaintOptions {
   readonly frame: VisibleFrame;
   readonly presentation?: EditorPresentationRead;
-  readonly mode: 'normal' | 'insert' | 'visual' | string;
+  readonly mode: "normal" | "insert" | "visual" | string;
   readonly theme: MotionPaintTokens;
   readonly foreground: RGBA;
   readonly muted: RGBA;
@@ -80,7 +86,8 @@ export interface MotionPaintOptions {
    * for a row whose `syntaxFallbackRows` entry proves its text hasn't changed -- reused
    * from a still-stale read (see `SyntaxFallbackRow`). */
   readonly syntax?: SyntaxRead;
-  readonly syntaxColors?: Partial<Record<SyntaxTokenKind, string>>;
+  readonly syntaxColors?: Partial<Record<SyntaxTokenKind, ThemeColor>>;
+  readonly syntaxStyles?: Readonly<Record<string, HelixThemeStyle>>;
   /** Per-row (indexed like `frame.rows`) last-known-current syntax snapshot; see `SyntaxFallbackRow`. */
   readonly syntaxFallbackRows?: readonly (SyntaxFallbackRow | undefined)[];
   /** Optional half-open visible row range for damage-limited repainting. */
@@ -98,11 +105,67 @@ export interface MotionPaintStats {
   readonly rejectedStalePreview: boolean;
 }
 
-function resolveSyntaxColors(colors: Partial<Record<SyntaxTokenKind, string>> | undefined, colorMode: EditorColorMode): Map<SyntaxTokenKind, RGBA> {
-  const resolved = new Map<SyntaxTokenKind, RGBA>();
-  if (colors === undefined) return resolved;
-  for (const [kind, value] of Object.entries(colors)) {
-    if (value !== undefined) resolved.set(kind as SyntaxTokenKind, resolvePaintColor(value, colorMode));
+interface ResolvedSyntaxStyle {
+  readonly foreground?: RGBA;
+  readonly background?: RGBA;
+  readonly underlineColor?: RGBA;
+  readonly attributes: number;
+}
+
+function syntaxAttributes(style: HelixThemeStyle | undefined): number {
+  let attributes = 0;
+  for (const modifier of style?.modifiers ?? []) {
+    if (modifier === "bold") attributes |= TextAttributes.BOLD;
+    else if (modifier === "dim") attributes |= TextAttributes.DIM;
+    else if (modifier === "italic") attributes |= TextAttributes.ITALIC;
+    else if (modifier === "underlined") attributes |= TextAttributes.UNDERLINE;
+    else if (modifier === "slow_blink") attributes |= TextAttributes.BLINK;
+    else if (modifier === "rapid_blink") attributes |= TextAttributes.RAPID_BLINK;
+    else if (modifier === "reversed") attributes |= TextAttributes.INVERSE;
+    else if (modifier === "hidden") attributes |= TextAttributes.HIDDEN;
+    else if (modifier === "crossed_out") attributes |= TextAttributes.STRIKETHROUGH;
+  }
+  const underlineStyle = style?.underline?.style;
+  if (underlineStyle !== undefined) {
+    attributes |=
+      underlineStyle === "double_line"
+        ? TextAttributes.UNDERLINE | TextAttributes.UNDERLINE_STYLE_DOUBLE
+        : underlineStyle === "curl"
+          ? TextAttributes.UNDERLINE | TextAttributes.UNDERLINE_STYLE_CURL
+          : underlineStyle === "dotted"
+            ? TextAttributes.UNDERLINE | TextAttributes.UNDERLINE_STYLE_DOTTED
+            : underlineStyle === "dashed"
+              ? TextAttributes.UNDERLINE | TextAttributes.UNDERLINE_STYLE_DASHED
+              : TextAttributes.UNDERLINE;
+  }
+  return attributes;
+}
+
+function resolveSyntaxStyles(
+  colors: Partial<Record<SyntaxTokenKind, ThemeColor>> | undefined,
+  styles: Readonly<Record<string, HelixThemeStyle>> | undefined,
+  colorMode: EditorColorMode,
+): Map<string, ResolvedSyntaxStyle> {
+  const resolved = new Map<string, ResolvedSyntaxStyle>();
+  for (const kind of new Set([...Object.keys(colors ?? {}), ...Object.keys(styles ?? {})])) {
+    const style = styles?.[kind];
+    const foreground = style?.fg ?? colors?.[kind as SyntaxTokenKind];
+    const background = style?.bg;
+    resolved.set(
+      kind,
+      Object.freeze({
+        ...(foreground === undefined
+          ? {}
+          : { foreground: resolvePaintColor(foreground, colorMode) }),
+        ...(background === undefined
+          ? {}
+          : { background: resolvePaintColor(background, colorMode) }),
+        ...(style?.underline?.color === undefined
+          ? {}
+          : { underlineColor: resolvePaintColor(style.underline.color, colorMode) }),
+        attributes: syntaxAttributes(style),
+      }),
+    );
   }
   return resolved;
 }
@@ -111,31 +174,55 @@ function resolveSyntaxColors(colors: Partial<Record<SyntaxTokenKind, string>> | 
 // change (it comes straight from `theme.syntax`), so resolving it is memoized by
 // (colors, colorMode) instead of rebuilt on every `drawFrame` call -- one call per paint
 // range, several ranges per frame, every frame.
-const syntaxColorCache = new WeakMap<Partial<Record<SyntaxTokenKind, string>>, Map<EditorColorMode, Map<SyntaxTokenKind, RGBA>>>();
+const syntaxStyleCache = new WeakMap<
+  object,
+  Map<EditorColorMode, Map<string, ResolvedSyntaxStyle>>
+>();
 
-function resolveSyntaxColorsCached(colors: Partial<Record<SyntaxTokenKind, string>> | undefined, colorMode: EditorColorMode): Map<SyntaxTokenKind, RGBA> {
-  if (colors === undefined) return resolveSyntaxColors(colors, colorMode);
-  let byMode = syntaxColorCache.get(colors);
-  if (byMode === undefined) { byMode = new Map(); syntaxColorCache.set(colors, byMode); }
+function resolveSyntaxStylesCached(
+  colors: Partial<Record<SyntaxTokenKind, ThemeColor>> | undefined,
+  styles: Readonly<Record<string, HelixThemeStyle>> | undefined,
+  colorMode: EditorColorMode,
+): Map<string, ResolvedSyntaxStyle> {
+  const source = styles ?? colors;
+  if (source === undefined) return resolveSyntaxStyles(colors, styles, colorMode);
+  let byMode = syntaxStyleCache.get(source);
+  if (byMode === undefined) {
+    byMode = new Map();
+    syntaxStyleCache.set(source, byMode);
+  }
   let resolved = byMode.get(colorMode);
-  if (resolved === undefined) { resolved = resolveSyntaxColors(colors, colorMode); byMode.set(colorMode, resolved); }
+  if (resolved === undefined) {
+    resolved = resolveSyntaxStyles(colors, styles, colorMode);
+    byMode.set(colorMode, resolved);
+  }
   return resolved;
 }
 
 /** True when the active syntax read's version matches the painted frame's document version. */
 function syntaxIsCurrent(frame: VisibleFrame, syntax: SyntaxRead | undefined): boolean {
-  return syntax !== undefined && (frame.identity.documentVersion as unknown as number) === (syntax.documentVersion as unknown as number);
+  return (
+    syntax !== undefined &&
+    (frame.identity.documentVersion as unknown as number) ===
+      (syntax.documentVersion as unknown as number)
+  );
 }
 
 /** Bounded, run-based per-row cursor over one row's sorted syntax spans (no per-cell allocation). */
 class RowSyntaxCursor {
   readonly #spans: readonly SyntaxSpan[];
   #index = 0;
-  constructor(spans: readonly SyntaxSpan[]) { this.#spans = spans; }
-  kindAt(offset: number): SyntaxTokenKind | undefined {
-    while (this.#index < this.#spans.length && (this.#spans[this.#index] as SyntaxSpan).end <= offset) this.#index += 1;
+  constructor(spans: readonly SyntaxSpan[]) {
+    this.#spans = spans;
+  }
+  spanAt(offset: number): SyntaxSpan | undefined {
+    while (
+      this.#index < this.#spans.length &&
+      (this.#spans[this.#index] as SyntaxSpan).end <= offset
+    )
+      this.#index += 1;
     const span = this.#spans[this.#index];
-    return span !== undefined && span.start <= offset && offset < span.end ? span.kind : undefined;
+    return span !== undefined && span.start <= offset && offset < span.end ? span : undefined;
   }
 }
 
@@ -150,7 +237,12 @@ export interface SyntaxFallbackRow {
   readonly text: string;
 }
 
-function rowSyntaxCursor(frame: VisibleFrame, row: ScreenRow, syntax: SyntaxRead | undefined, fallback?: SyntaxFallbackRow): RowSyntaxCursor | undefined {
+function rowSyntaxCursor(
+  frame: VisibleFrame,
+  row: ScreenRow,
+  syntax: SyntaxRead | undefined,
+  fallback?: SyntaxFallbackRow,
+): RowSyntaxCursor | undefined {
   if (syntax === undefined) return undefined;
   const start = row.startOffset as number | null;
   const end = row.endOffset as number | null;
@@ -164,19 +256,117 @@ function rowSyntaxCursor(frame: VisibleFrame, row: ScreenRow, syntax: SyntaxRead
   // has not changed since. A row whose offset shifted (later lines, after an edit) or
   // whose text changed (the edited row itself) fails the match and stays uncolored for
   // this one frame, exactly like today, until the next parse lands.
-  if (fallback !== undefined && fallback.startOffset === start && fallback.endOffset === end && fallback.text === row.text) {
+  if (
+    fallback !== undefined &&
+    fallback.startOffset === start &&
+    fallback.endOffset === end &&
+    fallback.text === row.text
+  ) {
     return new RowSyntaxCursor(syntax.spansInRange(start, end));
   }
   return undefined;
 }
 
-function syntaxForeground(cell: ScreenRow['cells'][number], cursor: RowSyntaxCursor | undefined, colors: Map<SyntaxTokenKind, RGBA> | undefined, base: RGBA): RGBA {
-  if (cursor === undefined || colors === undefined || cell.role === 'padding' || cell.role === 'gutter') return base;
+function styleForScope(
+  styles: Map<string, ResolvedSyntaxStyle> | undefined,
+  scope: string,
+): ResolvedSyntaxStyle | undefined {
+  if (styles === undefined) return undefined;
+  let candidate = scope;
+  while (candidate.length > 0) {
+    const style = styles.get(candidate);
+    if (style !== undefined) return style;
+    candidate = candidate.slice(0, candidate.lastIndexOf("."));
+  }
+  return undefined;
+}
+
+function syntaxStyle(
+  cell: ScreenRow["cells"][number],
+  cursor: RowSyntaxCursor | undefined,
+  styles: Map<string, ResolvedSyntaxStyle> | undefined,
+): ResolvedSyntaxStyle | undefined {
+  if (
+    cursor === undefined ||
+    styles === undefined ||
+    cell.role === "padding" ||
+    cell.role === "gutter"
+  )
+    return undefined;
   const target = cell.target;
-  if (target === null || target.kind !== 'text') return base;
-  const kind = cursor.kindAt(target.offset as unknown as number);
-  if (kind === undefined) return base;
-  return colors.get(kind) ?? base;
+  if (target === null || target.kind !== "text") return undefined;
+  const span = cursor.spanAt(target.offset as unknown as number);
+  if (span === undefined) return undefined;
+  return styleForScope(styles, span.scope ?? span.kind) ?? styles?.get(span.kind);
+}
+
+function cursorScope(primary: boolean, mode: string, selected: boolean): string {
+  const modeScope =
+    mode === "insert" ? "insert" : mode === "visual" || mode === "select" ? "select" : "normal";
+  if (primary) return selected ? "ui.cursor.primary.select" : `ui.cursor.primary.${modeScope}`;
+  return selected ? "ui.cursor.select" : `ui.cursor.${modeScope}`;
+}
+
+function cursorStyle(
+  styles: Map<string, ResolvedSyntaxStyle> | undefined,
+  primary: boolean,
+  mode: string,
+  selected: boolean,
+): ResolvedSyntaxStyle | undefined {
+  if (primary) return styleForScope(styles, cursorScope(true, mode, selected));
+  return (
+    styleForScope(
+      styles,
+      selected
+        ? "ui.cursor.secondary.select"
+        : `ui.cursor.secondary.${mode === "insert" ? "insert" : mode === "visual" || mode === "select" ? "select" : "normal"}`,
+    ) ?? styleForScope(styles, cursorScope(false, mode, selected))
+  );
+}
+
+interface CursorPoints {
+  readonly primary: CellPoint | undefined;
+  readonly secondary: readonly CellPoint[];
+}
+
+function cursorPoints(frame: VisibleFrame): CursorPoints {
+  let primary: CellPoint | undefined;
+  const secondary: CellPoint[] = [];
+  for (const selection of frame.selections) {
+    if (selection.head.position === null) continue;
+    if (selection.primary) primary = selection.head.position;
+    else secondary.push(selection.head.position);
+  }
+  return { primary, secondary };
+}
+
+function lineNumberStyle(
+  styles: Map<string, ResolvedSyntaxStyle> | undefined,
+  row: number,
+  cursors: CursorPoints,
+): ResolvedSyntaxStyle | undefined {
+  if (cursors.primary?.row === row)
+    return (
+      styleForScope(styles, "ui.linenr.selected") ??
+      styleForScope(styles, "ui.gutter.selected") ??
+      styleForScope(styles, "ui.linenr") ??
+      styleForScope(styles, "ui.gutter")
+    );
+  return styleForScope(styles, "ui.linenr") ?? styleForScope(styles, "ui.gutter");
+}
+
+function cursorGuideStyle(
+  styles: Map<string, ResolvedSyntaxStyle> | undefined,
+  row: number,
+  cursors: CursorPoints,
+): ResolvedSyntaxStyle | undefined {
+  if (cursors.primary?.row === row)
+    return styleForScope(styles, "ui.cursorline.primary") ?? styleForScope(styles, "ui.cursorline");
+  if (cursors.secondary.some((cursor) => cursor.row === row))
+    return (
+      styleForScope(styles, "ui.cursorline.secondary") ?? styleForScope(styles, "ui.cursorline")
+    );
+  return undefined;
 }
 
 const PAINT_PRIMARY_SELECTION = 1;
@@ -189,15 +379,30 @@ const PAINT_SEARCH = 16;
  * Paint one visible frame in strict layer order. All range work is bounded by
  * frame.rows/cells, so a long document or off-screen selection is never scanned.
  */
-export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOptions): MotionPaintStats {
+export function paintEditorFrame(
+  buffer: OptimizedBuffer,
+  options: MotionPaintOptions,
+): MotionPaintStats {
   // @xi-perf H1 RENDER-120 -- Per-cell damage paint issuing native buffer writes; mask lookups are scalar, no retained per-cell object.
   const colorMode = options.presentation?.colorMode ?? options.colorMode;
   const rowRange = paintRowRange(options.frame, options.rows);
   if (canPaintPlainFrameCached(options.frame, options.presentation)) {
     return paintPlainFrame(buffer, options, rowRange);
   }
-  const masks = buildPaintMasks(options.frame, options.presentation, options.mode, colorMode, rowRange);
-  const syntaxColors = colorMode === 'no-color' ? undefined : resolveSyntaxColorsCached(options.syntaxColors, colorMode);
+  const masks = buildPaintMasks(
+    options.frame,
+    options.presentation,
+    options.mode,
+    colorMode,
+    rowRange,
+  );
+  const syntaxStyles =
+    colorMode === "no-color"
+      ? undefined
+      : resolveSyntaxStylesCached(options.syntaxColors, options.syntaxStyles, colorMode);
+  const searchStyle = styleForScope(syntaxStyles, "ui.highlight");
+  const primarySelectionStyle = styleForScope(syntaxStyles, "ui.selection.primary");
+  const secondarySelectionStyle = styleForScope(syntaxStyles, "ui.selection");
   const colors = {
     trail: resolvePaintColor(options.theme.motionTrail, colorMode),
     operator: resolvePaintColor(options.theme.operatorPreview, colorMode),
@@ -208,6 +413,7 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
     cursorSecondary: resolvePaintColor(options.theme.cursorSecondary, colorMode),
     cursorOnSelection: resolvePaintColor(options.theme.cursorOnSelection, colorMode),
   };
+  const cursors = cursorPoints(options.frame);
   // Cursor heads within the painted range, keyed like `masks.cells`, so the per-cell loop
   // below can paint the real glyph under the cursor (instead of a second pass stomping it
   // with a marker) while still seeing that cell's own selection/trail/operator state.
@@ -225,7 +431,15 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
     const row = options.frame.rows[rowIndex];
     if (row === undefined) continue;
     const rowY = options.y + rowIndex;
-    const syntaxCursor = syntaxColors === undefined ? undefined : rowSyntaxCursor(options.frame, row, options.syntax, options.syntaxFallbackRows?.[rowIndex]);
+    const syntaxCursor =
+      syntaxStyles === undefined
+        ? undefined
+        : rowSyntaxCursor(
+            options.frame,
+            row,
+            options.syntax,
+            options.syntaxFallbackRows?.[rowIndex],
+          );
     for (let column = 0; column < row.cells.length; column += 1) {
       const cell = row.cells[column];
       if (cell === undefined) continue;
@@ -240,14 +454,43 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
       if (secondarySelection) secondarySelectedCells += 1;
       if (trail) trailCells += 1;
       if (operator) operatorPreviewCells += 1;
-      let background = options.background;
-      let attributes = 0;
+      const style = syntaxStyle(cell, syntaxCursor, syntaxStyles);
+      const guide = cursorGuideStyle(syntaxStyles, rowIndex, cursors);
+      const gutter =
+        cell.role === "gutter" ? lineNumberStyle(syntaxStyles, rowIndex, cursors) : undefined;
+      let foreground = cell.role === "gutter"
+        ? (gutter?.foreground ?? options.muted)
+        : (guide?.foreground ?? style?.foreground ?? options.foreground);
+      let background = gutter?.background ?? guide?.background ?? style?.background ?? options.background;
+      let attributes =
+        (style?.attributes ?? 0) | (guide?.attributes ?? 0) | (gutter?.attributes ?? 0);
+      let underlineColor = colorMode === "no-color"
+        ? undefined
+        : (gutter?.underlineColor ?? guide?.underlineColor ?? style?.underlineColor);
       if (trail) background = colors.trail;
-      if (search) background = colors.search;
-      if (operator) { background = colors.operator; attributes = TextAttributes.UNDERLINE; }
-      if (secondarySelection) { background = colors.secondarySelection; attributes = TextAttributes.BOLD; }
-      if (primarySelection) { background = colors.primarySelection; attributes = TextAttributes.BOLD; }
-      if (colorMode === 'no-color') {
+      if (search) {
+        foreground = searchStyle?.foreground ?? foreground;
+        background = searchStyle?.background ?? colors.search;
+        attributes |= searchStyle?.attributes ?? 0;
+        underlineColor = searchStyle?.underlineColor ?? underlineColor;
+      }
+      if (operator) {
+        background = colors.operator;
+        attributes |= TextAttributes.UNDERLINE;
+      }
+      if (secondarySelection) {
+        foreground = secondarySelectionStyle?.foreground ?? foreground;
+        background = secondarySelectionStyle?.background ?? colors.secondarySelection;
+        attributes |= secondarySelectionStyle?.attributes ?? 0;
+        underlineColor = secondarySelectionStyle?.underlineColor ?? underlineColor;
+      }
+      if (primarySelection) {
+        foreground = primarySelectionStyle?.foreground ?? foreground;
+        background = primarySelectionStyle?.background ?? colors.primarySelection;
+        attributes |= primarySelectionStyle?.attributes ?? 0;
+        underlineColor = primarySelectionStyle?.underlineColor ?? underlineColor;
+      }
+      if (colorMode === "no-color") {
         background = options.background;
         if (trail) attributes |= TextAttributes.DIM;
         if (search) attributes |= TextAttributes.BOLD | TextAttributes.UNDERLINE;
@@ -255,26 +498,44 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
         if (secondarySelection) attributes |= TextAttributes.UNDERLINE;
         if (primarySelection) attributes |= TextAttributes.INVERSE;
       }
-      let foreground = cell.role === 'gutter' ? options.muted : syntaxForeground(cell, syntaxCursor, syntaxColors, options.foreground);
       const cursorInfo = cursorCells.get(key);
       if (cursorInfo !== undefined) {
-        if (colorMode === 'no-color') {
+        if (colorMode === "no-color") {
           attributes |= cursorInfo.primary ? TextAttributes.INVERSE : TextAttributes.UNDERLINE;
-        } else if (options.mode === 'insert') {
-          // Thin bar-style caret: keep the real glyph and its color, only mark the
-          // position, so it reads as distinct from the solid Normal/Visual block below.
-          attributes |= TextAttributes.UNDERLINE;
         } else {
           const onSelection = primarySelection || secondarySelection;
-          const cursorBackground = onSelection ? colors.cursorOnSelection : (cursorInfo.primary ? colors.cursorPrimary : colors.cursorSecondary);
-          foreground = pickCursorForeground(foreground, cursorBackground, options.foreground, options.background);
-          background = cursorBackground;
-          attributes = TextAttributes.BOLD;
+          const styleForCursor = cursorStyle(
+            syntaxStyles,
+            cursorInfo.primary,
+            options.mode,
+            onSelection,
+          );
+          if (styleForCursor !== undefined) {
+            foreground = styleForCursor.foreground ?? foreground;
+            background = styleForCursor.background ?? background;
+            attributes |= styleForCursor.attributes;
+            underlineColor = styleForCursor.underlineColor ?? underlineColor;
+          } else if (options.mode === "insert") {
+            attributes |= TextAttributes.UNDERLINE;
+          } else {
+            const cursorBackground = onSelection
+              ? colors.cursorOnSelection
+              : cursorInfo.primary ? colors.cursorPrimary : colors.cursorSecondary;
+            foreground = pickCursorForeground(
+              foreground,
+              cursorBackground,
+              options.foreground,
+              options.background,
+            );
+            background = cursorBackground;
+            attributes |= TextAttributes.BOLD;
+          }
         }
       }
       buffer.fillRect(options.x + column, rowY, 1, 1, background);
       if (cell.text.length > 0) {
         buffer.setCell(options.x + column, rowY, cell.text, foreground, background, attributes);
+        if (underlineColor !== undefined) buffer.setUnderlineColor(options.x + column, rowY, underlineColor);
       }
     }
   }
@@ -307,9 +568,15 @@ export function paintEditorFrame(buffer: OptimizedBuffer, options: MotionPaintOp
 // render (see workbench.ts's per-range loop); `frame`/`presentation` are identical
 // across those calls, so a full rows*cells scan per range is pure waste. Memoize
 // by frame identity, one entry per rendered frame object.
-const plainFrameCache = new WeakMap<VisibleFrame, { readonly presentation: EditorPresentationRead | undefined; readonly result: boolean }>();
+const plainFrameCache = new WeakMap<
+  VisibleFrame,
+  { readonly presentation: EditorPresentationRead | undefined; readonly result: boolean }
+>();
 
-function canPaintPlainFrameCached(frame: VisibleFrame, presentation: EditorPresentationRead | undefined): boolean {
+function canPaintPlainFrameCached(
+  frame: VisibleFrame,
+  presentation: EditorPresentationRead | undefined,
+): boolean {
   const cached = plainFrameCache.get(frame);
   if (cached !== undefined && cached.presentation === presentation) return cached.result;
   const result = canPaintPlainFrame(frame, presentation);
@@ -334,7 +601,10 @@ function isRowPlain(row: ScreenRow): boolean {
   }
   let plain = true;
   for (const cell of row.cells) {
-    if (cell.text.length !== 1) { plain = false; break; }
+    if (cell.text.length !== 1) {
+      plain = false;
+      break;
+    }
   }
   if (key !== null) {
     if (rowPlainCache.size >= ROW_PLAIN_CACHE_CAP) {
@@ -347,14 +617,22 @@ function isRowPlain(row: ScreenRow): boolean {
 }
 
 /** Exported for direct unit testing of the plain-paint fast path (see tests/ui). */
-export function canPaintPlainFrame(frame: VisibleFrame, presentation: EditorPresentationRead | undefined): boolean {
-  if (presentation?.motionPreview != null || presentation?.operatorPreview != null || presentation?.searchHighlight != null) return false;
+export function canPaintPlainFrame(
+  frame: VisibleFrame,
+  presentation: EditorPresentationRead | undefined,
+): boolean {
+  if (
+    presentation?.motionPreview != null ||
+    presentation?.operatorPreview != null ||
+    presentation?.searchHighlight != null
+  )
+    return false;
   for (const selection of frame.selections) {
     // Only a visual-* selection ever populates `buildPaintMasks`' cell map (see
     // `markSelectionCells`); a plain cursor -- normal mode's block or insert mode's
     // caret, drawn afterward by `paintPlainFrame` itself -- never does, so both are
     // safe to run through the plain per-row path with an empty mask set.
-    if (selection.kind !== 'normal-cursor' && selection.kind !== 'insert-caret') return false;
+    if (selection.kind !== "normal-cursor" && selection.kind !== "insert-caret") return false;
   }
   for (const row of frame.rows) {
     if (!isRowPlain(row)) return false;
@@ -362,50 +640,115 @@ export function canPaintPlainFrame(frame: VisibleFrame, presentation: EditorPres
   return true;
 }
 
-/** The glyph and its own (non-cursor) resolved foreground at a cursor's cell, so the
- * cursor overlay paints the real character instead of stomping it with a marker glyph. */
-function cursorGlyphAndForeground(
+/** The non-cursor style at a cursor's cell, so the overlay patches the real glyph/style. */
+function cursorCellStyle(
   frame: VisibleFrame,
+  rowIndex: number,
   column: number,
   row: ScreenRow | undefined,
   syntax: SyntaxRead | undefined,
   fallback: SyntaxFallbackRow | undefined,
-  syntaxColors: Map<SyntaxTokenKind, RGBA> | undefined,
+  syntaxStyles: Map<string, ResolvedSyntaxStyle> | undefined,
+  cursors: CursorPoints,
   muted: RGBA,
-  base: RGBA,
-): { readonly glyph: string; readonly foreground: RGBA } {
+  foreground: RGBA,
+  background: RGBA,
+): { readonly glyph: string; readonly foreground: RGBA; readonly background: RGBA; readonly attributes: number; readonly underlineColor?: RGBA } {
   const cell = row?.cells[column];
-  if (row === undefined || cell === undefined) return { glyph: ' ', foreground: base };
-  const cursor = syntaxColors === undefined ? undefined : rowSyntaxCursor(frame, row, syntax, fallback);
-  return { glyph: cell.text, foreground: cell.role === 'gutter' ? muted : syntaxForeground(cell, cursor, syntaxColors, base) };
+  if (row === undefined || cell === undefined) return { glyph: " ", foreground, background, attributes: 0 };
+  const cursor =
+    syntaxStyles === undefined ? undefined : rowSyntaxCursor(frame, row, syntax, fallback);
+  const style = syntaxStyle(cell, cursor, syntaxStyles);
+  const guide = cursorGuideStyle(syntaxStyles, rowIndex, cursors);
+  const underlineColor = guide?.underlineColor ?? style?.underlineColor;
+  return {
+    glyph: cell.text,
+    foreground: cell.role === "gutter" ? muted : (guide?.foreground ?? style?.foreground ?? foreground),
+    background: guide?.background ?? style?.background ?? background,
+    attributes: (style?.attributes ?? 0) | (guide?.attributes ?? 0),
+    ...(underlineColor === undefined ? {} : { underlineColor }),
+  };
 }
 
-function paintPlainFrame(buffer: OptimizedBuffer, options: MotionPaintOptions, rowRange: PaintRowRange): MotionPaintStats {
+function paintPlainFrame(
+  buffer: OptimizedBuffer,
+  options: MotionPaintOptions,
+  rowRange: PaintRowRange,
+): MotionPaintStats {
   // @xi-perf H1 RENDER-120 -- Per-cell run-coalesced plain paint; run buffers are bounded per row, not per cell.
   const colors = {
     cursorPrimary: resolvePaintColor(options.theme.cursorPrimary, options.colorMode),
     cursorSecondary: resolvePaintColor(options.theme.cursorSecondary, options.colorMode),
   };
-  const syntaxColors = options.colorMode === 'no-color' ? undefined : resolveSyntaxColorsCached(options.syntaxColors, options.colorMode);
+  const syntaxStyles =
+    options.colorMode === "no-color"
+      ? undefined
+      : resolveSyntaxStylesCached(options.syntaxColors, options.syntaxStyles, options.colorMode);
+  const cursors = cursorPoints(options.frame);
   for (let rowIndex = rowRange.start; rowIndex < rowRange.end; rowIndex += 1) {
     const row = options.frame.rows[rowIndex];
     if (row === undefined || row.cells.length === 0) continue;
-    const syntaxCursor = syntaxColors === undefined ? undefined : rowSyntaxCursor(options.frame, row, options.syntax, options.syntaxFallbackRows?.[rowIndex]);
+    const syntaxCursor =
+      syntaxStyles === undefined
+        ? undefined
+        : rowSyntaxCursor(
+            options.frame,
+            row,
+            options.syntax,
+            options.syntaxFallbackRows?.[rowIndex],
+          );
     let runStart = 0;
     let runForeground = options.foreground;
+    let runBackground = options.background;
+    let runAttributes = 0;
+    let runUnderlineColor: RGBA | undefined;
     const runText: string[] = [];
     const flush = (column: number): void => {
-      if (runText.length > 0) buffer.drawText(runText.join(''), options.x + runStart, options.y + rowIndex, runForeground, options.background, 0);
+      if (runText.length > 0) {
+        buffer.drawText(
+          runText.join(""),
+          options.x + runStart,
+          options.y + rowIndex,
+          runForeground,
+          runBackground,
+          runAttributes,
+        );
+        if (runUnderlineColor !== undefined) {
+          for (let cursor = runStart; cursor < column; cursor += 1) {
+            buffer.setUnderlineColor(options.x + cursor, options.y + rowIndex, runUnderlineColor);
+          }
+        }
+      }
       runStart = column;
       runText.length = 0;
     };
     for (let column = 0; column < row.cells.length; column += 1) {
       const cell = row.cells[column];
       if (cell === undefined) continue;
-      const foreground = cell.role === 'gutter' ? options.muted : syntaxForeground(cell, syntaxCursor, syntaxColors, options.foreground);
-      if (foreground !== runForeground) {
+      const style = syntaxStyle(cell, syntaxCursor, syntaxStyles);
+      const guide = cursorGuideStyle(syntaxStyles, rowIndex, cursors);
+      const gutter =
+        cell.role === "gutter" ? lineNumberStyle(syntaxStyles, rowIndex, cursors) : undefined;
+      const foreground =
+        cell.role === "gutter"
+          ? (gutter?.foreground ?? options.muted)
+          : (guide?.foreground ?? style?.foreground ?? options.foreground);
+      const background =
+        gutter?.background ?? guide?.background ?? style?.background ?? options.background;
+      const attributes =
+        (style?.attributes ?? 0) | (guide?.attributes ?? 0) | (gutter?.attributes ?? 0);
+      const underlineColor = gutter?.underlineColor ?? guide?.underlineColor ?? style?.underlineColor;
+      if (
+        foreground !== runForeground ||
+        background !== runBackground ||
+        attributes !== runAttributes ||
+        underlineColor !== runUnderlineColor
+      ) {
         flush(column);
         runForeground = foreground;
+        runBackground = background;
+        runAttributes = attributes;
+        runUnderlineColor = underlineColor;
       }
       runText.push(cell.text);
     }
@@ -417,20 +760,56 @@ function paintPlainFrame(buffer: OptimizedBuffer, options: MotionPaintOptions, r
     const point = selection.head.position;
     if (point === null || point.row < rowRange.start || point.row >= rowRange.end) continue;
     const row = options.frame.rows[point.row];
-    const { glyph, foreground: tokenForeground } = cursorGlyphAndForeground(
-      options.frame, point.column, row, options.syntax, options.syntaxFallbackRows?.[point.row], syntaxColors, options.muted, options.foreground,
+    const base = cursorCellStyle(
+      options.frame,
+      point.row,
+      point.column,
+      row,
+      options.syntax,
+      options.syntaxFallbackRows?.[point.row],
+      syntaxStyles,
+      cursors,
+      options.muted,
+      options.foreground,
+      options.background,
     );
-    if (options.colorMode === 'no-color') {
-      const attributes = selection.primary ? TextAttributes.INVERSE : TextAttributes.UNDERLINE;
-      buffer.setCell(options.x + point.column, options.y + point.row, glyph, tokenForeground, options.background, attributes);
-    } else if (options.mode === 'insert') {
-      // Thin bar-style caret: real glyph, its own color, just underlined -- distinct
-      // from the solid Normal/Visual block cursor below.
-      buffer.setCell(options.x + point.column, options.y + point.row, glyph, tokenForeground, options.background, TextAttributes.UNDERLINE);
+    if (options.colorMode === "no-color") {
+      const attributes = base.attributes | (selection.primary ? TextAttributes.INVERSE : TextAttributes.UNDERLINE);
+      buffer.setCell(
+        options.x + point.column,
+        options.y + point.row,
+        base.glyph,
+        base.foreground,
+        base.background,
+        attributes,
+      );
     } else {
-      const cursorBackground = selection.primary ? colors.cursorPrimary : colors.cursorSecondary;
-      const foreground = pickCursorForeground(tokenForeground, cursorBackground, options.foreground, options.background);
-      buffer.setCell(options.x + point.column, options.y + point.row, glyph, foreground, cursorBackground, TextAttributes.BOLD);
+      const styleForCursor = cursorStyle(syntaxStyles, selection.primary, options.mode, false);
+      if (styleForCursor !== undefined) {
+        buffer.setCell(
+          options.x + point.column,
+          options.y + point.row,
+          base.glyph,
+          styleForCursor.foreground ?? base.foreground,
+          styleForCursor.background ?? base.background,
+          base.attributes | styleForCursor.attributes,
+        );
+        const underlineColor = styleForCursor.underlineColor ?? base.underlineColor;
+        if (underlineColor !== undefined) buffer.setUnderlineColor(options.x + point.column, options.y + point.row, underlineColor);
+      } else if (options.mode === "insert") {
+        buffer.setCell(options.x + point.column, options.y + point.row, base.glyph, base.foreground, base.background, base.attributes | TextAttributes.UNDERLINE);
+        if (base.underlineColor !== undefined) buffer.setUnderlineColor(options.x + point.column, options.y + point.row, base.underlineColor);
+      } else {
+        const cursorBackground = selection.primary ? colors.cursorPrimary : colors.cursorSecondary;
+        const foreground = pickCursorForeground(
+          base.foreground,
+          cursorBackground,
+          options.foreground,
+          options.background,
+        );
+        buffer.setCell(options.x + point.column, options.y + point.row, base.glyph, foreground, cursorBackground, base.attributes | TextAttributes.BOLD);
+        if (base.underlineColor !== undefined) buffer.setUnderlineColor(options.x + point.column, options.y + point.row, base.underlineColor);
+      }
     }
     if (selection.primary) primaryCursor = Object.freeze({ row: point.row, column: point.column });
     else secondaryCursors += 1;
@@ -466,40 +845,72 @@ function buildPaintMasks(
     cells.set(key, (cells.get(key) ?? 0) | bit);
   };
   for (const selection of frame.selections) {
-    const isVisual = selection.kind === 'visual-character' || selection.kind === 'visual-line' || selection.kind === 'visual-block';
+    const isVisual =
+      selection.kind === "visual-character" ||
+      selection.kind === "visual-line" ||
+      selection.kind === "visual-block";
     if (!isVisual) continue;
-    markSelectionCells(frame, selection, selection.primary ? PAINT_PRIMARY_SELECTION : PAINT_SECONDARY_SELECTION, setMask, rowRange);
+    markSelectionCells(
+      frame,
+      selection,
+      selection.primary ? PAINT_PRIMARY_SELECTION : PAINT_SECONDARY_SELECTION,
+      setMask,
+      rowRange,
+    );
   }
   const identity = frame.identity;
   let rejectedStalePreview = false;
   const motion = presentation?.motionPreview;
-  const trailMode = presentation?.motionTrail ?? 'off';
-  const trailAllowed = trailMode === 'last-motion' && mode === 'normal' && presentation?.reducedMotion !== false && colorMode !== 'no-color';
+  const trailMode = presentation?.motionTrail ?? "off";
+  const trailAllowed =
+    trailMode === "last-motion" &&
+    mode === "normal" &&
+    presentation?.reducedMotion !== false &&
+    colorMode !== "no-color";
   if (motion !== undefined && motion !== null) {
-    const valid = motion.documentId === identity.documentId
-      && motion.documentVersion === identity.documentVersion
-      && motion.selectionGeneration === identity.selectionGeneration;
+    const valid =
+      motion.documentId === identity.documentId &&
+      motion.documentVersion === identity.documentVersion &&
+      motion.selectionGeneration === identity.selectionGeneration;
     if (!valid) rejectedStalePreview = true;
     if (valid && trailAllowed) {
       for (const member of motion.members) {
-        paintOffsetRange(frame, member.extent.start, member.extent.end, (row, column) => setMask(row, column, PAINT_TRAIL), rowRange);
+        paintOffsetRange(
+          frame,
+          member.extent.start,
+          member.extent.end,
+          (row, column) => setMask(row, column, PAINT_TRAIL),
+          rowRange,
+        );
       }
     }
   }
   const operator = presentation?.operatorPreview;
   if (operator !== undefined && operator !== null) {
-    const valid = operator.documentId === identity.documentId
-      && operator.documentVersion === identity.documentVersion
-      && operator.selectionGeneration === identity.selectionGeneration;
+    const valid =
+      operator.documentId === identity.documentId &&
+      operator.documentVersion === identity.documentVersion &&
+      operator.selectionGeneration === identity.selectionGeneration;
     if (!valid) rejectedStalePreview = true;
     if (valid) {
       for (const member of operator.members) {
-        paintOffsetRange(frame, member.start, member.end, (row, column) => setMask(row, column, PAINT_OPERATOR), rowRange);
+        paintOffsetRange(
+          frame,
+          member.start,
+          member.end,
+          (row, column) => setMask(row, column, PAINT_OPERATOR),
+          rowRange,
+        );
       }
     }
   }
   const search = presentation?.searchHighlight;
-  if (search !== undefined && search !== null && search.documentId === identity.documentId && search.documentVersion === identity.documentVersion) {
+  if (
+    search !== undefined &&
+    search !== null &&
+    search.documentId === identity.documentId &&
+    search.documentVersion === identity.documentVersion
+  ) {
     // Ranges are sorted by start; only the ones overlapping the painted rows cost anything.
     const firstRow = frame.rows[rowRange.start];
     const lastRow = frame.rows[rowRange.end - 1];
@@ -508,10 +919,20 @@ function buildPaintMasks(
     for (const range of search.ranges) {
       if (range.start > highest) break;
       if (range.end < lowest) continue;
-      paintOffsetRange(frame, range.start, range.end, (row, column) => setMask(row, column, PAINT_SEARCH), rowRange);
+      paintOffsetRange(
+        frame,
+        range.start,
+        range.end,
+        (row, column) => setMask(row, column, PAINT_SEARCH),
+        rowRange,
+      );
     }
   }
-  return Object.freeze({ cells, trailPainted: trailAllowed && motion !== undefined && motion !== null && !rejectedStalePreview, rejectedStalePreview });
+  return Object.freeze({
+    cells,
+    trailPainted: trailAllowed && motion !== undefined && motion !== null && !rejectedStalePreview,
+    rejectedStalePreview,
+  });
 }
 
 function markSelectionCells(
@@ -523,58 +944,100 @@ function markSelectionCells(
 ): void {
   const anchor = selection.anchor.position;
   const head = selection.head.position;
-  if (selection.kind === 'visual-line') {
-    const firstLine = Math.min(selection.anchor.lineIndex as number, selection.head.lineIndex as number);
-    const lastLine = Math.max(selection.anchor.lineIndex as number, selection.head.lineIndex as number);
+  if (selection.kind === "visual-line") {
+    const firstLine = Math.min(
+      selection.anchor.lineIndex as number,
+      selection.head.lineIndex as number,
+    );
+    const lastLine = Math.max(
+      selection.anchor.lineIndex as number,
+      selection.head.lineIndex as number,
+    );
     for (let rowIndex = rowRange.start; rowIndex < rowRange.end; rowIndex += 1) {
       const row = frame.rows[rowIndex];
-      if (row === undefined || row.lineIndex === null || (row.lineIndex as number) < firstLine || (row.lineIndex as number) > lastLine) continue;
+      if (
+        row === undefined ||
+        row.lineIndex === null ||
+        (row.lineIndex as number) < firstLine ||
+        (row.lineIndex as number) > lastLine
+      )
+        continue;
       for (let column = 0; column < row.cells.length; column += 1) {
-        if (row.cells[column]?.role !== 'gutter') setMask(rowIndex, column, bit);
+        if (row.cells[column]?.role !== "gutter") setMask(rowIndex, column, bit);
       }
     }
     return;
   }
   if (anchor === null || head === null) return;
-  if (selection.kind === 'visual-block') {
+  if (selection.kind === "visual-block") {
     const firstRow = Math.min(anchor.row, head.row);
     const lastRow = Math.max(anchor.row, head.row);
     const firstColumn = Math.min(anchor.column, head.column);
     const lastColumn = Math.max(anchor.column, head.column);
-    for (let row = Math.max(firstRow, rowRange.start); row <= Math.min(lastRow, rowRange.end - 1); row += 1) {
+    for (
+      let row = Math.max(firstRow, rowRange.start);
+      row <= Math.min(lastRow, rowRange.end - 1);
+      row += 1
+    ) {
       const frameRow = frame.rows[row];
       if (frameRow === undefined) continue;
-      for (let column = firstColumn; column <= lastColumn && column < frameRow.cells.length; column += 1) {
-        if (column >= 0 && frameRow.cells[column]?.role !== 'gutter') setMask(row, column, bit);
+      for (
+        let column = firstColumn;
+        column <= lastColumn && column < frameRow.cells.length;
+        column += 1
+      ) {
+        if (column >= 0 && frameRow.cells[column]?.role !== "gutter") setMask(row, column, bit);
       }
     }
     return;
   }
-  const start = Math.min(selection.anchor.requestedOffset as number, selection.head.requestedOffset as number);
-  const end = Math.max(selection.anchor.requestedOffset as number, selection.head.requestedOffset as number);
+  const start = Math.min(
+    selection.anchor.requestedOffset as number,
+    selection.head.requestedOffset as number,
+  );
+  const end = Math.max(
+    selection.anchor.requestedOffset as number,
+    selection.head.requestedOffset as number,
+  );
   for (let rowIndex = rowRange.start; rowIndex < rowRange.end; rowIndex += 1) {
     const row = frame.rows[rowIndex];
     if (row === undefined) continue;
     for (let column = 0; column < row.cells.length; column += 1) {
       const cell = row.cells[column];
       const target = cell?.target;
-      if (cell?.role !== 'gutter' && cell?.role !== 'padding' && target?.kind === 'text' && (target.offset as number) >= start && (target.offset as number) <= end) {
+      if (
+        cell?.role !== "gutter" &&
+        cell?.role !== "padding" &&
+        target?.kind === "text" &&
+        (target.offset as number) >= start &&
+        (target.offset as number) <= end
+      ) {
         setMask(rowIndex, column, bit);
       }
     }
     // Keep the explicit EOL cell selected when the endpoint names the line end.
-    if ((row.endOffset as number | null) !== null && end >= (row.endOffset as number) && start <= (row.endOffset as number)) {
+    if (
+      (row.endOffset as number | null) !== null &&
+      end >= (row.endOffset as number) &&
+      start <= (row.endOffset as number)
+    ) {
       const eolColumn = eolColumnForRow(row);
       if (eolColumn >= 0) setMask(rowIndex, eolColumn, bit);
     }
   }
 }
 
-function paintOffsetRange(frame: VisibleFrame, start: number, end: number, paint: (row: number, column: number) => void, rowRange: PaintRowRange): void {
+function paintOffsetRange(
+  frame: VisibleFrame,
+  start: number,
+  end: number,
+  paint: (row: number, column: number) => void,
+  rowRange: PaintRowRange,
+): void {
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start) return;
   for (let rowIndex = rowRange.start; rowIndex < rowRange.end; rowIndex += 1) {
     const row = frame.rows[rowIndex];
-    if (row === undefined || row.kind !== 'text') continue;
+    if (row === undefined || row.kind !== "text") continue;
     const rowStart = row.startOffset as number | null;
     const rowEnd = row.endOffset as number | null;
     if (rowStart === null || rowEnd === null || end <= rowStart || start >= rowEnd) continue;
@@ -582,7 +1045,14 @@ function paintOffsetRange(frame: VisibleFrame, start: number, end: number, paint
       const cell = row.cells[column];
       if (cell === undefined) continue;
       const target = cell.target;
-      if (cell.role !== 'gutter' && cell.role !== 'padding' && target?.kind === 'text' && (target.offset as number) >= start && (target.offset as number) < end) paint(rowIndex, column);
+      if (
+        cell.role !== "gutter" &&
+        cell.role !== "padding" &&
+        target?.kind === "text" &&
+        (target.offset as number) >= start &&
+        (target.offset as number) < end
+      )
+        paint(rowIndex, column);
     }
     if (start <= rowEnd && end >= rowEnd && rowEnd > rowStart) {
       const eolColumn = eolColumnForRow(row);
@@ -593,8 +1063,12 @@ function paintOffsetRange(frame: VisibleFrame, start: number, end: number, paint
 
 function eolColumnForRow(row: ScreenRow): number {
   let contentStart = 0;
-  while (contentStart < row.cells.length && row.cells[contentStart]?.role === 'gutter') contentStart += 1;
-  return Math.min(row.cells.length - 1, Math.max(contentStart, contentStart + Math.floor(row.displayEndCell)));
+  while (contentStart < row.cells.length && row.cells[contentStart]?.role === "gutter")
+    contentStart += 1;
+  return Math.min(
+    row.cells.length - 1,
+    Math.max(contentStart, contentStart + Math.floor(row.displayEndCell)),
+  );
 }
 
 interface PaintRowRange {
@@ -602,7 +1076,7 @@ interface PaintRowRange {
   readonly end: number;
 }
 
-function paintRowRange(frame: VisibleFrame, requested: MotionPaintOptions['rows']): PaintRowRange {
+function paintRowRange(frame: VisibleFrame, requested: MotionPaintOptions["rows"]): PaintRowRange {
   if (requested === undefined) return { start: 0, end: frame.rows.length };
   return {
     start: Math.max(0, Math.min(frame.rows.length, Math.trunc(requested.start))),
@@ -610,4 +1084,6 @@ function paintRowRange(frame: VisibleFrame, requested: MotionPaintOptions['rows'
   };
 }
 
-function cellKey(row: number, column: number): number { return row * 2_048 + column; }
+function cellKey(row: number, column: number): number {
+  return row * 2_048 + column;
+}

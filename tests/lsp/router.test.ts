@@ -32,6 +32,7 @@ const router = new LanguageServerRouter({
   createSession: (config) => { created.push(config.name); return fakeSession(config.name); },
 });
 
+assert.equal(router.hasDocument('plain-text'), false, 'plain buffers are not language-sync targets');
 assert.equal(router.state, 'stopped', 'ROUTER-01 no session before any document');
 assert.equal(router.supportsRequest('textDocument/hover', 'file:///a.ts'), false, 'ROUTER-01 nothing supported before open');
 const markdown = router.openDocument({ uri: 'file:///README.md', languageId: 'markdown', version: 1, text: '' });
@@ -43,6 +44,7 @@ assert.ok(router.openDocument({ uri: 'file:///b.py', documentId: 'd2', languageI
 assert.ok(router.openDocument({ uri: 'file:///c.ts', documentId: 'd3', languageId: 'typescript', version: 1, text: '' }).ok);
 assert.deepEqual(created, ['typescript', 'pyright'], 'ROUTER-03 one session per server, reused for the second .ts');
 assert.equal(router.size, 2);
+assert.equal(router.hasDocument('d2'), true);
 
 assert.equal(await router.request('textDocument/hover', { textDocument: { uri: 'file:///b.py' } }), 'pyright', 'ROUTER-04 routed by uri');
 assert.equal(await router.request('textDocument/definition', { textDocument: { uri: 'file:///c.ts' } }), 'typescript');
@@ -56,6 +58,7 @@ assert.equal(router.changeDocument({ documentId: 'nope', before: 1, after: 2 } a
 assert.ok((await router.waitForReady('file:///b.py')).ok, 'ROUTER-08 readiness per uri');
 assert.equal((await router.waitForReady('file:///zzz')).ok, false);
 assert.ok(router.closeDocument('file:///b.py').ok);
+assert.equal(router.hasDocument('d2'), false, 'closing releases language admission');
 await assert.rejects(router.request('textDocument/hover', { textDocument: { uri: 'file:///b.py' } }), /no language server/, 'ROUTER-09 closed uri no longer routes');
 await router.dispose();
 assert.deepEqual(created.slice(2).sort(), ['dispose:pyright', 'dispose:typescript'], 'ROUTER-10 dispose reaches every session');

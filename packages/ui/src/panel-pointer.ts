@@ -3,7 +3,8 @@ export type WorkbenchPanel = 'explorer' | 'picker' | 'search' | 'problems' | 'gi
 /** Stable row identity from the immutable panel model actually painted. */
 export interface WorkbenchPanelPointerEvent {
   readonly panel: WorkbenchPanel;
-  readonly action: 'activate' | 'context';
+  /** Preview is a non-committing hover action (used by the theme picker). */
+  readonly action: 'activate' | 'context' | 'preview';
   readonly itemId: string;
   readonly generation: number;
   readonly row: number;
@@ -37,6 +38,7 @@ export class PanelScroll {
   #offset = 0;
   #dragAnchor: { readonly startRow: number; readonly startOffset: number } | undefined;
   #followedId: string | undefined;
+  #viewport = 0;
 
   get offset(): number { return this.#offset; }
   get dragging(): boolean { return this.#dragAnchor !== undefined; }
@@ -56,8 +58,9 @@ export class PanelScroll {
   /** Reveals the selected row only when the selection changes, so wheel/drag scrolling
    * away from it is not snapped back on the next paint. Always clamps. */
   follow(selectedId: string | undefined, indexOf: () => number, total: number, viewport: number): void {
-    if (selectedId !== this.#followedId) {
+    if (selectedId !== this.#followedId || viewport !== this.#viewport) {
       this.#followedId = selectedId;
+      this.#viewport = viewport;
       const index = selectedId === undefined ? -1 : indexOf();
       if (index >= 0 && index < this.#offset) this.#offset = index;
       else if (index >= this.#offset + viewport) this.#offset = index - viewport + 1;
@@ -88,6 +91,7 @@ export class PanelScroll {
     this.#offset = 0;
     this.#dragAnchor = undefined;
     this.#followedId = undefined;
+    this.#viewport = 0;
   }
 
   /** Thumb bounds within the viewport track, or undefined when content fits without scrolling. */

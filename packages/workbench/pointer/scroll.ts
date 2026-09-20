@@ -37,7 +37,7 @@ export function scrollViewBy(
     const clamped = line < scrollTop ? scrollTop : line > bottom ? bottom : line;
     if (clamped !== line) {
       const lineStart = view.document.lineStartOffset(cursorLine.value);
-      const column = lineStart.ok ? (primary!.head.at.offset as number) - (lineStart.value as number) : 0;
+      const column = primary!.head.kind === 'line' ? primary!.desiredColumn.logicalUtf16 ?? 0 : lineStart.ok ? (primary!.head.at.offset as number) - (lineStart.value as number) : 0;
       session.setCursorPosition(clamped, column);
     }
   }

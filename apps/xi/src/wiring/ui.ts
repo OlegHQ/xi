@@ -48,16 +48,25 @@ type RelaxedWorkbenchUiOptions = Omit<WorkbenchUiOptions, 'explorer' | 'search' 
  * controller memoizes its result per (generation, document, version), so the presentation
  * object identity only changes when the highlights actually change (the renderer
  * full-repaints on identity change, row-diffs otherwise). */
-function buildSearchPresentationPort(workbench: Controllers['workbench'], searchFeature: Controllers['searchFeature']): NonNullable<WorkbenchUiOptions['presentation']> {
-  const searchPresentations = new WeakMap<object, { readonly searchHighlight: NonNullable<ReturnType<typeof searchFeature.readPresentation>> }>();
+function buildEditorPresentationPort(workbench: Controllers['workbench'], searchFeature: Controllers['searchFeature'], host: Controllers['host'], renderer: WorkbenchUiOptionsDeps['renderer']): NonNullable<WorkbenchUiOptions['presentation']> {
+  const presentations = new Map<string, NonNullable<ReturnType<NonNullable<WorkbenchUiOptions['presentation']>['readPresentation']>>>();
+  const closeSubscription = host.onViewClosed(viewId => { presentations.delete(String(viewId)); });
+  const clearGhost = (): void => { host.activeSession()?.clearMotionGhost(); host.notifySurfaceChange(); };
+  void renderer.then(current => {
+    current.on('blur', clearGhost);
+    current.once('destroy', () => { current.off('blur', clearGhost); closeSubscription.dispose(); presentations.clear(); });
+  });
   return {
     readPresentation: (viewId) => {
       const view = workbench.readView(viewId as ViewId);
       if (view === undefined) return undefined;
-      const highlight = searchFeature.readPresentation(String(view.document.id), view.document.version);
-      if (highlight === undefined) return undefined;
-      let presentation = searchPresentations.get(highlight);
-      if (presentation === undefined) { presentation = Object.freeze({ searchHighlight: highlight }); searchPresentations.set(highlight, presentation); }
+      const searchHighlight = searchFeature.readPresentation(String(view.document.id), view.document.version) ?? null;
+      const motionPreview = workbench.activeViewId === viewId ? host.sessions.get(viewId as ViewId)?.motionGhost?.preview ?? null : null;
+      if (searchHighlight === null && motionPreview === null) { presentations.delete(viewId); return undefined; }
+      const previous = presentations.get(viewId);
+      if (previous?.searchHighlight === searchHighlight && previous.motionPreview === motionPreview) return previous;
+      const presentation = Object.freeze({ searchHighlight, motionPreview, motionTrail: 'last-motion' as const });
+      presentations.set(viewId, presentation);
       return presentation;
     },
   };
@@ -81,7 +90,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     renderer,
     theme: themeWiring.themeController.get(themeWiring.themeController.activeId) ?? LIGHT_WORKBENCH_THEME,
     syntax: syntaxTracker,
-    presentation: buildSearchPresentationPort(workbench, searchFeature),
+    presentation: buildEditorPresentationPort(workbench, searchFeature, host, renderer),
     comparison: gitDiffFeature,
     gitBranch: () => optionalServices.current?.gitStatusService.snapshot?.branch,
     registerMouseToggle: mouseMode.registered,
@@ -95,7 +104,10 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     onViewportSizeChange: (viewId, heightCells) => {
       workbench.setViewViewportHeight(viewId as ViewId, heightCells);
     },
-    onPointer: (event) => pointerRouter.handlePointer(event),
+    onPointer: (event) => {
+      if (event.phase === 'down') host.activeSession()?.clearMotionGhost();
+      return pointerRouter.handlePointer(event);
+    },
     onPaste: (bytes: Uint8Array) => inputRouter.handlePaste(bytes),
     onPointerCancel: (reason) => pointerRouter.handlePointerCancel(reason),
     onFrame: () => {
@@ -103,7 +115,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       if (perfTraceEnabled) process.stderr.write(`XI_FRAME ${process.hrtime.bigint().toString()}\r\n`);
     },
     sidebar: () => sidebarController.readModel(),
-    tabs: () => workbench.readTabs(),
+    tabs: viewId => workbench.readTabs(viewId as ViewId | undefined),
     prefixHelp: inputRouter.prefixHelp,
     contextMenu: contextMenuStore,
     commandLine: {
@@ -118,15 +130,18 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       void controllers.languageWiring.ensureLanguage().catch((error: unknown) => {
         statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
       });
-      if (!themeWiring.needsCustomThemeNow) void themeWiring.loadCustomThemes().finally(() => themeWiring.disposeStateCancellation());
-      else themeWiring.disposeStateCancellation();
+      void themeWiring.loadCustomThemes().finally(() => themeWiring.disposeStateCancellation());
       // Directory enumeration, watching and picker indexing are background
       // work. Starting them before the first frame makes the editor compete
       // with filesystem streams during the user's first interaction.
       fileIndexStarter.schedule();
       // The Files tree is visible by default; it loads in the background and never takes
       // keyboard focus from the editor.
-      explorerFeature.show();
+      if (sidebarController.visible) {
+        if (sidebarController.lastPanel === 'search') searchFeature.open();
+        else if (sidebarController.lastPanel === 'git') gitPanelFeature.open();
+        else explorerFeature.show();
+      }
     },
     // H1-7: the router owns the ordered overlay-focus stack (and its own fallthrough) as the
     // one and only per-key dispatch `processKeypress` calls; the overlay port objects below
@@ -136,6 +151,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     picker: {
       read: pickerModel,
       isOpen: () => picker.isOpen,
+      onViewportRows: rows => picker.setVisibleRows(rows),
       onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
       preview: () => {
         const selected = pickerModel.model.entries.find((entry) => entry.id === pickerModel.model.selectedId);

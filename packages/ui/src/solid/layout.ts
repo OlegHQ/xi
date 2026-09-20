@@ -5,7 +5,7 @@ import { calculateWorkbenchLayout, computeSidebarSectionLayout } from '../workbe
 export type SurfaceBounds = { readonly width: number; readonly height: number; readonly left: number; readonly top: number };
 
 export function getExplorerBounds(width: number, height: number, sidebar?: SidebarReadModel): SurfaceBounds {
-  const layout = calculateWorkbenchLayout(width, height, false, sidebar?.width);
+  const layout = calculateWorkbenchLayout(width, height, false, sidebar?.width, sidebar?.visible !== false);
   if (layout.sidebarVisible && sidebar !== undefined) {
     const sections = computeSidebarSectionLayout(sidebar, layout.statusRow);
     return { width: layout.sidebarWidth, height: sections.filesContentHeight, left: 0, top: sections.filesContentTop };
@@ -17,13 +17,13 @@ export function getExplorerBounds(width: number, height: number, sidebar?: Sideb
 }
 
 export function getPickerBounds(width: number, height: number): SurfaceBounds {
-  const panelWidth = Math.max(20, Math.min(width - 2, Math.max(60, Math.floor(width * 0.9))));
-  const panelHeight = Math.max(3, Math.min(height - 2, Math.max(12, Math.floor(height * 0.75))));
+  const panelWidth = Math.max(1, Math.min(width - 2, Math.max(60, Math.floor(width * 0.9))));
+  const panelHeight = Math.max(1, Math.min(height - 2, Math.max(12, Math.floor(height * 0.75))));
   return { width: panelWidth, height: panelHeight, left: Math.max(0, Math.floor((width - panelWidth) / 2)), top: Math.max(0, Math.floor((height - panelHeight) / 2)) };
 }
 
 export function getSearchBounds(width: number, height: number, sidebar?: SidebarReadModel): SurfaceBounds {
-  const layout = calculateWorkbenchLayout(width, height, false, sidebar?.width);
+  const layout = calculateWorkbenchLayout(width, height, false, sidebar?.width, sidebar?.visible !== false);
   if (layout.sidebarVisible && sidebar !== undefined) return { width: layout.sidebarWidth, height: Math.max(3, layout.statusRow - 1), left: 0, top: 1 };
   const panelWidth = Math.max(1, Math.min(100, width - 2));
   const panelHeight = Math.max(3, Math.min(14, height - 2));
@@ -41,7 +41,7 @@ export function getProblemsBounds(width: number, height: number): SurfaceBounds 
 }
 
 export function getGitDiffBounds(width: number, height: number, sidebar?: SidebarReadModel): SurfaceBounds {
-  const layout = calculateWorkbenchLayout(width, height, false, sidebar?.width);
+  const layout = calculateWorkbenchLayout(width, height, false, sidebar?.width, sidebar?.visible !== false);
   return { width: layout.editorWidth, height: layout.editorHeight, left: layout.editorX, top: layout.editorTop };
 }
 
@@ -52,7 +52,7 @@ export function getOutlineBounds(width: number, height: number): SurfaceBounds {
 }
 
 export function getSidebarOutlineBounds(width: number, height: number, sidebar?: SidebarReadModel): SurfaceBounds {
-  const layout = calculateWorkbenchLayout(width, height, false, sidebar?.width);
+  const layout = calculateWorkbenchLayout(width, height, false, sidebar?.width, sidebar?.visible !== false);
   if (layout.sidebarVisible && sidebar !== undefined) {
     const sections = computeSidebarSectionLayout(sidebar, layout.statusRow);
     return { width: layout.sidebarWidth, height: sections.outlineContentHeight, left: 0, top: sections.outlineContentTop };
@@ -95,8 +95,9 @@ export function popupBoundsInEditor(
   size: { readonly width: number; readonly height: number },
   prefer: 'below' | 'above',
   sidebarWidth?: number,
+  showSidebar = true,
 ): SurfaceBounds {
-  const layout = calculateWorkbenchLayout(width, height, false, sidebarWidth);
+  const layout = calculateWorkbenchLayout(width, height, false, sidebarWidth, showSidebar);
   const bounds = popupBoundsAtCursor(
     layout.editorWidth,
     height,

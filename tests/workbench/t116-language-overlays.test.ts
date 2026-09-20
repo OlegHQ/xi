@@ -138,6 +138,14 @@ await Promise.resolve();
 assert.equal(controller.handleHoverKeypress({ name: 'escape', raw: '\x1b', shift: false, option: false, ctrl: false, meta: false }), true, 'T116-OVERLAY-05e Escape closes hover and is consumed');
 assert.equal(controller.isHoverOpen, false, 'T116-OVERLAY-05f hover closed on Escape');
 
+controller.openHover();
+await Promise.resolve();
+await Promise.resolve();
+navigation.publish({ ...IDLE_MODEL, state: 'ready', hover: '   ' });
+assert.equal(controller.isHoverOpen, false, 'empty successful hover closes without a no-information popup');
+navigation.publish({ ...IDLE_MODEL, state: 'ready', hover: 'late response' });
+assert.equal(controller.isHoverOpen, false, 'a late result cannot reopen a dismissed hover');
+
 // T116-OVERLAY-06: do not open an empty or "unavailable" popup when the active language
 // server does not advertise hover support.
 const unsupportedSubscription = controller.attachNavigation(navigation, new FakeLanguageSession(false));

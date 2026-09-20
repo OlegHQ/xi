@@ -4,7 +4,7 @@ import { splitCoalescedEscape } from '../input/coalesced-escape';
 import type { PasteEvent } from '@opentui/core';
 import type { Disposable, DisposableScope, PlatformFailure, Result, SyntaxReadPort } from '../../contracts/src/index.ts';
 import type { UiComposition, UiMountContext, TerminalAdapter, TerminalAdapterFactory } from './contracts';
-import { WorkbenchRenderable, type WorkbenchPointerEvent, type WorkbenchRenderableOptions, type WorkbenchTheme } from './workbench';
+import { WorkbenchRenderable, themeColor, type WorkbenchPointerEvent, type WorkbenchRenderableOptions, type WorkbenchTheme } from './workbench';
 import type { EditorPresentationReadPort } from '../editor/motion-paint';
 import type { WorkbenchReadPort } from '../../workbench/src/index.ts';
 import { formatPrefixHelpLines, type PrefixHelpReadPort } from '../help/index';
@@ -151,8 +151,8 @@ export function createOpenTuiUiComposition(options: OpenTuiUiCompositionOptions 
           isOpen: () => options.prefixHelp?.model !== undefined,
           format: formatPrefixHelpLines,
           maxRows: options.prefixHelpHeight ?? 6,
-          background: '#F1F0EC',
-          foreground: '#24292E',
+          background: themeColor(renderable.theme.surface, 'bg'),
+          foreground: themeColor(renderable.theme.foreground),
           bounds: (width, height) => ({ width, height: Math.min(height, options.prefixHelpHeight ?? 6), left: 0, top: Math.max(0, height - (options.prefixHelpHeight ?? 6) - 1) }),
         }));
       }

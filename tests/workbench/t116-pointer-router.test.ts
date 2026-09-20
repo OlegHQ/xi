@@ -63,7 +63,9 @@ const noopProblems: PointerProblemsPort = { model: { generation: 0, all: [] }, s
 {
   const session = new FakeSession();
   const pointerCapture = new FakePointerCapture();
+  let layoutChanges = 0;
   const router = new WorkbenchPointerRouter({
+    onLayoutChange: () => { layoutChanges += 1; },
     session: session as never,
     marker: () => {},
     clock: new FakeClock(),
@@ -79,10 +81,13 @@ const noopProblems: PointerProblemsPort = { model: { generation: 0, all: [] }, s
   const began = router.handleControl(splitterEvent('begin', 40, 60));
   assert.equal(began, true);
 
+  router.handleControl(splitterEvent('move', 30, 70));
+  assert.equal(layoutChanges, 1, 'drag wakes the tab-strip geometry');
   router.handlePointerCancel('resize');
+  assert.equal(layoutChanges, 2, 'cancellation wakes the restored tab-strip geometry');
 
   assert.equal(pointerCapture.cancelled[0], 'resize', 'T116-POINTER-01a the pointer capture engine was cancelled for the resize');
-  assert.equal(session.resizeCalls.length, 1, 'T116-POINTER-01b the splitter was restored to its pre-drag geometry');
+  assert.equal(session.resizeCalls.length, 2, 'T116-POINTER-01b the splitter was restored to its pre-drag geometry');
   assert.equal(session.resizeCalls[0]?.nodeId, 'root');
 
   router.dispose();
@@ -157,6 +162,34 @@ const noopProblems: PointerProblemsPort = { model: { generation: 0, all: [] }, s
   assert.deepEqual(activated, ['doc-1', 'doc-1'], 'T116-POINTER-03c a double click activates again');
   assert.deepEqual(pinned, ['doc-1'], 'T116-POINTER-03d a double tab click within the window pins it');
 
+  router.dispose();
+}
+
+// T116-POINTER-04: theme-row hover only selects and previews; it must not activate/close the
+// picker as a click does.
+{
+  let previews = 0;
+  let activations = 0;
+  let selected: string | undefined;
+  const router = new WorkbenchPointerRouter({
+    session: new FakeSession() as never,
+    marker: () => {},
+    clock: new FakeClock(),
+    pointerCapture: new FakePointerCapture() as never,
+    contextMenu: { openAt: () => {} },
+    picker: { activateEntry: async () => { activations += 1; }, previewSelected: () => { previews += 1; } },
+    pickerModel: {
+      model: { generation: 7, entries: [{ id: 'xi-dark' }] },
+      select: (id) => { selected = id; return true; },
+    },
+    explorer: noopExplorer,
+    search: noopSearch,
+    problems: noopProblems,
+  });
+  router.handlePanelPointer({ panel: 'picker', action: 'preview', itemId: 'xi-dark', generation: 7, row: 2, column: 4, screenX: 4, screenY: 2 });
+  assert.equal(selected, 'xi-dark', 'T116-POINTER-04a hover selects the row before previewing it');
+  assert.equal(previews, 1, 'T116-POINTER-04b hover uses the picker preview path');
+  assert.equal(activations, 0, 'T116-POINTER-04c hover never commits a picker entry');
   router.dispose();
 }
 

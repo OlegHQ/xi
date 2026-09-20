@@ -182,6 +182,7 @@ export class LanguageOverlayController {
     this.#navigation = navigation;
     this.#session = session;
     return navigation.subscribe((model) => {
+      if (this.#hoverOpen && model.state === 'ready' && (model.hover?.trim().length ?? 0) === 0) this.#hoverOpen = false;
       for (const listener of this.#outlineListeners) listener(model);
       for (const listener of this.#hoverListeners) listener(model);
       this.#options.host.notifySurfaceChange();

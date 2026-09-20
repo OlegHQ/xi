@@ -99,6 +99,17 @@ assert.equal(session.buffer(dirtyBufferId) !== undefined, true, 'T116-HOST-05e4 
 assert.equal(session.buffer(dirtyBufferId)?.preview, true, 'T116-HOST-05e6 the dirty buffer remains a preview, unpromoted');
 assert.equal(session.buffer(thirdPreview!.bufferId)?.preview, true, 'T116-HOST-05e7 the new buffer is also a preview (two previews coexist)');
 
+assert.equal(host.discardPreviewView(secondPreview!.viewId).ok, false, 'dirty previews survive cancellation even when edited outside the active Vim session');
+const sharedPreview = session.splitView(thirdPreview!.viewId, 'vertical');
+assert.ok(sharedPreview.ok);
+const sharedDocument = host.documents.get(thirdPreview!.bufferId)!;
+host.createSession(sharedDocument, sharedPreview.value.viewId, sharedPreview.value.session.selections);
+assert.equal(host.discardPreviewView(thirdPreview!.viewId).ok, true);
+assert.equal(host.documents.get(thirdPreview!.bufferId), sharedDocument, 'discarding one preview view retains the shared document');
+assert.ok(host.sessions.has(sharedPreview.value.viewId));
+assert.equal(host.discardPreviewView(sharedPreview.value.viewId).ok, true);
+assert.equal(host.documents.has(thirdPreview!.bufferId), false, 'last preview view releases the document');
+
 // T116-HOST-06: closeAllPanels respects `keep`, except for panels registered with alwaysClose.
 let searchClosed = false;
 let explorerClosed = false;

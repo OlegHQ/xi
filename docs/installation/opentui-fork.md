@@ -13,11 +13,13 @@ bun install --frozen-lockfile
 bun run apps/xi/src/main.ts
 ```
 
-`package.json` retains the exact `@opentui/core` 0.5.11 ABI and applies the fork's
-`patches/opentui-core-0.5.11.patch` through Bun's `patchedDependencies`. Both
-published Bun and Node chunks consume the same source change. Official native
-binaries, optional dependencies, grammar assets and licenses are retained. No
-Zig or upstream monorepo build is needed to install Xi.
+`package.json` applies the fork's `patches/opentui-core-0.5.11.patch` through
+Bun's `patchedDependencies`. Both published Bun and Node chunks consume the
+same source change. Helix underline colour adds native OpenTUI symbols, so a
+source-only Bun patch cannot use the official 0.5.11 platform binaries. The
+fork release must publish matching owned platform packages before a fresh
+registry install can use underline colours. This checkout is exercised with a
+rebuilt Linux/arm64 library; other platforms still need release qualification.
 
 The pinned Solid 0.5.11 package also receives
 `patches/opentui-solid-0.5.11.patch`. It defers Babel until an actual TSX transform

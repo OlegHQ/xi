@@ -1,0 +1,133 @@
+{
+  "version": "helix 24.7 (079f5442)",
+  "cases": [
+    {
+      "name": "word",
+      "text": "one two three\nnext line\n",
+      "origin": 0,
+      "key": "w",
+      "count": 1,
+      "selected": "one "
+    },
+    {
+      "name": "count",
+      "text": "one two three\nnext line\n",
+      "origin": 0,
+      "key": "w",
+      "count": 2,
+      "selected": "two "
+    },
+    {
+      "name": "line-end",
+      "text": "one two\nnext line\n",
+      "origin": 4,
+      "key": "w",
+      "count": 1,
+      "selected": "two"
+    },
+    {
+      "name": "blank-lines",
+      "text": "one\n\nnext line\n",
+      "origin": 0,
+      "key": "w",
+      "count": 1,
+      "selected": "one"
+    },
+    {
+      "name": "indent",
+      "text": "one\n    next line\n",
+      "origin": 0,
+      "key": "w",
+      "count": 1,
+      "selected": "one"
+    },
+    {
+      "name": "whitespace",
+      "text": "    word next\n",
+      "origin": 0,
+      "key": "w",
+      "count": 1,
+      "selected": "    "
+    },
+    {
+      "name": "middle-word",
+      "text": "sample next\n",
+      "origin": 2,
+      "key": "w",
+      "count": 1,
+      "selected": "mple "
+    },
+    {
+      "name": "punctuation",
+      "text": "word.foo next\n",
+      "origin": 0,
+      "key": "w",
+      "count": 2,
+      "selected": "."
+    },
+    {
+      "name": "long-word",
+      "text": "word.foo next\n",
+      "origin": 0,
+      "key": "W",
+      "count": 1,
+      "selected": "word.foo "
+    },
+    {
+      "name": "end",
+      "text": "one two three\n",
+      "origin": 0,
+      "key": "e",
+      "count": 1,
+      "selected": "one"
+    },
+    {
+      "name": "end-count",
+      "text": "one two three\n",
+      "origin": 0,
+      "key": "e",
+      "count": 2,
+      "selected": " two"
+    },
+    {
+      "name": "backward",
+      "text": "one two three\n",
+      "origin": 8,
+      "key": "b",
+      "count": 1,
+      "selected": "two "
+    },
+    {
+      "name": "backward-count",
+      "text": "one two three\n",
+      "origin": 8,
+      "key": "b",
+      "count": 2,
+      "selected": "one "
+    },
+    {
+      "name": "unicode",
+      "text": "😀😀 next\n",
+      "origin": 0,
+      "key": "w",
+      "count": 1,
+      "selected": "😀😀 "
+    },
+    {
+      "name": "combining",
+      "text": "éclair next\n",
+      "origin": 0,
+      "key": "w",
+      "count": 1,
+      "selected": "clair "
+    },
+    {
+      "name": "last-word",
+      "text": "last\n",
+      "origin": 0,
+      "key": "w",
+      "count": 1,
+      "selected": "last"
+    }
+  ]
+}

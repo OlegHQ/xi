@@ -7,16 +7,14 @@ message and never partially applies".
 
 Before this pass, packages/services/config's real parseThemeConfig/ThemeConfig (which can
 already parse a theme.toml's tokens) had zero runtime caller -- only the two built-in themes
-(xi-light, xi-dark) existed. This exercises the real, new wiring: apps/xi/src/main.ts's
-discoverCustomThemes reads every *.toml under ~/.config/xi/themes/ at startup, using the real
-parser and a new workbenchThemeFromTokens validator that requires every core WorkbenchTheme
-field explicitly (background/surface/surface.active/foreground/muted/border/accent/error, using
-the dotted-lowercase naming DEFAULT_THEME_TOML and tests/config/t036-config.test.ts already
-established for the optional editor-layer tokens, extended consistently for the required base
-ones that example never covered) -- never partially applying a theme missing any of them.
+(xi-light, xi-dark) existed. This exercises the real wiring: configured startup reads its
+selected theme and inheritance chain before the first frame, then discovery reads every
+*.toml under ~/.config/xi/themes/ for the picker. Both paths use the real parser and the Helix
+scope-to-workbench decoder. The fixture uses Helix's direct scoped-style syntax, including the
+palette-free form used by simple user themes.
 
 This fixture: seeds ~/.config/xi/themes/ with one genuinely valid custom theme.toml ("Neon")
-and one invalid one (missing its [tokens] table entirely). Confirms the invalid file never
+and one invalid one (a numeric style value). Confirms the invalid file never
 blocks startup and is rejected with a clear stderr message naming the file; confirms the valid
 custom theme appears in the theme picker and previews live with its own real color (checked
 via the actual terminal SGR bytes, not a mocked assertion) -- proving it is genuinely usable
@@ -65,16 +63,19 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-custom-theme-") as temporary:
     home = Path(temporary)
     themes_directory = home / ".config" / "xi" / "themes"
     themes_directory.mkdir(parents=True)
+    (themes_directory.parent / "config.toml").write_text('[editor]\ntheme = "neon"\n', encoding="utf-8")
     (home / "a.txt").write_text("hi\n", encoding="utf-8")
     (themes_directory / "neon.toml").write_text(
-        'schema-version = 1\nname = "Neon"\n\n[tokens]\n'
-        'background = "#000011"\nsurface = "#000022"\n"surface.active" = "#000033"\n'
-        'foreground = "#00FF00"\nmuted = "#008800"\nborder = "#004400"\n'
-        'accent = "#00FFFF"\nerror = "#FF0000"\n',
+        '"ui.background" = { bg = "#000011" }\n'
+        '"ui.text" = "#00FF00"\n'
+        '"ui.popup" = { fg = "#00FF00", bg = "#000022" }\n'
+        '"ui.menu.selected" = { fg = "#000011", bg = "#00FFFF" }\n'
+        '"ui.window" = "#004400"\n'
+        'error = "#FF0000"\n',
         encoding="utf-8",
     )
-    # Invalid: no [tokens] table at all -- parseThemeConfig itself must reject this, not crash.
-    (themes_directory / "broken.toml").write_text('schema-version = 1\nname = "Broken"\n', encoding="utf-8")
+    # Invalid Helix scope value: parseThemeConfig itself must reject this, not crash.
+    (themes_directory / "broken.toml").write_text('"ui.background" = 1\n', encoding="utf-8")
     master, slave = pty.openpty()
     environment = os.environ.copy()
     environment.update({"TERM": "xterm-256color", "HOME": str(home), "XI_UI_TEST_MARKERS": "1"})
@@ -94,6 +95,8 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-custom-theme-") as temporary:
         read_for(master, captured, 0.4)
         if child.poll() is not None:
             raise SystemExit(f"an invalid custom theme.toml crashed startup: {captured[-4000:]!r}")
+        if NEON_BACKGROUND not in captured:
+            raise SystemExit(f"the configured Helix theme was not applied before the first frame: {captured[-4000:]!r}")
 
         # The invalid theme file must be rejected with a clear, specific message.
         rejection = re.search(rb"xi: theme file broken\.toml is invalid: [^\r\n]*", captured)
@@ -112,7 +115,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-custom-theme-") as temporary:
         wait_for(master, captured, b"XI_THEME_APPLIED", 5)
         read_for(master, captured, 0.3)
 
-        os.write(master, b":q\r")
+        os.write(master, b":qa\r")
         for _ in range(5):
             if child.poll() is not None:
                 break
@@ -128,7 +131,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-custom-theme-") as temporary:
         raise SystemExit(f"custom theme session exited {child.returncode}")
 
     # Explicit failure case from T132's own ticket: "Theme file removed from disk after being
-    # selected." Committing Neon above also persisted it to ~/.config/xi/state.json; removing
+    # selected." Committing Neon above also persisted it to ~/.xi.toml; removing
     # its source file and relaunching must fall back gracefully (light theme), never crash and
     # never show stale/partial Neon colors.
     (themes_directory / "neon.toml").unlink()
@@ -153,7 +156,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-custom-theme-") as temporary:
             raise SystemExit(f"a removed custom theme's colors still appeared after relaunch: {captured3[-4000:]!r}")
         if LIGHT_BACKGROUND not in captured3:
             raise SystemExit(f"did not fall back to the light theme after the selected custom theme's file was removed: {captured3[-4000:]!r}")
-        os.write(master3, b":q\r")
+        os.write(master3, b":qa\r")
         for _ in range(5):
             if child3.poll() is not None:
                 break

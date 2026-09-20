@@ -3,6 +3,7 @@ export {
   compileConfig,
   DEFAULT_COMMAND_CATALOG,
   DEFAULT_CONFIG_TOML,
+  decodeHelixWorkbenchTheme,
   decodeRequiredWorkbenchThemeTokens,
   decodeWorkbenchThemeTokens,
   loadStartupXiConfig,
@@ -14,6 +15,7 @@ export type {
   ConfigLayer,
   ConfigCompileResult,
   FormatterEnvironmentSelection,
+  HelixWorkbenchThemeTokens,
   LanguageConfig,
   LanguageServerConfig,
   LoadedStartupConfig,
@@ -21,3 +23,5 @@ export type {
   StartupConfigFilesystemPort,
   WorkbenchThemeTokens,
 } from '../../config/index';
+
+export { EditorStatePersistence } from '../../config/state';

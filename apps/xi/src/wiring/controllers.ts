@@ -1,3 +1,4 @@
+import type { EditorStatePersistence } from '../../../../packages/services/src/entrypoints/config';
 import { asIdentifier, asUtf16Offset, CancellationSource, type DocumentId, type Disposable, type ViewId, type Result } from '../../../../packages/primitives/src/entrypoints/launch';
 import type { DocumentSnapshot, TextFileDocument } from '../../../../packages/document/src/entrypoints/launch';
 import { openTextDocument } from '../../../../packages/document/src/entrypoints/launch';
@@ -87,6 +88,7 @@ export interface ControllersDeps {
 }
 
 export interface Controllers {
+  readonly editorState: EditorStatePersistence;
   readonly statusMessages: StatusMessageController;
   readonly workbench: InstanceType<typeof WorkbenchSession>;
   readonly host: BufferHost;
@@ -277,6 +279,7 @@ type StartupConfig = CompiledConfig | undefined;
 /** Values every feature-construction helper below needs and none of them own; threaded
  * through as one bag instead of repeating the same six parameters on every function. */
 interface BuildContext {
+  readonly editorState: EditorStatePersistence;
   readonly deps: ControllersDeps;
   readonly filesystem: NodeFilesystemPort;
   readonly clock: ReturnType<typeof createNodeClock>;
@@ -345,6 +348,12 @@ async function loadStartupSettings(deps: ControllersDeps): Promise<{ readonly st
   const startupLoaded = await deps.startupConfigPromise;
   if (startupLoaded.diagnostics.length > 0) deps.statusMessages.publish(`xi: config: ${startupLoaded.diagnostics.join('; ')}`);
   const startupConfig = startupLoaded.config;
+  const configuredTheme = startupConfig?.editor.theme;
+  if (configuredTheme !== undefined && (deps.themeWiring.persistedThemeId === undefined || startupConfig?.provenance['editor.theme'] === 'state-overrides')) {
+    if (!deps.themeWiring.themeController.has(configuredTheme)) await deps.themeWiring.loadCustomTheme(configuredTheme);
+    if (deps.themeWiring.themeController.has(configuredTheme)) deps.themeWiring.themeController.setActiveId(configuredTheme);
+    else deps.statusMessages.publish(`xi: configured theme ${configuredTheme} was not found; using ${deps.themeWiring.themeController.activeId}`);
+  }
   const configuredLanguages = startupConfig?.languages;
   const formatOnSave = resolveFormatOnSave(process.env, deps.languageId !== undefined && (configuredLanguages?.find((entry) => entry.name === deps.languageId)?.autoFormat ?? false));
   return { startupConfig, configuredLanguages, formatOnSave, workspaceRoot };
@@ -486,6 +495,7 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
   const { deps, filesystem, persistence, marker, workspaceRoot, clock } = ctx;
   const { document, filePath } = deps;
   const host = new BufferHost(workbench, document, {
+    motionGhost: ctx.startupConfig?.editor.motionTrail !== 'off',
     openDocument: async (path, documentId) => (path === undefined ? undefined : await forward.directoryDraftController.openDocumentIfDirectory(path, documentId)) ?? deps.openDocumentAt(path, documentId),
     workspaceRelativePath: (path) => filesystem.workspaceRelativePath(workspaceRoot, path),
     marker,
@@ -606,7 +616,7 @@ function createExplorerAndDirectory(
     workspaceRelativePath: (path) => filesystem.workspaceRelativePath(workspaceRoot, path),
     trashDirectory: `${workspaceRoot}/.xi-trash`,
     ensureServices: async () => { await forward.optionalServices.ensure(); },
-    onOpen: () => forward.sidebarController.expandSection('files'),
+    onOpen: () => { forward.sidebarController.setPanel('files'); forward.sidebarController.setVisible(true); forward.sidebarController.expandSection('files'); },
     onCollapse: () => forward.sidebarController.collapseSection('files'),
     focusOutline: () => forward.overlayFeature.openOutline(),
   });
@@ -700,6 +710,7 @@ function createSearchProblemsOverlaySidebar(
 ): { readonly searchFeature: SearchController; readonly gitPanelFeature: GitPanelController; readonly gitDiffFeature: DiffViewController; readonly problemsFeature: ProblemsController; readonly overlayFeature: LanguageOverlayController; readonly sidebarController: SidebarController } {
   const { filesystem, marker, workspaceRoot } = ctx;
   const searchFeature = new SearchController({
+    onOpen: () => { forward.sidebarController.setPanel('search'); forward.sidebarController.setVisible(true); },
     host,
     session: workbench,
     filesystem,
@@ -713,6 +724,7 @@ function createSearchProblemsOverlaySidebar(
   // constructed on first use exactly like `searchFeature`'s own `ensureServices` -- this
   // controller never touches the process/filesystem port directly.
   const gitPanelFeature = new GitPanelController({
+    onOpen: () => { forward.sidebarController.setPanel('git'); forward.sidebarController.setVisible(true); },
     host,
     status: {
       get snapshot() { return forward.optionalServices.current?.gitStatusService.snapshot; },
@@ -780,6 +792,11 @@ function createSearchProblemsOverlaySidebar(
     ensureLanguage: () => forward.languageWiring.ensureLanguage(),
   });
   const sidebarController = new SidebarController({
+    initiallyVisible: ctx.startupConfig?.editor.sidebarVisible ?? true,
+    initialPanel: ctx.startupConfig?.editor.sidebarPanel ?? 'files',
+    onPanelChange: panel => ctx.editorState.setSidebarPanel(panel),
+    persistence: { width: ctx.startupConfig?.editor.sidebarWidth, setWidth: width => ctx.editorState.setSidebarWidth(width) },
+    onVisibilityChange: visible => ctx.editorState.setSidebarVisible(visible),
     panelState: () => (forward.searchFeature.isOpen ? 'search' : forward.gitPanelFeature.isOpen ? 'git' : 'files'),
     outline: { get hasSymbols() { return overlayFeature.outlineRead.model.symbols.length > 0; } },
   });
@@ -982,6 +999,18 @@ function createInputAndPointerRouters(
     isSearchServiceLoaded: () => forward.optionalServices.current !== undefined,
     ensureOptionalServices: async () => { await forward.optionalServices.ensure(); },
     toggleMouseMode: mouseMode.toggle,
+    toggleSidebar: () => {
+      const panel = sidebarController.readModel().panel;
+      sidebarController.setVisible(!sidebarController.visible);
+      marker('XI_SIDEBAR_VISIBILITY', { visible: sidebarController.visible });
+      if (sidebarController.visible) {
+        if (panel === 'search') forward.searchFeature.open();
+        else if (panel === 'git') forward.gitPanelFeature.open();
+        else forward.explorerFeature.open();
+      }
+      else { host.closeAllPanels(); forward.explorerFeature.hide(); }
+      host.notifySurfaceChange();
+    },
     launchViewId: id<ViewId>('xi-launch-view'),
     bindings: startupConfig?.bindings ?? [],
     scrollLines: startupConfig?.editor.mouse.scrollLines ?? 1,
@@ -1020,10 +1049,11 @@ function createInputAndPointerRouters(
   });
   forward.inputRouter = inputRouter;
   const pointerRouter = new WorkbenchPointerRouter({
+    onLayoutChange: () => host.notifySurfaceChange(),
     session: workbench,
     marker,
     clock,
-    onTabActivate: (bufferId) => { workbench.activateBuffer(id<DocumentId>(bufferId)); host.notifySurfaceChange(); },
+    onTabActivate: (bufferId, viewId) => { host.focusBufferById(bufferId, viewId as ViewId | undefined); host.notifySurfaceChange(); },
     onEditorPointerDown: () => {
       inputRouter.focusEditor();
       if (forward.explorerFeature.isOpen || forward.searchFeature.isOpen) { host.closeAllPanels(); host.notifySurfaceChange(); }
@@ -1032,9 +1062,19 @@ function createInputAndPointerRouters(
     // `closeBuffer` with no decision closes a clean buffer immediately and returns a
     // `dirty-buffer` error (no side effect) for one with unsaved changes -- the tab close
     // glyph never silently discards edits; a dirty buffer just stays open until saved.
-    onTabClose: (bufferId) => {
+    onTabClose: (bufferId, viewId) => {
+      if (viewId !== undefined && gitDiffFeature.readComparison(id<ViewId>(bufferId)) === undefined) {
+        const active = host.focusBufferById(bufferId, viewId as ViewId);
+        if (active !== undefined) void Promise.resolve(forward.hostCommands.handleWorkbenchCommand('q', active)).then(() => host.notifySurfaceChange());
+        return;
+      }
       if (gitDiffFeature.readComparison(id<ViewId>(bufferId)) !== undefined) { workbench.focus(id<ViewId>(bufferId)); gitDiffFeature.close(); }
-      else if (workbench.closeBuffer(id<DocumentId>(bufferId)).ok) host.notifySurfaceChange();
+      else {
+        const buffer = workbench.buffer(id<DocumentId>(bufferId));
+        if (buffer === undefined || buffer.dirty) return;
+        for (const closedView of buffer.viewIds) host.closeView(closedView);
+        host.notifySurfaceChange();
+      }
     },
     sidebar: {
       beginResize: () => sidebarController.beginResize(),
@@ -1044,6 +1084,7 @@ function createInputAndPointerRouters(
     pointerCapture,
     contextMenu: contextMenuStore,
     picker: {
+      previewSelected: () => picker.previewSelected(),
       activateEntry: async (entryId) => {
         const entry = pickerModel.model.entries.find((candidate) => candidate.id === entryId);
         if (entry !== undefined) await picker.activateEntry(entry);
@@ -1085,8 +1126,9 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
 
   const { syntaxAssetsCancellation, syntaxTracker } = createSyntaxTracker(filesystem);
   forward.syntaxTracker = syntaxTracker;
+  const editorState = deps.themeWiring.editorState;
   const settings = await loadStartupSettings(deps);
-  const ctx: BuildContext = { deps, filesystem, clock, persistence, marker, ...settings };
+  const ctx: BuildContext = { editorState, deps, filesystem, clock, persistence, marker, ...settings };
 
   const workbench = createWorkbenchCore(ctx, forward, syntaxTracker);
   const diagnostics = new ctx.deps.coreServices.DiagnosticStore();
@@ -1120,6 +1162,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   }
 
   return {
+    editorState,
     statusMessages: deps.statusMessages,
     workbench,
     host,

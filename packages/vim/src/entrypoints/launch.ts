@@ -8,7 +8,7 @@ export { prepareVimDirectChange } from '../../operators/direct-changes';
 export { beginVimMultiInsert, planVimMultiInsertInput } from '../../insert/multi';
 export { parseVimExSequence, prepareVimEx } from '../../ex';
 export { prepareVimMultiOperator, resolveVimMultiVisualFind, resolveVimMultiVisualMotion, resolveVimMultiVisualTextObject } from '../../multi';
-export { beginVimVisualSelection, extendVimVisualSelection } from '../../visual';
+export { convertVimVisualSelection, exchangeVimVisualEndpoints, exchangeVimVisualBlockColumns, createVimMotionGhost, beginVimVisualSelection, extendVimVisualSelection } from '../../visual';
 export { applyVimSelectionCommand } from '../../selections';
 export { resolveVimCharacterInfo } from '../../navigation/character-info';
 export { createVimRegisterBank, prepareVimPutFromBank } from '../../registers';
@@ -44,3 +44,5 @@ export type {
   VimSelectionCommandInput,
   VimSelectionCommandResult,
 } from '../../selections';
+
+export type { VimMotionGhost } from '../../visual';

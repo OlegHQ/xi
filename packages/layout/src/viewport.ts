@@ -563,7 +563,7 @@ export class ViewportLayout {
         if (row === undefined || rows.length >= input.heightCells) break;
         rows.push(this.withGutter(row, gutterWidthCells));
       }
-      if (rows.length >= input.heightCells || !relative.complete) break;
+      if (rows.length >= input.heightCells || (wrap && !relative.complete)) break;
       logicalLine += 1;
       sourceAnchor = undefined;
     }

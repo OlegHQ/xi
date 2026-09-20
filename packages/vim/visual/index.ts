@@ -13,6 +13,8 @@ import {
 import { defaultCellWidthPolicy } from '../../layout/src/index';
 import type { VimNormalizedOperatorRange, VimOperatorRangeInput, VimOperatorRangeKind } from '../ranges/normalize';
 import { normalizeVimOperatorRange } from '../ranges/normalize';
+import { createVimMotionCursor } from '../motions';
+import { wordGhostRange } from './word-ghost';
 
 export type VimVisualKind = 'visual-character' | 'visual-line' | 'visual-block';
 export type VimSelectMode = 'select-character' | 'select-line' | 'select-block';
@@ -71,6 +73,74 @@ export interface VimVisualReplacementPlan {
 export type VimVisualReplacementFailure = VimVisualFailure
   | { readonly kind: 'invalid-replacement-text' }
   | { readonly kind: 'unsupported-select-replacement' };
+
+/** Xi-only last-motion range. Endpoints are semantic UTF-16 characters, never cells.
+ * Normal operators continue to use the Normal cursor; only explicit `v` adopts this set. */
+export function createVimMotionGhost(snapshot: DocumentSnapshot, before: SelectionSetSnapshot, after: SelectionSetSnapshot, key?: string, count = 1) {
+  if (before.documentId !== snapshot.id || after.documentId !== snapshot.id
+    || before.documentVersion !== snapshot.version || after.documentVersion !== snapshot.version
+    || before.members.length !== after.members.length) return undefined;
+  if (key !== undefined && /^(?:[hjklG0^$|_+\-]|gg|g_|H|M|L|<.*>)$/u.test(key)) return undefined;
+  const sources = new Map(before.members.map(member => [member.id, member]));
+  const members: SelectionMemberInput[] = [];
+  const previewMembers = [];
+  let moved = false;
+  for (const target of after.members) {
+    const source = sources.get(target.id);
+    if (source?.kind !== 'normal-cursor' || target.kind !== 'normal-cursor') return undefined;
+    const forward = source.head.at.offset <= target.head.at.offset;
+    let anchor = endpointInput(source.head);
+    let head = endpointInput(target.head);
+    let desiredColumn = target.desiredColumn;
+    let anchorDesiredColumn = source.desiredColumn;
+    let start = Math.min(source.head.at.offset, target.head.at.offset);
+    const high = forward ? target.head : source.head;
+    let end: number = high.kind === 'character' ? high.after.offset : high.at.offset;
+    // Helix word selections stop before the next word and do not carry a newline
+    // into the next selection. Keep Vim's actual cursor destination independent.
+    if (key === 'w' || key === 'W' || key === 'e' || key === 'E' || key === 'b' || key === 'B') {
+      const backward = key === 'b' || key === 'B';
+      const sourceEndpoint = endpointFor(snapshot, { documentVersion: snapshot.version, offset: source.head.at.offset, displayCellColumn: 0 as CellColumn }, 'visual-character');
+      if (!sourceEndpoint.ok) return undefined;
+      const range = wordGhostRange(snapshot, source.head.at.offset, sourceEndpoint.value.kind === 'character' ? sourceEndpoint.value.after : source.head.at.offset, key, count);
+      if (range === undefined) return undefined;
+      start = range.start;
+      end = range.end;
+      const line = snapshot.lineIndexAt(start as Utf16Offset);
+      const metrics = line.ok ? lineMetrics(snapshot, line.value) : null;
+      if (metrics === null) return undefined;
+      let last = end - 1;
+      while (last > start && !graphemeBoundaryConfirmed(snapshot, last, metrics.start)) last -= 1;
+      const low = endpointFor(snapshot, { documentVersion: snapshot.version, offset: start as Utf16Offset, displayCellColumn: 0 as CellColumn }, 'visual-character');
+      const high = endpointFor(snapshot, { documentVersion: snapshot.version, offset: last as Utf16Offset, displayCellColumn: 0 as CellColumn }, 'visual-character');
+      if (!low.ok || !high.ok) return undefined;
+      anchor = backward ? high.value : low.value;
+      head = backward ? low.value : high.value;
+      const headCursor = createVimMotionCursor(snapshot, (backward ? start : last) as Utf16Offset);
+      const anchorCursor = createVimMotionCursor(snapshot, (backward ? last : start) as Utf16Offset);
+      if (!headCursor.ok || !anchorCursor.ok) return undefined;
+      desiredColumn = { logicalUtf16: ((backward ? start : last) - metrics.start) as Utf16Column, displayCell: headCursor.value.desiredDisplayCellColumn };
+      anchorDesiredColumn = { logicalUtf16: ((backward ? last : start) - metrics.start) as Utf16Column, displayCell: anchorCursor.value.desiredDisplayCellColumn };
+    }
+    const changed = source.head.at.offset !== target.head.at.offset;
+    moved ||= changed;
+    members.push({ id: target.id, kind: 'visual-character', direction: forward ? 'forward' : 'backward',
+      anchor, head, inclusive: true,
+      desiredColumn, anchorDesiredColumn });
+    previewMembers.push(Object.freeze({ memberId: target.id, source: source.head.at.offset, destination: target.head.at.offset,
+      moved: changed, extent: Object.freeze({ kind: 'characterwise' as const,
+        start: start as Utf16Offset, end: end as Utf16Offset }) }));
+  }
+  if (!moved) return undefined;
+  const visual = updateSelectionSet(snapshot, after, { primaryId: after.primaryId, members });
+  if (!visual.ok) return undefined;
+  return Object.freeze({ selection: visual.value.selectionSet, preview: Object.freeze({
+    documentId: snapshot.id, documentVersion: snapshot.version, selectionGeneration: after.selectionGeneration,
+    members: Object.freeze(previewMembers),
+  }) });
+}
+
+export type VimMotionGhost = NonNullable<ReturnType<typeof createVimMotionGhost>>;
 
 /** Begin one visual region while keeping selection state in the shared selection owner. */
 export function beginVimVisualSelection(
@@ -141,6 +211,31 @@ export function extendVimVisualSelection(
   const updated = updateSelectionSet(snapshot, current, { primaryId: current.primaryId, members });
   if (!updated.ok) return { ok: false, error: { kind: 'invalid-selection', reason: updated.error.kind } };
   return { ok: true, value: updated.value.selectionSet };
+}
+
+/** Change Visual kind without discarding the stable anchor or any member. */
+export function convertVimVisualSelection(snapshot: DocumentSnapshot, current: SelectionSetSnapshot, kind: VimVisualKind): Result<SelectionSetSnapshot, VimVisualFailure> {
+  if (current.documentVersion !== snapshot.version) return visualFailure('stale-document-version');
+  const members: SelectionMemberInput[] = [];
+  for (const member of current.members) {
+    if (!isVisualMember(member)) return visualFailure('invalid-selection-kind');
+    const endpoints: EndpointInput[] = [];
+    for (const [endpoint, desired] of [[member.anchor, member.anchorDesiredColumn], [member.head, member.desiredColumn]] as const) {
+      const line = snapshot.lineIndexAt(endpoint.at.offset);
+      if (!line.ok) return visualFailure('invalid-cursor');
+      const metrics = lineMetrics(snapshot, line.value);
+      if (metrics === null) return visualFailure('invalid-cursor');
+      let at = endpoint.kind === 'line' ? Math.min(metrics.start + (desired.logicalUtf16 ?? 0), Math.max(metrics.start, metrics.end - 1)) : endpoint.at.offset as number;
+      while (at > metrics.start && !graphemeBoundaryConfirmed(snapshot, at, metrics.start)) at -= 1;
+      const converted = endpointFor(snapshot, { documentVersion: snapshot.version, offset: at as Utf16Offset, displayCellColumn: (desired.displayCell ?? 0) as CellColumn }, kind);
+      if (!converted.ok) return converted;
+      endpoints.push(converted.value);
+    }
+    const base = { id: member.id, kind, direction: member.direction, anchor: endpoints[0]!, head: endpoints[1]!, desiredColumn: member.desiredColumn, anchorDesiredColumn: member.anchorDesiredColumn, creationOrdinal: member.creationOrdinal };
+    members.push(kind === 'visual-character' ? { ...base, kind, inclusive: true } : { ...base, kind });
+  }
+  const updated = updateSelectionSet(snapshot, current, { primaryId: current.primaryId, members });
+  return updated.ok ? { ok: true, value: updated.value.selectionSet } : visualFailure('invalid-selection-kind');
 }
 
 /** `o` exchanges active and anchor endpoints while preserving each selection's geometry. */

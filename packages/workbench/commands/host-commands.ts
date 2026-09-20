@@ -308,6 +308,7 @@ export class WorkbenchHostCommands {
       const splitDocument = host.documents.get(split.value.session.documentId);
       if (splitDocument !== undefined) host.createSession(splitDocument, split.value.viewId, split.value.session.selections);
       marker('XI_WORKBENCH_SPLIT', { viewId: split.value.viewId });
+      host.notifySurfaceChange();
       return 'handled';
     }
     if (command === 'wa' || command === 'wa!') {
@@ -339,19 +340,18 @@ export class WorkbenchHostCommands {
     }
     const current = session.views().find((view) => view.viewId === viewId);
     const buffer = current === undefined ? undefined : session.buffer(current.bufferId);
-    if (current === undefined && (command === 'q' || command === 'q!')) return 'quit';
-    if (command === 'q' && buffer?.dirty === true) return 'unhandled';
-    if (host.sessions.size === 1) return 'unhandled';
-    const closingBufferId: DocumentId | undefined = current?.bufferId;
-    const closed = session.closeView(viewId, 'discard');
+    if (current === undefined) return 'handled';
+    if (command === 'q' && buffer?.dirty === true && buffer.viewIds.length === 1) {
+      onError('xi: buffer has unsaved changes (use :q! to discard)\n');
+      return 'handled';
+    }
+    const closed = host.closeView(viewId, command === 'q!');
     if (!closed.ok) {
       onError(`xi: ${closed.error.kind}\n`);
       return 'handled';
     }
-    host.sessions.get(viewId)?.dispose();
-    host.sessions.delete(viewId);
-    if (closingBufferId !== undefined && session.buffer(closingBufferId) === undefined) host.documents.delete(closingBufferId);
     marker('XI_WORKBENCH_VIEW_CLOSED', { activeViewId: closed.value.activeViewId });
+    host.notifySurfaceChange();
     return 'handled';
   }
 }

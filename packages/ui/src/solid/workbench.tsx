@@ -5,8 +5,8 @@ import { createSignal, onCleanup } from 'solid-js';
 import type { Disposable } from '../../../contracts/src/index.ts';
 import type { WorkbenchReadPort, ExCommandLineReadModel } from '../../../workbench/src/index.ts';
 import type { WorkbenchRenderable } from '../workbench';
-import { ASCII_WORKBENCH_THEME, type WorkbenchTheme } from '../workbench';
-import { formatPrefixHelpLines } from '../../help/index';
+import { ASCII_WORKBENCH_THEME, helixThemeColor, helixThemeStyle, type WorkbenchTheme } from '../workbench';
+import { formatPrefixHelpLines, type PrefixHelpReadPort } from '../../help/index';
 import { formatPickerLines, pickerRowIds, type PickerReadPort } from '../../picker/index';
 import { formatExplorerLines, type ExplorerReadModel, type ExplorerReadPort } from '../../explorer/index';
 import { resolveFileIcon, type IconColorToken } from '../../explorer/icons';
@@ -23,6 +23,8 @@ import { contextMenuBounds, formatContextMenuLines } from '../context-menu';
 import type { WorkbenchPanelPointerEvent } from '../panel-pointer';
 import type { OpenTuiWorkbenchOptions } from '../options';
 import { ChromeSurface } from './chrome';
+import { readableTextColor } from '../../theme/readability';
+import { readableSidebarForeground, sidebarTheme } from '../../theme/sidebar';
 import { StatusSurface } from './status';
 import { ThemedRowsSurface, type SolidThemeBridge } from './composition';
 import type { RowsSurfaceSpec, SurfaceRow, SurfaceRowSegment } from './panel';
@@ -45,7 +47,7 @@ import {
 export interface WorkbenchAppProps {
   readonly workbench: WorkbenchReadPort;
   readonly fileLabel: string;
-  readonly viewport: Pick<WorkbenchRenderable, 'cursorCell' | 'forwardPointerEvent'>;
+  readonly viewport: Pick<WorkbenchRenderable, 'cursorCell' | 'forwardPointerEvent' | 'getTabStrips'>;
   readonly options: OpenTuiWorkbenchOptions;
   readonly theme: WorkbenchTheme;
   readonly themeBridge: SolidThemeBridge<WorkbenchTheme>;
@@ -117,16 +119,29 @@ function visibilitySubscription(options: OpenTuiWorkbenchOptions): { readonly su
   return options.subscribeSurfaceChanges === undefined ? {} : { subscribeVisibility: options.subscribeSurfaceChanges };
 }
 
-function iconColor(theme: WorkbenchTheme, token: IconColorToken): string {
+function iconColor(theme: WorkbenchTheme, token: IconColorToken): import('../workbench').ThemeColor {
   switch (token) {
     case 'foreground': return theme.foreground;
     case 'muted': return theme.muted;
     case 'accent': return theme.accent;
-    case 'gitAdded': return '#367C4A';
-    case 'gitModified': return '#9B6A16';
+    case 'gitAdded': return helixThemeColor(theme, 'diff.plus', 'fg', '#367C4A');
+    case 'gitModified': return helixThemeColor(theme, 'diff.delta', 'fg', '#9B6A16');
     case 'gitConflict': return theme.error;
     case 'error': return theme.error;
   }
+}
+
+function themeForScope(theme: WorkbenchTheme, scope: string): WorkbenchTheme {
+  const selected = scope === 'ui.menu' ? 'ui.menu.selected' : 'ui.selection.primary';
+  return {
+    ...theme,
+    surface: helixThemeColor(theme, scope, 'bg', theme.surface),
+    surfaceActive: helixThemeColor(theme, selected, 'bg', theme.surfaceActive),
+    foreground: readableTextColor(helixThemeColor(theme, scope, 'fg', theme.foreground), helixThemeColor(theme, scope, 'bg', theme.surface), theme.foreground),
+    muted: helixThemeColor(theme, 'ui.text.inactive', 'fg', theme.muted),
+    accent: helixThemeColor(theme, selected, 'fg', theme.accent),
+    error: helixThemeColor(theme, 'error', 'fg', theme.error),
+  };
 }
 
 function clipSegments(segments: readonly SurfaceRowSegment[], width: number): readonly SurfaceRowSegment[] {
@@ -147,13 +162,20 @@ function clipSegments(segments: readonly SurfaceRowSegment[], width: number): re
 }
 
 function pickerRows(model: PickerReadPort['model'], width: number, maxRows: number, offset: number, hoveredId: string | undefined, theme: WorkbenchTheme): readonly SurfaceRow[] {
+  const background = helixThemeColor(theme, 'ui.menu', 'bg', theme.surface);
+  const selectedBackground = helixThemeColor(theme, 'ui.text.focus', 'bg', helixThemeColor(theme, 'ui.menu.selected', 'bg', theme.surfaceActive));
+  const foreground = helixThemeColor(theme, 'ui.menu', 'fg', theme.foreground);
+  const selectedForeground = helixThemeColor(theme, 'ui.text.focus', 'fg', helixThemeColor(theme, 'ui.menu.selected', 'fg', foreground));
+  const headerBackground = helixThemeColor(theme, 'ui.picker.header', 'bg', background);
+  const headerForeground = helixThemeColor(theme, 'ui.picker.header', 'fg', foreground);
+  const directoryStyle = helixThemeStyle(theme, 'ui.text.directory');
   const title = ({ file: 'Files', buffer: 'Buffers', command: 'Commands', theme: 'Themes', config: 'Config', git: 'Git' } as const)[model.mode];
   const rows: SurfaceRow[] = [{
     segments: clipSegments([
-      { text: `${title}  > `, foreground: theme.accent, bold: true },
-      { text: model.query.length === 0 ? 'Type to filter…' : model.query, foreground: model.query.length === 0 ? theme.muted : theme.foreground, italic: model.query.length === 0 },
+      { text: `${title}${model.mode === 'theme' ? '  ·  Live preview' : ''}  > `, foreground: headerForeground, bold: true },
+      { text: model.query.length === 0 ? 'Type to filter…' : model.query, foreground: model.query.length === 0 ? theme.muted : headerForeground, italic: model.query.length === 0 },
     ], width),
-    background: theme.surface,
+    background: headerBackground,
   }];
   const entries = model.entries.slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, maxRows - 2));
   for (const entry of entries) {
@@ -164,29 +186,38 @@ function pickerRows(model: PickerReadPort['model'], width: number, maxRows: numb
     rows.push({
       segments: clipSegments([
         { text: selected ? '▸ ' : '  ', foreground: selected ? theme.accent : theme.muted },
-        ...(parent.length === 0 ? [] : [{ text: parent, foreground: theme.muted }]),
-        { text: label, foreground: theme.foreground, bold: selected },
+        ...(parent.length === 0 ? [] : [{ text: parent, foreground: helixThemeColor(theme, 'ui.text.directory', 'fg', theme.muted), ...(directoryStyle === undefined ? {} : { style: directoryStyle }) }]),
+        { text: label, foreground: selected ? selectedForeground : foreground, bold: selected },
         ...(entry.detail.length === 0 ? [] : [{ text: `  ${entry.detail}`, foreground: theme.muted }]),
       ], width),
-      background: selected ? theme.surfaceActive : entry.id === hoveredId ? theme.selectionSecondary ?? theme.surfaceActive : theme.surface,
+      background: selected ? selectedBackground : entry.id === hoveredId ? theme.selectionSecondary ?? selectedBackground : background,
     });
   }
+  while (rows.length < maxRows - 1) rows.push({ text: '', background });
   if (rows.length < maxRows) rows.push({
-    text: model.message ?? `${model.totalMatches}${model.truncated ? '+' : ''} matches  ·  ↑↓/Ctrl-NP move  ·  Enter open  ·  Esc cancel`,
+    text: model.message ?? (model.mode === 'theme'
+      ? width < 80
+        ? `${model.totalMatches} themes · C-n/p C-u/d · Enter apply · Esc restore`
+        : `${model.totalMatches}${model.truncated ? '+' : ''} themes · ↑↓/C-n/p move · C-u/d half page · Hover preview · Enter apply · Esc restore`
+      : `${model.totalMatches}${model.truncated ? '+' : ''} matches  ·  ↑↓/Ctrl-N/P move  ·  Enter open  ·  Esc cancel`),
     foreground: model.state === 'error' ? theme.error : theme.muted,
-    background: theme.surface,
+    background,
   });
   return rows;
 }
 
-function gitStateColor(state: GitReadPort['model']['sections'][number]['entries'][number]['state'], theme: WorkbenchTheme): string {
+function gitStateColor(state: GitReadPort['model']['sections'][number]['entries'][number]['state'], theme: WorkbenchTheme): import('../workbench').ThemeColor {
   if (state === 'conflicted' || state === 'deleted') return theme.error;
-  if (state === 'modified') return '#C4872B';
-  if (state === 'added' || state === 'untracked') return '#3F9A5F';
+  if (state === 'modified') return helixThemeColor(theme, 'diff.delta', 'fg', '#C4872B');
+  if (state === 'added' || state === 'untracked') return helixThemeColor(theme, 'diff.plus', 'fg', '#3F9A5F');
   return theme.accent;
 }
 
-function gitRows(model: GitReadPort['model'], width: number, maxRows: number, offset: number, hoveredId: string | undefined, theme: WorkbenchTheme): readonly SurfaceRow[] {
+function gitStateScope(state: GitReadPort['model']['sections'][number]['entries'][number]['state']): 'diff.plus' | 'diff.minus' | 'diff.delta' {
+  return state === 'added' || state === 'untracked' ? 'diff.plus' : state === 'deleted' ? 'diff.minus' : 'diff.delta';
+}
+
+export function gitRows(model: GitReadPort['model'], width: number, maxRows: number, offset: number, hoveredId: string | undefined, theme: WorkbenchTheme): readonly SurfaceRow[] {
   const total = model.sections.reduce((sum, section) => sum + section.count, 0);
   const rows: SurfaceRow[] = [
     { segments: clipSegments([{ text: model.branch ?? 'detached', foreground: theme.accent, bold: true }, { text: `  ${total} change${total === 1 ? '' : 's'}`, foreground: theme.muted }], width), background: theme.surface },
@@ -209,10 +240,11 @@ function gitRows(model: GitReadPort['model'], width: number, maxRows: number, of
     }
     const selected = item.row.id === model.selectedId;
     const slash = item.row.path.lastIndexOf('/');
+    const { fg: _stateForeground, ...stateStyle } = helixThemeStyle(theme, gitStateScope(item.row.state)) ?? {};
     rows.push({
       segments: clipSegments([
         { text: '  ' },
-        { text: `${item.row.letter} `, foreground: gitStateColor(item.row.state, theme), bold: true },
+        { text: `${item.row.letter} `, foreground: readableSidebarForeground(gitStateColor(item.row.state, theme), theme.foreground, [theme.surface, theme.surfaceActive, theme.selectionSecondary ?? theme.surfaceActive]), bold: true, style: stateStyle },
         ...(slash < 0 ? [] : [{ text: item.row.path.slice(0, slash + 1), foreground: theme.muted }]),
         { text: item.row.path.slice(slash + 1), foreground: theme.foreground, bold: selected },
       ], width),
@@ -229,24 +261,28 @@ function gitDiffRows(model: ReturnType<GitDiffReadPort['readModel']>, width: num
   for (const line of model.lines.slice(start, start + Math.max(0, maxRows - 1))) {
     const added = line.kind === 'added';
     const removed = line.kind === 'removed';
+    const diffStyle = !added && !removed ? undefined : helixThemeStyle(theme, added ? 'diff.plus' : 'diff.minus');
     const oldNumber = line.oldLine === undefined ? '    ' : String(line.oldLine).padStart(4);
     const newNumber = line.newLine === undefined ? '    ' : String(line.newLine).padStart(4);
     rows.push({
       segments: clipSegments([
         { text: `${oldNumber} ${newNumber} `, foreground: theme.muted },
-        { text: added ? '+ ' : removed ? '- ' : '  ', foreground: added ? '#3F9A5F' : removed ? theme.error : theme.muted, bold: added || removed },
+        { text: added ? '+ ' : removed ? '- ' : '  ', foreground: added ? helixThemeColor(theme, 'diff.plus', 'fg', '#3F9A5F') : removed ? helixThemeColor(theme, 'diff.minus', 'fg', theme.error) : theme.muted, bold: added || removed },
         { text: line.text.replace(/[\r\n]+$/u, ''), foreground: theme.foreground },
       ], width),
-      background: added ? theme.diffAdded ?? '#E4F3E8' : removed ? theme.diffRemoved ?? '#F8E5E8' : theme.background,
+      background: added ? helixThemeColor(theme, 'diff.plus', 'bg', theme.diffAdded ?? '#E4F3E8') : removed ? helixThemeColor(theme, 'diff.minus', 'bg', theme.diffRemoved ?? '#F8E5E8') : theme.background,
+      ...(diffStyle === undefined ? {} : { style: diffStyle }),
     });
   }
   return rows;
 }
 
 function hoverRows(model: HoverReadPort['model'], width: number, maxRows: number, _offset: number, _hoveredId: string | undefined, theme: WorkbenchTheme): readonly SurfaceRow[] {
-  const padding = (): SurfaceRow => ({ text: '', background: theme.surface });
+  const background = helixThemeColor(theme, 'ui.popup', 'bg', theme.surface);
+  const foreground = helixThemeColor(theme, 'markup.normal.hover', 'fg', helixThemeColor(theme, 'ui.popup', 'fg', theme.foreground));
+  const padding = (): SurfaceRow => ({ text: '', background });
   if (model.state !== 'ready' || model.hover === undefined || model.hover.length === 0) {
-    return [padding(), ...formatHoverLines(model, Math.max(1, width - 4), Math.max(1, maxRows - 2)).map(text => ({ text: `  ${text}`, foreground: theme.muted, background: theme.surface })), padding()];
+    return [padding(), ...formatHoverLines(model, Math.max(1, width - 4), Math.max(1, maxRows - 2)).map(text => ({ text: `  ${text}`, foreground: theme.muted, background })), padding()];
   }
   const rows: SurfaceRow[] = [padding()];
   let code = false;
@@ -256,9 +292,10 @@ function hoverRows(model: HoverReadPort['model'], width: number, maxRows: number
     if (rows.length === 1 && source.trim() === '') continue;
     const heading = /^#{1,6}\s+(.+)$/u.exec(source);
     const segments = code ? highlightHoverCode(source, theme) : heading === null
-      ? [{ text: `  ${source}`, foreground: theme.foreground }]
-      : [{ text: `  ${heading[1] ?? ''}`, foreground: theme.accent, bold: true }];
-    rows.push({ segments: clipSegments(segments, width), background: theme.surface });
+      ? [{ text: `  ${source}`, foreground }]
+      : [{ text: `  ${heading[1] ?? ''}`, foreground: helixThemeColor(theme, 'markup.heading.hover', 'fg', theme.accent), bold: true }];
+    const style = helixThemeStyle(theme, heading === null ? 'markup.normal.hover' : 'markup.heading.hover');
+    rows.push({ segments: clipSegments(segments, width), background, ...(style === undefined ? {} : { style }) });
   }
   while (rows.length > 1 && rows.at(-1)?.segments?.every(segment => segment.text.trim() === '') === true) rows.pop();
   rows.push(padding());
@@ -266,38 +303,49 @@ function hoverRows(model: HoverReadPort['model'], width: number, maxRows: number
 }
 
 function highlightHoverCode(source: string, theme: WorkbenchTheme): readonly SurfaceRowSegment[] {
-  const segments: SurfaceRowSegment[] = [{ text: '  ', foreground: theme.foreground }];
+  const foreground = helixThemeColor(theme, 'markup.raw.inline.hover', 'fg', helixThemeColor(theme, 'ui.popup', 'fg', theme.foreground));
+  const muted = helixThemeColor(theme, 'comment', 'fg', theme.muted);
+  const string = helixThemeColor(theme, 'string', 'fg', theme.foreground);
+  const number = helixThemeColor(theme, 'constant.numeric', 'fg', theme.foreground);
+  const keyword = helixThemeColor(theme, 'keyword', 'fg', theme.accent);
+  const rawStyle = helixThemeStyle(theme, 'markup.raw.inline.hover');
+  const segments: SurfaceRowSegment[] = [{ text: '  ', foreground, ...(rawStyle === undefined ? {} : { style: rawStyle }) }];
   const token = /(\/\/.*$|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:async|await|class|const|else|extends|function|if|import|interface|let|new|return|type|typeof|var)\b|\b\d+(?:\.\d+)?\b)/gu;
   let offset = 0;
   for (const match of source.matchAll(token)) {
     const index = match.index;
-    if (index > offset) segments.push({ text: source.slice(offset, index), foreground: theme.foreground });
+    if (index > offset) segments.push({ text: source.slice(offset, index), foreground, ...(rawStyle === undefined ? {} : { style: rawStyle }) });
     const value = match[0];
-    const foreground = value.startsWith('//') || value.startsWith('/*') ? theme.muted
-      : /^["'`]/u.test(value) ? '#B56A3B'
-        : /^\d/u.test(value) ? '#8A5CB5' : theme.accent;
-    segments.push({ text: value, foreground, italic: value.startsWith('/') });
+    const color = value.startsWith('//') || value.startsWith('/*') ? muted
+      : /^["'`]/u.test(value) ? string
+        : /^\d/u.test(value) ? number : keyword;
+    const scope = value.startsWith('//') || value.startsWith('/*') ? 'comment' : /^["'`]/u.test(value) ? 'string' : /^\d/u.test(value) ? 'constant.numeric' : 'keyword';
+    const style = helixThemeStyle(theme, scope);
+    segments.push({ text: value, foreground: color, italic: value.startsWith('/'), ...(style === undefined ? {} : { style }) });
     offset = index + value.length;
   }
-  if (offset < source.length) segments.push({ text: source.slice(offset), foreground: theme.foreground });
+  if (offset < source.length) segments.push({ text: source.slice(offset), foreground, ...(rawStyle === undefined ? {} : { style: rawStyle }) });
   return segments;
 }
 
 function commandLineRows(model: ExCommandLineReadModel | undefined, width: number, maxRows: number, theme: WorkbenchTheme): readonly SurfaceRow[] {
   if (model === undefined) return [];
-  const rows: SurfaceRow[] = [{ segments: clipSegments([{ text: ':', foreground: theme.accent, bold: true }, { text: model.source.startsWith(':') ? model.source.slice(1) : model.source, foreground: theme.foreground, bold: true }], width), background: theme.surface }];
+  const background = helixThemeColor(theme, 'ui.popup', 'bg', theme.surface);
+  const foreground = helixThemeColor(theme, 'ui.popup', 'fg', theme.foreground);
+  const selectedBackground = helixThemeColor(theme, 'ui.menu.selected', 'bg', theme.surfaceActive);
+  const rows: SurfaceRow[] = [{ segments: clipSegments([{ text: ':', foreground: theme.accent, bold: true }, { text: model.source.startsWith(':') ? model.source.slice(1) : model.source, foreground, bold: true }], width), background }];
   if (model.parseFailure !== undefined && rows.length < maxRows) {
     const detail = 'reason' in model.parseFailure ? model.parseFailure.reason : model.parseFailure.kind;
-    rows.push({ text: detail, foreground: theme.error, background: theme.surface });
-  } else if (rows.length < maxRows) rows.push({ text: model.acceptanceHint, foreground: theme.muted, background: theme.surface });
+    rows.push({ text: detail, foreground: theme.error, background });
+  } else if (rows.length < maxRows) rows.push({ text: model.acceptanceHint, foreground: theme.muted, background });
   const selectedCandidate = model.candidates[model.selectedIndex];
   if (model.position.typedName.length > 0 && selectedCandidate !== undefined && rows.length < maxRows) {
     rows.push({
       segments: clipSegments([
         { text: `${selectedCandidate.label}  `, foreground: theme.accent, bold: true },
-        { text: selectedCandidate.detail, foreground: selectedCandidate.available ? theme.foreground : theme.error },
+        { text: selectedCandidate.detail, foreground: selectedCandidate.available ? foreground : theme.error },
       ], width),
-      background: theme.surfaceActive,
+      background: selectedBackground,
     });
   }
   for (let index = 0; index < model.candidates.length && rows.length < maxRows; index += 1) {
@@ -307,10 +355,38 @@ function commandLineRows(model: ExCommandLineReadModel | undefined, width: numbe
     rows.push({
       segments: clipSegments([
         { text: selected ? '▸ ' : '  ', foreground: selected ? theme.accent : theme.muted },
-        { text: candidate.label, foreground: candidate.available ? theme.foreground : theme.muted, bold: selected && candidate.available },
+        { text: candidate.label, foreground: candidate.available ? foreground : theme.muted, bold: selected && candidate.available },
         ...(candidate.alias === undefined ? [] : [{ text: `  → ${String(candidate.commandId ?? '')}`, foreground: theme.muted }]),
       ], width),
-      background: selected ? theme.surfaceActive : theme.surface,
+      background: selected ? selectedBackground : background,
+    });
+  }
+  return rows;
+}
+
+function prefixHelpRows(model: PrefixHelpReadPort['model'], width: number, maxRows: number, theme: WorkbenchTheme): readonly SurfaceRow[] {
+  if (model === undefined || width <= 0 || maxRows <= 0) return [];
+  const background = helixThemeColor(theme, 'ui.popup.info', 'bg', theme.surface);
+  const foreground = helixThemeColor(theme, 'ui.popup.info', 'fg', theme.foreground);
+  const keyForeground = helixThemeColor(theme, 'ui.text.info', 'fg', theme.accent);
+  const keyStyle = helixThemeStyle(theme, 'ui.text.info');
+  const prefix = model.pendingKeys.length === 0 ? 'Prefix' : `Prefix ${model.pendingKeys.join(' ')}`;
+  if (width < 48 || maxRows === 1) return [{ text: (model.compactHint ?? `${prefix}: no legal continuation`).slice(0, width), foreground, background }];
+  const rows: SurfaceRow[] = [{
+    segments: clipSegments([{ text: prefix, foreground: keyForeground, bold: true, ...(keyStyle === undefined ? {} : { style: keyStyle }) }, { text: `  (${model.hints.length} hints)`, foreground }], width),
+    background,
+  }];
+  for (const hint of model.hints) {
+    if (rows.length >= maxRows) break;
+    const alias = hint.aliases.length === 0 ? '' : ` (${hint.aliases.join(', ')})`;
+    const state = hint.available ? '' : ` [${hint.disabledReason ?? 'unavailable'}]`;
+    rows.push({
+      segments: clipSegments([
+        { text: `  ${hint.keyLabel}  `, foreground: keyForeground, ...(keyStyle === undefined ? {} : { style: keyStyle }) },
+        { text: `${hint.title}${alias} — ${hint.description}`, foreground: hint.available ? foreground : theme.muted },
+        ...(state.length === 0 ? [] : [{ text: state, foreground: helixThemeColor(theme, 'error', 'fg', theme.error) }]),
+      ], width),
+      background,
     });
   }
   return rows;
@@ -344,7 +420,10 @@ function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, 
         : node.kind === 'directory' || node.kind === 'file'
           ? resolveFileIcon(node.name, node.kind, node.expanded, ascii)
           : { glyph: '?', color: 'error' as const };
-    const gitColor = node.git?.state === 'conflicted' ? theme.error : node.git?.state === 'modified' ? '#9B6A16' : '#367C4A';
+    const gitScope = node.git?.state === 'modified' || node.git?.state === 'conflicted' ? 'diff.delta' : 'diff.plus';
+    const gitColor = node.git?.state === 'conflicted' ? theme.error : helixThemeColor(theme, gitScope, 'fg', node.git?.state === 'modified' ? '#9B6A16' : '#367C4A');
+    const directoryStyle = node.kind === 'directory' || node.kind === 'root' ? helixThemeStyle(theme, 'ui.text.directory') : undefined;
+    const gitStyle = helixThemeStyle(theme, gitScope);
     const suffix = node.loadState === 'permission-denied' ? '  [permission denied]'
       : node.loadState === 'symlink-cycle' ? '  [symlink cycle]'
         : node.loadState === 'empty' && expandable ? '  [empty]'
@@ -354,8 +433,8 @@ function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, 
       segments: clipSegments([
         { text: `${'  '.repeat(visible.depth)}${disclosure} `, foreground: theme.muted },
         { text: `${icon.glyph} `, foreground: iconColor(theme, icon.color) },
-        { text: node.name, foreground: selected ? theme.foreground : theme.muted, bold: selected },
-        ...(node.git === undefined ? [] : [{ text: ` ${node.git.label}`, foreground: gitColor }]),
+        { text: node.name, foreground: selected ? theme.foreground : (node.kind === 'directory' || node.kind === 'root' ? helixThemeColor(theme, 'ui.text.directory', 'fg', theme.foreground) : theme.foreground), bold: selected, ...(directoryStyle === undefined ? {} : { style: directoryStyle }) },
+        ...(node.git === undefined ? [] : [{ text: ` ${node.git.label}`, foreground: gitColor, ...(gitStyle === undefined ? {} : { style: gitStyle }) }]),
         ...(suffix.length === 0 ? [] : [{ text: suffix, foreground: node.loadState === 'permission-denied' ? theme.error : theme.muted }]),
       ], width),
     });
@@ -420,12 +499,13 @@ function searchRows(model: SearchReadPort['model'], width: number, maxRows: numb
     const location = `${match.id === selectedId ? '▸ ' : '  '}${match.path}:${match.line + 1}:${match.range.startUtf16 + 1} `;
     const query = model.query.query;
     const matchAt = query.length === 0 ? -1 : match.snippet.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+    const highlightStyle = helixThemeStyle(theme, 'ui.highlight');
     rows.push({
       segments: clipSegments([
         { text: location, foreground: theme.muted },
         ...(matchAt < 0 ? [{ text: match.snippet, foreground: theme.foreground }] : [
           { text: match.snippet.slice(0, matchAt), foreground: theme.foreground },
-          { text: match.snippet.slice(matchAt, matchAt + query.length), foreground: theme.accent, bold: true },
+          { text: match.snippet.slice(matchAt, matchAt + query.length), foreground: helixThemeColor(theme, 'ui.highlight', 'fg', theme.accent), bold: true, ...(highlightStyle === undefined ? {} : { style: highlightStyle }) },
           { text: match.snippet.slice(matchAt + query.length), foreground: theme.foreground },
         ]),
       ], width),
@@ -433,6 +513,32 @@ function searchRows(model: SearchReadPort['model'], width: number, maxRows: numb
     });
   }
   if (model.truncated && rows.length < maxRows) rows.push({ text: `… ${model.totalMatches - model.matches.length} more matches`, foreground: theme.muted, background: theme.surface });
+  return rows;
+}
+
+function problemsRows(model: ProblemsReadPort['model'], width: number, maxRows: number, offset: number, hoveredId: string | undefined, selectedId: string | undefined, theme: WorkbenchTheme): readonly SurfaceRow[] {
+  const background = helixThemeColor(theme, 'ui.popup', 'bg', theme.surface);
+  const foreground = helixThemeColor(theme, 'ui.popup', 'fg', theme.foreground);
+  const selectedBackground = helixThemeColor(theme, 'ui.selection.primary', 'bg', theme.surfaceActive);
+  const hoverBackground = helixThemeColor(theme, 'ui.selection', 'bg', theme.selectionSecondary ?? selectedBackground);
+  const severity = (value: 1 | 2 | 3 | 4 | undefined): import('../workbench').ThemeColor => {
+    const scope = value === 1 ? 'diagnostic.error' : value === 2 ? 'diagnostic.warning' : value === 3 ? 'diagnostic.info' : value === 4 ? 'diagnostic.hint' : 'ui.popup';
+    const fallback = value === 1 ? theme.error : foreground;
+    return helixThemeColor(theme, scope, 'fg', helixThemeColor(theme, value === 1 ? 'error' : value === 2 ? 'warning' : value === 3 ? 'info' : 'hint', 'fg', fallback));
+  };
+  const severityScope = (value: 1 | 2 | 3 | 4 | undefined): string => value === 1 ? 'diagnostic.error' : value === 2 ? 'diagnostic.warning' : value === 3 ? 'diagnostic.info' : value === 4 ? 'diagnostic.hint' : 'ui.popup';
+  const rows: SurfaceRow[] = [{ text: `Problems ${model.all.length}`.slice(0, width), foreground: theme.accent, background, bold: true }];
+  for (const problem of model.all.slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, maxRows - 1))) {
+    const selected = problem.id === selectedId;
+    const style = helixThemeStyle(theme, severityScope(problem.severity));
+    rows.push({
+      text: `${problem.uri}:${problem.range.startLine + 1}:${problem.range.startUtf16 + 1} ${problem.message}`.slice(0, width),
+      foreground: severity(problem.severity),
+      background: selected ? selectedBackground : problem.id === hoveredId ? hoverBackground : background,
+      bold: selected,
+      ...(style === undefined ? {} : { style }),
+    });
+  }
   return rows;
 }
 
@@ -453,7 +559,44 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
   const dimensions = useTerminalDimensions();
   const options = props.options;
   const panelProps = visibilitySubscription(options);
-  const rows = <T,>(spec: RowsSurfaceSpec<T>, colors?: (theme: WorkbenchTheme) => { readonly background: string; readonly foreground: string }): JSX.Element => (
+  const scopeColors = (scope: string, headerScope?: string, selectedScope?: string) => (theme: WorkbenchTheme) => {
+    const selected = selectedScope ?? (scope === 'ui.menu' ? 'ui.menu.selected' : 'ui.selection.primary');
+    const style = helixThemeStyle(theme, scope);
+    const selectedStyle = helixThemeStyle(theme, selected);
+    const headerStyle = headerScope === undefined ? undefined : helixThemeStyle(theme, headerScope);
+    return {
+      background: helixThemeColor(theme, scope, 'bg', theme.surface),
+      foreground: readableTextColor(helixThemeColor(theme, scope, 'fg', theme.foreground), helixThemeColor(theme, scope, 'bg', theme.surface), theme.foreground),
+      accent: helixThemeColor(theme, selected, 'fg', theme.accent),
+      muted: helixThemeColor(theme, 'ui.text.inactive', 'fg', theme.muted),
+      selectedBackground: helixThemeColor(theme, selected, 'bg', theme.surfaceActive),
+      hoverBackground: helixThemeColor(theme, 'ui.selection', 'bg', theme.selectionSecondary ?? theme.surfaceActive),
+      scrollForeground: helixThemeColor(theme, 'ui.menu.scroll', 'fg', theme.accent),
+      scrollBackground: helixThemeColor(theme, 'ui.menu.scroll', 'bg', theme.surface),
+      ...(style === undefined ? {} : { style }),
+      ...(selectedStyle === undefined ? {} : { selectedStyle }),
+      ...(headerStyle === undefined ? {} : { headerStyle }),
+    };
+  };
+  const sidebarColors = (source: WorkbenchTheme) => {
+    const theme = sidebarTheme(source);
+    return { background: theme.surface, foreground: theme.foreground, muted: theme.muted,
+      accent: theme.accent, selectedBackground: theme.surfaceActive,
+      hoverBackground: theme.selectionSecondary ?? theme.surfaceActive };
+  };
+  const rows = <T,>(spec: RowsSurfaceSpec<T>, colors?: (theme: WorkbenchTheme) => {
+    readonly background: import('../workbench').ThemeColor;
+    readonly foreground: import('../workbench').ThemeColor;
+    readonly accent?: import('../workbench').ThemeColor;
+    readonly muted?: import('../workbench').ThemeColor;
+    readonly selectedBackground?: import('../workbench').ThemeColor;
+    readonly hoverBackground?: import('../workbench').ThemeColor;
+    readonly scrollForeground?: import('../workbench').ThemeColor;
+    readonly scrollBackground?: import('../workbench').ThemeColor;
+    readonly style?: import('../workbench').HelixThemeStyle;
+    readonly selectedStyle?: import('../workbench').HelixThemeStyle;
+    readonly headerStyle?: import('../workbench').HelixThemeStyle;
+  }): JSX.Element => (
     <ThemedRowsSurface {...spec} {...panelProps} theme={props.themeBridge} {...(colors === undefined ? {} : { colors })} />
   );
 
@@ -497,6 +640,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         workbench={props.workbench}
         theme={props.theme}
         fileLabel={props.fileLabel}
+        tabStrips={(width, height) => props.viewport.getTabStrips(width, height)}
         {...(options.gitBranch === undefined ? {} : { gitBranch: options.gitBranch })}
         {...(options.sidebar === undefined ? {} : { sidebar: options.sidebar })}
         {...(options.tabs === undefined ? {} : { tabs: options.tabs })}
@@ -514,9 +658,9 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
       />}
       {rows({
         read: explorerSurface.read,
-        isOpen: () => explorerSurface.isOpen() && (dimensions().width >= 100 || options.explorer?.isFocused?.() !== false),
+        isOpen: () => options.sidebar?.().visible !== false && explorerSurface.isOpen() && (dimensions().width >= 100 || options.explorer?.isFocused?.() !== false),
         format: (model, width, maxRows, offset) => formatExplorerLines(model, width, maxRows, false, offset, props.themeBridge.current() === ASCII_WORKBENCH_THEME),
-        formatRows: (model, width, maxRows, offset, hoveredId) => explorerRows(model, width, maxRows, offset, hoveredId, props.themeBridge.current() === ASCII_WORKBENCH_THEME, props.themeBridge.current()),
+        formatRows: (model, width, maxRows, offset, hoveredId) => explorerRows(model, width, maxRows, offset, hoveredId, props.themeBridge.current() === ASCII_WORKBENCH_THEME, sidebarTheme(props.themeBridge.current())),
         maxRows: Number.MAX_SAFE_INTEGER,
         background: props.theme.surface,
         foreground: props.theme.foreground,
@@ -530,31 +674,35 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         selectedId: model => model.selectedId,
         selectedIndex: model => model.visibleRows.findIndex(row => row.nodeId === model.selectedId),
         zIndex: 20,
-      })}
+      }, sidebarColors)}
       {options.picker !== undefined && rows({
         read: options.picker.read,
         isOpen: options.picker.isOpen,
         format: formatPickerLines,
-        formatRows: (model, width, maxRows, offset, hoveredId) => pickerRows(model, width, maxRows, offset, hoveredId, props.themeBridge.current()),
-        maxRows: 20,
+        formatRows: (model, width, maxRows, offset, hoveredId) => pickerRows(model, width, maxRows, offset, hoveredId, themeForScope(props.themeBridge.current(), 'ui.menu')),
+        maxRows: Number.POSITIVE_INFINITY,
         background: props.theme.surface,
         foreground: props.theme.foreground,
         bounds: getPickerBounds,
         panel: 'picker',
         generation: model => model.generation,
         rowIds: pickerRowIds,
+        onViewportRows: count => options.picker?.onViewportRows?.(count),
         onPointer: event => forwardPanelPointer(options.picker?.onPointer, event, props.requestFrame),
         headerRows: 1,
+        footerRows: 1,
         totalRows: model => model.entries.length,
         selectedId: model => model.selectedId,
         selectedIndex: model => model.entries.findIndex(entry => entry.id === model.selectedId),
         zIndex: 100,
-      })}
+        border: true,
+        previewOnHover: model => model.mode === 'theme',
+      }, scopeColors('ui.menu', 'ui.picker.header'))}
       {rows<SearchReadPort['model']>({
         read: searchSurface.read,
-        isOpen: searchSurface.isOpen,
+        isOpen: () => options.sidebar?.().visible !== false && searchSurface.isOpen(),
         format: (model, width, maxRows, offset) => formatSearchLines(model, width, maxRows, searchSurface.selectedId(), offset, searchSurface.state()?.replaceInput ?? ''),
-        formatRows: (model, width, maxRows, offset, hoveredId) => searchRows(model, width, maxRows, offset, hoveredId, searchSurface.selectedId(), searchSurface.state()?.replaceInput ?? '', props.themeBridge.current()),
+        formatRows: (model, width, maxRows, offset, hoveredId) => searchRows(model, width, maxRows, offset, hoveredId, searchSurface.selectedId(), searchSurface.state()?.replaceInput ?? '', sidebarTheme(props.themeBridge.current())),
         maxRows: Number.MAX_SAFE_INTEGER,
         background: props.theme.surface,
         foreground: props.theme.foreground,
@@ -568,12 +716,12 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         selectedId: searchSurface.selectedId,
         selectedIndex: model => searchRowIds(model, 0, Number.MAX_SAFE_INTEGER).findIndex((id: string | undefined) => id === searchSurface.selectedId()),
         zIndex: 90,
-      })}
+      }, sidebarColors)}
       {options.git !== undefined && rows<GitReadPort['model']>({
         read: options.git.read,
-        isOpen: options.git.isOpen,
+        isOpen: () => options.sidebar?.().visible !== false && options.git!.isOpen(),
         format: formatGitLines,
-        formatRows: (model, width, maxRows, offset, hoveredId) => gitRows(model, width, maxRows, offset, hoveredId, props.themeBridge.current()),
+        formatRows: (model, width, maxRows, offset, hoveredId) => gitRows(model, width, maxRows, offset, hoveredId, sidebarTheme(props.themeBridge.current())),
         maxRows: Number.MAX_SAFE_INTEGER,
         background: props.theme.surface,
         foreground: props.theme.foreground,
@@ -587,12 +735,12 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         selectedId: model => model.selectedId,
         selectedIndex: model => gitRowIds(model, 0, Number.MAX_SAFE_INTEGER).findIndex((id: string | undefined) => id === model.selectedId),
         zIndex: 90,
-      })}
+      }, sidebarColors)}
       {options.gitDiff !== undefined && gitDiffRead !== undefined && rows<ReturnType<GitDiffReadPort['readModel']>>({
         read: gitDiffRead,
         isOpen: options.gitDiff.isOpen,
         format: formatGitDiffLines,
-        formatRows: (model, width, maxRows, offset, hoveredId) => gitDiffRows(model, width, maxRows, offset, hoveredId, props.themeBridge.current()),
+        formatRows: (model, width, maxRows, offset, hoveredId) => gitDiffRows(model, width, maxRows, offset, hoveredId, themeForScope(props.themeBridge.current(), 'ui.background')),
         maxRows: 30,
         background: props.theme.background,
         foreground: props.theme.foreground,
@@ -606,11 +754,12 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         onPointer: event => forwardPanelPointer(options.gitDiff?.onPointer, event, props.requestFrame),
         headerRows: 1,
         zIndex: 100,
-      }, current => ({ background: current.background, foreground: current.foreground }))}
+      }, scopeColors('ui.background'))}
       {options.problems !== undefined && rows<ProblemsReadPort['model']>({
         read: options.problems.read,
         isOpen: options.problems.isOpen,
         format: formatProblemsLines,
+        formatRows: (model, width, maxRows, offset, hoveredId) => problemsRows(model, width, maxRows, offset, hoveredId, options.problems?.selectedId?.(), themeForScope(props.themeBridge.current(), 'ui.popup')),
         maxRows: 10,
         background: props.theme.surface,
         foreground: props.theme.foreground,
@@ -626,7 +775,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
           selectedId: () => options.problems?.selectedId?.(),
           selectedIndex: model => model.all.findIndex((problem: ProblemsReadPort['model']['all'][number]) => problem.id === options.problems?.selectedId?.()),
         }),
-      })}
+      }, scopeColors('ui.popup'))}
       {options.outline !== undefined && rows({
         read: options.outline.read,
         isOpen: options.outline.isOpen,
@@ -636,7 +785,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: (width, height) => getSidebarOutlineBounds(width, height, options.sidebar?.()),
         zIndex: 70,
-      })}
+      }, scopeColors('ui.popup'))}
       {options.hierarchy !== undefined && rows({
         read: options.hierarchy.read,
         isOpen: options.hierarchy.isOpen,
@@ -646,18 +795,18 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: getOutlineBounds,
         zIndex: 75,
-      })}
+      }, scopeColors('ui.popup'))}
       {options.hover !== undefined && rows({
         read: options.hover.read,
-        isOpen: options.hover.isOpen,
+        isOpen: () => options.hover!.isOpen() && options.hover!.read.model.state === 'ready' && (options.hover!.read.model.hover?.trim().length ?? 0) > 0,
         format: (model, width, maxRows) => formatHoverLines(model, Math.max(1, width - 4), Math.max(1, maxRows - 2)),
-        formatRows: (model, width, maxRows, offset, hoveredId) => hoverRows(model, width, maxRows, offset, hoveredId, props.themeBridge.current()),
+        formatRows: (model, width, maxRows, offset, hoveredId) => hoverRows(model, width, maxRows, offset, hoveredId, themeForScope(props.themeBridge.current(), 'ui.popup')),
         maxRows: 12,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, measureHover(options.hover!.read.model, Math.max(1, width - 2), 12), 'below', options.sidebar?.().width),
+        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, measureHover(options.hover!.read.model, Math.max(1, width - 2), 12), 'below', options.sidebar?.().width, options.sidebar?.().visible !== false),
         zIndex: 110,
-      })}
+      }, scopeColors('ui.popup'))}
       {options.directoryReview !== undefined && rows({
         read: options.directoryReview.read,
         isOpen: options.directoryReview.isOpen,
@@ -667,7 +816,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: getDirectoryReviewBounds,
         zIndex: 105,
-      })}
+      }, scopeColors('ui.popup'))}
       {options.completion !== undefined && rows({
         read: options.completion.read,
         isOpen: options.completion.isOpen,
@@ -675,9 +824,14 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         maxRows: 10,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(60, width - 2)), height: 10 }, 'below', options.sidebar?.().width),
+        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(60, width - 2)), height: 10 }, 'below', options.sidebar?.().width, options.sidebar?.().visible !== false),
+        rowIds: model => [undefined, ...model.items.map(item => item.id)],
+        headerRows: 1,
+        totalRows: model => model.items.length,
+        selectedId: model => model.selectedId,
+        selectedIndex: model => model.items.findIndex(item => item.id === model.selectedId),
         zIndex: 120,
-      })}
+      }, scopeColors('ui.menu'))}
       {options.signature !== undefined && rows({
         read: options.signature.read,
         isOpen: options.signature.isOpen,
@@ -685,30 +839,31 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         maxRows: 10,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(100, width - 2)), height: 8 }, 'above', options.sidebar?.().width),
+        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(100, width - 2)), height: 8 }, 'above', options.sidebar?.().width, options.sidebar?.().visible !== false),
         zIndex: 115,
-      })}
+      }, scopeColors('ui.popup'))}
       {options.commandLine !== undefined && commandLineRead !== undefined && rows({
         read: commandLineRead,
         isOpen: options.commandLine.isOpen,
         format: (model, width) => model === undefined ? [] : formatExCommandLineLines(model, width, 10),
-        formatRows: (model, width, maxRows) => commandLineRows(model, width, maxRows, props.themeBridge.current()),
+        formatRows: (model, width, maxRows) => commandLineRows(model, width, maxRows, themeForScope(props.themeBridge.current(), 'ui.popup')),
         maxRows: 18,
         background: props.theme.surface,
         foreground: props.theme.foreground,
         bounds: (width, height) => getCommandLineBounds(width, height, options.commandLine!.read.model),
         zIndex: 130,
-      })}
+      }, scopeColors('ui.popup'))}
       {options.prefixHelp !== undefined && rows({
         read: options.prefixHelp,
         isOpen: () => options.prefixHelp?.model !== undefined,
         format: formatPrefixHelpLines,
+        formatRows: (model, width, maxRows) => prefixHelpRows(model, width, maxRows, themeForScope(props.themeBridge.current(), 'ui.popup.info')),
         maxRows: Number.MAX_SAFE_INTEGER,
         background: props.theme.surface,
         foreground: props.theme.foreground,
         bounds: (width, height) => getPrefixHelpBounds(width, height, options.prefixHelp?.model?.hints.length ?? 0),
         zIndex: 125,
-      })}
+      }, scopeColors('ui.popup.info'))}
       {options.contextMenu !== undefined && <ContextMenuBackdrop store={options.contextMenu} />}
       {options.contextMenu !== undefined && contextMenuRead !== undefined && rows({
         read: contextMenuRead,
@@ -716,8 +871,8 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         format: (state, width) => state === undefined ? [] : formatContextMenuLines(state, width),
         formatRows: (state, width) => state === undefined ? [] : state.items.map((item, index) => ({
           text: `${index === state.selectedIndex ? '› ' : '  '}${item.label}`.slice(0, width),
-          foreground: index === state.selectedIndex ? props.themeBridge.current().background : item.enabled ? props.themeBridge.current().foreground : props.themeBridge.current().muted,
-          background: index === state.selectedIndex ? props.themeBridge.current().accent : props.themeBridge.current().surface,
+          foreground: index === state.selectedIndex ? helixThemeColor(props.themeBridge.current(), 'ui.popup.info', 'bg', props.themeBridge.current().background) : item.enabled ? helixThemeColor(props.themeBridge.current(), 'ui.popup.info', 'fg', props.themeBridge.current().foreground) : props.themeBridge.current().muted,
+          background: index === state.selectedIndex ? helixThemeColor(props.themeBridge.current(), 'ui.menu.selected', 'bg', props.themeBridge.current().accent) : helixThemeColor(props.themeBridge.current(), 'ui.popup.info', 'bg', props.themeBridge.current().surface),
           bold: index === state.selectedIndex && item.enabled,
         })),
         maxRows: 20,
@@ -728,6 +883,8 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
           return state === undefined ? { width: 1, height: 1, left: 0, top: 0 } : contextMenuBounds(state.items, state.left, state.top, width, height);
         },
         zIndex: 200,
+        rowIds: state => state?.items.map(item => item.id) ?? [],
+        selectedId: state => state?.items[state.selectedIndex]?.id,
         onMouse: (event, row) => {
           if (event.type !== 'down') return false;
           const item = options.contextMenu?.state?.items[row];
@@ -735,7 +892,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
           else options.contextMenu?.activate(item.id);
           return true;
         },
-      }, current => ({ background: current.background, foreground: current.foreground }))}
+      }, scopeColors('ui.popup.info', undefined, 'ui.menu.selected'))}
       {rows({
         read: outputSurface.read,
         isOpen: outputSurface.isOpen,
@@ -745,7 +902,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: getProblemsBounds,
         zIndex: 80,
-      })}
+      }, scopeColors('ui.popup'))}
     </box>
   );
 }

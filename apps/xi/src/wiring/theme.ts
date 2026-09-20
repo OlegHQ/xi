@@ -3,12 +3,12 @@ import { ThemeController } from '../../../../packages/workbench/src/entrypoints/
 import type { WorkbenchTheme } from '../../../../packages/ui/src/entrypoints/launch';
 import { BUILTIN_WORKBENCH_THEMES } from '../../../../packages/ui/src/entrypoints/theme';
 import type { NodeFilesystemPort } from '../../../../packages/platform/src/entrypoints/launch';
-import { decodeWorkbenchThemeTokens } from '../../../../packages/services/src/entrypoints/config';
+import { EditorStatePersistence, decodeHelixWorkbenchTheme } from '../../../../packages/services/src/entrypoints/config';
+import type { ThemeConfig } from '../../../../packages/services/src/entrypoints/theme';
 import type { StatusMessageController } from '../../../../packages/workbench/src/entrypoints/launch';
 
-/** The standard XDG-style `~/.config/xi/` convention every config file (theme state,
- * config.toml, languages.toml) lives under; never throws, since a missing/unreadable/corrupt
- * file must never block startup. */
+/** Legacy user config, custom themes and the read-only theme migration source live here.
+ * New editor state is written to ~/.xi.toml. */
 export function themeStateDirectory(): string {
   return `${process.env.HOME ?? process.cwd()}/.config/xi`;
 }
@@ -16,13 +16,10 @@ export function themeStatePath(): string {
   return `${themeStateDirectory()}/state.json`;
 }
 
-/** Build a full WorkbenchTheme from a parsed theme.toml's free-form token table. The
- * validation/decoding (required base surface tokens plus whichever optional editor-layer
- * tokens are present) lives in `packages/services/config`'s `decodeWorkbenchThemeTokens`; this
- * app-side wrapper only assigns the structurally-identical result into the UI's launch type,
- * since only the app knows that type. */
-function workbenchThemeFromTokens(tokens: Readonly<Record<string, string>>): WorkbenchTheme | undefined {
-  return decodeWorkbenchThemeTokens(tokens);
+/** The service owns Helix parsing, palette resolution and inheritance; this composition root
+ * only assigns its structurally compatible result into the UI launch type. */
+function workbenchThemeFromConfig(theme: ThemeConfig): WorkbenchTheme {
+  return decodeHelixWorkbenchTheme(theme);
 }
 
 interface LoadedCustomTheme { readonly label: string; readonly theme: WorkbenchTheme; }
@@ -38,50 +35,62 @@ async function discoverCustomThemes(filesystem: NodeFilesystemPort, cancellation
   for (const diagnostic of diagnostics) statusMessages.publish(`xi: ${diagnostic.message}`);
   const themes = new Map<string, LoadedCustomTheme>();
   for (const [id, discoveredTheme] of discovered) {
-    const theme = workbenchThemeFromTokens(discoveredTheme.tokens);
-    if (theme === undefined) {
-      statusMessages.publish(`xi: theme file ${id}.toml is missing one or more required tokens (background, surface, surface.active, foreground, muted, border, accent, error)`);
-      continue;
-    }
-    themes.set(id, { label: discoveredTheme.name, theme });
+    themes.set(id, { label: id, theme: workbenchThemeFromConfig(discoveredTheme.theme) });
   }
   return themes;
 }
 
+async function loadCustomTheme(filesystem: NodeFilesystemPort, cancellation: CancellationSource, statusMessages: StatusMessageController, id: string): Promise<LoadedCustomTheme | undefined> {
+  const directory = `${themeStateDirectory()}/themes`;
+  const { loadCustomThemeConfig } = await import('../../../../packages/services/src/entrypoints/theme');
+  const { theme, diagnostics } = await loadCustomThemeConfig(filesystem, directory, id, cancellation.token);
+  for (const diagnostic of diagnostics) statusMessages.publish(`xi: ${diagnostic.message}`);
+  return theme === undefined ? undefined : { label: theme.id, theme: workbenchThemeFromConfig(theme.theme) };
+}
+
 export interface ThemeWiring {
+  readonly editorState: EditorStatePersistence;
   readonly themeController: ThemeController<WorkbenchTheme>;
   readonly persistedThemeId: string | undefined;
-  readonly needsCustomThemeNow: boolean;
+  loadCustomTheme(id: string): Promise<boolean>;
   loadCustomThemes(): Promise<void>;
   disposeStateCancellation(): void;
 }
 
-/** Constructs the theme controller, reads the persisted active theme id and (only when that
- * persisted theme is a custom one, not a builtin) loads custom themes before the first frame;
- * otherwise custom themes load after the first frame for the picker via `loadCustomThemes()`. */
+/** Constructs the theme controller and loads only a persisted custom selection before the
+ * first frame. The full picker catalog loads after that frame. */
 export async function createThemeWiring(filesystem: NodeFilesystemPort, statusMessages: StatusMessageController): Promise<ThemeWiring> {
+  const editorState = new EditorStatePersistence(filesystem, `${process.env.HOME ?? process.cwd()}/.xi.toml`, message => statusMessages.publish(message));
   const themeStateCancellation = new CancellationSource();
   const themeController = new ThemeController<WorkbenchTheme>({
     initial: new Map(Object.entries(BUILTIN_WORKBENCH_THEMES)),
     defaultId: 'xi-light',
+    persistSelection: async id => { editorState.setTheme(id); await editorState.flush(); },
     filesystem,
     statePath: themeStatePath(),
     stateDirectory: themeStateDirectory(),
     onPersistError: (message) => statusMessages.publish(`xi: ${message}`),
   });
   const persistedThemeId = await themeController.readPersistedId(themeStateCancellation.token);
+  const loadCustomThemeById = async (id: string): Promise<boolean> => {
+    if (themeController.has(id)) return true;
+    const custom = await loadCustomTheme(filesystem, themeStateCancellation, statusMessages, id);
+    if (custom === undefined) return false;
+    themeController.addCustomTheme(id, custom.label, custom.theme);
+    return true;
+  };
   const loadCustomThemes = async (): Promise<void> => {
     for (const [customId, custom] of await discoverCustomThemes(filesystem, themeStateCancellation, statusMessages)) {
       themeController.addCustomTheme(customId, custom.label, custom.theme);
     }
   };
-  const needsCustomThemeNow = persistedThemeId !== undefined && !themeController.has(persistedThemeId);
-  if (needsCustomThemeNow) await loadCustomThemes();
+  if (persistedThemeId !== undefined && !themeController.has(persistedThemeId)) await loadCustomThemeById(persistedThemeId);
   if (persistedThemeId !== undefined && themeController.has(persistedThemeId)) themeController.setActiveId(persistedThemeId);
   return {
+    editorState,
     themeController,
     persistedThemeId,
-    needsCustomThemeNow,
+    loadCustomTheme: loadCustomThemeById,
     loadCustomThemes,
     disposeStateCancellation: () => themeStateCancellation.dispose(),
   };

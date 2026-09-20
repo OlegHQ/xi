@@ -151,7 +151,8 @@ function normalEndpointInput(snapshot: DocumentSnapshot, at: number): { kind: 'e
   // overshoot to lengthUtf16 itself falls back to the document's last character.
   const bounded = Math.min(at, snapshot.lengthUtf16 - 1);
   const character = snapshot.slice(offset(bounded), offset(Math.min(bounded + 1, snapshot.lengthUtf16)));
-  const candidate = character.ok && character.value === '\n' && bounded > 0 ? bounded - 1 : bounded;
+  let candidate = character.ok && character.value === '\n' && bounded > 0 ? bounded - 1 : bounded;
+  if (candidate > 0 && !snapshot.slice(offset(candidate), offset(candidate)).ok) candidate -= 1;
   return { kind: 'character', offset: offset(candidate), after: offset(Math.min(candidate + characterWidthAt(snapshot, candidate), snapshot.lengthUtf16)) };
 }
 

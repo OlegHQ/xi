@@ -57,7 +57,7 @@ export interface ConfigCommandCatalog {
 export const DEFAULT_COMMAND_CATALOG: ConfigCommandCatalog = Object.freeze({
   commandIds: Object.freeze([
     'files.pick', 'buffers.pick', 'command.pick', 'search.workspace', 'search.replace', 'files.edit-directory', 'files.edit-buffer-directory', 'theme.pick',
-    'lsp.hover', 'lsp.code-action', 'lsp.rename', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'panel.problems.focus', 'panel.preview', 'panel.open', 'panel.close', 'git.diff', 'editor.mouse.toggle',
+    'lsp.hover', 'lsp.code-action', 'lsp.rename', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'panel.problems.focus', 'panel.preview', 'panel.open', 'panel.close', 'git.diff', 'editor.mouse.toggle', 'sidebar.toggle', 'macro.record',
     'selection.add-above', 'selection.add-below', 'selection.add-next-match', 'selection.skip-next-match',
     'selection.select-all-matches', 'selection.split-lines', 'selection.select-regex', 'selection.keep-matching',
     'selection.remove-primary', 'selection.keep-primary', 'selection.rotate-primary-next', 'selection.rotate-primary-previous',
@@ -94,6 +94,9 @@ export interface MouseConfig {
 }
 
 export interface EditorConfig {
+  readonly sidebarVisible: boolean;
+  readonly sidebarWidth: number;
+  readonly sidebarPanel: 'files' | 'search' | 'git';
   readonly theme: string;
   readonly lineNumber: 'absolute' | 'relative' | 'none';
   readonly scrolloff: number;
@@ -213,6 +216,7 @@ function disposedDiagnostic(): ConfigDiagnostic {
 }
 
 const defaultEditor: EditorConfig = Object.freeze({
+  sidebarVisible: true, sidebarWidth: 28, sidebarPanel: 'files',
   theme: 'xi-light', lineNumber: 'absolute', scrolloff: 5,
   mouse: Object.freeze({ enabled: true, modifier: 'none', scrollLines: 3 }), wrap: false,
   motionTrail: 'last-motion', selection: Object.freeze({ limit: 10_000, historyLimit: 100 }), hintsDelayMs: 250,
@@ -227,9 +231,10 @@ export function parseToml(source: string, fileName = 'config.toml'): Result<Pars
   const entries: TomlEntry[] = [];
   let table: string[] = [];
   const diagnostics: ConfigDiagnostic[] = [];
-  const lines = source.split(/\r?\n/u);
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex] ?? '';
+  const lines = logicalTomlLines(source);
+  for (const logicalLine of lines) {
+    const lineIndex = logicalLine.line - 1;
+    const line = logicalLine.source;
     const clean = stripComment(line);
     const trimmed = clean.trim();
     if (trimmed.length === 0) continue;
@@ -443,7 +448,26 @@ export function parseTasksConfig(source: string, fileName = 'tasks.toml'): Resul
   return diagnostics.length === 0 ? { ok: true, value: Object.freeze(values) } : { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
 }
 
-export interface ThemeConfig { readonly schemaVersion: 1; readonly name: string; readonly tokens: Readonly<Record<string, string>>; }
+/** Helix theme files are deliberately free-form: a scope is either a foreground colour or a
+ * style table. Keep that representation intact here; UI adapters choose the scopes they paint. */
+export interface HelixThemeStyle {
+  readonly fg?: string;
+  readonly bg?: string;
+  readonly modifiers?: readonly string[];
+  readonly underline?: { readonly color?: string; readonly style?: string };
+}
+
+export interface ThemeConfig {
+  readonly inherits?: string;
+  readonly palette: Readonly<Record<string, string>>;
+  readonly styles: Readonly<Record<string, HelixThemeStyle>>;
+  /** Helix also permits non-style theme data (for example a grammar's rainbow palette). Xi
+   * preserves it even when no current surface consumes it. */
+  readonly extras: Readonly<Record<string, TomlValue>>;
+}
+
+const HELIX_MODIFIERS = new Set(['bold', 'dim', 'italic', 'underlined', 'slow_blink', 'rapid_blink', 'reversed', 'hidden', 'crossed_out']);
+const HELIX_UNDERLINE_STYLES = new Set(['line', 'curl', 'dashed', 'dotted', 'double_line']);
 
 /** The base surface tokens every `WorkbenchTheme` (packages/ui/theme) requires -- kept here,
  * next to the theme.toml parser, so token-schema validation lives with the schema it validates
@@ -458,20 +482,55 @@ export function hasRequiredWorkbenchThemeTokens(tokens: Readonly<Record<string, 
 export function parseThemeConfig(source: string, fileName = 'theme.toml'): Result<ThemeConfig, ConfigCompileFailure> {
   const parsed = parseToml(source, fileName);
   if (!parsed.ok) return parsed;
-  const root = parsed.value.value;
-  const version = root['schema-version'];
-  const name = root.name;
-  const tokens = asRecord(root.tokens);
+  const palette = asRecord(parsed.value.value.palette);
+  const styles: Record<string, HelixThemeStyle> = Object.create(null) as Record<string, HelixThemeStyle>;
+  const colors: Record<string, string> = Object.create(null) as Record<string, string>;
+  const extras: Record<string, TomlValue> = Object.create(null) as Record<string, TomlValue>;
   const diagnostics: ConfigDiagnostic[] = [];
-  if (version !== 1) diagnostics.push(diag(fileName, 1, 1, 'schema-version', 'unsupported-schema', 'theme schema-version must be 1'));
-  if (typeof name !== 'string' || name.length === 0) diagnostics.push(diag(fileName, 1, 1, 'name', 'missing-field', 'theme name is required'));
-  if (tokens === undefined) diagnostics.push(diag(fileName, 1, 1, 'tokens', 'missing-field', 'theme tokens table is required'));
-  const output: Record<string, string> = Object.create(null) as Record<string, string>;
-  for (const [key, value] of Object.entries(tokens ?? {})) {
-    if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/iu.test(value)) diagnostics.push(diag(fileName, 1, 1, `tokens.${key}`, 'invalid-value', 'theme token must be a six-digit hexadecimal color'));
-    else output[key] = value;
+  const inherits = parsed.value.value.inherits;
+  if (inherits !== undefined && typeof inherits !== 'string') diagnostics.push(diag(fileName, 1, 1, 'inherits', 'invalid-type', 'inherits must name a theme'));
+  for (const [name, color] of Object.entries(palette ?? {})) {
+    if (typeof color !== 'string') diagnostics.push(diag(fileName, 1, 1, `palette.${name}`, 'invalid-type', 'palette colours must be strings'));
+    else colors[name] = color;
   }
-  return diagnostics.length === 0 ? { ok: true, value: Object.freeze({ schemaVersion: 1, name: name as string, tokens: Object.freeze(output) }) } : { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
+  for (const entry of parsed.value.entries) {
+    if (entry.path[0] === 'palette' || entry.path[0] === 'inherits') continue;
+    const property = entry.path.at(-1);
+    if (entry.path.length > 1 && property !== undefined && ['fg', 'bg', 'modifiers', 'underline'].includes(property)) {
+      const scope = entry.path.slice(0, -1).join('.');
+      const update = helixStyle(Object.freeze({ [property]: entry.value }));
+      if (update === undefined) diagnostics.push(diag(entry.location.fileName, entry.location.line, entry.location.column, entry.path.join('.'), 'invalid-type', `invalid ${property} style property`));
+      else styles[scope] = Object.freeze({ ...(styles[scope] ?? {}), ...update });
+      continue;
+    }
+    const key = entry.path.join('.');
+    const style = helixStyle(entry.value);
+    if (style !== undefined) styles[key] = Object.freeze({ ...(styles[key] ?? {}), ...style });
+    else if (key === 'rainbow' && Array.isArray(entry.value) && entry.value.every((value) => helixStyle(value) !== undefined)) extras[key] = entry.value;
+    else diagnostics.push(diag(entry.location.fileName, entry.location.line, entry.location.column, key, 'invalid-type', 'a Helix theme scope must be a colour or style table; rainbow must be an array of styles'));
+  }
+  return diagnostics.length === 0
+    ? { ok: true, value: Object.freeze({ ...(typeof inherits === 'string' ? { inherits } : {}), palette: Object.freeze(colors), styles: Object.freeze(styles), extras: Object.freeze(extras) }) }
+    : { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
+}
+
+function helixStyle(value: TomlValue): HelixThemeStyle | undefined {
+  if (typeof value === 'string') return Object.freeze({ fg: value });
+  const record = asRecord(value);
+  if (record === undefined) return undefined;
+  const fg = typeof record.fg === 'string' ? record.fg : undefined;
+  const bg = typeof record.bg === 'string' ? record.bg : undefined;
+  const modifiers = stringArrayField(record, 'modifiers');
+  const underlineRecord = asRecord(record.underline);
+  const underline = underlineRecord === undefined ? undefined : {
+    ...(typeof underlineRecord.color === 'string' ? { color: underlineRecord.color } : {}),
+    ...(typeof underlineRecord.style === 'string' ? { style: underlineRecord.style } : {}),
+  };
+  if (Object.keys(record).some((key) => !['fg', 'bg', 'modifiers', 'underline'].includes(key))
+    || (record.fg !== undefined && fg === undefined) || (record.bg !== undefined && bg === undefined)
+    || (record.modifiers !== undefined && (modifiers === undefined || modifiers.some((modifier) => !HELIX_MODIFIERS.has(modifier))))
+    || (record.underline !== undefined && (underlineRecord === undefined || (underlineRecord.style !== undefined && (typeof underlineRecord.style !== 'string' || !HELIX_UNDERLINE_STYLES.has(underlineRecord.style)))))) return undefined;
+  return Object.freeze({ ...(fg === undefined ? {} : { fg }), ...(bg === undefined ? {} : { bg }), ...(modifiers === undefined ? {} : { modifiers }), ...(underline === undefined ? {} : { underline: Object.freeze(underline) }) });
 }
 
 /** Filesystem operations custom-theme discovery needs: reading one theme file and listing the
@@ -482,7 +541,7 @@ export interface ThemeDiscoveryFilesystemPort {
   enumerateDirectory(path: string, root: string, cancellation: CancellationToken): Promise<Result<readonly { readonly kind: string; readonly name: string }[], PlatformFailure>>;
 }
 
-export interface DiscoveredCustomTheme { readonly id: string; readonly name: string; readonly tokens: Readonly<Record<string, string>>; }
+export interface DiscoveredCustomTheme { readonly id: string; readonly theme: ThemeConfig; }
 export interface ThemeDiscoveryDiagnostic { readonly fileName: string; readonly message: string; }
 
 /** Discover and parse every `*.toml` file directly under `directory` as a theme config. A
@@ -508,9 +567,87 @@ export async function discoverCustomThemeConfigs(
       diagnostics.push({ fileName: entry.name, message: `theme file ${entry.name} is invalid: ${parsed.error.diagnostics.map((d) => d.message).join('; ')}` });
       continue;
     }
-    themes.set(entry.name.replace(/\.toml$/u, ''), { id: entry.name.replace(/\.toml$/u, ''), name: parsed.value.name, tokens: parsed.value.tokens });
+    themes.set(entry.name.replace(/\.toml$/u, ''), { id: entry.name.replace(/\.toml$/u, ''), theme: parsed.value });
   }
-  return { themes, diagnostics };
+  const resolved = new Map<string, DiscoveredCustomTheme>();
+  const visit = (id: string, trail: readonly string[]): ThemeConfig | undefined => {
+    const cached = resolved.get(id);
+    if (cached !== undefined) return cached.theme;
+    const candidate = themes.get(id);
+    if (candidate === undefined) return undefined;
+    if (trail.includes(id)) { diagnostics.push({ fileName: `${id}.toml`, message: `theme inheritance cycle: ${[...trail, id].join(' -> ')}` }); return undefined; }
+    const parent = candidate.theme.inherits === undefined ? undefined : visit(candidate.theme.inherits, [...trail, id]);
+    if (candidate.theme.inherits !== undefined && parent === undefined) { diagnostics.push({ fileName: `${id}.toml`, message: `theme inherits missing or invalid theme ${candidate.theme.inherits}` }); return undefined; }
+    const theme = Object.freeze({
+      ...(candidate.theme.inherits === undefined ? {} : { inherits: candidate.theme.inherits }),
+      palette: Object.freeze({ ...(parent?.palette ?? {}), ...candidate.theme.palette }),
+      styles: Object.freeze({ ...(parent?.styles ?? {}), ...candidate.theme.styles }),
+      extras: Object.freeze({ ...(parent?.extras ?? {}), ...candidate.theme.extras }),
+    });
+    const invalidColors = invalidThemeColors(theme);
+    if (invalidColors.length > 0) {
+      diagnostics.push({ fileName: `${id}.toml`, message: `theme has unknown colours: ${invalidColors.join(', ')}` });
+      return undefined;
+    }
+    resolved.set(id, { id, theme });
+    return theme;
+  };
+  for (const id of themes.keys()) visit(id, []);
+  return { themes: resolved, diagnostics };
+}
+
+/** Load one configured custom theme and only the parent chain it names. This keeps selecting a
+ * theme at startup independent of the size of the user's theme catalog. */
+export async function loadCustomThemeConfig(
+  filesystem: ThemeDiscoveryFilesystemPort,
+  directory: string,
+  id: string,
+  cancellation: CancellationToken,
+): Promise<{ readonly theme: DiscoveredCustomTheme | undefined; readonly diagnostics: readonly ThemeDiscoveryDiagnostic[] }> {
+  const diagnostics: ThemeDiscoveryDiagnostic[] = [];
+  const cache = new Map<string, ThemeConfig>();
+  const visit = async (candidateId: string, trail: readonly string[]): Promise<ThemeConfig | undefined> => {
+    const cached = cache.get(candidateId);
+    if (cached !== undefined) return cached;
+    if (!/^[A-Za-z0-9_.-]+$/u.test(candidateId)) {
+      diagnostics.push({ fileName: `${candidateId}.toml`, message: `invalid theme id ${candidateId}` });
+      return undefined;
+    }
+    if (trail.includes(candidateId)) {
+      diagnostics.push({ fileName: `${candidateId}.toml`, message: `theme inheritance cycle: ${[...trail, candidateId].join(' -> ')}` });
+      return undefined;
+    }
+    const read = await filesystem.readFile(`${directory}/${candidateId}.toml`, cancellation);
+    if (!read.ok) {
+      diagnostics.push({ fileName: `${candidateId}.toml`, message: `could not read theme file ${candidateId}.toml: ${read.error.message}` });
+      return undefined;
+    }
+    const parsed = parseThemeConfig(new TextDecoder('utf-8').decode(read.value), `${candidateId}.toml`);
+    if (!parsed.ok) {
+      diagnostics.push({ fileName: `${candidateId}.toml`, message: `theme file ${candidateId}.toml is invalid: ${parsed.error.diagnostics.map((d) => d.message).join('; ')}` });
+      return undefined;
+    }
+    const parent = parsed.value.inherits === undefined ? undefined : await visit(parsed.value.inherits, [...trail, candidateId]);
+    if (parsed.value.inherits !== undefined && parent === undefined) {
+      diagnostics.push({ fileName: `${candidateId}.toml`, message: `theme inherits missing or invalid theme ${parsed.value.inherits}` });
+      return undefined;
+    }
+    const theme = Object.freeze({
+      ...(parsed.value.inherits === undefined ? {} : { inherits: parsed.value.inherits }),
+      palette: Object.freeze({ ...(parent?.palette ?? {}), ...parsed.value.palette }),
+      styles: Object.freeze({ ...(parent?.styles ?? {}), ...parsed.value.styles }),
+      extras: Object.freeze({ ...(parent?.extras ?? {}), ...parsed.value.extras }),
+    });
+    const invalidColors = invalidThemeColors(theme);
+    if (invalidColors.length > 0) {
+      diagnostics.push({ fileName: `${candidateId}.toml`, message: `theme has unknown colours: ${invalidColors.join(', ')}` });
+      return undefined;
+    }
+    cache.set(candidateId, theme);
+    return theme;
+  };
+  const theme = await visit(id, []);
+  return { theme: theme === undefined ? undefined : { id, theme }, diagnostics: Object.freeze(diagnostics) };
 }
 
 export interface RequiredWorkbenchThemeTokens {
@@ -558,6 +695,142 @@ export interface WorkbenchThemeTokens extends RequiredWorkbenchThemeTokens {
   readonly cursorSecondary?: string;
   readonly motionTrail?: string;
   readonly operatorPreview?: string;
+}
+
+/** Resolved Helix styles are retained on the UI theme so every surface can use its own Helix
+ * key instead of silently sharing a hand-picked Xi palette token. */
+export type HelixWorkbenchThemeTokens = Omit<WorkbenchThemeTokens, 'surface.active'> & {
+  readonly styles: Readonly<Record<string, HelixThemeStyle>>;
+  readonly syntax: Readonly<Record<string, string>>;
+  readonly syntaxStyles: Readonly<Record<string, HelixThemeStyle>>;
+  readonly diffAdded?: string;
+  readonly diffRemoved?: string;
+  readonly diffHunk?: string;
+  readonly cursorOnSelection?: string;
+  readonly searchMatch?: string;
+};
+
+const HELIX_TERMINAL_PALETTE: Readonly<Record<string, string>> = Object.freeze({
+  default: '\u0000xi-terminal-default', black: '\u0000xi-terminal-index:0', red: '\u0000xi-terminal-index:1', green: '\u0000xi-terminal-index:2', yellow: '\u0000xi-terminal-index:3', blue: '\u0000xi-terminal-index:4', magenta: '\u0000xi-terminal-index:5', cyan: '\u0000xi-terminal-index:6', gray: '\u0000xi-terminal-index:8',
+  'light-red': '\u0000xi-terminal-index:9', 'light-green': '\u0000xi-terminal-index:10', 'light-yellow': '\u0000xi-terminal-index:11', 'light-blue': '\u0000xi-terminal-index:12', 'light-magenta': '\u0000xi-terminal-index:13', 'light-cyan': '\u0000xi-terminal-index:14', 'light-gray': '\u0000xi-terminal-index:7', white: '\u0000xi-terminal-index:15',
+});
+
+function resolvedHelixColor(theme: ThemeConfig, color: string | undefined): string | undefined {
+  if (color === undefined) return undefined;
+  return resolveHelixColor(theme, color, new Set<string>());
+}
+
+function resolveHelixColor(theme: ThemeConfig, color: string, seen: Set<string>): string | undefined {
+  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/iu.test(color)) return color;
+  if (seen.has(color)) return undefined;
+  const paletteColor = theme.palette[color];
+  if (paletteColor !== undefined) {
+    seen.add(color);
+    return resolveHelixColor(theme, paletteColor, seen);
+  }
+  const indexed = /^\d{1,3}$/u.test(color) ? Number(color) : Number.NaN;
+  return Number.isInteger(indexed) && indexed <= 255 ? `\u0000xi-terminal-index:${indexed}` : HELIX_TERMINAL_PALETTE[color];
+}
+
+function invalidThemeColors(theme: ThemeConfig): readonly string[] {
+  const invalid = new Set<string>();
+  for (const [name] of Object.entries(theme.palette)) if (resolvedHelixColor(theme, name) === undefined) invalid.add(name);
+  for (const style of Object.values(theme.styles)) {
+    for (const color of [style.fg, style.bg, style.underline?.color]) if (color !== undefined && resolvedHelixColor(theme, color) === undefined) invalid.add(color);
+  }
+  const rainbow = theme.extras.rainbow;
+  if (Array.isArray(rainbow)) for (const value of rainbow) {
+    const style = helixStyle(value);
+    if (style !== undefined) for (const color of [style.fg, style.bg, style.underline?.color]) if (color !== undefined && resolvedHelixColor(theme, color) === undefined) invalid.add(color);
+  }
+  return Object.freeze([...invalid].sort());
+}
+
+/** Helix chooses the longest matching dotted scope, not a field-by-field merge. */
+function helixStyleFor(theme: ThemeConfig, scope: string): HelixThemeStyle | undefined {
+  let candidate = scope;
+  while (candidate.length > 0) {
+    const style = theme.styles[candidate];
+    if (style !== undefined) return style;
+    candidate = candidate.slice(0, candidate.lastIndexOf('.'));
+  }
+  return undefined;
+}
+
+function resolvedHelixStyles(theme: ThemeConfig): Readonly<Record<string, HelixThemeStyle>> {
+  const styles: Record<string, HelixThemeStyle> = Object.create(null) as Record<string, HelixThemeStyle>;
+  for (const [scope, style] of Object.entries(theme.styles)) {
+    const fg = resolvedHelixColor(theme, style.fg);
+    const bg = resolvedHelixColor(theme, style.bg);
+    const underlineColor = resolvedHelixColor(theme, style.underline?.color);
+    styles[scope] = Object.freeze({
+      ...(fg === undefined ? {} : { fg }), ...(bg === undefined ? {} : { bg }),
+      ...(style.modifiers === undefined ? {} : { modifiers: style.modifiers }),
+      ...(style.underline === undefined ? {} : { underline: Object.freeze({ ...(underlineColor === undefined ? {} : { color: underlineColor }), ...(style.underline.style === undefined ? {} : { style: style.underline.style }) }) }),
+    });
+  }
+  const rainbow = theme.extras.rainbow;
+  if (Array.isArray(rainbow)) for (let index = 0; index < rainbow.length; index += 1) {
+    const style = helixStyle(rainbow[index] as TomlValue);
+    if (style !== undefined) styles[`rainbow.${index}`] = resolvedHelixStyle(theme, style);
+  }
+  return Object.freeze(styles);
+}
+
+function resolvedHelixStyle(theme: ThemeConfig, style: HelixThemeStyle): HelixThemeStyle {
+  const fg = resolvedHelixColor(theme, style.fg);
+  const bg = resolvedHelixColor(theme, style.bg);
+  const underlineColor = resolvedHelixColor(theme, style.underline?.color);
+  return Object.freeze({
+    ...(fg === undefined ? {} : { fg }), ...(bg === undefined ? {} : { bg }),
+    ...(style.modifiers === undefined ? {} : { modifiers: style.modifiers }),
+    ...(style.underline === undefined ? {} : { underline: Object.freeze({ ...(underlineColor === undefined ? {} : { color: underlineColor }), ...(style.underline.style === undefined ? {} : { style: style.underline.style }) }) }),
+  });
+}
+
+/** Map each existing Xi paint site to its documented Helix scope. The resolved scope map stays
+ * available for newer widgets, while these fields keep the established UI adapter boundary. */
+export function decodeHelixWorkbenchTheme(theme: ThemeConfig): HelixWorkbenchThemeTokens {
+  const foreground = resolvedHelixColor(theme, helixStyleFor(theme, 'ui.text')?.fg) ?? '#FFFFFF';
+  const background = resolvedHelixColor(theme, helixStyleFor(theme, 'ui.background')?.bg) ?? '#000000';
+  const surface = resolvedHelixColor(theme, helixStyleFor(theme, 'ui.popup')?.bg) ?? resolvedHelixColor(theme, helixStyleFor(theme, 'ui.menu')?.bg) ?? background;
+  const surfaceActive = resolvedHelixColor(theme, helixStyleFor(theme, 'ui.menu.selected')?.bg) ?? resolvedHelixColor(theme, helixStyleFor(theme, 'ui.text.focus')?.bg) ?? resolvedHelixColor(theme, helixStyleFor(theme, 'ui.selection.primary')?.bg) ?? resolvedHelixColor(theme, helixStyleFor(theme, 'ui.selection')?.bg) ?? surface;
+  const muted = resolvedHelixColor(theme, helixStyleFor(theme, 'ui.text.inactive')?.fg) ?? resolvedHelixColor(theme, helixStyleFor(theme, 'ui.linenr')?.fg) ?? foreground;
+  const border = resolvedHelixColor(theme, helixStyleFor(theme, 'ui.window')?.fg) ?? muted;
+  const accent = resolvedHelixColor(theme, helixStyleFor(theme, 'ui.text.focus')?.fg) ?? resolvedHelixColor(theme, helixStyleFor(theme, 'ui.linenr.selected')?.fg) ?? foreground;
+  const error = resolvedHelixColor(theme, helixStyleFor(theme, 'error')?.fg) ?? resolvedHelixColor(theme, helixStyleFor(theme, 'diagnostic.error')?.fg) ?? '#FF0000';
+  const color = (scope: string): string | undefined => resolvedHelixColor(theme, helixStyleFor(theme, scope)?.fg);
+  const backgroundColor = (scope: string): string | undefined => resolvedHelixColor(theme, helixStyleFor(theme, scope)?.bg);
+  const selectionPrimary = backgroundColor('ui.selection.primary') ?? backgroundColor('ui.selection');
+  const selectionSecondary = backgroundColor('ui.selection');
+  const cursorPrimary = backgroundColor('ui.cursor.primary') ?? backgroundColor('ui.cursor');
+  const cursorSecondary = backgroundColor('ui.cursor');
+  const cursorOnSelection = backgroundColor('ui.cursor.primary.select') ?? backgroundColor('ui.cursor.select');
+  const searchMatch = backgroundColor('ui.highlight');
+  const diffAdded = backgroundColor('diff.plus');
+  const diffRemoved = backgroundColor('diff.minus');
+  const diffHunk = color('diff.delta');
+  const syntax: Record<string, string> = Object.create(null) as Record<string, string>;
+  const syntaxStyles: Record<string, HelixThemeStyle> = Object.create(null) as Record<string, HelixThemeStyle>;
+  for (const [kind, scope] of Object.entries({ comment: 'comment', string: 'string', number: 'constant.numeric', keyword: 'keyword', boolean: 'constant.builtin.boolean', type: 'type', function: 'function', operator: 'operator', punctuation: 'punctuation', variable: 'variable', property: 'variable.other.member', constant: 'constant' })) {
+    const value = color(scope);
+    if (value !== undefined) syntax[kind] = value;
+    const style = helixStyleFor(theme, scope);
+    if (style !== undefined) syntaxStyles[kind] = resolvedHelixStyle(theme, style);
+  }
+  return Object.freeze({
+    background, surface, surfaceActive, foreground, muted, border, accent, error,
+    ...(selectionPrimary === undefined ? {} : { selectionPrimary }),
+    ...(selectionSecondary === undefined ? {} : { selectionSecondary }),
+    ...(cursorPrimary === undefined ? {} : { cursorPrimary }),
+    ...(cursorSecondary === undefined ? {} : { cursorSecondary }),
+    ...(cursorOnSelection === undefined ? {} : { cursorOnSelection }),
+    ...(searchMatch === undefined ? {} : { searchMatch }),
+    ...(diffAdded === undefined ? {} : { diffAdded }),
+    ...(diffRemoved === undefined ? {} : { diffRemoved }),
+    ...(diffHunk === undefined ? {} : { diffHunk }),
+    styles: resolvedHelixStyles(theme), syntax: Object.freeze(syntax), syntaxStyles: Object.freeze(syntaxStyles),
+  });
 }
 
 const OPTIONAL_WORKBENCH_THEME_TOKEN_KEYS = Object.freeze([
@@ -647,6 +920,7 @@ export async function loadStartupXiConfig(
   configDirectory: string,
   cancellation: CancellationToken,
   extraCommandIds: readonly string[] = [],
+  overridesPath?: string,
 ): Promise<LoadedStartupConfig> {
   const layers: ConfigLayer[] = [
     { name: 'defaults', kind: 'defaults', source: DEFAULT_CONFIG_TOML, fileName: 'config/default.toml' },
@@ -660,6 +934,16 @@ export async function loadStartupXiConfig(
   if (configToml.ok) layers.push({ name: 'user', kind: 'user', source: new TextDecoder('utf-8').decode(configToml.value), fileName: 'config.toml' });
   const languagesToml = await filesystem.readFile(`${configDirectory}/languages.toml`, cancellation);
   if (languagesToml.ok) layers.push({ name: 'languages', kind: 'language', source: new TextDecoder('utf-8').decode(languagesToml.value), fileName: 'languages.toml' });
+  if (overridesPath !== undefined) {
+    const overrides = await filesystem.readFile(overridesPath, cancellation);
+    if (overrides.ok) {
+      try {
+        layers.push({ name: 'state-overrides', kind: 'user', source: new TextDecoder('utf-8', { fatal: true }).decode(overrides.value), fileName: overridesPath });
+      } catch {
+        return { config: undefined, diagnostics: [`${overridesPath}: invalid UTF-8`] };
+      }
+    }
+  }
   const commandCatalog = { ...DEFAULT_COMMAND_CATALOG, commandIds: [...DEFAULT_COMMAND_CATALOG.commandIds, ...extraCommandIds] };
   const compiled = compileConfig(layers, { commandCatalog });
   if (!compiled.ok) return { config: undefined, diagnostics: compiled.error.diagnostics.map((diagnostic) => diagnostic.message) };
@@ -670,6 +954,9 @@ export const DEFAULT_CONFIG_TOML = `schema-version = 1
 profile = "xi"
 
 [editor]
+sidebar-visible = true
+sidebar-width = 28
+sidebar-panel = "files"
 theme = "xi-light"
 line-number = "absolute"
 scrolloff = 5
@@ -702,6 +989,9 @@ hidden = true
 follow-symlinks = false
 
 [keys.normal.space]
+q = "macro.record"
+c = "config.open"
+s = "sidebar.toggle"
 f = "files.pick"
 b = "buffers.pick"
 ";" = "command.pick"
@@ -717,6 +1007,7 @@ m = "editor.mouse.toggle"
 r = "search.replace"
 
 [keys.normal.space.v]
+p = "panel.problems.focus"
 f = "panel.files.focus"
 s = "panel.search.focus"
 g = "panel.git.focus"
@@ -724,21 +1015,25 @@ o = "panel.outline.focus"
 d = "git.diff"
 
 [keys.files-panel.space]
+s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
 [keys.search-panel.space]
+s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
 [keys.git-panel.space]
+s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
 [keys.diff-panel.space]
+s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
@@ -761,11 +1056,17 @@ export const PERSONAL_MIGRATION_TOML = `schema-version = 1
 profile = "personal"
 
 [editor]
+sidebar-visible = true
+sidebar-width = 28
+sidebar-panel = "files"
 theme = "xi-light"
 mouse = true
 motion-trail = "last-motion"
 
 [keys.normal.space]
+q = "macro.record"
+c = "config.open"
+s = "sidebar.toggle"
 t = "theme.pick"
 
 [aliases]
@@ -816,16 +1117,19 @@ file-types = ["md", "markdown"]
 indent = { tab-width = 2, unit = "  " }
 `;
 
-export const DEFAULT_THEME_TOML = `schema-version = 1
-name = "xi-light"
+export const DEFAULT_THEME_TOML = `"ui.background" = { bg = "paper" }
+"ui.text" = "ink"
+"ui.selection.primary" = { bg = "selection" }
+"ui.cursor.primary" = { fg = "paper", bg = "ink" }
+"ui.menu" = { fg = "ink", bg = "panel" }
+"ui.menu.selected" = { fg = "paper", bg = "ink" }
+error = "red"
 
-[tokens]
-"selection.primary" = "#D6E5F2"
-"selection.secondary" = "#E4ECF3"
-"cursor.primary" = "#263238"
-"cursor.secondary" = "#455A64"
-"motion.trail" = "#EEF2F4"
-"operator.preview" = "#B0BEC5"
+[palette]
+paper = "#FCFCFA"
+panel = "#F1F2F5"
+ink = "#1E2430"
+selection = "#D6E5F2"
 `;
 
 function validateKnownKeys(document: ParsedToml, layer: ConfigLayer, diagnostics: ConfigDiagnostic[]): void {
@@ -853,6 +1157,11 @@ function validateMerged(
   const schemaVersion = root['schema-version'];
   if (schemaVersion !== undefined && schemaVersion !== 1) diagnostics.push(issue('schema-version', 'unsupported-schema', 'schema-version must be 1', locations));
   const theme = textField(editor, 'theme') ?? 'xi-light';
+  if (editor['sidebar-visible'] !== undefined && typeof editor['sidebar-visible'] !== 'boolean') {
+    diagnostics.push(issue('editor.sidebar-visible', 'invalid-type', 'editor.sidebar-visible must be a boolean', locations));
+  }
+  const sidebarWidth = boundedInteger(editor, 'sidebar-width', 22, 40, 28, diagnostics, locations, 'editor.sidebar-width');
+  const sidebarPanel = enumField(editor, 'sidebar-panel', ['files', 'search', 'git'] as const, 'files', diagnostics, locations, 'editor.sidebar-panel');
   const lineNumber = enumField(editor, 'line-number', ['absolute', 'relative', 'none'] as const, 'absolute', diagnostics, locations, 'editor.line-number');
   const scrolloff = boundedInteger(editor, 'scrolloff', 0, 1000, 5, diagnostics, locations, 'editor.scrolloff');
   const mouseEnabled = booleanField(editor, 'mouse') ?? booleanField(editorMouse ?? Object.create(null), 'enabled') ?? true;
@@ -882,7 +1191,7 @@ function validateMerged(
   const languageServers = compileServers(root['language-server'], locations, diagnostics);
   const languages = compileLanguages(root.language, languageServers, locations, diagnostics);
   if (diagnostics.length > 0) return { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
-  const editorConfig: EditorConfig = Object.freeze({ theme, lineNumber, scrolloff, mouse: Object.freeze({ enabled: mouseEnabled, modifier: mouseModifier, scrollLines }), wrap, motionTrail, selection: Object.freeze({ limit: selectionLimit, historyLimit: selectionHistoryLimit }), hintsDelayMs, cursorShape: Object.freeze(shapes), lsp: Object.freeze(lspConfig) });
+  const editorConfig: EditorConfig = Object.freeze({ sidebarWidth, sidebarPanel, sidebarVisible: booleanField(editor, 'sidebar-visible') ?? true, theme, lineNumber, scrolloff, mouse: Object.freeze({ enabled: mouseEnabled, modifier: mouseModifier, scrollLines }), wrap, motionTrail, selection: Object.freeze({ limit: selectionLimit, historyLimit: selectionHistoryLimit }), hintsDelayMs, cursorShape: Object.freeze(shapes), lsp: Object.freeze(lspConfig) });
   return { ok: true, value: Object.freeze({ schemaVersion: 1, generation: 0, profile, editor: editorConfig, search: searchConfig, bindings: Object.freeze(bindings), aliases: Object.freeze(aliases), languageServers: Object.freeze(languageServers), languages: Object.freeze(languages), provenance: Object.freeze({ ...provenance }) }) };
 }
 
@@ -998,7 +1307,7 @@ function isKnownPath(path: readonly string[]): boolean {
   if (joined.startsWith('aliases.') || joined.startsWith('keys.')) return true;
   const editorPaths = new Set([
     'editor.theme', 'editor.line-number', 'editor.scrolloff', 'editor.mouse', 'editor.wrap', 'editor.motion-trail',
-    'editor.selection-limit', 'editor.selection-history-limit', 'editor.cursor-shape', 'editor.cursor-shape.normal',
+    'editor.sidebar-visible', 'editor.sidebar-width', 'editor.sidebar-panel', 'editor.selection-limit', 'editor.selection-history-limit', 'editor.cursor-shape', 'editor.cursor-shape.normal',
     'editor.cursor-shape.insert', 'editor.cursor-shape.visual', 'editor.lsp', 'editor.lsp.enable', 'editor.lsp.inlay-hints',
     'editor.mouse.enabled', 'editor.mouse.modifier', 'editor.mouse.scroll-lines', 'editor.hints', 'editor.hints.delay-ms',
   ]);
@@ -1109,6 +1418,42 @@ function parseDottedPath(value: string): string[] | undefined {
   return result;
 }
 
+/** TOML allows an inline array/table to span lines. The main parser intentionally remains
+ * line-oriented, so join only an assignment whose value still has an open delimiter. */
+function logicalTomlLines(source: string): readonly { readonly source: string; readonly line: number }[] {
+  const output: Array<{ readonly source: string; readonly line: number }> = [];
+  let pending = '';
+  let firstLine = 0;
+  for (const [index, raw] of source.split(/\r?\n/u).entries()) {
+    const line = stripComment(raw);
+    if (pending.length === 0) { pending = line; firstLine = index + 1; }
+    else pending += ` ${line.trim()}`;
+    if (tomlValueOpen(pending)) continue;
+    output.push(Object.freeze({ source: pending, line: firstLine }));
+    pending = '';
+  }
+  if (pending.length > 0) output.push(Object.freeze({ source: pending, line: firstLine }));
+  return Object.freeze(output);
+}
+
+function tomlValueOpen(line: string): boolean {
+  const equals = findEquals(line);
+  if (equals < 0) return false;
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  for (const char of line.slice(equals + 1)) {
+    if (quote.length > 0) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = '';
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === '[' || char === '{') depth += 1;
+    else if (char === ']' || char === '}') depth -= 1;
+  }
+  return depth > 0;
+}
+
 function parseValue(value: string): Result<TomlValue, { readonly message: string }> {
   const trimmed = value.trim();
   if (trimmed === 'true' || trimmed === 'false') return { ok: true, value: trimmed === 'true' };
@@ -1128,8 +1473,11 @@ function parseValue(value: string): Result<TomlValue, { readonly message: string
       if (equals < 0) return { ok: false, error: { message: 'invalid inline table entry' } };
       const key = parseDottedPath(part.slice(0, equals).trim());
       const item = parseValue(part.slice(equals + 1));
-      if (key === undefined || key.length !== 1 || !item.ok) return { ok: false, error: { message: 'invalid inline table entry' } };
-      record[key[0] as string] = item.value;
+      if (key === undefined || !item.ok) return { ok: false, error: { message: 'invalid inline table entry' } };
+      const parent = ensureTable(record, key.slice(0, -1));
+      const name = key[key.length - 1] as string;
+      if (parent[name] !== undefined) return { ok: false, error: { message: 'duplicate inline table key' } };
+      parent[name] = item.value;
     }
     return { ok: true, value: Object.freeze(record) };
   }
@@ -1166,3 +1514,50 @@ function boundedInteger(record: Record<string, TomlValue>, key: string, min: num
 function enumField<T extends string>(record: Record<string, TomlValue>, key: string, values: readonly T[], fallback: T, diagnostics: ConfigDiagnostic[], locations: Map<string, SourceLocation>, path: string): T { const value = record[key]; if (value === undefined) return fallback; if (typeof value !== 'string' || !values.includes(value as T)) { diagnostics.push(issue(path, 'invalid-value', `${path} must be one of ${values.join(', ')}`, locations)); return fallback; } return value as T; }
 function issue(path: string, code: ConfigDiagnostic['code'], message: string, locations: Map<string, SourceLocation>): ConfigDiagnostic { const location = locations.get(path) ?? { fileName: 'config.toml', line: 1, column: 1 }; return { ...location, path, code, message }; }
 function diag(fileName: string, line: number, column: number, path: string, code: ConfigDiagnostic['code'], message: string): ConfigDiagnostic { return { fileName, line, column, path, code, message }; }
+
+/** Source-preserving scalar update inside an already parsed inline-table assignment.
+ * Reuse the TOML quote/depth scanner; masked comments keep original character offsets. */
+export function patchInlineTableScalar(source: string, line: number, key: string, value: boolean | string | number): string {
+  const start = source.split('\n').slice(0, line - 1).reduce((offset, part) => offset + part.length + 1, 0);
+  const tail = source.slice(start);
+  const clean = tail.split('\n').map(part => stripComment(part).padEnd(part.length)).join('\n');
+  const equals = findEquals(clean);
+  const assignment = splitTopLevel(clean.slice(equals + 1), '\n')[0] ?? '';
+  const open = assignment.indexOf('{');
+  const close = assignment.lastIndexOf('}');
+  if (equals < 0 || open < 0 || close < open) throw new Error('cannot locate inline editor table');
+  const bodyStart = start + equals + 1 + open + 1;
+  const body = assignment.slice(open + 1, close);
+  let offset = bodyStart;
+  for (const part of splitTopLevel(body, ',')) {
+    const delimiter = findEquals(part);
+    const path = parseDottedPath(part.slice(0, delimiter).trim());
+    if (delimiter >= 0 && path?.length === 1 && path[0] === key) {
+      const raw = part.slice(delimiter + 1);
+      const token = raw.trim();
+      const parsed = parseValue(token);
+      if (!parsed.ok || typeof parsed.value !== typeof value) throw new Error(`${key} has an invalid type; state file left unchanged`);
+      const valueStart = offset + delimiter + 1 + raw.search(/\S/u);
+      return source.slice(0, valueStart) + JSON.stringify(value) + source.slice(valueStart + token.length);
+    }
+    offset += part.length + 1;
+  }
+  const insertion = bodyStart + body.length;
+  const separator = body.trim().length === 0 || body.trimEnd().endsWith(',') ? '' : ',';
+  return source.slice(0, insertion) + `${separator} ${key} = ${JSON.stringify(value)} ` + source.slice(insertion);
+}
+
+
+/** Change one scalar assignment while preserving its key, spacing and trailing comment. */
+export function patchTomlScalar(source: string, line: number, value: boolean | string | number): string {
+  const start = source.split('\n').slice(0, line - 1).reduce((offset, part) => offset + part.length + 1, 0);
+  const assignment = stripComment(source.slice(start).split('\n')[0] ?? '');
+  const equals = findEquals(assignment);
+  if (equals < 0) throw new Error('cannot locate state assignment');
+  const raw = assignment.slice(equals + 1);
+  const token = raw.trim();
+  const parsed = parseValue(token);
+  if (!parsed.ok || typeof parsed.value !== typeof value) throw new Error('invalid state value type');
+  const offset = start + equals + 1 + raw.search(/\S/u);
+  return source.slice(0, offset) + JSON.stringify(value) + source.slice(offset + token.length);
+}

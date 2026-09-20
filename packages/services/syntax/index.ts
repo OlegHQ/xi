@@ -286,6 +286,11 @@ function captureNameToKind(name: string): SyntaxTokenKind | undefined {
   if (name.startsWith('markup.link')) return 'property';
   if (name.startsWith('markup.list')) return 'punctuation';
   if (name === 'markup.italic' || name === 'markup.strong' || name === 'markup.strikethrough' || name === 'label') return 'type';
+  // These are documented Helix syntax-scope families without a distinct legacy Xi palette
+  // category. Keep the exact capture for theme lookup and use the neutral category only for
+  // old themes that do not provide Helix scopes.
+  if (name === 'attribute' || name.startsWith('tag') || name.startsWith('namespace')
+    || name.startsWith('special') || name.startsWith('diff') || name.startsWith('markup')) return 'variable';
   return undefined;
 }
 
@@ -293,6 +298,7 @@ interface ResolvedCapture {
   readonly start: number;
   readonly end: number;
   readonly kind: SyntaxTokenKind;
+  readonly scope: string;
   readonly order: number;
 }
 
@@ -324,10 +330,10 @@ function resolveSpans(captures: readonly ResolvedCapture[]): SyntaxHighlightSpan
       if (candidateLength < bestLength || (candidateLength === bestLength && candidate.order > best.order)) best = candidate;
     }
     const previous = result[result.length - 1];
-    if (previous !== undefined && previous.kind === best.kind && previous.end === segmentStart) {
-      result[result.length - 1] = Object.freeze({ start: previous.start, end: segmentEnd, kind: previous.kind });
+    if (previous !== undefined && previous.kind === best.kind && previous.scope === best.scope && previous.end === segmentStart) {
+      result[result.length - 1] = Object.freeze({ start: previous.start, end: segmentEnd, kind: previous.kind, scope: previous.scope });
     } else {
-      result.push(Object.freeze({ start: segmentStart, end: segmentEnd, kind: best.kind }));
+      result.push(Object.freeze({ start: segmentStart, end: segmentEnd, kind: best.kind, scope: best.scope }));
     }
   }
   return result;
@@ -505,7 +511,7 @@ class LiveHighlightResult implements SyntaxHighlightResult {
       const kind = captureNameToKind(capture.name);
       if (kind === undefined) continue;
       const node: TSNode = capture.node;
-      resolved.push({ start: node.startIndex, end: node.endIndex, kind, order: order++ });
+      resolved.push({ start: node.startIndex, end: node.endIndex, kind, scope: capture.name, order: order++ });
     }
     return Object.freeze(resolveSpans(resolved));
   }

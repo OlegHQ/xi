@@ -1,33 +1,60 @@
+import type { RGBA } from '@opentui/core/renderer';
 import type { SyntaxTokenKind } from '../../contracts/src/index';
 
-/** Pure theme tokens: no OpenTUI import, so the CLI can read them before the renderer loads. */
+export type ThemeColor = string | RGBA;
+
+/** Mirrors Helix's style table without pulling configuration ownership into the UI package. */
+export interface HelixThemeStyle {
+  readonly fg?: string;
+  readonly bg?: string;
+  readonly modifiers?: readonly string[];
+  readonly underline?: { readonly color?: string; readonly style?: string };
+}
+
+/** Theme values stay data-only here. The renderer materializes terminal palette intent. */
 export interface WorkbenchTheme {
-  readonly background: string;
-  readonly surface: string;
-  readonly surfaceActive: string;
-  readonly foreground: string;
-  readonly muted: string;
-  readonly border: string;
-  readonly accent: string;
-  readonly error: string;
+  readonly background: ThemeColor;
+  readonly surface: ThemeColor;
+  readonly surfaceActive: ThemeColor;
+  readonly foreground: ThemeColor;
+  readonly muted: ThemeColor;
+  readonly border: ThemeColor;
+  readonly accent: ThemeColor;
+  readonly error: ThemeColor;
   /** Optional editor layer tokens. Existing themes receive stable defaults. */
-  readonly selectionPrimary?: string;
-  readonly selectionSecondary?: string;
-  readonly cursorPrimary?: string;
-  readonly cursorSecondary?: string;
+  readonly selectionPrimary?: ThemeColor;
+  readonly selectionSecondary?: ThemeColor;
+  readonly cursorPrimary?: ThemeColor;
+  readonly cursorSecondary?: ThemeColor;
   /** Cursor background when the cursor's cell also lies inside a visual selection. */
-  readonly cursorOnSelection?: string;
-  readonly motionTrail?: string;
-  readonly operatorPreview?: string;
+  readonly cursorOnSelection?: ThemeColor;
+  readonly motionTrail?: ThemeColor;
+  readonly operatorPreview?: ThemeColor;
   /** Background of workspace-search matches painted in the editor. */
-  readonly searchMatch?: string;
+  readonly searchMatch?: ThemeColor;
   /** Git diff view: added/removed line backgrounds and the hunk-header foreground. Unset
    * themes fall back to stable defaults in `packages/ui/git/diff.ts`. */
-  readonly diffAdded?: string;
-  readonly diffRemoved?: string;
-  readonly diffHunk?: string;
+  readonly diffAdded?: ThemeColor;
+  readonly diffRemoved?: ThemeColor;
+  readonly diffHunk?: ThemeColor;
   /** Optional per-kind syntax foreground colors; unset kinds paint with the plain foreground. */
-  readonly syntax?: Partial<Record<SyntaxTokenKind, string>>;
+  readonly syntax?: Partial<Record<SyntaxTokenKind, ThemeColor>>;
+  /** Per-kind Helix syntax style, including background and terminal attributes. */
+  readonly syntaxStyles?: Readonly<Record<string, HelixThemeStyle>>;
+  /** Fully resolved Helix scope map. New paint sites consume this first; scalar fields above
+   * are compatibility defaults for existing renderer interfaces. */
+  readonly styles?: Readonly<Record<string, HelixThemeStyle>>;
+}
+
+/** Helix resolves a dotted scope using the longest available prefix. */
+export function helixThemeStyle(theme: WorkbenchTheme, scope: string): HelixThemeStyle | undefined {
+  let candidate = scope;
+  while (candidate.length > 0) {
+    const style = theme.styles?.[candidate];
+    if (style !== undefined) return style;
+    candidate = candidate.slice(0, candidate.lastIndexOf('.'));
+  }
+  return undefined;
 }
 
 const LIGHT_SYNTAX_COLORS: Partial<Record<SyntaxTokenKind, string>> = Object.freeze({

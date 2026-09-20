@@ -144,7 +144,7 @@
         "Create deterministic corpora and reference edit traces",
         "Compare augmented piece tree and chunked rope for edits, line lookup, snapshots, anchors and undo retention",
         "Measure 1MiB long line and 100k edit fragmentation; choose one layout with evidence",
-        "Include sorted/reversed 1–10000 simultaneous edits and anchor mapping in storage comparison"
+        "Include sorted/reversed 1\u201310000 simultaneous edits and anchor mapping in storage comparison"
       ],
       "acceptance": [
         "Both candidates match simple reference model",
@@ -1089,9 +1089,9 @@
         "Verify timeout, cancellation and stale-context outcomes preserve document, cursor and repeat state"
       ],
       "acceptance": [
-        "Integrated pinned pattern corpus matches oracle spans/captures/errors across VP-01–VP-11 and VP-15–VP-16",
+        "Integrated pinned pattern corpus matches oracle spans/captures/errors across VP-01\u2013VP-11 and VP-15\u2013VP-16",
         "Timeout, cancellation and stale-context failures preserve document/cursor/repeat state",
-        "Every in-scope built-in VP-01–VP-11 and VP-15–VP-16 behavior is verified; only the specifically documented syntax-highlighting-only `\\z(` group remains outside the search evaluator",
+        "Every in-scope built-in VP-01\u2013VP-11 and VP-15\u2013VP-16 behavior is verified; only the specifically documented syntax-highlighting-only `\\z(` group remains outside the search evaluator",
         "No required built-in behavior is deferred or silently converted to a literal, no-match or JavaScript syntax"
       ],
       "failure_cases": [
@@ -1133,7 +1133,7 @@
         "Oracle matches search/substitute state and resulting edits",
         "Cancel restores original view and cursor",
         "Multiline/zero-width substitutions terminate with correct count",
-        "All VP-12–VP-14 command/replacement rows are verified or carry an explicit extension boundary"
+        "All VP-12\u2013VP-14 command/replacement rows are verified or carry an explicit extension boundary"
       ],
       "failure_cases": [
         "Empty pattern reuse",
@@ -2805,7 +2805,7 @@
         "E18 passes on every advertised platform",
         "License/dependency/grammar notices and checksums included",
         "Terminal restored on clean/error/signal exit",
-        "Packaged no-Neovim CLI runs E19–E25 including required pointer and multi-cursor workflows"
+        "Packaged no-Neovim CLI runs E19\u2013E25 including required pointer and multi-cursor workflows"
       ],
       "failure_cases": [
         "Missing native dylib",
@@ -3804,7 +3804,7 @@
       ],
       "evidence": [
         "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
-        "Fixture families MP01–MP04, E21, E22; retain minimized failures and relevant artifacts",
+        "Fixture families MP01\u2013MP04, E21, E22; retain minimized failures and relevant artifacts",
         "docs/evidence/T086.md using docs/plan/evidence-template.md"
       ],
       "gate": null,
@@ -3939,8 +3939,8 @@
       ],
       "steps": [
         "Audit all inventory rows for command cardinality/selection policy and Xi fixture coverage",
-        "Run MC01–MC12, MP01–MP04 and E19–E25 through production paths",
-        "Measure 1–10000 selection creation/edit/mapping/render/cancel/retention workloads"
+        "Run MC01\u2013MC12, MP01\u2013MP04 and E19\u2013E25 through production paths",
+        "Measure 1\u201310000 selection creation/edit/mapping/render/cancel/retention workloads"
       ],
       "acceptance": [
         "No missing local editing policy or unexplained singleton/extension mismatch remains",
@@ -3954,7 +3954,7 @@
       ],
       "evidence": [
         "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
-        "Fixture families MC01–MC12, MP01–MP04, EX01–EX05, E19–E25; retain minimized failures and relevant artifacts",
+        "Fixture families MC01\u2013MC12, MP01\u2013MP04, EX01\u2013EX05, E19\u2013E25; retain minimized failures and relevant artifacts",
         "docs/evidence/T089.md using docs/plan/evidence-template.md"
       ],
       "gate": null,
@@ -4036,7 +4036,7 @@
         "Document stable ID/deprecation/version changes and provider arbitration"
       ],
       "acceptance": [
-        "EX01–EX05 pass without changing Vim parser/document internals/central UI switch to add the example",
+        "EX01\u2013EX05 pass without changing Vim parser/document internals/central UI switch to add the example",
         "1000 cycles satisfy retention budget with no stale handlers, requests or views",
         "Prior schema migrates; unknown future schema preserves original bytes; label changes do not break command IDs"
       ],
@@ -4047,7 +4047,7 @@
       ],
       "evidence": [
         "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
-        "Fixture families EX01–EX05, E25; retain minimized failures and relevant artifacts",
+        "Fixture families EX01\u2013EX05, E25; retain minimized failures and relevant artifacts",
         "docs/evidence/T091.md using docs/plan/evidence-template.md"
       ],
       "gate": null,
@@ -4146,7 +4146,7 @@
       "id": "T094",
       "title": "Implement mouse workbench controls and terminal restoration",
       "status": "done",
-      "status_note": "2026-09-16: split into T127 (versioned panel controls), T128 (named terminal restoration matrix) and T129 (scrolling/context menus/mouse settings); existing splitter implementation/evidence is retained. 2026-09-17: all three children done with passed evidence. Closed the integration gate: found and fixed a real gap where none of the 13 T127/T128/T129 PTY fixtures were wired into the automated `e2e --suite interaction` selector (tools/verify-suite.ts) despite being cited as passing in prior evidence — they had only ever been run manually. Added them, plus a new tests/e2e/t094-integration-pty.py that combines explorer activation, panel scroll, context menu, mouse toggle and a live splitter drag interrupted by a real SIGTSTP/SIGCONT (the one combination none of the children tested and T094's own prior evidence had named as an open gap). Suite now runs 37 fixtures (was 24), all passing across two consecutive runs; bun run check/test:ui/test:unit/test:services and plan.py check all clean. See docs/evidence/T094.md.",
+      "status_note": "2026-09-16: split into T127 (versioned panel controls), T128 (named terminal restoration matrix) and T129 (scrolling/context menus/mouse settings); existing splitter implementation/evidence is retained. 2026-09-17: all three children done with passed evidence. Closed the integration gate: found and fixed a real gap where none of the 13 T127/T128/T129 PTY fixtures were wired into the automated `e2e --suite interaction` selector (tools/verify-suite.ts) despite being cited as passing in prior evidence \u2014 they had only ever been run manually. Added them, plus a new tests/e2e/t094-integration-pty.py that combines explorer activation, panel scroll, context menu, mouse toggle and a live splitter drag interrupted by a real SIGTSTP/SIGCONT (the one combination none of the children tested and T094's own prior evidence had named as an open gap). Suite now runs 37 fixtures (was 24), all passing across two consecutive runs; bun run check/test:ui/test:unit/test:services and plan.py check all clean. See docs/evidence/T094.md.",
       "depends_on": [
         "T086",
         "T039",
@@ -4186,7 +4186,7 @@
       ],
       "evidence": [
         "Executed commands, actual outcomes, environment/revision and acceptance-item mapping",
-        "Fixture families MP01–MP04, E21, E22; retain minimized failures and relevant artifacts",
+        "Fixture families MP01\u2013MP04, E21, E22; retain minimized failures and relevant artifacts",
         "docs/evidence/T094.md using docs/plan/evidence-template.md"
       ],
       "gate": null,
@@ -4261,7 +4261,7 @@
       ],
       "steps": [
         "Implement exact magic-mode tables and pattern-local case controls with source-span diagnostics",
-        "Implement core regular Vim syntax: concatenation, alternation and captures; all quantifiers; built-in atoms/classes; newline matching; anchors; and reported spans for VP-01–VP-07 and regular VP-09",
+        "Implement core regular Vim syntax: concatenation, alternation and captures; all quantifiers; built-in atoms/classes; newline matching; anchors; and reported spans for VP-01\u2013VP-07 and regular VP-09",
         "Execute the regular language through an ordered NFA with deterministic work/output budgets, resumability and cancellation over immutable versioned snapshots"
       ],
       "acceptance": [
@@ -4444,7 +4444,7 @@
         "Composed, precomposed, multiple-mark and pattern-leading-mark behavior is covered with retained minimized fixture IDs",
         "NUL and other code-point atom boundaries are verified through actual buffer/search behavior, with UTF-8 byte columns and source spans checked at valid boundaries",
         "Regular and bounded paths retain deterministic budgets, cancellation, resumability and source-aware failures after Unicode changes",
-        "T097’s remaining VP-11 acceptance is covered by this ticket and is not closed until T100 evidence passes"
+        "T097\u2019s remaining VP-11 acceptance is covered by this ticket and is not closed until T100 evidence passes"
       ],
       "failure_cases": [
         "Bare combining mark detached from versus attached to a base character",
@@ -5863,7 +5863,7 @@
       "id": "T128",
       "title": "Qualify terminal pointer-mode restoration matrix",
       "status": "done",
-      "status_note": "2026-09-16/17: qualified against a real xterm and tmux (bash-wrapped) under Xvfb/xdotool. Click delivery, mouse-mode toggle and suspend/resume pass on both named configurations (5/5 tmux+bash suspend/resume). tmux wrapped in fish (this host's tmux default-shell) reproducibly (3/3) loses the process entirely on SIGCONT after a clean SIGTSTP; characterized as an unsupported fish/tmux job-control interaction, not an Xi defect, and not silently claimed as working. Follow-up addenda closed every remaining real-terminal E21/E22 gap: splitter click and live incremental-motion drag with resize-cancellation, split-pane click routing with exact-byte preservation, editor wheel scroll, word/line multi-click promotion, and text-selection drag-to-extend — all proven through a real xterm, not synthetic PTY bytes. See docs/evidence/T128.md.",
+      "status_note": "2026-09-16/17: qualified against a real xterm and tmux (bash-wrapped) under Xvfb/xdotool. Click delivery, mouse-mode toggle and suspend/resume pass on both named configurations (5/5 tmux+bash suspend/resume). tmux wrapped in fish (this host's tmux default-shell) reproducibly (3/3) loses the process entirely on SIGCONT after a clean SIGTSTP; characterized as an unsupported fish/tmux job-control interaction, not an Xi defect, and not silently claimed as working. Follow-up addenda closed every remaining real-terminal E21/E22 gap: splitter click and live incremental-motion drag with resize-cancellation, split-pane click routing with exact-byte preservation, editor wheel scroll, word/line multi-click promotion, and text-selection drag-to-extend \u2014 all proven through a real xterm, not synthetic PTY bytes. See docs/evidence/T128.md.",
       "depends_on": [
         "T086",
         "T039",
@@ -5901,7 +5901,7 @@
       ],
       "evidence": [
         "Executed commands and actual outcomes for every acceptance item",
-        "Fixture families E21, E22 and MP01–MP04; retain minimized failures and relevant artifacts",
+        "Fixture families E21, E22 and MP01\u2013MP04; retain minimized failures and relevant artifacts",
         "docs/evidence/T128.md using docs/plan/evidence-template.md"
       ],
       "gate": null,
@@ -5959,7 +5959,7 @@
       "id": "T130",
       "title": "Wire dot-repeat and macro record/playback into the production coordinator",
       "status": "done",
-      "status_note": "2026-09-17 discovery while pursuing T045 (G3 qualification, whose E01 acceptance names 'dot' explicitly): the production CLI's Vim dispatcher (packages/workbench/vim-session/index.ts, 1594 lines, no match for 'Repeat', 'dot' or 'Macro') never calls any of packages/vim/src/index.ts's repeat API (applyVimRepeatEvent, createVimInsertRepeatTarget, createVimOperatorRepeatTarget, createVimRepeatState, recordVimRepeatTarget, replayVimMultiDot) or macro API. T024 ('Implement semantic dot repeat', done) and T025 ('Implement macro recording and execution', done) both explicitly and honestly disclaimed this in their own evidence Limitations sections ('The workbench/parser dispatcher must wire successful native command outcomes to applyVimRepeatEvent...downstream owner work' / '...connect q/@ parser intents to the recording and execution APIs; command wiring...remain downstream owner work') — those tickets are not mis-scoped, but no ticket was ever created to do the downstream wiring itself, and it does not exist. Reproduced twice with real production PTY sessions, byte-exact: (1) dot-repeat: 'gg0x' deletes the first character of line 1 correctly, then 'j0.j0.' on lines 2/3 leaves them completely unchanged — dot-repeat is a total no-op in production despite T080's multi-cursor semantics being fully unit-tested. (2) macros: 'qax' 'q' (record register a: delete first char) then 'j0@a' (play it on line 2) leaves the ENTIRE file byte-for-byte unchanged, including no visible effect from the 'x' typed while ostensibly recording — macro record/playback does not execute at all in production. Ordinary motions/operators/Insert/Visual/Ex commands are confirmed working correctly through the same dispatcher (ciw, o, undo, :w/:wq all verified byte-exact in the same sessions), so this is a precisely scoped gap, not a general dispatcher failure. This blocks T045's E01 acceptance ('...ciw, dot...') and full G2/G3 Vim-correctness claims; do not mark T045 done until this closes with a real production PTY proof of '.' repeat and 'q'/'@' macro playback matching Neovim-oracle semantics. Separately fixed (2026-09-17, under T038's maintenance per AGENTS.md since T038 owns packages/workbench/): a related but distinct bug found in the same investigation, where bare 'q' in Normal mode (Xi's documented quick-quit shortcut) silently discarded unsaved edits because it bypassed the dirty-buffer check ':q' already enforces. Fixed by routing it through the same submitCommandLine('q') path; see docs/evidence/T038.md's 2026-09-17 addendum. That fix is unrelated to and does not reduce the remaining scope of this ticket (dot-repeat and macro record/playback are still completely unwired in production). 2026-09-17 (later same day): implemented and wired dot-repeat ('.') into the production dispatcher (packages/workbench/vim-session/index.ts) for the single-cursor delete-operator+motion/text-object and plain-insert cases T024 already models and oracle-tested; verified with a new production PTY test (tests/e2e/t130-dot-repeat-pty.py, 3/3 clean runs, 7 cases: operator repeat, insert repeat, repeated dot, no-target no-op, Ctrl-C non-recording, direct-change-key non-target). Full regression clean (bun run check, test:e2e --suite interaction 38/38, test:ui 7/7, test:unit 31/31, test:services 28/28, plan.py check). Status stays todo: macro record/playback ('q'/'@') is still completely unwired (unstarted, the larger remaining half of this ticket), and multi-cursor dot-repeat, visual/put repeat targets, and treating an operator-into-insert sequence (ciw<text><Esc>) as one atomic replay unit are explicitly out of scope for this pass and remain unimplemented. See docs/evidence/T130.md. 2026-09-17 (later same day): implemented and wired macro record/playback. Playback ('@'/'@@') and stop-recording (bare 'q' while already recording) use their real, unmodified Vim keys with zero conflict, via T025's already oracle-tested executeVimMacro. Starting a recording uses a new leader-key trigger ('<space>q<register>') instead of bare 'q'+register, because bare 'q' alone is already Xi's own documented, shipped quick-quit shortcut (docs/evidence/T038.md) extensively relied upon across dozens of existing tests and T094's own evidence; removing that shipped behavior to make room for the literal Vim trigger was judged out of scope for a ticket whose job is 'wire the existing tested engine in', not 'redesign a shipped keybinding'. Verified with a new production PTY test (tests/e2e/t130-macro-pty.py, 4/4 clean runs, 6 cases: quit-shortcut regression checks unchanged, invalid-register safety, record+replay, @@ repeat-last, counted replay). Full regression clean: bun run check, test:e2e --suite interaction 39/39, every other e2e/distribution fixture individually, test:ui 7/7, test:unit 31/31, test:services 28/28, the underlying T024/T025/T080/T092/T033 engine tests, two bench/performance harnesses, plan.py check. Both of T130's acceptance items are now met, each with a real, disclosed scope boundary (see docs/evidence/T130.md's Limitations): single-cursor only, no visual/put repeat targets, operator-into-insert not replayed as one atomic unit, ':' not replayable inside a macro, nested macro-call recursion accounting not independently verified through this path. T045 should stay todo regardless, since its own E01 acceptance names the exact ciw+dot scenario the disclosed change+insert simplification affects. 2026-09-17 (later still): extended dot-repeat to cover an operator that transitions into insert ('ciw<text><Esc>', 'cc<text><Esc>') as one atomic 'delete then insert' replay unit, via a session-local target alongside T024's own state (T024's schema has no combined variant, by design). Building this surfaced and fixed a genuine, previously-undiscovered pre-existing bug, independent of dot-repeat: 'dd'/'cc' (linewise operators) left the cursor one deleted-span's-length too far into the document whenever a line survived after the deleted range. Root cause: packages/vim/operators/core.ts's cursorAfterOperator returns a pre-edit-coordinate offset by design (its own oracle test maps it through the edits itself); packages/workbench/vim-session/index.ts (T038-owned, the only production caller) never did that mapping. Fixed only in vim-session/index.ts (new mapOffsetThroughCommit, reusing the same DocumentChangeMap/createDocumentAnchor machinery T092's multi-cursor path already relies on); packages/vim/operators/core.ts itself was investigated and confirmed correct/unmodified (git status clean). Verified directly against the real pinned Neovim 0.12.4 binary (nvim --headless), not just Xi's own before/after. New production PTY test tests/e2e/t130-change-repeat-pty.py (3/3 clean runs, 8 cases). Full regression clean: bun run check, test:e2e --suite interaction 40/40 (re-run twice), tests/vim/t019 and t020 oracle tests unchanged (confirming core.ts truly wasn't touched), test:ui 7/7, test:unit 32/32, test:services 28/28, plan.py check. This closes T045's specifically-named E01 blocker (the ciw+dot scenario); T045's much larger remaining acceptance (screenshot review, empty/loading/error states, typing-under-load profiling, selection/prefix/Ex/extensibility exercises) was not attempted and T045 correctly stays todo. See docs/evidence/T130.md.",
+      "status_note": "2026-09-17 discovery while pursuing T045 (G3 qualification, whose E01 acceptance names 'dot' explicitly): the production CLI's Vim dispatcher (packages/workbench/vim-session/index.ts, 1594 lines, no match for 'Repeat', 'dot' or 'Macro') never calls any of packages/vim/src/index.ts's repeat API (applyVimRepeatEvent, createVimInsertRepeatTarget, createVimOperatorRepeatTarget, createVimRepeatState, recordVimRepeatTarget, replayVimMultiDot) or macro API. T024 ('Implement semantic dot repeat', done) and T025 ('Implement macro recording and execution', done) both explicitly and honestly disclaimed this in their own evidence Limitations sections ('The workbench/parser dispatcher must wire successful native command outcomes to applyVimRepeatEvent...downstream owner work' / '...connect q/@ parser intents to the recording and execution APIs; command wiring...remain downstream owner work') \u2014 those tickets are not mis-scoped, but no ticket was ever created to do the downstream wiring itself, and it does not exist. Reproduced twice with real production PTY sessions, byte-exact: (1) dot-repeat: 'gg0x' deletes the first character of line 1 correctly, then 'j0.j0.' on lines 2/3 leaves them completely unchanged \u2014 dot-repeat is a total no-op in production despite T080's multi-cursor semantics being fully unit-tested. (2) macros: 'qax' 'q' (record register a: delete first char) then 'j0@a' (play it on line 2) leaves the ENTIRE file byte-for-byte unchanged, including no visible effect from the 'x' typed while ostensibly recording \u2014 macro record/playback does not execute at all in production. Ordinary motions/operators/Insert/Visual/Ex commands are confirmed working correctly through the same dispatcher (ciw, o, undo, :w/:wq all verified byte-exact in the same sessions), so this is a precisely scoped gap, not a general dispatcher failure. This blocks T045's E01 acceptance ('...ciw, dot...') and full G2/G3 Vim-correctness claims; do not mark T045 done until this closes with a real production PTY proof of '.' repeat and 'q'/'@' macro playback matching Neovim-oracle semantics. Separately fixed (2026-09-17, under T038's maintenance per AGENTS.md since T038 owns packages/workbench/): a related but distinct bug found in the same investigation, where bare 'q' in Normal mode (Xi's documented quick-quit shortcut) silently discarded unsaved edits because it bypassed the dirty-buffer check ':q' already enforces. Fixed by routing it through the same submitCommandLine('q') path; see docs/evidence/T038.md's 2026-09-17 addendum. That fix is unrelated to and does not reduce the remaining scope of this ticket (dot-repeat and macro record/playback are still completely unwired in production). 2026-09-17 (later same day): implemented and wired dot-repeat ('.') into the production dispatcher (packages/workbench/vim-session/index.ts) for the single-cursor delete-operator+motion/text-object and plain-insert cases T024 already models and oracle-tested; verified with a new production PTY test (tests/e2e/t130-dot-repeat-pty.py, 3/3 clean runs, 7 cases: operator repeat, insert repeat, repeated dot, no-target no-op, Ctrl-C non-recording, direct-change-key non-target). Full regression clean (bun run check, test:e2e --suite interaction 38/38, test:ui 7/7, test:unit 31/31, test:services 28/28, plan.py check). Status stays todo: macro record/playback ('q'/'@') is still completely unwired (unstarted, the larger remaining half of this ticket), and multi-cursor dot-repeat, visual/put repeat targets, and treating an operator-into-insert sequence (ciw<text><Esc>) as one atomic replay unit are explicitly out of scope for this pass and remain unimplemented. See docs/evidence/T130.md. 2026-09-17 (later same day): implemented and wired macro record/playback. Playback ('@'/'@@') and stop-recording (bare 'q' while already recording) use their real, unmodified Vim keys with zero conflict, via T025's already oracle-tested executeVimMacro. Starting a recording uses a new leader-key trigger ('<space>q<register>') instead of bare 'q'+register, because bare 'q' alone is already Xi's own documented, shipped quick-quit shortcut (docs/evidence/T038.md) extensively relied upon across dozens of existing tests and T094's own evidence; removing that shipped behavior to make room for the literal Vim trigger was judged out of scope for a ticket whose job is 'wire the existing tested engine in', not 'redesign a shipped keybinding'. Verified with a new production PTY test (tests/e2e/t130-macro-pty.py, 4/4 clean runs, 6 cases: quit-shortcut regression checks unchanged, invalid-register safety, record+replay, @@ repeat-last, counted replay). Full regression clean: bun run check, test:e2e --suite interaction 39/39, every other e2e/distribution fixture individually, test:ui 7/7, test:unit 31/31, test:services 28/28, the underlying T024/T025/T080/T092/T033 engine tests, two bench/performance harnesses, plan.py check. Both of T130's acceptance items are now met, each with a real, disclosed scope boundary (see docs/evidence/T130.md's Limitations): single-cursor only, no visual/put repeat targets, operator-into-insert not replayed as one atomic unit, ':' not replayable inside a macro, nested macro-call recursion accounting not independently verified through this path. T045 should stay todo regardless, since its own E01 acceptance names the exact ciw+dot scenario the disclosed change+insert simplification affects. 2026-09-17 (later still): extended dot-repeat to cover an operator that transitions into insert ('ciw<text><Esc>', 'cc<text><Esc>') as one atomic 'delete then insert' replay unit, via a session-local target alongside T024's own state (T024's schema has no combined variant, by design). Building this surfaced and fixed a genuine, previously-undiscovered pre-existing bug, independent of dot-repeat: 'dd'/'cc' (linewise operators) left the cursor one deleted-span's-length too far into the document whenever a line survived after the deleted range. Root cause: packages/vim/operators/core.ts's cursorAfterOperator returns a pre-edit-coordinate offset by design (its own oracle test maps it through the edits itself); packages/workbench/vim-session/index.ts (T038-owned, the only production caller) never did that mapping. Fixed only in vim-session/index.ts (new mapOffsetThroughCommit, reusing the same DocumentChangeMap/createDocumentAnchor machinery T092's multi-cursor path already relies on); packages/vim/operators/core.ts itself was investigated and confirmed correct/unmodified (git status clean). Verified directly against the real pinned Neovim 0.12.4 binary (nvim --headless), not just Xi's own before/after. New production PTY test tests/e2e/t130-change-repeat-pty.py (3/3 clean runs, 8 cases). Full regression clean: bun run check, test:e2e --suite interaction 40/40 (re-run twice), tests/vim/t019 and t020 oracle tests unchanged (confirming core.ts truly wasn't touched), test:ui 7/7, test:unit 32/32, test:services 28/28, plan.py check. This closes T045's specifically-named E01 blocker (the ciw+dot scenario); T045's much larger remaining acceptance (screenshot review, empty/loading/error states, typing-under-load profiling, selection/prefix/Ex/extensibility exercises) was not attempted and T045 correctly stays todo. See docs/evidence/T130.md.",
       "depends_on": [
         "T024",
         "T025",
@@ -6476,6 +6476,315 @@
       ],
       "gate": null,
       "report": "docs/evidence/T141.md"
+    },
+    {
+      "id": "T142",
+      "title": "Correct buffer close and window-prefix routing",
+      "status": "in_progress",
+      "depends_on": [],
+      "owner": "workbench",
+      "paths": [
+        "packages/workbench/",
+        "tests/workbench/",
+        "tests/e2e/",
+        "docs/plan/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/workbench-state-refinements.md",
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Close last buffer without exiting; preserve dirty-buffer protection and quit-all behavior",
+        "Preserve Ctrl-W s/v through comparison routing; restore visible focus and reject hidden-view splits atomically"
+      ],
+      "acceptance": [
+        "Close last buffer without exiting; preserve dirty-buffer protection and quit-all behavior",
+        "Preserve Ctrl-W s/v through comparison routing; restore visible focus and reject hidden-view splits atomically"
+      ],
+      "failure_cases": [
+        "Closing dirty shared views loses edits",
+        "A closed view stays in cached layout",
+        "An invalid split mutates live state"
+      ],
+      "evidence": [
+        "docs/evidence/T142.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T142.md"
+    },
+    {
+      "id": "T143",
+      "title": "Render and audit all theme panel contrast without editing Helix themes",
+      "status": "in_progress",
+      "depends_on": [],
+      "owner": "ui",
+      "paths": [
+        "packages/ui/",
+        "packages/services/config/",
+        "tests/ui/",
+        "tests/config/",
+        "tests/e2e/",
+        "docs/plan/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/workbench-state-refinements.md",
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Render every panel for available themes and retain quantitative contrast findings and inspected screenshots",
+        "Correct Catppuccin Latte sidebar token mapping at Xi boundary; preserve upstream Helix files"
+      ],
+      "acceptance": [
+        "Render every panel for available themes and retain quantitative contrast findings and inspected screenshots",
+        "Correct Catppuccin Latte sidebar token mapping at Xi boundary; preserve upstream Helix files"
+      ],
+      "failure_cases": [
+        "Muted text becomes unreadable on popup-derived sidebar backgrounds",
+        "Selected and inactive states use incompatible foreground/background pairs"
+      ],
+      "evidence": [
+        "docs/evidence/T143.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T143.md"
+    },
+    {
+      "id": "T144",
+      "title": "Give each editor split a pane-scoped buffer strip",
+      "status": "in_progress",
+      "depends_on": [],
+      "owner": "ui",
+      "paths": [
+        "packages/ui/",
+        "packages/workbench/",
+        "apps/xi/src/wiring/",
+        "tests/ui/",
+        "tests/workbench/",
+        "tests/e2e/",
+        "docs/plan/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/workbench-state-refinements.md",
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Each horizontal and vertical split renders an independent buffer strip",
+        "Tab activation and closing target the clicked pane; dirty shared buffers remain safe",
+        "Verify narrow layouts, pointer targets and repeated split/close journeys"
+      ],
+      "acceptance": [
+        "Each horizontal and vertical split renders an independent buffer strip",
+        "Tab activation and closing target the clicked pane; dirty shared buffers remain safe",
+        "Verify narrow layouts, pointer targets and repeated split/close journeys"
+      ],
+      "failure_cases": [
+        "Global active tab overrides another pane",
+        "Tab geometry overlaps editor content"
+      ],
+      "evidence": [
+        "docs/evidence/T144.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T144.md"
+    },
+    {
+      "id": "T145",
+      "title": "Persist editor overrides and expose remappable panel commands",
+      "status": "in_progress",
+      "depends_on": [],
+      "owner": "workbench",
+      "paths": [
+        "packages/workbench/",
+        "packages/services/config/",
+        "packages/contracts/",
+        "apps/xi/",
+        "config/",
+        "tests/",
+        "docs/plan/",
+        "docs/evidence/"
+      ],
+      "specs": [
+        "docs/plan/workbench-state-refinements.md",
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Space s toggles the whole sidebar from both editor and sidebar focus",
+        "Persist panel visibility and editor overrides in ~/.xi.toml across launches with documented precedence",
+        "Represent additional key commands in default config and support remapping through the registry",
+        "Preserve unrelated TOML settings and handle invalid configuration/write failure"
+      ],
+      "acceptance": [
+        "Space s toggles the whole sidebar from both editor and sidebar focus",
+        "Persist panel visibility and editor overrides in ~/.xi.toml across launches with documented precedence",
+        "Represent additional key commands in default config and support remapping through the registry",
+        "Preserve unrelated TOML settings and handle invalid configuration/write failure"
+      ],
+      "failure_cases": [
+        "Sidebar shortcut only opens or changes focus",
+        "State persistence overwrites user settings",
+        "Hard-coded bindings remain active after remapping"
+      ],
+      "evidence": [
+        "docs/evidence/T145.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T145.md"
+    },
+    {
+      "id": "T146",
+      "title": "Refine theme picker, cursor guides, empty hover and split boundaries",
+      "status": "in_progress",
+      "depends_on": [],
+      "owner": "ui",
+      "paths": [
+        "packages/ui/",
+        "packages/workbench/",
+        "apps/xi/",
+        "tests/",
+        "docs/"
+      ],
+      "specs": [
+        "docs/plan/03-ux.md",
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Theme picker covers a full-height sidebar on dark/light preview, cancel and apply",
+        "Theme cursor-column scopes do not create a vertical editor stripe",
+        "Empty hover stays invisible and late replies cannot reopen a closed popup",
+        "Horizontal split strips share the boundary row and preserve tab clicks and resizing"
+      ],
+      "acceptance": [
+        "Theme picker covers a full-height sidebar on dark/light preview, cancel and apply",
+        "Theme cursor-column scopes do not create a vertical editor stripe",
+        "Empty hover stays invisible and late replies cannot reopen a closed popup",
+        "Horizontal split strips share the boundary row and preserve tab clicks and resizing",
+        "Run relevant frame, real CLI, visual and mandatory performance gates"
+      ],
+      "failure_cases": [
+        "Stale or invisible selection is applied",
+        "Theme or pane refinement drops input or changes text",
+        "Missing measurements are presented as a performance pass"
+      ],
+      "evidence": [
+        "docs/evidence/T146.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T146.md"
+    },
+    {
+      "id": "T147",
+      "title": "Adopt the last-motion ghost with Visual mode",
+      "status": "in_progress",
+      "depends_on": [],
+      "owner": "vim",
+      "paths": [
+        "packages/vim/",
+        "packages/workbench/",
+        "packages/ui/",
+        "apps/xi/",
+        "tests/",
+        "docs/"
+      ],
+      "specs": [
+        "docs/plan/09-interaction.md",
+        "docs/plan/01-architecture.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Xi word ghosts follow researched Helix ranges, counts and newline boundaries; ordinary navigation collapses the ghost; painting uses a distinct faint theme color",
+        "Normal v adopts the last motion; strict mode and Normal operators retain their existing semantics",
+        "Cover counts, reverse motion, find, Unicode, multiple members, stale changes and lifecycle invalidation",
+        "Real CLI Visual delete/save/undo matches the highlighted range and mode status updates"
+      ],
+      "acceptance": [
+        "Xi word ghosts follow researched Helix ranges, counts and newline boundaries; ordinary navigation collapses the ghost; painting uses a distinct faint theme color",
+        "Normal v adopts the last motion; strict mode and Normal operators retain their existing semantics",
+        "Cover counts, reverse motion, find, Unicode, multiple members, stale changes and lifecycle invalidation",
+        "Real CLI Visual delete/save/undo matches the highlighted range and mode status updates",
+        "Run relevant pinned Visual oracle and mandatory input/render performance gates"
+      ],
+      "failure_cases": [
+        "Stale or invisible selection is applied",
+        "Theme or pane refinement drops input or changes text",
+        "Missing measurements are presented as a performance pass"
+      ],
+      "evidence": [
+        "docs/evidence/T147.md using docs/plan/evidence-template.md",
+        "docs/evidence/selection-resize-recovery.md: researched Helix correction and regression results"
+      ],
+      "gate": null,
+      "report": "docs/evidence/T147.md"
+    },
+    {
+      "id": "T148",
+      "title": "Preserve Visual state and pane geometry through scrolling, transitions and resizing",
+      "status": "in_progress",
+      "depends_on": [],
+      "owner": "workbench",
+      "paths": [
+        "packages/vim/",
+        "packages/workbench/",
+        "packages/layout/",
+        "packages/ui/",
+        "packages/services/language/",
+        "apps/xi/",
+        "tests/",
+        "docs/"
+      ],
+      "specs": [
+        "docs/plan/02-vim.md",
+        "docs/plan/08-selections.md",
+        "docs/plan/09-interaction.md",
+        "docs/plan/05-validation.md",
+        "docs/plan/12-performance.md",
+        "docs/plan/15-keystroke-latency.md"
+      ],
+      "steps": [
+        "Extend Visual anchors on half-page and cursor-follow scrolling; move half-pages once",
+        "Keep parser mode and selection kind coherent through Visual conversions and text objects",
+        "Recover from incomplete literal/register/digraph input without fatal errors",
+        "Continue unwrapped layout after a clipped long line; repaint changed split geometry and notify tab chrome",
+        "Skip language-sync dispatch for buffers never admitted to a server; retain router errors for invalid direct calls"
+      ],
+      "acceptance": [
+        "Pinned Neovim transition/text-object/scroll and invalid-prompt fixtures match",
+        "Seeded traces preserve document versions, valid endpoints and Escape/edit recovery",
+        "Real CLI Visual delete/save/undo matches selection; inspect split drag and terminal resize screenshots",
+        "Relevant type, architecture, lint, frame and interaction checks pass",
+        "Mandatory input/render performance gates remain required"
+      ],
+      "failure_cases": [
+        "Mode/selection mismatch strands input",
+        "Half-page scroll drops the anchor or moves twice",
+        "Clipped lines leave the rest of a pane blank",
+        "Tab strips retain pre-drag geometry",
+        "Missing performance measurements are reported as passes"
+      ],
+      "evidence": [
+        "docs/evidence/selection-resize-recovery.md using docs/plan/evidence-template.md"
+      ],
+      "gate": null,
+      "report": "docs/evidence/selection-resize-recovery.md"
     }
   ]
 }

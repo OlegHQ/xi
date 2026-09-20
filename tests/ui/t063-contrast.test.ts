@@ -7,6 +7,8 @@ import {
   DARK_WORKBENCH_THEME,
   LIGHT_WORKBENCH_THEME,
   resolveMotionPaintTokens,
+  themeColor,
+  type ThemeColor,
   type WorkbenchTheme,
 } from '../../packages/ui/src/index';
 import { contrastRatio as rgbaContrastRatio, pickCursorForeground } from '../../packages/ui/theme/motion-tokens';
@@ -19,7 +21,7 @@ const themes: readonly { readonly name: string; readonly theme: WorkbenchTheme }
 
 const results: { readonly theme: string; readonly id: string; readonly ratio: number; readonly minimum: number }[] = [];
 
-function check(themeName: string, id: string, foreground: string, background: string, minimum: number): void {
+function check(themeName: string, id: string, foreground: ThemeColor, background: ThemeColor, minimum: number): void {
   const ratio = contrastRatio(foreground, background);
   assert.ok(ratio >= minimum, `T063-CONTRAST-${themeName}-${id} ratio ${ratio.toFixed(2)} >= ${minimum.toFixed(2)}`);
   results.push({ theme: themeName, id, ratio, minimum });
@@ -42,19 +44,19 @@ for (const { name, theme } of themes) {
   // packages/ui/editor/motion-paint.ts), so the token's own color -- not just the theme's
   // plain foreground/background -- must still read against the cursor's background once
   // `pickCursorForeground` (packages/ui/theme/motion-tokens.ts) resolves it.
-  const cursorPrimary = parseColor(paint.cursorPrimary);
-  const themeForeground = parseColor(theme.foreground);
-  const themeBackground = parseColor(theme.background);
+  const cursorPrimary = parseColor(themeColor(paint.cursorPrimary, 'bg'));
+  const themeForeground = parseColor(themeColor(theme.foreground));
+  const themeBackground = parseColor(themeColor(theme.background, 'bg'));
   const tokenColors = [theme.foreground, theme.accent, ...Object.values(theme.syntax ?? {})];
   for (const [index, tokenColor] of tokenColors.entries()) {
     if (tokenColor === undefined) continue;
-    const resolvedFg = pickCursorForeground(parseColor(tokenColor), cursorPrimary, themeForeground, themeBackground);
+    const resolvedFg = pickCursorForeground(parseColor(themeColor(tokenColor)), cursorPrimary, themeForeground, themeBackground);
     check(name, `token-fg-under-cursor-${index}`, toHex(resolvedFg), paint.cursorPrimary, 3);
   }
 
   // Cursor-on-selection: the blended token must stay readable, using the same
   // contrast-resolution rule as a plain cursor.
-  const cursorOnSelection = parseColor(paint.cursorOnSelection);
+  const cursorOnSelection = parseColor(themeColor(paint.cursorOnSelection, 'bg'));
   const onSelectionFg = pickCursorForeground(themeForeground, cursorOnSelection, themeForeground, themeBackground);
   check(name, 'cursor-on-selection-marker', toHex(onSelectionFg), paint.cursorOnSelection, 3);
 }
@@ -70,6 +72,6 @@ function toHex(color: ReturnType<typeof parseColor>): string {
   return `#${channel(r ?? 0)}${channel(g ?? 0)}${channel(b ?? 0)}`;
 }
 
-function contrastRatio(foreground: string, background: string): number {
-  return rgbaContrastRatio(parseColor(foreground), parseColor(background));
+function contrastRatio(foreground: ThemeColor, background: ThemeColor): number {
+  return rgbaContrastRatio(parseColor(themeColor(foreground)), parseColor(themeColor(background, 'bg')));
 }

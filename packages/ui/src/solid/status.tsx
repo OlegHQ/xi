@@ -3,8 +3,9 @@ import { useTerminalDimensions } from '@opentui/solid';
 import type { JSX } from '@opentui/solid';
 import { createSignal, onCleanup } from 'solid-js';
 import type { Disposable } from '../../../contracts/src/index.ts';
+import { readableTextColor } from '../../theme/readability';
 import type { StatusMessageReadPort } from '../../status/index.ts';
-import type { WorkbenchTheme } from '../workbench.ts';
+import { helixTextAttributes, helixThemeColor, helixThemeStyle, type WorkbenchTheme } from '../workbench';
 
 export interface StatusSurfaceSpec {
   readonly read: StatusMessageReadPort;
@@ -30,9 +31,11 @@ export function StatusSurface(props: StatusSurfaceSpec): JSX.Element {
 
   return (
     <box position="absolute" left={0} top={Math.max(0, dimensions().height - 1)} width="100%" height={1}
-      zIndex={130} visible={visible()} backgroundColor={theme().background}>
-      <text width="100%" height={1} wrapMode="none" content={message()?.text ?? ''}
-        fg={message()?.kind === 'error' ? theme().error : theme().foreground} />
+      zIndex={130} visible={visible()} backgroundColor={helixThemeColor(theme(), 'ui.statusline', 'bg', theme().background)}>
+      <text width="100%" height={1} wrapMode="none"
+        fg={readableTextColor(message()?.kind === 'error' ? helixThemeColor(theme(), 'error', 'fg', theme().error) : helixThemeColor(theme(), 'ui.statusline', 'fg', theme().foreground), helixThemeColor(theme(), 'ui.statusline', 'bg', theme().background), theme().foreground)}>
+        <span style={helixTextAttributes(helixThemeStyle(theme(), message()?.kind === 'error' ? 'error' : 'ui.statusline'))}>{message()?.text ?? ''}</span>
+      </text>
     </box>
   );
 }

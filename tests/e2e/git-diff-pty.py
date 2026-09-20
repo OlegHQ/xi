@@ -72,6 +72,18 @@ with tempfile.TemporaryDirectory(prefix="xi-git-diff-pty-") as temporary:
         read_until(master, captured, b"XI_GIT_DIFF_OPEN", 5)
         read_until(master, captured, b"XI_GIT_DIFF_READY", 5)
         read_for(master, captured, 0.3)
+        for chord in (b"\x17s", b"\x17v"):
+            start = len(captured)
+            os.write(master, chord)
+            read_for(master, captured, 0.5)
+            if b"XI_WORKBENCH_SPLIT" not in captured[start:]:
+                raise SystemExit(f"comparison swallowed split chord {chord!r}: {captured[-1500:]!r}")
+            os.write(master, b":q\r")
+            read_for(master, captured, 0.3)
+            if b"XI_WORKBENCH_VIEW_CLOSED" not in captured[start:]:
+                raise SystemExit("split did not close with :q")
+        os.write(master, b" vd")
+        read_for(master, captured, 0.3)
         before = captured[:]
         os.write(master, b"]c")
         read_for(master, captured, 0.2)
@@ -92,8 +104,13 @@ with tempfile.TemporaryDirectory(prefix="xi-git-diff-pty-") as temporary:
         os.write(master, b"\x1b")
         read_until(master, captured, b"XI_GIT_DIFF_CLOSED", 5)
         os.write(master, b":qa!\r")
+        # Keep draining terminal output while quitting: a full PTY output buffer can
+        # otherwise block the final repaint/terminal cleanup before process exit.
+        quit_deadline = time.monotonic() + 5
+        while child.poll() is None and time.monotonic() < quit_deadline:
+            read_for(master, captured, 0.05)
         try:
-            child.wait(timeout=5)
+            child.wait(timeout=0.1)
         except subprocess.TimeoutExpired as error:
             raise SystemExit(f"git diff PTY did not quit: {captured[-7000:]!r}") from error
     finally:
@@ -101,6 +118,9 @@ with tempfile.TemporaryDirectory(prefix="xi-git-diff-pty-") as temporary:
             child.kill()
             child.wait()
         os.close(master)
+        artifact = ROOT / '.artifacts/e2e/git-diff.ansi'
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_bytes(captured)
     if child.returncode != 0:
         raise SystemExit(f"git diff PTY exited {child.returncode}: {captured[-7000:]!r}")
     print("Git diff PTY passed comparison tab, first-change navigation, editing spaces/brackets, exact saved bytes and close to file tab")

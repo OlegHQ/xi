@@ -14,10 +14,10 @@ export function canonicalKeyToken(event: OwnedVimKeyEvent): string {
   const named: Record<string, string> = {
     escape: 'esc', esc: 'esc', enter: 'enter', return: 'enter', tab: 'tab', backspace: 'bs', delete: 'del',
     arrowup: 'up', up: 'up', arrowdown: 'down', down: 'down', arrowleft: 'left', left: 'left', arrowright: 'right', right: 'right',
-    space: 'space',
+    space: 'space', home: 'home', end: 'end', pageup: 'pageup', pagedown: 'pagedown', insert: 'insert',
   };
   const isSpace = event.raw === ' ' || lowerName === 'space';
-  const namedKey = isSpace ? 'space' : named[lowerName];
+  const namedKey = isSpace ? 'space' : named[lowerName] ?? (/^f(?:[1-9]|1[0-9]|2[0-4])$/u.test(lowerName) ? lowerName : undefined);
   const isNamed = namedKey !== undefined;
   // Ctrl/Meta combos: `raw` is the control byte (Ctrl-D arrives as name 'd', raw '\x04'),
   // so only `name` yields a matchable token.

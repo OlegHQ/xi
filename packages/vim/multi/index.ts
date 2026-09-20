@@ -242,7 +242,10 @@ export function resolveVimMultiVisualTextObject(
   const members: SelectionMemberInput[] = [];
   const failedMemberIds: SelectionId[] = [];
   let kind: VimVisualKind = 'visual-character';
-  const cursorAt = (offset: Utf16Offset): VimVisualCursor => Object.freeze({ documentVersion: input.snapshot.version, offset, displayCellColumn: 0 as CellColumn });
+  const cursorAt = (offset: Utf16Offset): VimVisualCursor => {
+    const cursor = createVimMotionCursor(input.snapshot, offset);
+    return { documentVersion: input.snapshot.version, offset, displayCellColumn: (cursor.ok ? cursor.value.desiredDisplayCellColumn : null) ?? 0 as CellColumn };
+  };
   for (let index = 0; index < input.selections.members.length; index += 1) {
     const member = input.selections.members[index];
     if (member === undefined || !isVisualMember(member)) return failure({ kind: 'invalid-selection' });
@@ -260,8 +263,8 @@ export function resolveVimMultiVisualTextObject(
       members.push(memberInput(member));
       continue;
     }
-    const memberKind: VimVisualKind = extended.value.kind === 'linewise' ? 'visual-line' : member.kind === 'visual-block' ? 'visual-character' : member.kind;
-    if (memberKind === 'visual-line') kind = 'visual-line';
+    const memberKind: VimVisualKind = extended.value.kind === 'linewise' ? 'visual-line' : member.kind;
+    kind = memberKind;
     const begun = beginVimVisualSelection(input.snapshot, member.id, cursorAt(extended.value.anchor), memberKind);
     if (!begun.ok) return failure({ kind: 'selection-update-failed' });
     const moved = extendVimVisualSelection(input.snapshot, begun.value, [{ id: member.id, cursor: cursorAt(extended.value.head) }]);

@@ -25,7 +25,7 @@ assert.ok(parsed.value.entries.some((entry) => entry.path.join('.') === 'keys.no
 const initial = compileInitialConfig();
 assert.equal(initial.ok, true, 'T036-CONFIG-01 shipped example validates');
 if (!initial.ok) throw new Error('default config did not compile');
-assert.equal(initial.value.bindings.length, 30, 'T036-CONFIG-02 every shipped editor and panel key declaration compiles');
+assert.equal(initial.value.bindings.length, 38, 'T036-CONFIG-02 every shipped editor and panel key declaration compiles');
 assert.ok(initial.value.bindings.every((binding) => DEFAULT_COMMAND_CATALOG.commandIds.includes(binding.commandId)), 'T036-CONFIG-03 every binding command resolves in the catalog');
 assert.equal(initial.value.aliases.length, 11, 'T036-CONFIG-04 friendly aliases compile to stable command IDs');
 assert.equal(initial.value.editor.selection.limit, 10_000, 'T036-CONFIG-05 selection limit is validated and retained');
@@ -105,10 +105,10 @@ if (languages.ok) {
 }
 const theme = parseThemeConfig(DEFAULT_THEME_TOML, 'config/themes/xi-light.toml');
 assert.equal(theme.ok, true, 'T036-THEME-01 shipped theme example validates');
-if (theme.ok) assert.equal(theme.value.tokens['selection.primary'], '#D6E5F2', 'T036-THEME-02 semantic theme token is retained');
+if (theme.ok) assert.equal(theme.value.styles['ui.selection.primary']?.bg, 'selection', 'T036-THEME-02 Helix semantic scope is retained');
 const invalidLanguage = parseLanguageConfig('schema-version = 1\n[[language]]\nname = "x"\nfile-types = ["x"]\nwat = true\n', 'invalid-languages.toml');
 assert.equal(invalidLanguage.ok, false, 'T036-FAIL-LANGUAGE-01 unknown language field is rejected');
-const invalidTheme = parseThemeConfig('schema-version = 1\nname = "x"\n[tokens]\n"selection.primary" = "red"\n', 'invalid-theme.toml');
+const invalidTheme = parseThemeConfig('"ui.selection.primary" = 1\n', 'invalid-theme.toml');
 assert.equal(invalidTheme.ok, false, 'T036-FAIL-THEME-01 invalid theme color is rejected');
 
 // A user languages.toml layer (as apps/xi/src/main.ts's loadStartupConfig reads at startup)

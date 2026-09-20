@@ -45,13 +45,12 @@ export function executeViewCommand(commandId: ViewCommandId, context: ViewComman
     : commandId === 'view.scroll-down' ? scrollLines
     : commandId === 'view.scroll-page-up' ? -page
     : commandId === 'view.scroll-page-down' ? page
-    : commandId === 'view.half-page-up' ? -Math.ceil(page / 2)
-    : Math.ceil(page / 2); // view.half-page-down
+    : commandId === 'view.half-page-up' ? -Math.max(1, Math.floor(page / 2))
+    : Math.max(1, Math.floor(page / 2)); // view.half-page-down
+  // Half-page movement is based on the original cursor, before wheel-style clamping.
+  if (commandId === 'view.half-page-up' || commandId === 'view.half-page-down') moveCursorBy(workbench, getSession, viewId, delta);
   const scrolled = scrollViewBy(workbench, getSession, viewId, delta, viewportHeight);
   if (scrolled === undefined) return false;
-  // Vim CTRL-D/CTRL-U: the cursor moves the same number of lines as the window, not just
-  // far enough to stay on screen (`scrollViewBy`'s wheel semantics).
-  if (commandId === 'view.half-page-up' || commandId === 'view.half-page-down') moveCursorBy(workbench, getSession, viewId, delta);
   return true;
 }
 
@@ -63,6 +62,6 @@ function moveCursorBy(workbench: Pick<WorkbenchSession, 'readView'>, getSession:
   const line = view.document.lineIndexAt(primary.head.at.offset);
   if (!line.ok) return;
   const lineStart = view.document.lineStartOffset(line.value);
-  const column = lineStart.ok ? (primary.head.at.offset as number) - (lineStart.value as number) : 0;
+  const column = primary.head.kind === 'line' ? primary.desiredColumn.logicalUtf16 ?? 0 : lineStart.ok ? (primary.head.at.offset as number) - (lineStart.value as number) : 0;
   session.setCursorPosition(Math.min(Math.max(0, (line.value as number) + delta), view.document.lineCount - 1), column);
 }

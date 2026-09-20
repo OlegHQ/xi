@@ -439,7 +439,7 @@ function planKey(
       return success(continued(snapshot, session, [], 'continued'));
     }
     const registerName = textKey(key);
-    if (registerName === undefined) return failure('invalid-input');
+    if (registerName === undefined) return success(ignored(snapshot, freezeSession({ ...session, pending: NONE_PENDING })));
     const request: VimInsertRegisterRequest = Object.freeze({
       requestId: session.pending.requestId,
       registerName,
@@ -489,7 +489,11 @@ function planKey(
     // and then replays that same key through this same dispatcher against the
     // updated line/session, so it gets exactly the handling a standalone press of
     // that key would -- not swallowed.
-    if (digits.length === 0) return failure('invalid-input');
+    if (digits.length === 0) {
+      const literal = literalText(key);
+      if (literal === undefined) return failure('invalid-input');
+      return insertPayload(snapshot, source, base, freezeSession({ ...session, pending: NONE_PENDING }), literal, lineStart, 'continued');
+    }
     const char = literalCodeChar(radix, digits);
     if (char === undefined) return failure('invalid-input');
     const cleared = freezeSession({ ...session, pending: NONE_PENDING });
@@ -513,6 +517,9 @@ function planKey(
     // range the real document was never long enough to contain.
     const edits = foldLiteralInsertionEdits(insertedAt, char, replayed.value.plan.edits);
     return success(Object.freeze({ ...replayed.value, plan: Object.freeze({ ...replayed.value.plan, edits }) }));
+  }
+  if ((session.pending.kind === 'digraph-first' || session.pending.kind === 'digraph-second') && (key === '<Esc>' || key === '<C-c>')) {
+    return success(continued(snapshot, freezeSession({ ...session, pending: NONE_PENDING }), [], 'continued'));
   }
   if (session.pending.kind === 'digraph-first') {
     const value = textKey(key);
@@ -1628,7 +1635,7 @@ function literalText(key: string): string | undefined {
   if (key === '<CR>' || key === '<Enter>') return '\n';
   if (key === '<Tab>') return '\t';
   if (key === '<BS>') return '\b';
-  return textKey(key);
+  return textKey(key) ?? (/^<[^<>]+>$/u.test(key) ? key : undefined);
 }
 
 /** The key right after `<C-v>` that opens a numeric literal-entry sequence instead of an

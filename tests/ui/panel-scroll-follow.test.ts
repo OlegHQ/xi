@@ -14,4 +14,7 @@ scroll.follow('c', () => 5, 100, 10); // selection moved above
 assert.equal(scroll.offset, 5);
 scroll.follow('c', () => 5, 8, 10); // list shrank: clamp
 assert.equal(scroll.offset, 0);
+scroll.follow('last', () => 99, 100, 30);
+scroll.follow('last', () => 99, 100, 10);
+assert.equal(scroll.offset, 90, 'shrinking the viewport keeps the current selection visible');
 console.log('panel-scroll-follow ok');

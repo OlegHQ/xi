@@ -2,6 +2,9 @@ schema-version = 1
 profile = "xi"
 
 [editor]
+sidebar-visible = true
+sidebar-width = 28
+sidebar-panel = "files"
 theme = "xi-light"
 line-number = "absolute"
 scrolloff = 5
@@ -34,6 +37,9 @@ hidden = true
 follow-symlinks = false
 
 [keys.normal.space]
+q = "macro.record"
+c = "config.open"
+s = "sidebar.toggle"
 f = "files.pick"
 b = "buffers.pick"
 ";" = "command.pick"
@@ -49,6 +55,7 @@ m = "editor.mouse.toggle"
 r = "search.replace"
 
 [keys.normal.space.v]
+p = "panel.problems.focus"
 f = "panel.files.focus"
 s = "panel.search.focus"
 g = "panel.git.focus"
@@ -56,21 +63,25 @@ o = "panel.outline.focus"
 d = "git.diff"
 
 [keys.files-panel.space]
+s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
 [keys.search-panel.space]
+s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
 [keys.git-panel.space]
+s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
 [keys.diff-panel.space]
+s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"

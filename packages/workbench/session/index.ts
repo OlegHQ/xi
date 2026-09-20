@@ -327,24 +327,32 @@ export class WorkbenchSession implements VimSessionReader {
 
   /** Activate (focus) a buffer for a tab-strip click: focuses one of its existing views,
    * preferring the currently active view if it already shows the buffer. */
-  activateBuffer(bufferId: DocumentId): Result<void, WorkbenchSessionFailure> {
+  activateBuffer(bufferId: DocumentId, paneViewId?: ViewId): Result<void, WorkbenchSessionFailure> {
     const comparison = this.#views.get(bufferId as unknown as ViewId);
     if (comparison?.comparisonLabel !== undefined) return this.focus(comparison.viewId);
     const buffer = this.#buffers.get(bufferId);
     if (buffer === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId } };
+    if (paneViewId !== undefined) {
+      const focused = this.focus(paneViewId);
+      if (!focused.ok) return focused;
+    }
     const activeView = this.#activeViewId === undefined ? undefined : this.#views.get(this.#activeViewId);
     const viewId = activeView?.bufferId === bufferId && activeView.comparisonLabel === undefined
       ? this.#activeViewId : [...buffer.viewIds].find(id => this.#views.get(id)?.comparisonLabel === undefined);
     if (viewId === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId } };
+    if (paneViewId !== undefined && viewId !== paneViewId && findLeaf(this.#root, viewId) !== undefined) {
+      const opened = this.splitView(viewId, undefined, undefined, paneViewId);
+      return opened.ok ? { ok: true, value: undefined } : opened;
+    }
     return this.focus(viewId);
   }
 
   /** Ordered read model for a tab strip; another agent's UI renders it. */
-  readTabs(): readonly WorkbenchTabSnapshot[] {
-    const activeView = this.#activeViewId === undefined ? undefined : this.#views.get(this.#activeViewId);
+  readTabs(viewId = this.#activeViewId): readonly WorkbenchTabSnapshot[] {
+    const activeView = viewId === undefined ? undefined : this.#views.get(viewId);
     const activeBufferId = activeView?.comparisonLabel === undefined ? activeView?.bufferId : undefined;
     const buffers = [...this.#buffers.values()];
-    let key = String(this.#activeViewId);
+    let key = String(viewId);
     for (const buffer of buffers) key += `|${buffer.bufferId}:${buffer.path ?? ''}:${buffer.document.isDirty}:${buffer.preview}:${buffer.pinned}`;
     for (const view of this.#views.values()) if (view.comparisonLabel !== undefined) key += `|${view.viewId}:${view.comparisonLabel}`;
     if (this.#tabsReadCache !== undefined && this.#tabsReadCacheKey === key) return this.#tabsReadCache;
@@ -362,7 +370,7 @@ export class WorkbenchSession implements VimSessionReader {
       dirty: this.#buffers.get(view.bufferId)?.document.isDirty ?? false,
       preview: false,
       pinned: true,
-      active: view.viewId === this.#activeViewId,
+      active: view.viewId === viewId,
     }))]);
     this.#tabsReadCache = tabs;
     this.#tabsReadCacheKey = key;
@@ -379,13 +387,15 @@ export class WorkbenchSession implements VimSessionReader {
   }
 
   /** Create a second view sharing the same coordinator, document and undo tree. */
-  splitView(viewId: ViewId, orientation: SplitOrientation | undefined, requestedViewId?: ViewId): Result<WorkbenchViewStateSnapshot, WorkbenchSessionFailure> {
+  splitView(viewId: ViewId, orientation: SplitOrientation | undefined, requestedViewId?: ViewId, paneViewId = viewId): Result<WorkbenchViewStateSnapshot, WorkbenchSessionFailure> {
     const source = this.#views.get(viewId);
     if (source === undefined) return { ok: false, error: { kind: 'view-not-found', viewId } };
     const buffer = this.#buffers.get(source.bufferId);
     if (buffer === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId: source.bufferId } };
     const newViewId = requestedViewId ?? this.newViewId(source.bufferId);
     if (this.#views.has(newViewId)) return { ok: false, error: { kind: 'duplicate-view', viewId: newViewId } };
+    const leaf = findLeaf(this.#root, paneViewId);
+    if (leaf === undefined) return { ok: false, error: { kind: 'invalid-layout', message: `view ${viewId} is not in split tree` } };
     const oldState = buffer.coordinator.readState();
     const sourceState = oldState.views.find((view) => view.viewId === viewId);
     if (sourceState === undefined) return { ok: false, error: { kind: 'view-not-found', viewId } };
@@ -398,9 +408,7 @@ export class WorkbenchSession implements VimSessionReader {
     const paneId = this.newNodeId('pane');
     this.#views.set(newViewId, { viewId: newViewId, bufferId: source.bufferId, paneId, scrollTop: source.scrollTop, scrollLeft: source.scrollLeft });
     buffer.viewIds.add(newViewId);
-    const leaf = findLeaf(this.#root, viewId);
-    if (leaf === undefined) return { ok: false, error: { kind: 'invalid-layout', message: `view ${viewId} is not in split tree` } };
-    this.#root = orientation === undefined ? replaceLeafView(this.#root, viewId, newViewId) : replaceNode(this.#root, leaf.nodeId, {
+    this.#root = orientation === undefined ? replaceLeafView(this.#root, paneViewId, newViewId) : replaceNode(this.#root, leaf.nodeId, {
       kind: 'split', nodeId: this.newNodeId('split'), orientation, ratio: 0.5,
       first: leaf, second: { kind: 'leaf', nodeId: this.newNodeId('leaf'), viewId: newViewId },
     });
@@ -515,7 +523,7 @@ export class WorkbenchSession implements VimSessionReader {
     if (view === undefined) return { ok: false, error: { kind: 'view-not-found', viewId } };
     const buffer = this.#buffers.get(view.bufferId);
     if (buffer === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId: view.bufferId } };
-    if (buffer.document.isDirty && decision === undefined) {
+    if (buffer.document.isDirty && buffer.viewIds.size === 1 && decision === undefined) {
       return { ok: false, error: { kind: 'dirty-buffer', bufferId: buffer.bufferId, choices: ['save', 'keep-open', 'discard'] } };
     }
     if (decision === 'cancel' || decision === 'keep-open') return { ok: true, value: { closed: false, activeViewId: this.#activeViewId } };
@@ -526,16 +534,13 @@ export class WorkbenchSession implements VimSessionReader {
       if (!saved.ok) return { ok: false, error: { kind: 'save-failed', bufferId: buffer.bufferId, message: saved.error } };
     }
     if (buffer.viewIds.size > 1) {
-      buffer.viewIds.delete(viewId);
       const state = buffer.coordinator.readState();
       const replaced = buffer.coordinator.replaceState({ activeViewId: state.activeViewId === viewId ? (state.views.find((candidate) => candidate.viewId !== viewId)?.viewId as ViewId) : state.activeViewId, views: state.views.filter((candidate) => candidate.viewId !== viewId), registers: state.registers });
       if (!replaced.ok) return { ok: false, error: { kind: 'invalid-layout', message: replaced.error.kind } };
+      buffer.viewIds.delete(viewId);
       this.#views.delete(viewId);
-    this.#root = removeViewFromTree(this.#root, viewId, view.returnViewId, this.#views);
-    this.invalidateLayoutRead();
-      if (this.#activeViewId === viewId) this.#activeViewId = view.returnViewId !== undefined && this.#views.has(view.returnViewId)
-        ? view.returnViewId
-        : firstView(this.#views);
+      this.#root = removeViewFromTree(this.#root, viewId, view.returnViewId, this.#views);
+      this.restoreActiveViewAfterClose();
       return { ok: true, value: { closed: true, activeViewId: this.#activeViewId } };
     }
     return this.closeBuffer(view.bufferId, decision === undefined ? 'discard' : decision);
@@ -559,7 +564,7 @@ export class WorkbenchSession implements VimSessionReader {
   closeBuffer(bufferId: DocumentId, decision?: CloseDecision): Result<{ readonly closed: boolean; readonly activeViewId: ViewId | undefined }, WorkbenchSessionFailure> {
     const comparison = this.#views.get(bufferId as unknown as ViewId);
     // Closing this tab only releases its view. The file tab still owns all unsaved edits.
-    if (comparison?.comparisonLabel !== undefined) return this.closeView(comparison.viewId, 'discard');
+    if (comparison?.comparisonLabel !== undefined) return this.closeView(comparison.viewId, decision);
     const buffer = this.#buffers.get(bufferId);
     if (buffer === undefined) return { ok: false, error: { kind: 'buffer-not-found', bufferId } };
     if (buffer.document.isDirty && decision === undefined) return { ok: false, error: { kind: 'dirty-buffer', bufferId, choices: ['save', 'keep-open', 'discard'] } };
@@ -578,8 +583,20 @@ export class WorkbenchSession implements VimSessionReader {
     buffer.changeSubscription.dispose();
     buffer.coordinator.dispose();
     this.#buffers.delete(bufferId);
-    this.#activeViewId = firstView(this.#views);
+    this.restoreActiveViewAfterClose();
     return { ok: true, value: { closed: true, activeViewId: this.#activeViewId } };
+  }
+
+  private restoreActiveViewAfterClose(): void {
+    if (this.#activeViewId === undefined || findLeaf(this.#root, this.#activeViewId) === undefined) {
+      let leaf = this.#root;
+      while (leaf?.kind === 'split') leaf = leaf.first;
+      this.#activeViewId = leaf?.viewId ?? firstView(this.#views);
+    }
+    if (this.#root === undefined && this.#activeViewId !== undefined) {
+      this.#root = { kind: 'leaf', nodeId: this.newNodeId('leaf'), viewId: this.#activeViewId };
+    }
+    this.invalidateLayoutRead();
   }
 
   async closeBufferAsync(bufferId: DocumentId, decision: CloseDecision = 'cancel'): Promise<Result<{ readonly closed: boolean; readonly activeViewId: ViewId | undefined }, WorkbenchSessionFailure>> {

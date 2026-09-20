@@ -67,11 +67,20 @@ export class DiffViewController implements Disposable {
   readonly #options: DiffViewControllerOptions;
   readonly #entries = new Map<ViewId, Comparison>();
   readonly #listeners = new Set<() => void>();
+  readonly #viewClosedSubscription: Disposable;
   #load: CancellationSource | undefined;
   #sequence = 0;
   #pendingBracket: '[' | ']' | undefined;
 
-  constructor(options: DiffViewControllerOptions) { this.#options = options; }
+  constructor(options: DiffViewControllerOptions) {
+    this.#options = options;
+    this.#viewClosedSubscription = options.host.onViewClosed(viewId => {
+      const entry = this.#entries.get(viewId);
+      if (entry === undefined) return;
+      this.#release(entry);
+      this.#entries.delete(viewId);
+    });
+  }
   get isOpen(): boolean { return this.readComparison() !== undefined; }
   subscribe(listener: () => void): Disposable { this.#listeners.add(listener); return { dispose: () => { this.#listeners.delete(listener); } }; }
   #emit(): void { for (const listener of this.#listeners) listener(); this.#options.host.notifySurfaceChange(); }
@@ -226,11 +235,8 @@ export class DiffViewController implements Disposable {
     const id = this.#options.workbench.activeViewId;
     const entry = id === undefined ? undefined : this.#entries.get(id);
     if (entry === undefined) return;
-    this.#options.workbench.closeView(entry.model.viewId, 'discard');
-    this.#options.host.sessions.get(entry.model.viewId)?.dispose();
-    this.#options.host.sessions.delete(entry.model.viewId);
-    this.#release(entry);
-    this.#entries.delete(entry.model.viewId);
+    const closed = this.#options.host.closeView(entry.model.viewId);
+    if (!closed.ok) { this.#options.onError(closed.error.kind === 'dirty-buffer' ? 'buffer has unsaved changes (use :q! to discard)' : closed.error.kind); return; }
     this.#options.marker('XI_GIT_DIFF_CLOSED', {});
     this.#emit();
   }
@@ -242,5 +248,5 @@ export class DiffViewController implements Disposable {
     this.#options.closeSyntax(entry.model.left.id);
     if (!entry.model.editable) this.#options.closeSyntax(entry.model.right.id);
   }
-  dispose(): void { this.#load?.dispose(); for (const entry of this.#entries.values()) this.#release(entry); this.#entries.clear(); this.#listeners.clear(); }
+  dispose(): void { this.#viewClosedSubscription.dispose(); this.#load?.dispose(); for (const entry of this.#entries.values()) this.#release(entry); this.#entries.clear(); this.#listeners.clear(); }
 }

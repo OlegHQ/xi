@@ -85,5 +85,16 @@ assert.equal(controller.handleKeypress(key('i')), true, 'index side never enters
 assert.equal(workbench.readView(workbench.activeViewId!)?.session.mode, 'normal');
 controller.close();
 assert.equal(snapshots.size, 1, 'closing comparisons releases original/index syntax snapshots');
-controller.dispose(); host.dispose();
+await controller.open('file.ts', 'worktree');
+const lastComparison = workbench.activeViewId!;
+for (const raw of ['i', 'Y', '\x1b']) await host.activeSession()!.handleKey(key(raw));
+assert.ok(host.closeView(viewId).ok, 'shared dirty file view can close while comparison retains the document');
+assert.throws(() => controller.close(), /unsaved changes/, 'last dirty comparison refuses a destructive close');
+assert.ok(workbench.readView(lastComparison));
+assert.ok(host.documents.has(document.id));
+assert.equal(workbench.closeBuffer(lastComparison as unknown as DocumentId).ok, false, 'comparison tab identity must not bypass last-view dirty protection');
+assert.ok(host.closeView(lastComparison, true).ok);
+assert.equal(snapshots.size, 1, 'closing the last comparison immediately releases syntax');
+assert.equal(controller.readComparison(lastComparison), undefined);
+controller.dispose(); host.dispose(); workbench.dispose();
 console.log('Git comparison passed separate tabs/shared document, first-change focus, split/unified +/- syntax frames and edit/close preservation');

@@ -45,6 +45,9 @@ export class LanguageServerRouter implements Disposable {
     this.#options = options;
   }
 
+  /** Whether a document was admitted to a configured server; plain buffers are absent. */
+  hasDocument(documentId: string): boolean { return this.#uriByDocumentId.has(documentId); }
+
   get size(): number { return this.#sessions.size; }
   sessions(): readonly LanguageServerSession[] { return Object.freeze([...this.#sessions.values()]); }
   /** The session serving `uri`, if any document under it was opened. */

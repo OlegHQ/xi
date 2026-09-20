@@ -21,8 +21,7 @@ PickerTheme/ContextMenuTheme, distinct shapes from WorkbenchTheme), so this is r
 wiring, not a side effect of the editor's own theme; finally quits and relaunches a fresh
 process against the same HOME directory, confirming the committed theme is restored
 immediately on startup with no picker interaction at all -- real cross-launch persistence to
-`~/.config/xi/state.json` (a minimal, deliberately narrow file, not a general config-load
-pipeline; see docs/evidence/T132.md).
+`~/.xi.toml`, which takes precedence over legacy theme state.
 """
 from __future__ import annotations
 
@@ -35,6 +34,7 @@ import subprocess
 import tempfile
 import termios
 import time
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -74,6 +74,12 @@ def wait_for(master: int, captured: bytearray, marker: bytes, timeout: float) ->
 with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
     source = Path(temporary) / "theme.txt"
     source.write_text("hello\n", encoding="utf-8")
+    state_path = Path(temporary) / ".xi.toml"
+    original_state = '# preserve this comment\n[editor]\ntheme = "xi-light" # committed choice\n'
+    state_path.write_text(original_state, encoding="utf-8")
+    legacy_path = Path(temporary) / ".config" / "xi" / "state.json"
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text('{"theme":"xi-dark"}\n', encoding="utf-8")
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     environment = os.environ.copy()
@@ -95,13 +101,22 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
         if DARK_BACKGROUND in captured:
             raise SystemExit(f"editor started already dark -- LIGHT/DARK_BACKGROUND fixtures need updating: {captured[-2000:]!r}")
 
-        # Open the theme picker (space t) -- its default-selected entry (Xi Dark) must preview
-        # live immediately.
+        # Open the theme picker (space t) -- the currently applied Xi Light must remain
+        # selected until navigation/hover chooses a preview.
         before_open = len(captured)
         os.write(master, b" t")
         read_for(master, captured, 0.4)
-        if DARK_BACKGROUND not in captured[before_open:]:
-            raise SystemExit(f"opening the theme picker did not preview its default entry live: {captured[before_open:][-2000:]!r}")
+        if DARK_BACKGROUND in captured[before_open:]:
+            raise SystemExit(f"opening the theme picker did not keep the current theme selected: {captured[before_open:][-2000:]!r}")
+
+        # At 120x40 the picker starts at (6,5), with a border and query header.
+        # Hover the first visible result (Xi Dark), then the second (Xi Light).
+        for row, expected in [(8, DARK_BACKGROUND), (9, LIGHT_BACKGROUND), (8, DARK_BACKGROUND)]:
+            before_hover = len(captured)
+            os.write(master, mouse(35, 12, row))
+            read_for(master, captured, 0.3)
+            if expected not in captured[before_hover:]:
+                raise SystemExit(f"hover on row {row} did not apply its theme: {captured[before_hover:][-2000:]!r}")
 
         # Cancel with Escape -- must revert to the original light theme immediately.
         before_cancel = len(captured)
@@ -110,10 +125,16 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
         if LIGHT_BACKGROUND not in captured[before_cancel:]:
             raise SystemExit(f"cancelling the theme picker did not restore the original theme: {captured[before_cancel:][-2000:]!r}")
 
-        # Reopen (previews Xi Dark again) and commit with Enter -- must keep the dark theme
-        # after the picker closes, not just during preview.
+        assert state_path.read_text(encoding="utf-8") == original_state, "preview/cancel changed persisted state"
+
+        # Reopen, navigate to Xi Dark, and commit it -- it must keep the dark theme after the
+        # picker closes, not just during preview.
         os.write(master, b" t")
         read_for(master, captured, 0.4)
+        os.write(master, b"\x10")  # Ctrl-P previews the previous theme (Xi Dark).
+        read_for(master, captured, 0.4)
+        if DARK_BACKGROUND not in captured:
+            raise SystemExit(f"Ctrl-P did not preview Xi Dark: {captured[-2000:]!r}")
         before_commit = len(captured)
         os.write(master, b"\r")
         wait_for(master, captured, b"XI_THEME_APPLIED", 5)
@@ -167,7 +188,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
         os.write(master, b"\x1b")
         read_for(master, captured, 0.2)
 
-        os.write(master, b":q\r")
+        os.write(master, b":qa\r")
         for _ in range(4):
             if child.poll() is not None:
                 break
@@ -182,9 +203,15 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
     if child.returncode != 0:
         raise SystemExit(f"theme switch session exited {child.returncode}")
 
+    saved_state = state_path.read_text(encoding="utf-8")
+    assert tomllib.loads(saved_state)["editor"]["theme"] == "xi-dark"
+    assert '# preserve this comment' in saved_state and '# committed choice' in saved_state
+    # Make legacy state conflict again so the relaunch proves TOML precedence.
+    legacy_path.write_text('{"theme":"xi-light"}\n', encoding="utf-8")
+
     # Cross-launch persistence: a fresh process against the same HOME must start dark
     # immediately, with zero picker interaction -- confirming the committed selection was
-    # actually written to and read back from ~/.config/xi/state.json, not merely held in the
+    # actually written to and read back from ~/.xi.toml, not merely held in the
     # first process's memory. Still inside the `with tempfile.TemporaryDirectory(...)` block,
     # so `temporary`/`environment` and the directory itself are still valid here.
     master2, slave2 = pty.openpty()
@@ -205,7 +232,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
         read_for(master2, captured2, 0.4)
         if DARK_BACKGROUND not in captured2:
             raise SystemExit(f"the committed theme was not restored on a fresh launch: {captured2[-2000:]!r}")
-        os.write(master2, b":q\r")
+        os.write(master2, b":qa\r")
         for _ in range(4):
             if child2.poll() is not None:
                 break

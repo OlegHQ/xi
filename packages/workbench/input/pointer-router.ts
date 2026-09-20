@@ -10,6 +10,7 @@ import type { ProblemsDiagnostic, ProblemsReadModel } from '../problems';
  * import `packages/ui`, not even types. */
 export interface PointerControlEvent {
   readonly id: string;
+  readonly viewId?: string;
   /** `'tab-close'` is the per-tab close glyph; kept distinct from `'tab'` (the tab body,
    * which activates/pins) so both can share the same `id` (the buffer id). */
   readonly kind: 'tree' | 'tab' | 'tab-close' | 'picker' | 'button' | 'splitter';
@@ -51,7 +52,7 @@ export interface PointerWorkbenchEvent {
 /** Mirrors `packages/ui`'s `WorkbenchPanelPointerEvent`. */
 export interface PointerPanelEvent {
   readonly panel: 'explorer' | 'picker' | 'search' | 'problems' | 'git' | 'git-diff';
-  readonly action: 'activate' | 'context';
+  readonly action: 'activate' | 'context' | 'preview';
   readonly itemId: string;
   readonly generation: number;
   readonly row: number;
@@ -73,6 +74,7 @@ export interface PointerPickerModelPort {
 
 export interface PointerPickerPort {
   activateEntry(id: string): Promise<void>;
+  previewSelected?(): void;
 }
 
 export interface PointerExplorerPort {
@@ -132,14 +134,16 @@ export interface WorkbenchPointerRouterOptions {
   readonly git?: PointerGitPort;
   readonly problems: PointerProblemsPort;
   readonly splitterMinimumCells?: number;
+  /** Wake declarative chrome after a split geometry mutation, including cancellation. */
+  readonly onLayoutChange?: () => void;
   /** Drives click-count derivation (`clickCount`, tab single/double-click). */
   readonly clock: ClockPort;
   /** A `tab.<bufferId>` control (see `PointerControlEvent.kind: 'tab'`) was clicked once. */
-  readonly onTabActivate?: (bufferId: string) => void;
+  readonly onTabActivate?: (bufferId: string, viewId?: string) => void;
   /** The same control was double-clicked -- pins the tab (promotes it out of preview). */
   readonly onTabPin?: (bufferId: string) => void;
   /** The tab's close glyph (`kind: 'tab-close'`) was clicked. */
-  readonly onTabClose?: (bufferId: string) => void;
+  readonly onTabClose?: (bufferId: string, viewId?: string) => void;
   /** A button went down on editor text/gutter: keyboard focus returns to the editor, so any
    * focused panel (Files tree, Search) must release it. */
   readonly onEditorPointerDown?: () => void;
@@ -204,7 +208,7 @@ export class WorkbenchPointerRouter implements Disposable {
     if (control?.kind === 'tab') {
       if (event.phase === 'down' && event.button === 0) {
         const count = this.#clickCount('tab', event.cell.row, event.cell.column);
-        this.#options.onTabActivate?.(control.id);
+        this.#options.onTabActivate?.(control.id, control.viewId);
         if (count >= 2) this.#options.onTabPin?.(control.id);
         this.#options.marker('XI_TAB_POINTER', { id: control.id, clickCount: count });
         return true;
@@ -213,7 +217,7 @@ export class WorkbenchPointerRouter implements Disposable {
     }
     if (control?.kind === 'tab-close') {
       if (event.phase === 'down' && event.button === 0) {
-        this.#options.onTabClose?.(control.id);
+        this.#options.onTabClose?.(control.id, control.viewId);
         this.#options.marker('XI_TAB_CLOSE_POINTER', { id: control.id });
         return true;
       }
@@ -240,6 +244,7 @@ export class WorkbenchPointerRouter implements Disposable {
           } else {
             const resized = this.#options.session.resizeSplit(nodeId, control.firstSize / control.availableCells, control.availableCells);
             if (!resized.ok) this.#splitterDrag.cancel();
+            else this.#options.onLayoutChange?.();
             this.#options.marker('XI_WORKBENCH_SPLITTER', { action: 'move', nodeId, firstSize: control.firstSize, secondSize: control.secondSize, resized: resized.ok });
           }
         }
@@ -271,6 +276,10 @@ export class WorkbenchPointerRouter implements Disposable {
       if (model.generation !== event.generation) return true;
       const entry = model.entries.find((candidate) => candidate.id === event.itemId);
       if (entry === undefined || !this.#options.pickerModel.select(entry.id)) return true;
+      if (event.action === 'preview') {
+        this.#options.picker.previewSelected?.();
+        return true;
+      }
       void this.#options.picker.activateEntry(entry.id);
       return true;
     }
@@ -354,7 +363,7 @@ export class WorkbenchPointerRouter implements Disposable {
     this.#activeSplitter = undefined;
     if (initial !== undefined) {
       if (capture.nodeId === 'sidebar') this.#options.sidebar?.moveResize(initial.firstSize);
-      else this.#options.session.resizeSplit(capture.nodeId, initial.firstSize / capture.availableCells, capture.availableCells);
+      else if (this.#options.session.resizeSplit(capture.nodeId, initial.firstSize / capture.availableCells, capture.availableCells).ok) this.#options.onLayoutChange?.();
       this.#options.marker('XI_WORKBENCH_SPLITTER', { action: 'cancel', nodeId: capture.nodeId, firstSize: initial.firstSize, secondSize: initial.secondSize });
     }
   }

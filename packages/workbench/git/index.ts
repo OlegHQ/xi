@@ -103,6 +103,7 @@ function sectionFor(entry: WorkbenchGitEntry): GitSectionId | undefined {
 }
 
 export interface GitPanelOptions {
+  readonly onOpen?: () => void;
   readonly host: BufferHost;
   readonly status: GitStatusPort;
   readonly mutations: GitMutationPort;
@@ -160,6 +161,7 @@ export class GitPanelController {
   }
 
   open(): void {
+    this.#options.onOpen?.();
     this.#options.host.closeAllPanels('git');
     this.#open = true;
     this.#subscription ??= this.#options.status.subscribe((snapshot) => {

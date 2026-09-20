@@ -1,3 +1,4 @@
+import { compileConfig, DEFAULT_CONFIG_TOML } from '../../packages/services/config';
 import { strict as assert } from 'node:assert';
 import type { ClockPort, Disposable } from '../../packages/contracts/src/index';
 import { CommandRegistry } from '../../packages/workbench/commands/registry';
@@ -16,6 +17,10 @@ import {
 function key(name: string, raw: string, overrides: Partial<{ shift: boolean; ctrl: boolean; meta: boolean; option: boolean }> = {}): RouterKeyEvent {
   return { name, raw, shift: overrides.shift ?? false, option: overrides.option ?? false, ctrl: overrides.ctrl ?? false, meta: overrides.meta ?? false };
 }
+
+const defaults = compileConfig([{ name: 'defaults', kind: 'defaults', source: DEFAULT_CONFIG_TOML }]);
+assert.ok(defaults.ok);
+const defaultBindings = defaults.value.bindings;
 
 const testClock: ClockPort = {
   monotonicMilliseconds: () => Date.now(),
@@ -56,7 +61,10 @@ class FakeSearch implements RouterSearchPort {
 }
 
 class FakeVimSession {
+  ghostClears = 0;
+  clearMotionGhost(): void { this.ghostClears += 1; }
   commandLineActive = false;
+  prefixHelp = { pendingKeys: [] as string[] };
   handledKeys: RouterKeyEvent[] = [];
   handleKey(event: RouterKeyEvent): boolean { this.handledKeys.push(event); return true; }
   handlePaste(): void {}
@@ -107,7 +115,7 @@ function makeRouter(
   search: FakeSearch,
   host: FakeHost,
   session: FakeSession,
-  bindings: readonly RouterBindingConfig[] = [],
+  bindings: readonly RouterBindingConfig[] = defaultBindings,
   git?: { readonly panel: { readonly isOpen: () => boolean; readonly onKeypress: (event: RouterKeyEvent) => boolean }; readonly diff: { readonly isOpen: () => boolean; readonly onKeypress: (event: RouterKeyEvent) => boolean } },
 ): WorkbenchInputRouter {
   return new WorkbenchInputRouter({
@@ -163,7 +171,7 @@ function makeRouter(
   router.dispose();
 }
 
-// Opening a comparison focuses its editor. Ctrl-W explicitly transfers focus to/from Git.
+// Opening a comparison focuses its editor. Ctrl-W remains a window-command prefix.
 {
   const explorer = new FakeExplorer();
   const search = new FakeSearch();
@@ -186,9 +194,14 @@ function makeRouter(
   assert.deepEqual(diffKeys, []);
 
   assert.equal(router.dispatchKey(key('w', '\u0017', { ctrl: true })), 'consumed');
-  assert.equal(router.dispatchKey(key('j', 'j')), 'consumed');
-  assert.deepEqual(diffKeys, [], 'T116-ROUTER-GIT-01b the old read-only diff controller no longer captures editing keys');
-  assert.deepEqual(panelKeys, ['j'], 'T116-ROUTER-GIT-01c Ctrl-W transfers focus back into Git');
+  host.session.prefixHelp.pendingKeys = ['<C-w>'];
+  const clearsBeforeVisual = host.session.ghostClears;
+  assert.ok(clearsBeforeVisual > 0, 'non-v workbench input invalidates the old ghost');
+  assert.equal(router.dispatchKey(key('v', 'v')), 'consumed');
+  assert.equal(host.session.ghostClears, clearsBeforeVisual, 'v reaches the engine with its ghost intact');
+  assert.deepEqual(diffKeys, [], 'the diff controller does not capture window commands');
+  assert.deepEqual(panelKeys, [], 'Git does not consume the Ctrl-W continuation');
+  assert.deepEqual(host.session.handledKeys.map(event => event.raw), ['j', '\u0017', 'v']);
   router.dispose();
 }
 
@@ -283,3 +296,35 @@ function makeRouter(
 }
 
 console.log('T116 WorkbenchInputRouter passed leader-open-explorer, command-line-active, synchronous-fast-path and config-binding fixtures');
+
+// Arbitrary configured leader prefixes replace the previous hard-coded v chain.
+{
+  const explorer = new FakeExplorer();
+  const host = new FakeHost();
+  const router = makeRouter(explorer, new FakeSearch(), host, new FakeSession(), [
+    { mode: 'normal', keys: ['<Space>', 'x', 'y', 'z'], commandId: 'panel.files.focus' },
+  ]);
+  for (const raw of [' ', 'v', 'f']) await router.dispatchKey(key(raw === ' ' ? 'space' : raw, raw));
+  assert.equal(explorer.opened, false, 'removed default has no hard-coded fallback');
+  for (const raw of [' ', 'x', 'y', 'z']) await router.dispatchKey(key(raw === ' ' ? 'space' : raw, raw));
+  assert.equal(explorer.opened, true, 'arbitrary configured prefix reaches its command');
+  router.dispose();
+}
+
+// Single-key application bindings use the same actions as leader mappings, in editor/panel context.
+{
+  const explorer = new FakeExplorer();
+  const search = new FakeSearch();
+  const host = new FakeHost();
+  const session = new FakeSession();
+  const router = makeRouter(explorer, search, host, session, [
+    { mode: 'normal', keys: ['<F2>'], commandId: 'panel.files.focus' },
+    { mode: 'files-panel', keys: ['<F3>'], commandId: 'search.workspace' },
+  ]);
+  assert.equal(await router.dispatchKey(key('f2', '')), 'consumed');
+  assert.equal(explorer.opened, true);
+  assert.equal(await router.dispatchKey(key('f3', '')), 'consumed');
+  assert.equal(search.isOpen, true);
+  assert.equal(explorer.handledKeys.length, 0, 'mapped key does not also reach panel default handler');
+  router.dispose();
+}

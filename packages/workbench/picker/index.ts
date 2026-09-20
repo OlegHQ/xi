@@ -54,6 +54,7 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
   #mode: WorkbenchPickerMode = 'file';
   #query = '';
   #generation = 0;
+  #visibleRows = 10;
   readonly #options: PickerControllerOptions<TEntry, TTheme>;
 
   constructor(options: PickerControllerOptions<TEntry, TTheme>) {
@@ -69,7 +70,10 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
   get isOpen(): boolean { return this.#open; }
   get mode(): WorkbenchPickerMode { return this.#mode; }
 
+  setVisibleRows(rows: number): void { this.#visibleRows = Math.max(1, Math.trunc(rows)); }
+
   open(mode: WorkbenchPickerMode): void {
+    if (this.#open) void this.close(true);
     this.#options.host.closeAllPanels('picker');
     this.#mode = mode;
     this.#query = '';
@@ -99,10 +103,11 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
       return;
     }
     const model = this.#options.model;
-    // Result navigation: arrows, Ctrl-N/P, Ctrl-J/K and Ctrl-D/U step one result; PageDown/Up jump ten.
-    const step = key === 'up' || (event.ctrl && (key === 'p' || key === 'k' || key === 'u')) ? -1
-      : key === 'down' || (event.ctrl && (key === 'n' || key === 'j' || key === 'd')) ? 1
-      : key === 'pageup' ? -10 : key === 'pagedown' ? 10 : 0;
+    const halfPage = Math.max(1, Math.floor(this.#visibleRows / 2));
+    const step = key === 'up' || (event.ctrl && (key === 'p' || key === 'k')) ? -1
+      : key === 'down' || (event.ctrl && (key === 'n' || key === 'j')) ? 1
+      : event.ctrl && key === 'u' ? -halfPage : event.ctrl && key === 'd' ? halfPage
+      : key === 'pageup' ? -this.#visibleRows : key === 'pagedown' ? this.#visibleRows : 0;
     if (step !== 0) {
       const entries = model.model.entries;
       const selected = entries.findIndex((entry) => entry.id === model.model.selectedId);
@@ -156,9 +161,8 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
       return;
     }
     if (entry.mode === 'theme') {
-      // Already applied live by #previewSelected as the picker navigated to this entry;
-      // committing just needs to stop tracking a "before" theme to revert to on cancel,
-      // and persist the selection so the next launch restores it.
+      // A click can activate a row without first previewing it.
+      if (!this.#options.theme.preview(entry.value)) return;
       this.#options.theme.commit();
       const cancellation = new CancellationSource();
       void this.#options.theme.persistActiveId(cancellation.token).finally(() => cancellation.dispose());
@@ -167,6 +171,12 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
       return;
     }
     await this.close(false);
+  }
+
+  /** Uses the same selected-entry preview path for pointer hover and keyboard navigation. */
+  previewSelected(): void {
+    const selected = this.#options.model.model.entries.find((entry) => entry.id === this.#options.model.model.selectedId);
+    void this.#previewSelected(selected);
   }
 
   async #previewSelected(entry: TEntry | undefined): Promise<void> {
@@ -213,7 +223,13 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
         }
         return;
       }
-      void this.#previewSelected(result.value.entries[0]);
+      // A theme picker opens on the applied theme. Other pickers retain their first-result
+      // behavior; if filtering hides the active theme, the first match becomes the preview.
+      const selected = mode === 'theme'
+        ? result.value.entries.find((entry) => entry.value === this.#options.theme.activeId) ?? result.value.entries[0]
+        : result.value.entries[0];
+      if (selected !== undefined) this.#options.model.select(selected.id);
+      void this.#previewSelected(selected);
     });
   }
 }
@@ -230,6 +246,7 @@ export interface ThemeControllerOptions<T> {
   readonly filesystem: ThemeFilesystemPort;
   readonly statePath: string;
   readonly stateDirectory: string;
+  readonly persistSelection?: (id: string) => Promise<void>;
   readonly onPersistError?: (message: string) => void;
 }
 
@@ -245,6 +262,7 @@ export class ThemeController<T> {
   readonly #filesystem: ThemeFilesystemPort;
   readonly #statePath: string;
   readonly #stateDirectory: string;
+  readonly #persistSelection: ((id: string) => Promise<void>) | undefined;
   readonly #onPersistError: ((message: string) => void) | undefined;
   #activeId: string;
   #beforePicker: string | undefined;
@@ -257,6 +275,7 @@ export class ThemeController<T> {
     this.#statePath = options.statePath;
     this.#stateDirectory = options.stateDirectory;
     this.#onPersistError = options.onPersistError;
+    this.#persistSelection = options.persistSelection;
   }
 
   get activeId(): string { return this.#activeId; }
@@ -326,9 +345,15 @@ export class ThemeController<T> {
    * writes it to stderr) and otherwise swallowed, since a persistence failure must never
    * block editing. */
   async persistActiveId(cancellation: CancellationToken): Promise<void> {
+    const activeId = this.#activeId;
+    if (this.#persistSelection !== undefined) {
+      try { await this.#persistSelection(activeId); }
+      catch (error) { this.#onPersistError?.(`could not persist the selected theme: ${error instanceof Error ? error.message : String(error)}`); }
+      return;
+    }
     const made = await this.#filesystem.makeDirectory(this.#stateDirectory, cancellation);
     if (!made.ok) { this.#onPersistError?.(`could not create theme state directory: ${made.error.message}`); return; }
-    const written = await this.#filesystem.writeFileAtomic(this.#statePath, new TextEncoder().encode(`${JSON.stringify({ theme: this.#activeId })}\n`), cancellation);
+    const written = await this.#filesystem.writeFileAtomic(this.#statePath, new TextEncoder().encode(`${JSON.stringify({ theme: activeId })}\n`), cancellation);
     if (!written.ok) this.#onPersistError?.(`could not persist the selected theme: ${written.error.message}`);
   }
 }

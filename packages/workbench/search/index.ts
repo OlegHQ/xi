@@ -202,6 +202,7 @@ export interface SearchPresentation {
 }
 
 export interface SearchControllerOptions {
+  readonly onOpen?: () => void;
   readonly host: BufferHost;
   readonly session: SearchSessionPort;
   readonly filesystem: SearchFilesystemPort;
@@ -451,6 +452,7 @@ export class SearchController {
   }
 
   open(): void {
+    this.#options.onOpen?.();
     this.#options.host.closeAllPanels('search');
     this.#open = true;
     this.#selectedIndex = 0;

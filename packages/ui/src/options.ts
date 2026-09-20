@@ -57,7 +57,7 @@ export interface OpenTuiWorkbenchOptions {
    * used to bound `getExplorerBounds`'s sidebar-docked region below the section headers. */
   readonly sidebar?: () => SidebarReadModel;
   /** Live buffer tab strip; see `WorkbenchRenderableOptions.tabs`. */
-  readonly tabs?: () => readonly WorkbenchTabSnapshot[];
+  readonly tabs?: (viewId?: string) => readonly WorkbenchTabSnapshot[];
   /** Wake panels whose read ports become available after an asynchronous open. */
   readonly subscribeSurfaceChanges?: (listener: () => void) => Disposable;
   /** Forwarded to the main viewport renderable; see `WorkbenchRenderableOptions.onViewportAnchorChange`. */
@@ -92,6 +92,7 @@ export interface OpenTuiWorkbenchOptions {
   readonly picker?: {
     readonly read: PickerReadPort;
     readonly isOpen: () => boolean;
+    readonly onViewportRows?: (rows: number) => void;
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
     /** Helix-style preview of the selected file entry (title + leading lines), if any. */
     readonly preview?: () => { readonly title: string; readonly lines: readonly string[] } | undefined;

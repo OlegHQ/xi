@@ -201,7 +201,8 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
   }
 
   function changeDocument(change: CommittedDocumentChange): void {
-    const admitted = languageSession?.changeDocument(change);
+    if (languageSession?.hasDocument(String(change.documentId)) !== true) return;
+    const admitted = languageSession.changeDocument(change);
     if (admitted !== undefined && !admitted.ok && !languageSyncWarnedDocumentIds.has(change.documentId)) {
       languageSyncWarnedDocumentIds.add(change.documentId);
       deps.statusMessages.publish(`xi: language sync unavailable: ${admitted.error.message}`);

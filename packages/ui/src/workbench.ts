@@ -30,8 +30,10 @@ import {
   type MotionTrailMode,
 } from '../theme/motion-tokens';
 
-export { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, BUILTIN_WORKBENCH_THEMES, type WorkbenchTheme } from '../theme/workbench-themes';
+export { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, BUILTIN_WORKBENCH_THEMES, helixThemeStyle, type HelixThemeStyle, type ThemeColor, type WorkbenchTheme } from '../theme/workbench-themes';
+export { helixTextAttributes, helixThemeColor, themeColor } from '../theme/color-input';
 import { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, type WorkbenchTheme } from '../theme/workbench-themes';
+import { themeColor } from '../theme/color-input';
 
 export interface WorkbenchLayout {
   readonly compact: boolean;
@@ -62,6 +64,7 @@ export interface WorkbenchPointerEvent {
   /** Stable workbench control identity; editor text targets and controls are exclusive. */
   readonly control?: {
     readonly id: string;
+    readonly viewId?: string;
     readonly kind: 'tree' | 'tab' | 'tab-close' | 'picker' | 'button' | 'splitter';
     readonly action: 'activate' | 'begin' | 'move' | 'commit';
     readonly axis?: 'horizontal' | 'vertical';
@@ -95,7 +98,7 @@ export interface WorkbenchRenderableOptions extends RenderableOptions<WorkbenchR
   readonly sidebar?: () => SidebarReadModel;
   /** Live buffer tab strip (`WorkbenchSession.readTabs()`); omitted keeps the legacy single
    * `<fileLabel> ●` header. */
-  readonly tabs?: () => readonly WorkbenchTabSnapshot[];
+  readonly tabs?: (viewId?: string) => readonly WorkbenchTabSnapshot[];
   /** Optional immutable presentation read model supplied by the workbench. */
   readonly presentation?: EditorPresentationReadPort;
   /** Optional read-only syntax boundary; painted only when its version matches the frame's. */
@@ -194,17 +197,17 @@ interface SplitterRect {
  * launches before one exists). */
 // Keep the pure geometry calculation cheap for the viewport and Solid chrome, which both read
 // the same terminal-cell layout during a frame.
-let lastWorkbenchLayout: { readonly width: number; readonly height: number; readonly showBottomPanel: boolean; readonly sidebarWidthOverride: number | undefined; readonly value: WorkbenchLayout } | undefined;
+let lastWorkbenchLayout: { readonly width: number; readonly height: number; readonly showBottomPanel: boolean; readonly sidebarWidthOverride: number | undefined; readonly showSidebar: boolean; readonly value: WorkbenchLayout } | undefined;
 
-export function calculateWorkbenchLayout(width: number, height: number, showBottomPanel = false, sidebarWidthOverride?: number): WorkbenchLayout {
+export function calculateWorkbenchLayout(width: number, height: number, showBottomPanel = false, sidebarWidthOverride?: number, showSidebar = true): WorkbenchLayout {
   if (lastWorkbenchLayout !== undefined && lastWorkbenchLayout.width === width && lastWorkbenchLayout.height === height
-    && lastWorkbenchLayout.showBottomPanel === showBottomPanel && lastWorkbenchLayout.sidebarWidthOverride === sidebarWidthOverride) {
+    && lastWorkbenchLayout.showBottomPanel === showBottomPanel && lastWorkbenchLayout.sidebarWidthOverride === sidebarWidthOverride && lastWorkbenchLayout.showSidebar === showSidebar) {
     return lastWorkbenchLayout.value;
   }
   const safeWidth = Math.max(0, Math.trunc(width));
   const safeHeight = Math.max(0, Math.trunc(height));
   const compact = safeWidth < 40 || safeHeight < 10;
-  const sidebarVisible = !compact && safeWidth >= 100;
+  const sidebarVisible = showSidebar && !compact && safeWidth >= 100;
   const sidebarWidth = sidebarVisible
     ? sidebarWidthOverride !== undefined
       ? Math.max(22, Math.min(Math.min(40, safeWidth - 20), Math.trunc(sidebarWidthOverride)))
@@ -218,7 +221,7 @@ export function calculateWorkbenchLayout(width: number, height: number, showBott
   const editorTop = compact ? 0 : 1;
   const editorHeight = Math.max(1, bottomTop - editorTop);
   const value = Object.freeze({ compact, sidebarVisible, sidebarWidth, editorX, editorWidth, editorTop, editorHeight, bottomTop, bottomHeight, statusRow });
-  lastWorkbenchLayout = { width, height, showBottomPanel, sidebarWidthOverride, value };
+  lastWorkbenchLayout = { width, height, showBottomPanel, sidebarWidthOverride, showSidebar, value };
   return value;
 }
 
@@ -302,7 +305,7 @@ export class WorkbenchRenderable extends Renderable {
   readonly #showBottomPanel: boolean;
   readonly #presentation: EditorPresentationReadPort | undefined;
   readonly #sidebar: (() => SidebarReadModel) | undefined;
-  readonly #tabs: (() => readonly WorkbenchTabSnapshot[]) | undefined;
+  readonly #tabs: ((viewId?: string) => readonly WorkbenchTabSnapshot[]) | undefined;
   #sidebarSplitterCapture = false;
   readonly #syntax: SyntaxReadPort | undefined;
   readonly #motionTrail: MotionTrailMode;
@@ -336,7 +339,7 @@ export class WorkbenchRenderable extends Renderable {
   #motionPaintTokens: ReturnType<typeof resolveMotionPaintTokens>;
   /** `layout` only depends on size and `#showBottomPanel` (constant); avoid recomputing it
    * from every `renderSelf`/pointer-hit-test access at up to 30x/s while idle. */
-  #cachedLayout: { readonly width: number; readonly height: number; readonly sidebarWidth: number | undefined; readonly value: WorkbenchLayout } | undefined;
+  #cachedLayout: { readonly width: number; readonly height: number; readonly sidebarWidth: number | undefined; readonly showSidebar: boolean; readonly value: WorkbenchLayout } | undefined;
   #splitterCapture: string | undefined;
   #background: RGBA;
   #surface: RGBA;
@@ -345,6 +348,7 @@ export class WorkbenchRenderable extends Renderable {
   #border: RGBA;
   #accent: RGBA;
   #lastViewportSize: { readonly width: number; readonly height: number; readonly editorWidth: number; readonly editorHeight: number } | undefined;
+  #lastPaintedSplitRoot: WorkbenchLayoutRead['split']['root'] | undefined;
   #lastFrame: WorkbenchFrameRead | undefined;
   #lastPresentation: EditorPresentationRead | undefined;
   #lastSyntaxRead: SyntaxRead | undefined;
@@ -383,12 +387,12 @@ export class WorkbenchRenderable extends Renderable {
     this.#onPointerCancel = options.onPointerCancel;
     this.#onViewportAnchorChange = options.onViewportAnchorChange;
     this.#onViewportSizeChange = options.onViewportSizeChange;
-    this.#background = parseColor(this.#theme.background);
-    this.#surface = parseColor(this.#theme.surface);
-    this.#foreground = parseColor(this.#theme.foreground);
-    this.#muted = parseColor(this.#theme.muted);
-    this.#border = parseColor(this.#theme.border);
-    this.#accent = parseColor(this.#theme.accent);
+    this.#background = parseColor(themeColor(this.#theme.background, 'bg'));
+    this.#surface = parseColor(themeColor(this.#theme.surface, 'bg'));
+    this.#foreground = parseColor(themeColor(this.#theme.foreground));
+    this.#muted = parseColor(themeColor(this.#theme.muted));
+    this.#border = parseColor(themeColor(this.#theme.border));
+    this.#accent = parseColor(themeColor(this.#theme.accent));
     this.#motionPaintTokens = resolveMotionPaintTokens(this.#theme);
     this.onMouse = (event: MouseEvent): void => {
       if (this.#onPointer === undefined || event.target !== this) return;
@@ -429,8 +433,9 @@ export class WorkbenchRenderable extends Renderable {
       const currentFrame = pane === undefined ? this.#lastFrame?.frame : this.#paneFrames.get(String(activeViewId));
       const currentFrameId = Number(currentFrame?.identity.frameId ?? 0);
       const dispatchFrameId = phase === 'down' ? currentFrameId : this.#pointerFrameId ?? currentFrameId;
-      const splitterControl = phase === 'wheel' ? undefined : this.splitterControlAt(event.x, event.y, phase) ?? this.#sidebarSplitterControlAt(event.x, event.y, phase);
-      const control = phase === 'wheel' ? undefined : splitterControl ?? this.#chromeControlAt(event.x, event.y, geometry) ?? workbenchControlAt(geometry, event.x, event.y);
+      const chromeControl = phase === 'wheel' || this.#splitterCapture !== undefined || this.#sidebarSplitterCapture ? undefined : this.#chromeControlAt(event.x, event.y, geometry);
+      const splitterControl = phase === 'wheel' || chromeControl !== undefined ? undefined : this.splitterControlAt(event.x, event.y, phase) ?? this.#sidebarSplitterControlAt(event.x, event.y, phase);
+      const control = phase === 'wheel' ? undefined : chromeControl ?? splitterControl ?? workbenchControlAt(geometry, event.x, event.y);
       // A drag gesture already captured by this pointer (`#pointerFrameId` set) must keep
       // receiving 'move'/'up' even when the pointer strays into the gutter, past the last
       // shaped row/line-end, or below end-of-file (still inside the viewport, but over a
@@ -490,12 +495,22 @@ export class WorkbenchRenderable extends Renderable {
   }
 
   get layout(): WorkbenchLayout {
-    const sidebarWidth = this.#sidebar?.().width;
+    const sidebar = this.#sidebar?.();
+    const sidebarWidth = sidebar?.width;
+    const showSidebar = sidebar?.visible !== false;
     const cached = this.#cachedLayout;
-    if (cached !== undefined && cached.width === this.width && cached.height === this.height && cached.sidebarWidth === sidebarWidth) return cached.value;
-    const value = calculateWorkbenchLayout(this.width, this.height, this.#showBottomPanel, sidebarWidth);
-    this.#cachedLayout = { width: this.width, height: this.height, sidebarWidth, value };
+    if (cached !== undefined && cached.width === this.width && cached.height === this.height && cached.sidebarWidth === sidebarWidth && cached.showSidebar === showSidebar) return cached.value;
+    const value = calculateWorkbenchLayout(this.width, this.height, this.#showBottomPanel, sidebarWidth, showSidebar);
+    this.#cachedLayout = { width: this.width, height: this.height, sidebarWidth, showSidebar, value };
     return value;
+  }
+  get tabStrips() { return this.getTabStrips(this.width, this.height); }
+  getTabStrips(width: number, height: number): readonly { readonly viewId: string; readonly x: number; readonly y: number; readonly width: number }[] {
+    const sidebar = this.#sidebar?.();
+    const geometry = calculateWorkbenchLayout(width, height, this.#showBottomPanel, sidebar?.width, sidebar?.visible !== false);
+    const layoutRead = this.#workbench.readLayout?.();
+    if (layoutRead?.split.root?.kind === 'split') return this.#collectPanes(geometry, layoutRead).panes.map(pane => ({ viewId: pane.viewId, x: pane.x, y: pane.y - 1, width: pane.width }));
+    return [{ viewId: String(this.#workbench.activeViewId ?? ''), x: geometry.editorX, y: 0, width: geometry.editorWidth }];
   }
   get lastFrame(): WorkbenchFrameRead | undefined { return this.#lastFrame; }
   get cursorCell(): { readonly x: number; readonly y: number } | undefined { return this.#cursorCell; }
@@ -508,12 +523,12 @@ export class WorkbenchRenderable extends Renderable {
    * only; this reassigns those same cached fields and requests one fresh frame. */
   setTheme(theme: WorkbenchTheme): void {
     this.#theme = theme;
-    this.#background = parseColor(theme.background);
-    this.#surface = parseColor(theme.surface);
-    this.#foreground = parseColor(theme.foreground);
-    this.#muted = parseColor(theme.muted);
-    this.#border = parseColor(theme.border);
-    this.#accent = parseColor(theme.accent);
+    this.#background = parseColor(themeColor(theme.background, 'bg'));
+    this.#surface = parseColor(themeColor(theme.surface, 'bg'));
+    this.#foreground = parseColor(themeColor(theme.foreground));
+    this.#muted = parseColor(themeColor(theme.muted));
+    this.#border = parseColor(themeColor(theme.border));
+    this.#accent = parseColor(themeColor(theme.accent));
     this.#motionPaintTokens = resolveMotionPaintTokens(theme);
     this.#lastViewportSize = undefined;
     // The composition requests the frame after updating all themed surfaces.
@@ -669,18 +684,20 @@ export class WorkbenchRenderable extends Renderable {
     const splitters: SplitterRect[] = [];
     collectSplitGeometry(layoutRead.split.root, {
       x: geometry.editorX,
-      y: geometry.editorTop,
+      y: geometry.editorTop - 1,
       width: geometry.editorWidth,
-      height: geometry.editorHeight,
+      height: geometry.editorHeight + 1,
     }, panes, splitters, layoutRead.split.minimumPaneSize, String(this.#workbench.activeViewId ?? ''));
-    return { panes, splitters };
+    return { panes: panes.map(pane => ({ ...pane, y: pane.y + 1, height: Math.max(1, pane.height - 1) })), splitters };
   }
 
   protected override renderSelf(buffer: OptimizedBuffer): void {
     const geometry = this.layout;
     const lastViewport = this.#lastViewportSize;
-    const fullRepaint = lastViewport?.width !== this.width || lastViewport?.height !== this.height
+    const splitRoot = this.#workbench.readLayout?.().split.root;
+    const fullRepaint = splitRoot !== this.#lastPaintedSplitRoot || lastViewport?.width !== this.width || lastViewport?.height !== this.height
       || lastViewport.editorWidth !== geometry.editorWidth || lastViewport.editorHeight !== geometry.editorHeight;
+    this.#lastPaintedSplitRoot = splitRoot;
     // Anchors for a width/height change are re-resolved by `onResize` (OpenTUI's own
     // pre-paint layout hook, which fires before this method with the new dimensions
     // already applied), not here -- renderSelf only reads `#resolvedAnchors`, never
@@ -756,6 +773,7 @@ export class WorkbenchRenderable extends Renderable {
           theme: this.#motionPaintTokens,
           ...(syntaxRead === undefined ? {} : { syntax: syntaxRead }),
           ...(this.#theme.syntax === undefined ? {} : { syntaxColors: this.#theme.syntax }),
+          ...(this.#theme.styles === undefined && this.#theme.syntaxStyles === undefined ? {} : { syntaxStyles: this.#theme.styles ?? this.#theme.syntaxStyles! }),
           ...(syntaxFallbackRows === undefined ? {} : { syntaxFallbackRows }),
           rows,
         });
@@ -848,6 +866,7 @@ export class WorkbenchRenderable extends Renderable {
           theme: this.#motionPaintTokens,
           ...(syntaxRead === undefined ? {} : { syntax: syntaxRead }),
           ...(this.#theme.syntax === undefined ? {} : { syntaxColors: this.#theme.syntax }),
+          ...(this.#theme.styles === undefined && this.#theme.syntaxStyles === undefined ? {} : { syntaxStyles: this.#theme.styles ?? this.#theme.syntaxStyles! }),
           ...(paneSyntaxFallbackRows === undefined ? {} : { syntaxFallbackRows: paneSyntaxFallbackRows }),
           rows,
         });
@@ -869,7 +888,7 @@ export class WorkbenchRenderable extends Renderable {
       }
     }
     for (const splitter of splitters) {
-      buffer.fillRect(splitter.x, splitter.y, splitter.width, splitter.height, this.#border);
+      if (splitter.axis === 'vertical') buffer.fillRect(splitter.x, splitter.y, splitter.width, splitter.height, this.#border);
     }
     this.#lastFrame = Object.freeze({ layout: geometry, frame: activeFrame, view: activeView });
     this.#lastPresentation = activePresentation;
@@ -960,19 +979,20 @@ export class WorkbenchRenderable extends Renderable {
         return { id: 'sidebar-section.outline', kind: 'button', action: 'activate' };
       }
     }
-    if (this.#tabs !== undefined && y === 0 && x >= geometry.editorX && x < geometry.editorX + geometry.editorWidth) {
-      return this.#tabControlAt(x - geometry.editorX);
+    if (this.#tabs !== undefined) {
+      const strip = this.tabStrips.find(candidate => y === candidate.y && x >= candidate.x && x < candidate.x + candidate.width);
+      if (strip !== undefined) return this.#tabControlAt(x - strip.x, strip.width, strip.viewId);
     }
     return undefined;
   }
 
-  #tabControlAt(column: number): WorkbenchPointerEvent['control'] | undefined {
-    const tabs = this.#tabs?.();
+  #tabControlAt(column: number, width: number, viewId: string): WorkbenchPointerEvent['control'] | undefined {
+    const tabs = this.#tabs?.(viewId);
     if (tabs === undefined) return undefined;
-    for (const entry of computeTabLayout(tabs, this.layout.editorWidth)) {
+    for (const entry of computeTabLayout(tabs, width)) {
       if (entry.tab === undefined || column < entry.x || column >= entry.x + entry.width) continue;
-      if (entry.hasClose && column >= entry.x + entry.width - 3) return { id: entry.tab.id, kind: 'tab-close', action: 'activate' };
-      return { id: entry.tab.id, kind: 'tab', action: 'activate' };
+      if (entry.hasClose && column >= entry.x + entry.width - 3) return { id: entry.tab.id, viewId, kind: 'tab-close', action: 'activate' };
+      return { id: entry.tab.id, viewId, kind: 'tab', action: 'activate' };
     }
     return undefined;
   }
@@ -992,7 +1012,7 @@ function collectSplitGeometry(
     return;
   }
   const horizontal = node.orientation === 'horizontal';
-  const availableCells = (horizontal ? rect.height : rect.width) - 1;
+  const availableCells = horizontal ? rect.height : rect.width - 1;
   if (availableCells < minimumPaneSize * 2) {
     const viewId = containsView(node.first, activeViewId) || !containsView(node.second, activeViewId)
       ? firstView(node.first)
@@ -1006,7 +1026,7 @@ function collectSplitGeometry(
     ? { x: rect.x, y: rect.y, width: rect.width, height: firstSize }
     : { x: rect.x, y: rect.y, width: firstSize, height: rect.height };
   const secondRect = horizontal
-    ? { x: rect.x, y: rect.y + firstSize + 1, width: rect.width, height: secondSize }
+    ? { x: rect.x, y: rect.y + firstSize, width: rect.width, height: secondSize }
     : { x: rect.x + firstSize + 1, y: rect.y, width: secondSize, height: rect.height };
   const splitter = horizontal
     ? { x: rect.x, y: rect.y + firstSize, width: rect.width, height: 1 }
@@ -1079,6 +1099,7 @@ interface EditorPaintSettings {
   readonly theme: import('../theme/motion-tokens').MotionPaintTokens;
   readonly syntax?: SyntaxRead;
   readonly syntaxColors?: WorkbenchTheme['syntax'];
+  readonly syntaxStyles?: WorkbenchTheme['styles'] | WorkbenchTheme['syntaxStyles'];
   readonly syntaxFallbackRows?: readonly (SyntaxFallbackRow | undefined)[];
   readonly rows?: { readonly start: number; readonly end: number };
 }
@@ -1094,6 +1115,7 @@ function drawFrame(buffer: OptimizedBuffer, frame: VisibleFrame, x: number, y: n
     },
     ...(settings.syntax === undefined ? {} : { syntax: settings.syntax }),
     ...(settings.syntaxColors === undefined ? {} : { syntaxColors: settings.syntaxColors }),
+    ...(settings.syntaxStyles === undefined ? {} : { syntaxStyles: settings.syntaxStyles }),
     ...(settings.syntaxFallbackRows === undefined ? {} : { syntaxFallbackRows: settings.syntaxFallbackRows }),
     mode: settings.mode,
     theme: settings.theme,
@@ -1214,7 +1236,7 @@ function sameSpans(a: readonly SyntaxSpan[], b: readonly SyntaxSpan[]): boolean 
   for (let index = 0; index < a.length; index += 1) {
     const left = a[index];
     const right = b[index];
-    if (left === undefined || right === undefined || left.start !== right.start || left.end !== right.end || left.kind !== right.kind) return false;
+    if (left === undefined || right === undefined || left.start !== right.start || left.end !== right.end || left.kind !== right.kind || left.scope !== right.scope) return false;
   }
   return true;
 }

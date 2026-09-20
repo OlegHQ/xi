@@ -32,6 +32,7 @@ export interface BufferHostOptions {
   /** The view a freshly-opened document's initial cursor line is not already known for. */
   readonly launchViewId: ViewId;
   readonly launchInitialLine?: number;
+  readonly motionGhost?: boolean;
   readonly onMessage?: (message: string) => void;
   readonly onSave?: (document: TextFileDocument, viewId: ViewId, target: string | undefined) => Promise<boolean>;
   readonly onExCommand?: (source: string, viewId: ViewId) => Promise<'handled' | 'unhandled' | 'quit'> | 'handled' | 'unhandled' | 'quit';
@@ -90,6 +91,7 @@ export class BufferHost {
   // first's in-flight open and then re-checks "already open" itself.
   readonly #openingByPath = new Map<string, Promise<OpenBufferAtPathResult | undefined>>();
   readonly #surfaceChangeListeners = new Set<(payloads: readonly SurfaceChangePayload[]) => void>();
+  readonly #viewClosedListeners = new Set<(viewId: ViewId) => void>();
   readonly #bufferClosedListeners = new Set<(bufferId: DocumentId) => void>();
   #pendingSurfaceChanges: SurfaceChangePayload[] = [];
   #surfaceChangeScheduled = false;
@@ -126,8 +128,10 @@ export class BufferHost {
     const options = this.#options;
     const resolvedInitialLine = initialLine ?? (viewId === options.launchViewId ? options.launchInitialLine : undefined);
     const workbenchSession = this.#session;
+    let publishedMode = 'normal';
     const session = createOwnedVimSession(document, {
       viewId,
+      motionGhost: options.motionGhost ?? false,
       ...(options.clock === undefined ? {} : { clock: options.clock }),
       files: {
         currentPath: () => workbenchSession.buffer(document.id)?.path,
@@ -156,6 +160,7 @@ export class BufferHost {
       ...(options.onCommandLineChange === undefined ? {} : { onCommandLineChange: options.onCommandLineChange }),
       onStateChange: (state) => {
         this.#session.syncViewSession(viewId, state.selections, state.mode);
+        if (publishedMode !== state.mode) { publishedMode = state.mode; this.notifySurfaceChange(); }
       },
       // Preview-buffer promotion only needs to run when an edit actually lands, not on
       // every key (most keys are cursor/mode moves that can never change `dirty`).
@@ -239,6 +244,7 @@ export class BufferHost {
       for (const staleViewId of replacedPreviewBuffer.viewIds) {
         this.sessions.get(staleViewId)?.dispose();
         this.sessions.delete(staleViewId);
+        for (const listener of this.#viewClosedListeners) listener(staleViewId);
       }
       this.documents.delete(replacedPreviewBuffer.bufferId);
       this.#options.onBufferClosed?.({ documentId: replacedPreviewBuffer.bufferId, path: replacedPreviewBuffer.path });
@@ -258,17 +264,33 @@ export class BufferHost {
   discardPreviewView(viewId: ViewId): { readonly ok: boolean; readonly activeViewId: ViewId | undefined } {
     const view = this.#session.views().find((candidate) => candidate.viewId === viewId);
     const bufferId = view?.bufferId;
-    if (bufferId === undefined || this.#session.buffer(bufferId)?.preview !== true) return { ok: false, activeViewId: undefined };
-    const path = this.#session.buffer(bufferId)?.path;
-    const closed = this.#session.closeView(viewId, 'discard');
+    const buffer = bufferId === undefined ? undefined : this.#session.buffer(bufferId);
+    if (bufferId === undefined || buffer?.preview !== true || buffer.dirty) return { ok: false, activeViewId: undefined };
+    const closed = this.closeView(viewId, true);
+    return { ok: closed.ok, activeViewId: closed.ok ? closed.value.activeViewId : undefined };
+  }
+
+  /** Release per-view resources, and notify document owners only when its last view closes. */
+  closeView(viewId: ViewId, discard = false): ReturnType<WorkbenchSession['closeView']> {
+    const view = this.#session.views().find(candidate => candidate.viewId === viewId);
+    const buffer = view === undefined ? undefined : this.#session.buffer(view.bufferId);
+    const closed = this.#session.closeView(viewId, discard ? 'discard' : undefined);
+    if (!closed.ok || !closed.value.closed) return closed;
     this.sessions.get(viewId)?.dispose();
     this.sessions.delete(viewId);
-    if (closed.ok) {
-      this.documents.delete(bufferId);
-      this.#options.onBufferClosed?.({ documentId: bufferId, path });
-      for (const listener of this.#bufferClosedListeners) listener(bufferId);
+    if (this.previewViewId === viewId) this.previewViewId = undefined;
+    if (buffer !== undefined && this.#session.buffer(buffer.bufferId) === undefined) {
+      this.documents.delete(buffer.bufferId);
+      this.#options.onBufferClosed?.({ documentId: buffer.documentId, path: buffer.path });
+      for (const listener of this.#bufferClosedListeners) listener(buffer.bufferId);
     }
-    return { ok: closed.ok, activeViewId: closed.ok ? closed.value.activeViewId : undefined };
+    for (const listener of this.#viewClosedListeners) listener(viewId);
+    return closed;
+  }
+
+  onViewClosed(listener: (viewId: ViewId) => void): Disposable {
+    this.#viewClosedListeners.add(listener);
+    return { dispose: () => { this.#viewClosedListeners.delete(listener); } };
   }
 
   /** Internal buffer-closed event (distinct from the composition-root-facing
@@ -282,10 +304,13 @@ export class BufferHost {
 
   /** Resolves a picker "buffer" entry (keyed by `String(bufferId)`) to its first view and
    * focuses it. Returns the view id, or `undefined` when no such buffer is open. */
-  focusBufferById(bufferId: string): ViewId | undefined {
-    const buffer = this.#session.buffers().find((candidate) => String(candidate.bufferId) === bufferId);
-    const viewId = buffer?.viewIds[0];
-    if (viewId !== undefined) this.#session.focus(viewId);
+  focusBufferById(bufferId: string, paneViewId?: ViewId): ViewId | undefined {
+    const activated = this.#session.activateBuffer(bufferId as DocumentId, paneViewId);
+    if (!activated.ok) return undefined;
+    const viewId = this.#session.activeViewId;
+    const view = viewId === undefined ? undefined : this.#session.readView(viewId);
+    const document = view === undefined ? undefined : this.documents.get(view.document.id);
+    if (viewId !== undefined && document !== undefined && !this.sessions.has(viewId)) this.createSession(document, viewId, view?.selections);
     return viewId;
   }
 
@@ -309,6 +334,7 @@ export class BufferHost {
    * panel being opened: an open*() that defers until services load re-enters itself, and
    * closing its own pending panel there would cancel it and emit a spurious close. */
   closeAllPanels(keep?: string | readonly string[]): void {
+    this.activeSession()?.clearMotionGhost();
     const kept = typeof keep === 'string' ? [keep] : keep ?? [];
     for (const [name, panel] of this.#panels) {
       if (!panel.isOpen()) continue;
@@ -352,6 +378,8 @@ export class BufferHost {
   dispose(): void {
     for (const session of this.sessions.values()) session.dispose();
     this.sessions.clear();
+    this.#viewClosedListeners.clear();
+    this.#bufferClosedListeners.clear();
     this.#session.dispose();
   }
 }

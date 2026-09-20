@@ -71,7 +71,7 @@ async function main(): Promise<void> {
   const statusMessages = new StatusMessageController();
   // Kicked off now, alongside the other startup filesystem work, so the awaits below (once,
   // before it's first needed) do not add a second sequential round-trip on top of it.
-  const startupConfigPromise = loadStartupXiConfig(filesystem, themeStateDirectory(), configCancellation.token, VIEW_COMMAND_IDS);
+  const startupConfigPromise = loadStartupXiConfig(filesystem, themeStateDirectory(), configCancellation.token, VIEW_COMMAND_IDS, `${process.env.HOME ?? process.cwd()}/.xi.toml`);
   // The document open and the theme-state read are independent IO: overlap them. Custom
   // theme files are only enumerated before the first frame when the persisted theme is not
   // builtin; otherwise they load after the first frame for the picker.
@@ -147,6 +147,7 @@ async function main(): Promise<void> {
  * before this extraction. Mechanical split out of `main()` to stay under
  * ARCH-APP-FUNCTION-LENGTH-01's line budget; no ordering or behavior change. */
 async function teardownControllers(controllers: Controllers, persistence: PersistenceService, marker: (name: string, payload?: unknown) => void): Promise<void> {
+  await controllers.editorState.dispose();
   controllers.fileIndexStarter.cancel();
   // H2-4: `awaitPending()` hands back the same typed bundle `ensure()` resolved to (or
   // `undefined` if the optional services never loaded) -- teardown reads it once instead of

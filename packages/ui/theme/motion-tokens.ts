@@ -1,33 +1,36 @@
-import { parseColor, type RGBA } from '@opentui/core/renderer';
+import { parseColor, RGBA } from '@opentui/core/renderer';
+import { themeColor } from './color-input';
+import type { ThemeColor } from './workbench-themes';
 
 /** Paint mode selected by the terminal capability adapter or a deterministic fixture. */
 export type EditorColorMode = 'truecolor' | 'ansi256' | 'no-color';
 export type MotionTrailMode = 'off' | 'last-motion';
 
 export interface MotionPaintTokens {
-  readonly selectionPrimary: string;
-  readonly selectionSecondary: string;
-  readonly cursorPrimary: string;
-  readonly cursorSecondary: string;
+  readonly selectionPrimary: ThemeColor;
+  readonly selectionSecondary: ThemeColor;
+  readonly cursorPrimary: ThemeColor;
+  readonly cursorSecondary: ThemeColor;
   /** Cursor background used when the cursor's cell also falls inside a visual selection,
    * so the two states blend into one readable color instead of the selection color
    * hiding under (or clashing with) the plain cursor color. */
-  readonly cursorOnSelection: string;
-  readonly motionTrail: string;
-  readonly operatorPreview: string;
+  readonly cursorOnSelection: ThemeColor;
+  readonly motionTrail: ThemeColor;
+  readonly operatorPreview: ThemeColor;
   /** Background of workspace-search matches shown in the editor while the Search panel is open. */
-  readonly searchMatch: string;
+  readonly searchMatch: ThemeColor;
 }
 
 export interface MotionPaintThemeSource {
-  readonly selectionPrimary?: string;
-  readonly selectionSecondary?: string;
-  readonly cursorPrimary?: string;
-  readonly cursorSecondary?: string;
-  readonly cursorOnSelection?: string;
-  readonly motionTrail?: string;
-  readonly operatorPreview?: string;
-  readonly searchMatch?: string;
+  readonly background?: ThemeColor;
+  readonly selectionPrimary?: ThemeColor;
+  readonly selectionSecondary?: ThemeColor;
+  readonly cursorPrimary?: ThemeColor;
+  readonly cursorSecondary?: ThemeColor;
+  readonly cursorOnSelection?: ThemeColor;
+  readonly motionTrail?: ThemeColor;
+  readonly operatorPreview?: ThemeColor;
+  readonly searchMatch?: ThemeColor;
 }
 
 export const DEFAULT_MOTION_PAINT_TOKENS: MotionPaintTokens = Object.freeze({
@@ -43,15 +46,20 @@ export const DEFAULT_MOTION_PAINT_TOKENS: MotionPaintTokens = Object.freeze({
 
 /** Resolve optional theme tokens while retaining T034's small theme contract. */
 export function resolveMotionPaintTokens(theme: MotionPaintThemeSource): MotionPaintTokens {
+  const neutral = theme.background ?? DEFAULT_MOTION_PAINT_TOKENS.selectionPrimary;
+  const background = parseColor(themeColor(theme.background ?? neutral, 'bg'));
+  const selection = parseColor(themeColor(theme.selectionPrimary ?? neutral, 'bg'));
+  const trail = RGBA.fromValues(background.r * 0.65 + selection.r * 0.35,
+    background.g * 0.65 + selection.g * 0.35, background.b * 0.65 + selection.b * 0.35, background.a);
   return Object.freeze({
-    selectionPrimary: theme.selectionPrimary ?? DEFAULT_MOTION_PAINT_TOKENS.selectionPrimary,
-    selectionSecondary: theme.selectionSecondary ?? DEFAULT_MOTION_PAINT_TOKENS.selectionSecondary,
-    cursorPrimary: theme.cursorPrimary ?? DEFAULT_MOTION_PAINT_TOKENS.cursorPrimary,
-    cursorSecondary: theme.cursorSecondary ?? DEFAULT_MOTION_PAINT_TOKENS.cursorSecondary,
-    cursorOnSelection: theme.cursorOnSelection ?? DEFAULT_MOTION_PAINT_TOKENS.cursorOnSelection,
-    motionTrail: theme.motionTrail ?? DEFAULT_MOTION_PAINT_TOKENS.motionTrail,
-    operatorPreview: theme.operatorPreview ?? DEFAULT_MOTION_PAINT_TOKENS.operatorPreview,
-    searchMatch: theme.searchMatch ?? DEFAULT_MOTION_PAINT_TOKENS.searchMatch,
+    selectionPrimary: themeColor(theme.selectionPrimary ?? neutral, 'bg'),
+    selectionSecondary: themeColor(theme.selectionSecondary ?? theme.background ?? DEFAULT_MOTION_PAINT_TOKENS.selectionSecondary, 'bg'),
+    cursorPrimary: themeColor(theme.cursorPrimary ?? theme.background ?? DEFAULT_MOTION_PAINT_TOKENS.cursorPrimary, 'bg'),
+    cursorSecondary: themeColor(theme.cursorSecondary ?? theme.background ?? DEFAULT_MOTION_PAINT_TOKENS.cursorSecondary, 'bg'),
+    cursorOnSelection: themeColor(theme.cursorOnSelection ?? theme.selectionPrimary ?? neutral, 'bg'),
+    motionTrail: themeColor(theme.motionTrail ?? trail, 'bg'),
+    operatorPreview: themeColor(theme.operatorPreview ?? DEFAULT_MOTION_PAINT_TOKENS.operatorPreview, 'bg'),
+    searchMatch: themeColor(theme.searchMatch ?? theme.background ?? DEFAULT_MOTION_PAINT_TOKENS.searchMatch, 'bg'),
   });
 }
 
@@ -92,8 +100,8 @@ export function pickCursorForeground(tokenForeground: RGBA, cursorBackground: RG
 }
 
 /** Convert a theme color to a stable 256-color approximation for terminal fallback. */
-export function resolvePaintColor(value: string, mode: EditorColorMode): RGBA {
-  const color = parseColor(value);
+export function resolvePaintColor(value: ThemeColor, mode: EditorColorMode): RGBA {
+  const color = parseColor(themeColor(value));
   if (mode !== 'ansi256') return color;
   const red = quantize256(color.r);
   const green = quantize256(color.g);

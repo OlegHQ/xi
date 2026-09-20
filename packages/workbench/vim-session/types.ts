@@ -18,6 +18,8 @@ export interface OwnedVimKeyEvent {
 
 export interface OwnedVimSessionOptions {
   readonly viewId: ViewId;
+  /** Xi profile: preserve the last motion for explicit Visual adoption. */
+  readonly motionGhost?: boolean;
   /** Monotonic time source for repeat-timing/dot-repeat bookkeeping. Defaults to a
    * performance.now()-backed clock when omitted. */
   readonly clock?: Pick<ClockPort, 'monotonicMilliseconds'>;
@@ -75,6 +77,8 @@ export interface VimSearchHighlightState {
 
 export interface OwnedVimSession extends WorkbenchReadPort {
   handleKey(event: OwnedVimKeyEvent): boolean | 'quit' | Promise<boolean | 'quit'>;
+  clearMotionGhost(): void;
+  readonly motionGhost: import('../../vim/src/entrypoints/launch').VimMotionGhost | undefined;
   readonly commandLineActive: boolean;
   readonly commandLine: VimCommandLineState | undefined;
   readonly prefixHelp: VimPrefixHelpState;
@@ -89,7 +93,7 @@ export interface OwnedVimSession extends WorkbenchReadPort {
   setInsertCursor(offset: number): boolean;
   /** Move every insert caret in one selection-only update. */
   setInsertCursors(offsets: ReadonlyMap<string, number>): boolean;
-  /** Place the primary Normal cursor at a host-resolved zero-based line/column. */
+  /** Place the primary cursor at a host-resolved zero-based line/UTF-16 column; Visual extends its anchor. */
   setCursorPosition(line: number, utf16Column?: number): boolean;
   /** Apply a versioned pointer intent after layout has resolved its text target. */
   placePointer(intent: PointerSelectionIntent): boolean;

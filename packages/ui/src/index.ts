@@ -5,6 +5,8 @@ export {
   BUILTIN_WORKBENCH_THEMES,
   DARK_WORKBENCH_THEME,
   LIGHT_WORKBENCH_THEME,
+  themeColor,
+  helixTextAttributes,
   WorkbenchRenderable,
   calculatePaintRanges,
   calculateWorkbenchLayout,
@@ -14,6 +16,7 @@ export type {
   WorkbenchLayout,
   WorkbenchRenderableOptions,
   WorkbenchTheme,
+  ThemeColor,
   WorkbenchPointerEvent,
 } from './workbench';
 export type { WorkbenchPanel, WorkbenchPanelPointerEvent } from './panel-pointer';

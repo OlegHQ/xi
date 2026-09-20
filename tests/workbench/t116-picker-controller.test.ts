@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { asIdentifier, type DocumentId, type ViewId } from '../../packages/primitives/src/index';
-import type { ClockPort, Disposable, PlatformFailure, Result } from '../../packages/contracts/src/index';
+import { CancellationSource, type ClockPort, type Disposable, type PlatformFailure, type Result } from '../../packages/contracts/src/index';
 import { TextFileDocument } from '../../packages/document/src/index';
 import { WorkbenchSession } from '../../packages/workbench/session/index';
 import { BufferHost } from '../../packages/workbench/host/index';
@@ -104,8 +104,8 @@ const picker = new PickerController<FixtureEntry, string>({
   onSecondaryAction: (entry, key) => { secondaryActions.push({ entryId: entry.id, key }); },
 });
 
-// T116-PICKER-01: opening the theme picker begins a preview session; navigating to a
-// different theme applies it live without persisting yet.
+// T116-PICKER-01: opening the theme picker begins a preview session on the applied theme;
+// navigating or pointer-hovering a different theme applies it live without persisting yet.
 assert.equal(theme.activeId, 'light', 'T116-PICKER-01a starts on the default theme');
 model.entries = [
   { id: 'dark', mode: 'theme', value: 'dark' },
@@ -114,14 +114,46 @@ model.entries = [
 picker.open('theme');
 await flush();
 assert.equal(picker.isOpen, true, 'T116-PICKER-01b the picker is open');
-assert.equal(theme.activeId, 'dark', 'T116-PICKER-01c the first entry is previewed live');
-assert.equal(appliedTheme, 'dark-theme', 'T116-PICKER-01d the UI-facing setTheme port was called');
+assert.equal(theme.activeId, 'light', 'T116-PICKER-01c opening selects the active theme, not the first alphabetical result');
+assert.equal(model.selectedId, 'light', 'T116-PICKER-01d the active theme is visibly selected');
+assert.equal(appliedTheme, 'light-theme', 'T116-PICKER-01e the UI-facing setTheme port receives the active theme');
+model.select('dark');
+picker.previewSelected();
+assert.equal(theme.activeId, 'dark', 'T116-PICKER-01f the shared selected-entry preview path applies hover/key selection live');
+assert.equal(appliedTheme, 'dark-theme', 'T116-PICKER-01g the preview uses the UI-facing setTheme port');
 
 // T116-PICKER-02: escape cancels the picker and reverts the previewed theme.
 await picker.handleKeypress({ name: 'escape', raw: '', shift: false, option: false, ctrl: false, meta: false });
 assert.equal(picker.isOpen, false, 'T116-PICKER-02a escape closes the picker');
 assert.equal(theme.activeId, 'light', 'T116-PICKER-02b escape reverts the live preview');
 assert.equal(appliedTheme, 'light-theme', 'T116-PICKER-02c the revert goes through the setTheme port too');
+
+// Direct pointer activation must commit the clicked entry even without a prior hover.
+picker.open('theme');
+await flush();
+await picker.activateEntry({ id: 'dark', mode: 'theme', value: 'dark' });
+assert.equal(theme.activeId, 'dark');
+picker.open('theme');
+await flush();
+assert.equal(model.selectedId, 'dark', 'reopening selects the committed theme');
+await picker.handleKeypress({ name: 'n', raw: '\u000e', ctrl: true, shift: false, option: false, meta: false });
+assert.equal(theme.activeId, 'light', 'Ctrl-N previews the next theme');
+await picker.handleKeypress({ name: 'p', raw: '\u0010', ctrl: true, shift: false, option: false, meta: false });
+assert.equal(theme.activeId, 'dark', 'Ctrl-P previews the previous theme');
+await picker.close(true);
+
+model.entries = Array.from({ length: 40 }, (_, index) => ({ id: `theme-${index}`, mode: 'theme', value: `theme-${index}` }));
+for (const entry of model.entries) theme.addCustomTheme(entry.value, entry.value, entry.value);
+theme.setActiveId('theme-30');
+picker.setVisibleRows(12);
+picker.open('theme');
+await flush();
+assert.equal(model.selectedId, 'theme-30', 'the current theme need not be near the start');
+await picker.handleKeypress({ name: 'u', raw: '\u0015', ctrl: true, shift: false, option: false, meta: false });
+assert.equal(theme.activeId, 'theme-24', 'Ctrl-U moves half a visible page');
+await picker.handleKeypress({ name: 'd', raw: '\u0004', ctrl: true, shift: false, option: false, meta: false });
+assert.equal(theme.activeId, 'theme-30', 'Ctrl-D moves half a visible page');
+await picker.close(true);
 
 // T116-PICKER-03: enter on a file entry promotes the buffer (not a preview) and closes.
 model.entries = [{ id: 'a', mode: 'file', value: '/workspace/a.txt' }];
@@ -166,5 +198,26 @@ secondaryActions.length = 0;
 await picker.handleKeypress({ name: 's', raw: 's', shift: false, option: false, ctrl: false, meta: false });
 assert.equal(secondaryActions.length, 0, 'T116-PICKER-05b s/u outside git mode falls through to the ordinary filter-query path');
 await picker.close(true);
+
+// A new preview during asynchronous persistence must not replace the committed id on disk.
+let releaseDirectory: () => void = () => {};
+const directoryReady = new Promise<void>(resolve => { releaseDirectory = resolve; });
+let persisted = '';
+const delayedTheme = new ThemeController<string>({
+  initial: new Map([['light', 'light'], ['dark', 'dark']]), defaultId: 'light',
+  statePath: '/fixture/state.json', stateDirectory: '/fixture',
+  filesystem: {
+    ...notImplemented,
+    makeDirectory: async () => { await directoryReady; return { ok: true, value: undefined }; },
+    writeFileAtomic: async (_path, bytes) => { persisted = new TextDecoder().decode(bytes); return { ok: true, value: undefined }; },
+  },
+});
+const persistenceCancellation = new CancellationSource();
+const savingTheme = delayedTheme.persistActiveId(persistenceCancellation.token);
+delayedTheme.preview('dark');
+releaseDirectory();
+await savingTheme;
+assert.equal(JSON.parse(persisted).theme, 'light', 'persist the committed id captured before asynchronous IO');
+persistenceCancellation.dispose();
 
 console.log('T116 PickerController/ThemeController passed theme-preview-revert, file-commit, git-entry-open and git secondary-action fixtures');

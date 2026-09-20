@@ -17,7 +17,7 @@ import {
   type PointerSearchPort,
   type PointerWorkbenchEvent,
 } from '../../packages/workbench/input/pointer-router';
-import { WorkbenchRenderable, calculateWorkbenchLayout, computeSidebarTabLayout, computeTabLayout } from '../../packages/ui/src/workbench';
+import { WorkbenchRenderable, calculateWorkbenchLayout, computeSidebarTabLayout, computeTabLayout, type WorkbenchTheme } from '../../packages/ui/src/workbench';
 import { createChromeSurfaceNode, createThemeBridge, mountSolidRoot } from '../../packages/ui/src/solid/composition';
 import { parseColor } from '@opentui/core/renderer';
 import { wireControllerPanels } from '../../apps/xi/src/wiring/pointer';
@@ -137,13 +137,14 @@ async function testTabBarAttributes(): Promise<void> {
   const setup = await createTestRenderer({ width: 120, height: 30, bufferedOutput: 'memory', gatherStats: true });
   const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench: makeWorkbench(), fileLabel: 'editor.ts', tabs: () => tabs });
   setup.renderer.root.add(viewport);
+  const chromeTheme: WorkbenchTheme = { ...viewport.theme, styles: { 'ui.bufferline.active': { underline: { color: '#123456', style: 'double_line' } } } };
   await mountSolidRoot(setup.renderer, [createChromeSurfaceNode({
     workbench: makeWorkbench(),
-    theme: viewport.theme,
+    theme: chromeTheme,
     fileLabel: 'editor.ts',
     showBottomPanel: false,
     tabs: () => tabs,
-  }, createThemeBridge(viewport.theme))]);
+  }, createThemeBridge(chromeTheme))]);
   await setup.renderOnce();
   const frame = setup.captureSpans();
   const headerRow = frame.lines[0];
@@ -158,6 +159,8 @@ async function testTabBarAttributes(): Promise<void> {
   assert.notEqual((activeSpan?.attributes ?? 0) & TextAttributes.BOLD, 0, 'T-SIDEBAR-TABS-04d active tab is bold');
   assert.deepEqual(activeSpan?.bg, parseColor(viewport.theme.accent), 'T-SIDEBAR-TABS-04e active tab paints an accent background');
   assert.ok(dirtySpan !== undefined, 'T-SIDEBAR-TABS-04f the dirty marker is painted for the modified tab');
+  assert.ok(setup.renderer.currentRenderBuffer.buffers.attributes.slice(0, 120).some(attributes =>
+    (attributes & TextAttributes.UNDERLINE_STYLE_DOUBLE) === TextAttributes.UNDERLINE_STYLE_DOUBLE), 'T-SIDEBAR-TABS-04g active tab keeps Helix underline shape');
   setup.renderer.destroy();
 }
 

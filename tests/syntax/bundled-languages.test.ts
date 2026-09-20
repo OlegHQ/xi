@@ -79,6 +79,7 @@ async function main(): Promise<void> {
       while (tasks.length > 0) { const task = tasks.shift(); task?.(); }
     }
     const kinds = new Set((latest?.spans ?? []).map((span) => span.kind));
+    assert.ok(latest?.spans.every((span) => span.scope !== undefined), `BUNDLED-SCOPE-${languageId} every emitted span retains its Tree-sitter capture scope`);
     for (const kind of expectedKinds) {
       assert.ok(kinds.has(kind), `BUNDLED-KIND-${languageId}-${kind} expected a ${kind} span, got [${[...kinds].join(', ')}]`);
     }

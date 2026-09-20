@@ -135,6 +135,7 @@ export interface WorkbenchInputRouterOptions {
   readonly isExplorerServiceLoaded: () => boolean;
   readonly isSearchServiceLoaded: () => boolean;
   readonly ensureOptionalServices: () => Promise<void>;
+  readonly toggleSidebar?: () => void;
   readonly toggleMouseMode: () => boolean;
   readonly launchViewId: ViewId;
   /** Compiled config key bindings (`compileConfig(...).bindings`); `<C-Up>`/`<C-Down>` line
@@ -189,7 +190,6 @@ export class WorkbenchInputRouter implements Disposable {
   readonly #prefixHelp: PrefixHelpController;
   readonly #bindings: ReadonlyMap<string, string>;
   #leaderPending = false;
-  #leaderPanelPending = false;
   #leaderKeys: readonly string[] = Object.freeze([]);
   #macroRegisterPending = false;
   #prefixGeneration = 0;
@@ -200,8 +200,7 @@ export class WorkbenchInputRouter implements Disposable {
   // array copies and any timer churn entirely.
   #lastPrefixPendingKeys: readonly string[] | undefined;
   #lastPrefixContinuations: VimPrefixHelpState['parserContinuations'] | undefined;
-  // `Ctrl-W` toggles input focus between the diff view and the still-open Git panel behind
-  // it (both stay open together, see `DiffViewController.open`'s `closeAllPanels` call).
+  // Comparison editors and the Git panel can remain open together.
   #gitPanelFocused = false;
   #lastGitDiffOpen = false;
   #exCommandLineSession: ExCommandLineSession | undefined;
@@ -224,7 +223,7 @@ export class WorkbenchInputRouter implements Disposable {
         registry: options.commandRegistry,
         registrySnapshot: options.commandRegistry.snapshot,
         focusGeneration: this.#prefixGeneration,
-        bindings: options.bindings.filter((binding) => binding.mode === this.#bindingMode()).map((binding): PrefixHelpBinding => Object.freeze({
+        bindings: this.#leaderBindings().map((binding): PrefixHelpBinding => Object.freeze({
           targetId: request.targetId ?? '',
           keys: binding.keys,
           command: { kind: 'command' as const, id: binding.commandId as CommandId },
@@ -345,7 +344,7 @@ export class WorkbenchInputRouter implements Disposable {
    */
   dispatchKey(event: OwnedVimKeyEvent): RouterDispatchOutcome | Promise<RouterDispatchOutcome> {
     const o = this.#options;
-    if (o.overlayGitDiff?.isReadOnly?.() === true && !this.#gitPanelFocused && !(event.ctrl && event.name.toLowerCase() === 'w')) return finishOverlay(o.overlayGitDiff.onKeypress(event));
+    if (event.raw !== 'v' || event.ctrl || event.meta || event.option) o.host.activeSession()?.clearMotionGhost();
     // The leader key is global even while a navigational panel is focused: it is how users
     // reach terminal controls such as mouse-mode toggle without first dismissing the panel.
     const activeMode = o.session.activeViewId === undefined ? undefined : o.session.readView(o.session.activeViewId)?.session.mode;
@@ -354,10 +353,24 @@ export class WorkbenchInputRouter implements Disposable {
     if (this.isCommandLineActive()) return finishOverlay(this.handleCommandLineKeypress(event));
     if (o.overlayCompletion?.isOpen() === true) return finishOverlay(o.overlayCompletion.onKeypress(event));
     if (o.overlayPicker?.isOpen() === true) return finishOverlay(o.overlayPicker.onKeypress(event));
+    // Window commands belong to the Vim prefix parser. A sidebar must not consume the
+    // prefix or its continuation (in particular Ctrl-W s/v while a diff is open).
+    if ((activeMode === 'normal' && event.ctrl && event.name.toLowerCase() === 'w')
+      || o.host.activeSession()?.prefixHelp?.pendingKeys.includes('<C-w>') === true) {
+      this.#gitPanelFocused = false;
+      return this.dispatch(event);
+    }
+    const panelMode = this.#bindingMode();
+    if (panelMode !== 'normal') {
+      const panel = panelMode === 'files-panel' ? o.overlayExplorer : panelMode === 'search-panel' ? o.overlaySearch : o.overlayGit;
+      const commandId = panel?.capturesTextInput?.() === true ? undefined : this.#resolveBoundCommand(panelMode, event);
+      if (commandId !== undefined) return finishOverlay(this.#executeWorkbenchCommandId(commandId));
+    }
     // `:` works everywhere a panel is only navigated, not typed into (explorer, problems,
     // output, outline, hierarchy, hover): it opens the editor's command line so `:q`, `:w`
     // and friends never depend on which panel has focus.
-    if (event.raw === ':' && !event.ctrl && !event.meta && !event.option && o.overlayGitDiff?.isOpen() !== true && this.#colonPanelOpen()) return finishOverlay(this.handleKeypress(event));
+    if (event.raw === ':' && !event.ctrl && !event.meta && !event.option && this.#colonPanelOpen()) return finishOverlay(this.handleKeypress(event));
+    if (o.overlayGitDiff?.isReadOnly?.() === true && !this.#gitPanelFocused) return finishOverlay(o.overlayGitDiff.onKeypress(event));
     if (o.overlayExplorer?.isOpen() === true) return finishOverlay(o.overlayExplorer.onKeypress(event));
     if (o.overlaySearch?.isOpen() === true) return finishOverlay(o.overlaySearch.onKeypress(event));
     {
@@ -366,10 +379,6 @@ export class WorkbenchInputRouter implements Disposable {
       if (gitDiffOpen && !this.#lastGitDiffOpen) this.#gitPanelFocused = false;
       this.#lastGitDiffOpen = gitDiffOpen;
       if (!gitPanelOpen) this.#gitPanelFocused = false;
-      if (gitDiffOpen && gitPanelOpen && event.ctrl && event.name.toLowerCase() === 'w') {
-        this.#gitPanelFocused = !this.#gitPanelFocused;
-        return finishOverlay(true);
-      }
       if (gitDiffOpen && !this.#gitPanelFocused) {
         const handled = o.overlayGitDiff!.onKeypress(event);
         if (handled !== false) return finishOverlay(handled);
@@ -426,15 +435,15 @@ export class WorkbenchInputRouter implements Disposable {
     if (completion.isSnippetActive) return completion.handleSnippetKeypress(event);
     if ((activeMode === 'normal' || activeMode === undefined) && ((this.#bindingMode() !== 'normal' && (event.raw === ' ' || event.name.toLowerCase() === 'space')) || isNormalSpace(event, activeMode))) {
       this.#leaderPending = true;
-      this.#leaderPanelPending = false;
       this.#leaderKeys = Object.freeze(['<Space>']);
       this.scheduleLeaderHelp();
       return true;
     }
     if (this.#leaderPending) return this.handleLeaderKeypress(event);
-    if (activeViewId !== undefined && activeMode !== undefined) {
-      const commandId = this.#resolveBoundCommand(activeMode, event);
-      if (commandId !== undefined && isViewCommandId(commandId)) {
+    {
+      const commandId = this.#resolveBoundCommand(activeMode ?? 'normal', event);
+      if (commandId !== undefined && !isViewCommandId(commandId)) return this.#executeWorkbenchCommandId(commandId);
+      if (activeViewId !== undefined && commandId !== undefined && isViewCommandId(commandId)) {
         const handled = executeViewCommand(commandId, {
           workbench: session,
           getSession: (viewId) => host.sessions.get(viewId),
@@ -482,7 +491,7 @@ export class WorkbenchInputRouter implements Disposable {
   focusEditor(): void { this.#gitPanelFocused = false; }
 
   async handleLeaderKeypress(event: OwnedVimKeyEvent): Promise<boolean> {
-    const { picker, explorer, search, problems, overlays, workspaceEdits, host } = this.#options;
+    const { host } = this.#options;
     this.#prefixHelp.cancel();
     this.#prefixGeneration += 1;
     // <space>q<register> starts a macro recording. This uses the leader-key layer rather
@@ -500,108 +509,30 @@ export class WorkbenchInputRouter implements Disposable {
       if (!started) this.#options.onError('xi: invalid macro register\n');
       return true;
     }
-    const token = canonicalKeyToken(event);
-    const configured = this.#options.bindings.find((binding) => binding.mode === this.#bindingMode()
-      && binding.keys.length === this.#leaderKeys.length + 1
-      && binding.keys.every((key, index) => normalizeConfigToken(key) === normalizeConfigToken(index === this.#leaderKeys.length ? token : this.#leaderKeys[index] ?? '')));
+    const keys = [...this.#leaderKeys, canonicalKeyToken(event)];
+    const matches = (binding: RouterBindingConfig): boolean => binding.keys.length >= keys.length
+      && keys.every((key, index) => normalizeConfigToken(key) === normalizeConfigToken(binding.keys[index] ?? ''));
+    const candidates = this.#leaderBindings().filter(matches);
+    const configured = candidates.find(binding => binding.keys.length === keys.length);
     if (configured !== undefined) {
       this.#leaderPending = false;
-      this.#leaderPanelPending = false;
       this.#leaderKeys = Object.freeze([]);
       return this.#executeWorkbenchCommandId(configured.commandId);
     }
-    if (!this.#leaderPanelPending && event.name.toLowerCase() === 'v') {
-      this.#leaderPanelPending = true;
-      this.#leaderKeys = Object.freeze([...this.#leaderKeys, event.raw]);
+    if (candidates.length > 0) {
+      this.#leaderKeys = Object.freeze(keys);
       this.scheduleLeaderHelp();
       return true;
     }
-    if (!this.#leaderPanelPending && event.name.toLowerCase() === 'q') {
-      this.#macroRegisterPending = true;
-      return true;
-    }
-    const panelPrefix = this.#leaderPanelPending;
     this.#leaderPending = false;
-    this.#leaderPanelPending = false;
     this.#leaderKeys = Object.freeze([]);
-    if (panelPrefix && event.name.toLowerCase() === 'f') {
-      if (picker.isOpen) await picker.close(true);
-      if (search.isOpen) search.close();
-      explorer.open();
-      return true;
-    }
-    if (panelPrefix && event.name.toLowerCase() === 's') {
-      if (picker.isOpen) await picker.close(true);
-      if (explorer.isOpen) explorer.close();
-      search.open();
-      return true;
-    }
-    if (panelPrefix && event.name.toLowerCase() === 'p') {
-      if (picker.isOpen) await picker.close(true);
-      if (explorer.isOpen) explorer.close();
-      if (search.isOpen) search.close();
-      problems.openProblems();
-      return true;
-    }
-    if (panelPrefix && event.name.toLowerCase() === 'd' && this.#options.openGitDiffForActiveBuffer !== undefined) {
-      if (picker.isOpen) await picker.close(true);
-      if (explorer.isOpen) explorer.close();
-      if (search.isOpen) search.close();
-      await this.#options.openGitDiffForActiveBuffer();
-      return true;
-    }
-    if (panelPrefix && event.name.toLowerCase() === 'o') {
-      if (picker.isOpen) await picker.close(true);
-      if (explorer.isOpen) explorer.close();
-      if (search.isOpen) search.close();
-      overlays.openOutline();
-      return true;
-    }
-    if (!panelPrefix && event.name.toLowerCase() === 'k') {
-      if (picker.isOpen) await picker.close(true);
-      if (explorer.isOpen) explorer.close();
-      if (search.isOpen) search.close();
-      overlays.openHover();
-      return true;
-    }
-    if (!panelPrefix && event.name.toLowerCase() === 'a') return workspaceEdits.requestCodeActions();
-    if (!panelPrefix && event.name.toLowerCase() === 'm') {
-      const enabled = this.#options.toggleMouseMode();
-      this.#options.marker('XI_MOUSE_MODE', { enabled });
-      return true;
-    }
-    if (!panelPrefix && (event.name.toLowerCase() === 'd' || event.name.toLowerCase() === 'e')) {
-      if (picker.isOpen) await picker.close(true);
-      if (explorer.isOpen) explorer.close();
-      if (search.isOpen) search.close();
-      problems.openProblems();
-      return true;
-    }
-    if (!panelPrefix && event.name === '/') {
-      if (picker.isOpen) await picker.close(true);
-      if (explorer.isOpen) explorer.close();
-      search.open();
-      return true;
-    }
-    if (!panelPrefix && event.name.toLowerCase() === 'r') {
-      search.startReplace();
-      return true;
-    }
-    const mode = pickerModeForLeader(event);
-    if (mode !== undefined) {
-      if (explorer.isOpen) explorer.close();
-      if (search.isOpen) search.close();
-      picker.open(mode);
-      return true;
-    }
-    const activeBeforeLeader = host.activeSession();
-    if (activeBeforeLeader !== undefined) await activeBeforeLeader.handleKey(keyEvent(' ', event));
     return true;
   }
 
   async #executeWorkbenchCommandId(commandId: string): Promise<boolean> {
     const { picker, explorer, search, problems, overlays, workspaceEdits } = this.#options;
     switch (commandId) {
+      case 'macro.record': this.#macroRegisterPending = true; this.#leaderPending = true; return true;
       case 'files.pick': picker.open('file'); return true;
       case 'buffers.pick': picker.open('buffer'); return true;
       case 'command.pick': picker.open('command'); return true;
@@ -618,6 +549,7 @@ export class WorkbenchInputRouter implements Disposable {
       case 'git.diff': await this.#options.openGitDiffForActiveBuffer?.(); return true;
       case 'lsp.hover': overlays.openHover(); return true;
       case 'lsp.code-action': return workspaceEdits.requestCodeActions();
+      case 'sidebar.toggle': this.#options.toggleSidebar?.(); return true;
       case 'editor.mouse.toggle': this.#options.toggleMouseMode(); return true;
       case 'panel.preview': return this.#dispatchPanelKey('l', 'l');
       case 'panel.open': return this.#dispatchPanelKey('enter', '\r');
@@ -630,6 +562,17 @@ export class WorkbenchInputRouter implements Disposable {
       }
       default: return false;
     }
+  }
+
+  #leaderBindings(): readonly RouterBindingConfig[] {
+    const mode = this.#bindingMode();
+    const local = this.#options.bindings.filter(binding => binding.mode === mode);
+    if (mode === 'normal') return local;
+    const inherited = this.#options.bindings.filter(binding => binding.mode === 'normal' && !local.some(override => {
+      const length = Math.min(binding.keys.length, override.keys.length);
+      return binding.keys.slice(0, length).every((key, index) => normalizeConfigToken(key) === normalizeConfigToken(override.keys[index] ?? ''));
+    }));
+    return [...local, ...inherited];
   }
 
   #bindingMode(): string {
@@ -731,17 +674,6 @@ function finishOverlay(result: void | boolean | 'quit' | Promise<void | boolean 
 function isNormalSpace(event: { readonly name: string; readonly raw: string }, mode: string | undefined): boolean {
   if (event.raw !== ' ' && event.name.toLowerCase() !== 'space') return false;
   return mode === 'normal';
-}
-
-function pickerModeForLeader(event: { readonly name: string }): RouterPickerMode | undefined {
-  switch (event.name.toLowerCase()) {
-    case 'f': return 'file';
-    case 'b': return 'buffer';
-    case ';': return 'command';
-    case 't': return 'theme';
-    case 'c': return 'config';
-    default: return undefined;
-  }
 }
 
 function keyEvent(raw: string, source: { readonly name: string; readonly shift: boolean; readonly option: boolean; readonly ctrl: boolean; readonly meta: boolean }): OwnedVimKeyEvent {

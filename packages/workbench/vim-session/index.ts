@@ -4,6 +4,11 @@ import type { DocumentEdit, DocumentReadPort, DocumentSnapshot, TextFileDocument
 import { createDocumentAnchor, DocumentChangeMap } from '../../document/src/index';
 import { mapSelectionSet, updateSelectionSet, type SelectionSetSnapshot, type SelectionMemberInput } from '../../selections/src/index';
 import {
+  createVimMotionGhost,
+  convertVimVisualSelection,
+  exchangeVimVisualEndpoints,
+  exchangeVimVisualBlockColumns,
+  type VimMotionGhost,
   beginVimMultiInsert,
   normalizeVimInput,
   parseVimInput,
@@ -42,6 +47,7 @@ import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../src/read-model
 import type { VimHostCommand } from '../../vim/src/index';
 import { searchVimBufferInteractive } from '../../vim/src/index';
 import {
+  createVimMotionCursor,
   createVimInsertRepeatTarget,
   createVimOperatorRepeatTarget,
   createVimRepeatState,
@@ -149,9 +155,9 @@ function splitSearchCommandLine(source: string, delimiter: '/' | '?'): { readonl
 }
 
 function visualCursorAt(snapshot: DocumentSnapshot, at: Utf16Offset): VimVisualCursor | undefined {
-  const cellColumn = asCellColumn(0);
-  if (!cellColumn.ok) return undefined;
-  return { documentVersion: snapshot.version, offset: at, displayCellColumn: cellColumn.value };
+  const cursor = createVimMotionCursor(snapshot, at);
+  if (!cursor.ok) return undefined;
+  return { documentVersion: snapshot.version, offset: at, displayCellColumn: cursor.value.desiredDisplayCellColumn ?? 0 as VimVisualCursor['displayCellColumn'] };
 }
 
 /** Parse nvim's `search-offset` suffix: the `e[+-N]`/`s[+-N]`/`b[+-N]` character forms
@@ -207,7 +213,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   // Escape) instead of rebuilding it every key. `parser` is this session's
   // own closure variable, so this cannot leak across concurrent sessions.
   function makeParser(nextMode: VimMode, nextSelections: SelectionSetSnapshot): VimParserState {
-    if (parser.session.mode === nextMode && parser.session.selections === nextSelections) return parser;
+    if (parser.pending.kind === 'none' && parser.session.mode === nextMode && parser.session.selections === nextSelections) return parser;
     return buildParser(nextMode, nextSelections);
   }
   let insert: VimMultiInsertSession | null = null;
@@ -289,7 +295,21 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   // don't touch the command line at all).
   let commandLineStateCache: { readonly source: string | undefined; readonly cursorOffset: number; readonly kind: VimCommandLineState['kind']; readonly value: VimCommandLineState | undefined } | undefined;
   let lastPublishedCommandLine: VimCommandLineState | undefined;
+  function finishMotion(before: SelectionSetSnapshot, beforeMode: VimMode, key: string): void {
+    if (options.motionGhost === true && beforeMode === 'normal' && mode === 'normal' && before !== selections) {
+      motionGhost = createVimMotionGhost(document.snapshot(), before, selections, ghostMotionKey ?? key, ghostMotionCount);
+      ghostTarget = motionGhost === undefined ? undefined : selections;
+    }
+  }
   let selectionHistory: SelectionSetSnapshot[] = [];
+  let motionGhost: VimMotionGhost | undefined;
+  let ghostMotionCount = 1;
+  let ghostMotionKey: string | undefined;
+  let ghostTarget: SelectionSetSnapshot | undefined;
+  function clearMotionGhost(): void { motionGhost = undefined; ghostTarget = undefined; }
+  function currentMotionGhost(): VimMotionGhost | undefined {
+    return mode === 'normal' && selections === ghostTarget && motionGhost?.preview.documentVersion === document.snapshot().version ? motionGhost : undefined;
+  }
   // Dot-repeat (T130): a single most-recent semantic target, matching T024's tested
   // model exactly (operator xor insert xor visual xor put; last completed one wins).
   // Only the delete/change-motion and plain-insert cases below are wired; visual-change
@@ -345,13 +365,20 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       return first === 'quit' ? first : handleKey(plain);
     }
     const key = keyName(event);
+    const before = selections;
+    const beforeMode = mode;
+    ghostMotionCount = 1;
+    ghostMotionKey = undefined;
+    if (key !== 'v') clearMotionGhost();
     if (canHandleSynchronously(event, key)) {
       const result = handleSynchronousKey(event, key);
+      finishMotion(before, beforeMode, key);
       options.onStateChange?.({ selections, mode });
       publishAuxiliaryState();
       return result;
     }
     return handleKeyInternal(event).then((result) => {
+      finishMotion(before, beforeMode, key);
       options.onStateChange?.({ selections, mode });
       publishAuxiliaryState();
       return result;
@@ -622,6 +649,8 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
   const session: OwnedVimSession = {
     get activeViewId(): ViewId { return viewId; },
+    clearMotionGhost,
+    get motionGhost(): VimMotionGhost | undefined { return currentMotionGhost(); },
     get commandLineActive(): boolean { return commandLine !== undefined; },
     get commandLine(): VimCommandLineState | undefined { return readCommandLine(); },
     get prefixHelp(): VimPrefixHelpState { return readPrefixHelp(); },
@@ -632,6 +661,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     readDocument(candidate): DocumentReadPort | undefined { return candidate === viewId ? readPort : undefined; },
     handleKey,
     cancelPendingOperator(): void {
+      clearMotionGhost();
       if (disposed || commandLine !== undefined) return;
       parser = makeParser(mode, selections);
       prefixKeys = EMPTY_PREFIX_KEYS;
@@ -639,6 +669,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     },
     applyExternalChange(change): void {
       if (disposed || change.documentId !== documentId || selections.documentVersion !== change.before) return;
+      clearMotionGhost();
       if (change.origin !== 'vim') {
         insert = insert === null ? null : mapExternalInsertSession(insert, change.changeMap.orderedEdits);
         // The document undo tree closes a Vim group when another origin commits.
@@ -739,14 +770,29 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       return true;
     },
     setCursorPosition(line, utf16Column = 0): boolean {
-      if (disposed || mode !== 'normal' || !Number.isSafeInteger(line) || line < 0 || !Number.isSafeInteger(utf16Column) || utf16Column < 0) return false;
+      if (disposed || (mode !== 'normal' && !isVisualMode(mode)) || !Number.isSafeInteger(line) || line < 0 || !Number.isSafeInteger(utf16Column) || utf16Column < 0) return false;
       const current = document.snapshot();
       const lineIndex = asLineIndex(Math.min(line, Math.max(0, current.lineCount - 1)));
       if (!lineIndex.ok) return false;
       const start = current.lineStartOffset(lineIndex.value);
       if (!start.ok) return false;
-      const requested = Math.min((start.value as number) + utf16Column, current.lengthUtf16);
-      selections = makeNormalSelection(current, requested as Utf16Offset, (selections.selectionGeneration as number) + 1, selections.primaryId);
+      const next = lineIndex.value + 1 < current.lineCount ? current.lineStartOffset((lineIndex.value + 1) as typeof lineIndex.value) : undefined;
+      const end = next?.ok === true ? next.value - 1 : current.lengthUtf16;
+      const requested = Math.min(start.value + utf16Column, Math.max(start.value, end - 1));
+      const target = makeNormalSelection(current, requested as Utf16Offset, (selections.selectionGeneration as number) + 1, selections.primaryId);
+      if (isVisualMode(mode)) {
+        const cursor = visualCursorAt(current, target.members[0]!.head.at.offset);
+        if (cursor === undefined) return false;
+        const targets = [];
+        for (const member of selections.members) {
+          const memberCursor = member.id === selections.primaryId ? cursor : visualCursorAt(current, member.head.at.offset);
+          if (memberCursor === undefined) return false;
+          targets.push({ id: member.id, cursor: memberCursor });
+        }
+        const extended = extendVimVisualSelection(current, selections, targets);
+        if (!extended.ok) return false;
+        selections = extended.value;
+      } else selections = target;
       motionCursor = makeMotionCursor(current, selections);
       parser = makeParser(mode, selections);
       options.onStateChange?.({ selections, mode });
@@ -853,6 +899,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      clearMotionGhost();
       closeCommandLine();
       prefixKeys = EMPTY_PREFIX_KEYS;
       macroRecording = null;
@@ -1103,16 +1150,40 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
     function executeCommand(command: VimCommandIntent): void | Promise<void> {
       const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
+      if (command.kind === 'mode-transition' && isVisualMode(mode)) {
+        if (command.to === 'normal') {
+          executeCommand({ kind: 'leave-mode', via: 'escape', from: mode, to: 'normal', selections, atMilliseconds: command.atMilliseconds });
+        } else if (isVisualMode(command.to)) {
+          const converted = convertVimVisualSelection(document.snapshot(), selections, command.to);
+          if (!converted.ok) return;
+          selections = converted.value;
+          mode = command.to;
+          parser = makeParser(mode, selections);
+        }
+        return;
+      }
+      if (command.kind === 'single-key' && isVisualMode(mode) && (command.key === 'o' || command.key === 'O')) {
+        const exchanged = command.key === 'O' && mode === 'visual-block'
+          ? exchangeVimVisualBlockColumns(document.snapshot(), selections)
+          : exchangeVimVisualEndpoints(document.snapshot(), selections);
+        if (exchanged.ok) { selections = exchanged.value; parser = makeParser(mode, selections); }
+        return;
+      }
       if (command.kind === 'mode-transition' && mode === 'normal' && isVisualMode(command.to)) {
+        const ghost = command.to === 'visual-character' ? currentMotionGhost() : undefined;
+        if (ghost !== undefined) {
+          selections = ghost.selection;
+          mode = command.to;
+          clearMotionGhost();
+          motionCursor = undefined;
+          parser = makeParser(mode, selections);
+          return;
+        }
         const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
         if (primary === undefined || primary.kind !== 'normal-cursor') return;
-        const cellColumn = asCellColumn(0);
-        if (!cellColumn.ok) return;
-        const started = beginVimVisualSelection(document.snapshot(), primary.id, {
-          documentVersion: document.snapshot().version,
-          offset: primary.anchor.at.offset,
-          displayCellColumn: cellColumn.value,
-        }, command.to as VimVisualKind);
+        const cursor = visualCursorAt(document.snapshot(), primary.anchor.at.offset);
+        if (cursor === undefined) return;
+        const started = beginVimVisualSelection(document.snapshot(), primary.id, cursor, command.to);
         if (!started.ok) return;
         selections = started.value;
         mode = command.to;
@@ -1300,7 +1371,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         });
         if (!extended.ok) return;
         selections = extended.value.selection;
-        mode = extended.value.kind === 'visual-line' ? 'visual-line' : mode;
+        mode = extended.value.kind;
         parser = makeParser(mode, selections);
         return;
       }
@@ -1360,6 +1431,8 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         return;
       }
       if (command.kind === 'single-key' && mode === 'normal' && isMotionLike(command.key)) {
+        ghostMotionCount = command.count.value;
+        ghostMotionKey = command.key;
         const invocation = motionInvocation(command.key, command.count.explicit ? command.count.value : undefined);
         if (invocation === null) return;
         const motionOptions = (command.key === 'H' || command.key === 'M' || command.key === 'L') ? viewportMotionOptions() : undefined;
@@ -1926,6 +1999,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         return;
       }
       if (command.command === 'find-forward' || command.command === 'find-backward' || command.command === 'till-forward' || command.command === 'till-backward') {
+        ghostMotionKey = 'find';
         const key = command.command === 'find-forward' ? 'f' : command.command === 'find-backward' ? 'F' : command.command === 'till-forward' ? 't' : 'T';
         const cursor = makeMotionCursor(document.snapshot(), selections);
         if (cursor === undefined) return;

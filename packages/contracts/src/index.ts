@@ -291,6 +291,9 @@ export interface SyntaxSpan {
   readonly start: number;
   readonly end: number;
   readonly kind: SyntaxTokenKind;
+  /** Original Tree-sitter capture scope (for example `function.call`). The UI resolves this
+   * against Helix's dotted scope hierarchy before falling back to the coarse kind. */
+  readonly scope?: string;
 }
 
 /** A read-only, versioned view over one document's resolved syntax spans. */
