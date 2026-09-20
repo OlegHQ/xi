@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove the embedded Tree-sitter runtime/grammar wasm work inside the compiled binary.
 
-Builds the shipping executable with `bun run package:build`, opens a small real .ts fixture
+Builds the shipping executable with `bun run package:build`, opens a small real .rb fixture
 in an isolated PTY (empty HOME/PATH, so no source-tree or system dependency can leak in), and
 waits for an XI_SYNTAX_STATE marker reporting a highlighted parse with classified spans -- the
 grammar and runtime wasm files that `bun build --compile` embeds via `type: "file"` imports
@@ -53,9 +53,10 @@ def read_until(fd: int, needle: bytes, deadline: float, captured: bytearray) -> 
 def parse_syntax_state_markers(captured: bytes) -> list[dict]:
     markers: list[dict] = []
     for line in captured.split(b"\r\n"):
-        if not line.startswith(b"XI_SYNTAX_STATE "):
+        start = line.find(b"XI_SYNTAX_STATE ")
+        if start < 0:
             continue
-        payload = line[len(b"XI_SYNTAX_STATE "):]
+        payload = line[start + len(b"XI_SYNTAX_STATE "):]
         try:
             markers.append(json.loads(payload.decode("utf-8", errors="replace")))
         except json.JSONDecodeError:
@@ -81,11 +82,11 @@ def main() -> None:
         isolated = Path(temporary)
         home = isolated / "home"
         empty_path = isolated / "empty-bin"
-        source = isolated / "fixture.ts"
+        source = isolated / "fixture.rb"
         home.mkdir()
         empty_path.mkdir()
         source.write_text(
-            "const value = 1;\nfunction greet(name: string): string {\n  return \"hi \" + name;\n}\n",
+            "# note\ndef greet(name)\n  \"hi #{name}\"\nend\n",
             encoding="utf-8",
         )
 
@@ -144,10 +145,10 @@ def main() -> None:
             if not highlighted:
                 raise SystemExit(
                     f"T053 compiled binary never reported a highlighted, non-empty XI_SYNTAX_STATE "
-                    f"(markers seen: {markers})"
+                    f"(markers seen: {markers}; raw-marker-count={captured.count(b'XI_SYNTAX_STATE')}; tail={bytes(captured[-2000:])!r})"
                 )
 
-            os.write(master, b":q\r")
+            os.write(master, b":qa\r")
             exit_deadline = time.monotonic() + 5
             while child.poll() is None and time.monotonic() < exit_deadline:
                 readable, _, _ = select.select([master], [], [], 0.05)
@@ -167,7 +168,7 @@ def main() -> None:
                 except subprocess.TimeoutExpired:
                     child.kill()
                     child.wait()
-                    raise SystemExit("T053 compiled binary did not shut down after :q")
+                    raise SystemExit("T053 compiled binary did not shut down after :qa")
             if child.returncode != 0:
                 raise SystemExit(f"T053 compiled binary exited with {child.returncode}")
             print(

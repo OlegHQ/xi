@@ -1087,6 +1087,11 @@ command = "pyright-langserver"
 args = ["--stdio"]
 root-markers = ["pyproject.toml", "setup.py", "requirements.txt", ".git"]
 
+[language-server.ruby-lsp]
+command = "ruby-lsp"
+args = []
+root-markers = ["Gemfile", "gems.rb", ".ruby-version", ".git"]
+
 [[language]]
 name = "typescript"
 file-types = ["ts", "tsx"]
@@ -1100,6 +1105,12 @@ name = "python"
 file-types = ["py", "pyi"]
 language-servers = ["pyright"]
 indent = { tab-width = 4, unit = "    " }
+
+[[language]]
+name = "ruby"
+file-types = ["rb", "rake", "gemspec", "Gemfile", "Rakefile", "Guardfile", "Podfile", "Vagrantfile", ".irbrc"]
+language-servers = ["ruby-lsp"]
+indent = { tab-width = 2, unit = "  " }
 
 [[language]]
 name = "json"

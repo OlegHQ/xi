@@ -103,6 +103,14 @@ if (languages.ok) {
   assert.equal(languages.value[0]?.name, 'typescript', 'T036-LANGUAGE-02 language identity is retained');
   assert.equal(languages.value[0]?.formatter?.command, 'biome', 'T036-LANGUAGE-03 formatter command remains argv configuration');
 }
+const shippedLanguages = compileConfig([defaults, { name: 'default-languages', kind: 'language', source: DEFAULT_LANGUAGES_TOML }]);
+assert.equal(shippedLanguages.ok, true, 'T036-LANGUAGE-RUBY-01 shipped Ruby configuration compiles');
+if (shippedLanguages.ok) {
+  const ruby = shippedLanguages.value.languages.find((entry) => entry.name === 'ruby');
+  const rubyServer = shippedLanguages.value.languageServers.find((entry) => entry.name === ruby?.languageServers[0]);
+  assert.ok(ruby?.fileTypes.includes('rb') && ruby.fileTypes.includes('Gemfile'), 'T036-LANGUAGE-RUBY-02 Ruby extensions and conventional filenames ship by default');
+  assert.equal(rubyServer?.command, 'ruby-lsp', 'T036-LANGUAGE-RUBY-03 Ruby LSP ships by default');
+}
 const theme = parseThemeConfig(DEFAULT_THEME_TOML, 'config/themes/xi-light.toml');
 assert.equal(theme.ok, true, 'T036-THEME-01 shipped theme example validates');
 if (theme.ok) assert.equal(theme.value.styles['ui.selection.primary']?.bg, 'selection', 'T036-THEME-02 Helix semantic scope is retained');

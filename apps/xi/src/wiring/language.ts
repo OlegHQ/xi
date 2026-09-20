@@ -112,8 +112,9 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
   // built-in mapping for still resolves, and a remapped extension follows the config.
   function resolveLanguageId(path: string | undefined): string | undefined {
     if (path !== undefined && deps.configuredLanguages !== undefined) {
-      const extension = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
-      const configured = deps.configuredLanguages.find((entry) => entry.fileTypes.includes(extension));
+      const fileName = path.split(/[\\/]/u).at(-1)?.toLowerCase() ?? '';
+      const extension = fileName.slice(fileName.lastIndexOf('.') + 1);
+      const configured = deps.configuredLanguages.find((entry) => entry.fileTypes.some((type) => type.toLowerCase() === extension || type.toLowerCase() === fileName));
       if (configured !== undefined) return configured.name;
     }
     return languageIdForPath(path);

@@ -10,6 +10,11 @@ command = "rust-analyzer"
 args = []
 root-markers = ["Cargo.toml", ".git"]
 
+[language-server.ruby-lsp]
+command = "ruby-lsp"
+args = []
+root-markers = ["Gemfile", "gems.rb", ".ruby-version", ".git"]
+
 [[language]]
 name = "typescript"
 file-types = ["ts", "tsx"]
@@ -23,4 +28,11 @@ name = "rust"
 file-types = ["rs"]
 language-servers = ["rust"]
 indent = { tab-width = 4, unit = "    " }
+auto-format = false
+
+[[language]]
+name = "ruby"
+file-types = ["rb", "rake", "gemspec", "Gemfile", "Rakefile", "Guardfile", "Podfile", "Vagrantfile", ".irbrc"]
+language-servers = ["ruby-lsp"]
+indent = { tab-width = 2, unit = "  " }
 auto-format = false
