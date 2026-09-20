@@ -41,7 +41,7 @@ function buildBindingMap(bindings: readonly RouterBindingConfig[]): ReadonlyMap<
 }
 
 /** Mirrors `packages/services/navigation`'s `PickerMode`; workbench cannot import services. */
-export type RouterPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config';
+export type RouterPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'diagnostic';
 
 export interface RouterPickerPort {
   readonly isOpen: boolean;
@@ -547,6 +547,7 @@ export class WorkbenchInputRouter implements Disposable {
       case 'macro.record': this.#macroRegisterPending = true; this.#leaderPending = true; return true;
       case 'files.pick': picker.open('file'); return true;
       case 'buffers.pick': picker.open('buffer'); return true;
+      case 'diagnostics.pick': picker.open('diagnostic'); return true;
       case 'command.pick': picker.open('command'); return true;
       case 'theme.pick': picker.open('theme'); return true;
       case 'config.open': picker.open('config'); return true;

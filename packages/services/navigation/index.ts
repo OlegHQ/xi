@@ -17,8 +17,8 @@ import {
 /** Stable public contract version for navigation read models and picker providers. */
 export const NAVIGATION_CONTRACT_VERSION = 1 as const;
 
-export type PickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git';
-export type PickerEntryKind = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git';
+export type PickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git' | 'diagnostic';
+export type PickerEntryKind = PickerMode;
 
 export interface PickerEntry {
   /** Stable identity. Selection is retained by this value, never by row index. */
@@ -32,6 +32,7 @@ export interface PickerEntry {
   readonly relativePath: string | undefined;
   readonly hidden: boolean;
   readonly score: number;
+  readonly severity?: 1 | 2 | 3 | 4;
 }
 
 export interface PickerQueryRequest {
@@ -370,6 +371,7 @@ export interface BufferPickerEntry {
   readonly label: string;
   readonly detail: string;
   readonly value: string;
+  readonly severity?: 1 | 2 | 3 | 4;
 }
 
 /** Picker provider over an in-memory buffer list supplied by `source()` on every query (open
@@ -394,10 +396,11 @@ export class BufferPickerProvider implements PickerProvider {
     const entries: PickerEntry[] = [];
     for (const entry of this.#source()) {
       if (cancellation.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
-      if (query.length > 0 && !normalizeForSearch(entry.label).includes(query)) continue;
+      if (query.length > 0 && !normalizeForSearch(this.mode === 'diagnostic' ? `${entry.label} ${entry.detail}` : entry.label).includes(query)) continue;
       entries.push(Object.freeze({
         id: entry.id, mode: this.mode, kind: this.mode, label: entry.label, detail: entry.detail, value: entry.value,
         rootId: undefined, relativePath: undefined, hidden: false, score: query.length === 0 ? 0 : 1,
+        ...(entry.severity === undefined ? {} : { severity: entry.severity }),
       }));
     }
     return { ok: true, value: Object.freeze(entries.slice(0, request.limit ?? 100)) };
@@ -587,6 +590,7 @@ function pickerCommands() {
   return [
     command('files.pick', 'File picker', 'Open the multi-root file picker.', schema),
     command('buffers.pick', 'Buffer picker', 'Open the open-buffer picker.', schema),
+    command('diagnostics.pick', 'Diagnostics', 'Search diagnostics and jump to their source.', schema),
     command('command.pick', 'Command picker', 'Search every available command and alias.', schema),
     command('theme.pick', 'Theme picker', 'Preview and choose a theme.', schema),
     command('config.open', 'Open config', 'Open a configuration document.', schema),

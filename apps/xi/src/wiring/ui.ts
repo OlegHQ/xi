@@ -90,6 +90,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     renderer,
     theme: themeWiring.themeController.get(themeWiring.themeController.activeId) ?? LIGHT_WORKBENCH_THEME,
     syntax: syntaxTracker,
+    editorDiagnostics: controllers.editorDiagnostics,
     presentation: buildEditorPresentationPort(workbench, searchFeature, host, renderer),
     comparison: gitDiffFeature,
     gitBranch: () => optionalServices.current?.gitStatusService.snapshot?.branch,
@@ -131,8 +132,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
         statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
       });
       void themeWiring.loadCustomThemes().finally(() => themeWiring.disposeStateCancellation());
-      // Directory enumeration, watching and picker indexing are background
-      // work. Starting them before the first frame makes the editor compete
+      // Directory enumeration, watching and picker indexing start in the background;
       // with filesystem streams during the user's first interaction.
       fileIndexStarter.schedule();
       // The Files tree is visible by default; it loads in the background and never takes
@@ -155,7 +155,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
       preview: () => {
         const selected = pickerModel.model.entries.find((entry) => entry.id === pickerModel.model.selectedId);
-        return selected?.mode === 'file' ? pickerPreview(selected.value) : undefined;
+        return selected === undefined ? undefined : pickerPreview(selected);
       },
     },
     get explorer() {

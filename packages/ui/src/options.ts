@@ -48,6 +48,7 @@ export interface OpenTuiWorkbenchOptions {
   readonly theme?: WorkbenchTheme;
   /** Read-only syntax spans for the editor viewport; see `WorkbenchRenderableOptions.syntax`. */
   readonly syntax?: SyntaxReadPort;
+  readonly editorDiagnostics?: import('./workbench').WorkbenchRenderableOptions['editorDiagnostics'];
   /** Optional editor presentation read (workspace-search match highlights, previews); see
    * `WorkbenchRenderableOptions.presentation`. */
   readonly presentation?: EditorPresentationReadPort;
@@ -95,7 +96,7 @@ export interface OpenTuiWorkbenchOptions {
     readonly onViewportRows?: (rows: number) => void;
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
     /** Helix-style preview of the selected file entry (title + leading lines), if any. */
-    readonly preview?: () => { readonly title: string; readonly lines: readonly string[] } | undefined;
+    readonly preview?: () => { readonly title: string; readonly lines: readonly string[]; readonly selectedLine?: number; readonly startLine?: number } | undefined;
   };
   /** Optional focused Explorer surface; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly explorer?: {

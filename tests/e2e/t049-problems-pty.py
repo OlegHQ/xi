@@ -47,7 +47,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t049-problems-") as temporary:
     captured = bytearray()
     try:
         wait_for(master, captured, b"XI_WORKBENCH_READY", 10)
-        os.write(master, b" d")
+        os.write(master, b" e")
         wait_for(master, captured, b"XI_PROBLEMS_OPEN", 5)
         os.write(master, b"\x1b")
         wait_for(master, captured, b"XI_PROBLEMS_CLOSED", 5)

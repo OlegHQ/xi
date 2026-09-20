@@ -356,6 +356,6 @@ export class WorkbenchHostCommands {
     }
     marker('XI_WORKBENCH_VIEW_CLOSED', { activeViewId: closed.value.activeViewId });
     host.notifySurfaceChange();
-    return 'handled';
+    return closed.value.activeViewId === undefined ? 'quit' : 'handled';
   }
 }

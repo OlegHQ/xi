@@ -56,7 +56,7 @@ export interface ConfigCommandCatalog {
 
 export const DEFAULT_COMMAND_CATALOG: ConfigCommandCatalog = Object.freeze({
   commandIds: Object.freeze([
-    'files.pick', 'buffers.pick', 'command.pick', 'search.workspace', 'search.replace', 'files.edit-directory', 'files.edit-buffer-directory', 'theme.pick',
+    'files.pick', 'buffers.pick', 'diagnostics.pick', 'command.pick', 'search.workspace', 'search.replace', 'files.edit-directory', 'files.edit-buffer-directory', 'theme.pick',
     'lsp.hover', 'lsp.code-action', 'lsp.rename', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'panel.problems.focus', 'panel.preview', 'panel.open', 'panel.close', 'git.diff', 'editor.mouse.toggle', 'sidebar.toggle', 'macro.record',
     'selection.add-above', 'selection.add-below', 'selection.add-next-match', 'selection.skip-next-match',
     'selection.select-all-matches', 'selection.split-lines', 'selection.select-regex', 'selection.keep-matching',
@@ -1001,7 +1001,7 @@ O = "files.edit-buffer-directory"
 t = "theme.pick"
 k = "lsp.hover"
 a = "lsp.code-action"
-d = "panel.problems.focus"
+d = "diagnostics.pick"
 e = "panel.problems.focus"
 m = "editor.mouse.toggle"
 r = "search.replace"

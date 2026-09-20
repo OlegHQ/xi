@@ -5,7 +5,7 @@ import type { BufferHost } from '../host';
 /** Mirrors `packages/services/navigation`'s `PickerMode`/`PickerEntry` shape structurally --
  * workbench cannot import `packages/services`, not even types, so only the literal union and
  * the fields this controller actually reads are declared here. */
-export type WorkbenchPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git';
+export type WorkbenchPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git' | 'diagnostic';
 
 export interface WorkbenchPickerEntry {
   readonly id: string;
@@ -33,6 +33,7 @@ export interface PickerControllerOptions<TEntry extends WorkbenchPickerEntry, TT
   readonly marker: (name: string, payload?: unknown) => void;
   readonly startFileIndexPopulation: () => Promise<void>;
   readonly toggleMouseMode: () => boolean;
+  readonly openDiagnostic?: (id: string) => Promise<void>;
   /** Opens a promoted buffer's file (commit) or a preview (no commit); returns the same
    * result shape as `BufferHost.openBufferAtPath` so preview/promote bookkeeping stays here. */
   readonly openFile: (path: string, preview: boolean) => ReturnType<BufferHost['openBufferAtPath']>;
@@ -140,6 +141,11 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
   }
 
   async activateEntry(entry: TEntry): Promise<void> {
+    if (entry.mode === 'diagnostic') {
+      await this.close(false);
+      await this.#options.openDiagnostic?.(entry.value);
+      return;
+    }
     if (entry.mode === 'command') {
       if (entry.value === 'toggle-mouse') {
         await this.close(false);
@@ -148,7 +154,7 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
         return;
       }
       const mode = entry.value;
-      if (mode === 'file' || mode === 'buffer' || mode === 'command' || mode === 'theme' || mode === 'config') this.open(mode);
+      if (mode === 'file' || mode === 'buffer' || mode === 'command' || mode === 'theme' || mode === 'config' || mode === 'diagnostic') this.open(mode);
       return;
     }
     if (entry.mode === 'file' || entry.mode === 'git') {
@@ -179,6 +185,9 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
     void this.#previewSelected(selected);
   }
 
+  /** Requery a live provider without changing the user's query or selected identity. */
+  refresh(): void { if (this.#open) this.#runQuery(true); }
+
   async #previewSelected(entry: TEntry | undefined): Promise<void> {
     if (!this.#open || entry === undefined) return;
     if (entry.mode === 'theme') {
@@ -207,7 +216,8 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
     }
   }
 
-  #runQuery(): void {
+  #runQuery(retainSelection = false): void {
+    const selectedId = retainSelection ? this.#options.model.model.selectedId : undefined;
     const generation = ++this.#generation;
     const query = this.#query;
     const mode = this.#mode;
@@ -227,7 +237,7 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
       // behavior; if filtering hides the active theme, the first match becomes the preview.
       const selected = mode === 'theme'
         ? result.value.entries.find((entry) => entry.value === this.#options.theme.activeId) ?? result.value.entries[0]
-        : result.value.entries[0];
+        : result.value.entries.find(entry => entry.id === selectedId) ?? result.value.entries[0];
       if (selected !== undefined) this.#options.model.select(selected.id);
       void this.#previewSelected(selected);
     });

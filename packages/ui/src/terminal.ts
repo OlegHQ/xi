@@ -201,6 +201,7 @@ export async function runOpenTuiWorkbench(
   });
   const viewport = new WorkbenchRenderable(renderer.root.ctx, {
     workbench,
+    ...(options.editorDiagnostics === undefined ? {} : { editorDiagnostics: options.editorDiagnostics }),
     ...(options.comparison === undefined ? {} : { comparison: options.comparison }),
     fileLabel,
     ...(options.theme === undefined ? {} : { theme: options.theme }),

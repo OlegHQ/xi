@@ -1,4 +1,11 @@
 import type { Disposable } from '../../contracts/src/index';
+import { helixThemeColor } from '../theme/color-input';
+import type { WorkbenchTheme, ThemeColor } from '../theme/workbench-themes';
+
+export function diagnosticColor(theme: WorkbenchTheme, severity: Problem['severity']): ThemeColor {
+  const name = severity === 1 ? 'error' : severity === 2 ? 'warning' : severity === 3 ? 'info' : 'hint';
+  return helixThemeColor(theme, `diagnostic.${name}`, 'fg', helixThemeColor(theme, name, 'fg', severity === 1 ? theme.error : theme.accent));
+}
 
 export interface ProblemRange { readonly startLine: number; readonly startUtf16: number; readonly endLine: number; readonly endUtf16: number; }
 export interface Problem {

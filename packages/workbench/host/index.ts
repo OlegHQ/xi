@@ -121,6 +121,7 @@ export class BufferHost {
    * at this same view. */
   promoteBuffer(bufferId: DocumentId, viewId: ViewId): void {
     this.#session.promoteBuffer(bufferId);
+    this.#closeEmptyScratch(viewId);
     if (this.previewViewId === viewId) this.previewViewId = undefined;
   }
 
@@ -203,6 +204,7 @@ export class BufferHost {
       const viewId = existing.viewIds[0];
       if (viewId === undefined) return undefined;
       this.#session.focus(viewId);
+      if (options.preview !== true && options.split === undefined) this.#closeEmptyScratch(viewId);
       return { viewId, bufferId: existing.bufferId, created: false };
     }
     const openedFile = await this.#options.openDocument(path, this.nextDocumentId());
@@ -255,7 +257,17 @@ export class BufferHost {
     this.createSession(openedFile, viewId, undefined, options.line === undefined ? undefined : options.line + 1);
     this.#session.focus(viewId);
     this.#options.onBufferOpened?.({ documentId: openedFile.id, path, document: openedFile });
+    if (options.split === undefined && options.preview !== true) this.#closeEmptyScratch(viewId);
     return { viewId, bufferId: openedFile.id, created: true };
+  }
+
+  #closeEmptyScratch(keep: ViewId): void {
+    for (const buffer of this.#session.buffers()) {
+      const viewId = buffer.viewIds[0];
+      if (viewId === undefined || viewId === keep || buffer.path !== undefined || buffer.dirty || buffer.viewIds.length !== 1) continue;
+      if (this.documents.get(buffer.documentId)?.snapshot().lengthUtf16 === 0) this.closeView(viewId);
+    }
+    this.#session.focus(keep);
   }
 
   /** Closes `viewId` if (and only if) it is still marked `preview` -- once an edit or an

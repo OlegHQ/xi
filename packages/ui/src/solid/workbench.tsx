@@ -12,7 +12,7 @@ import { formatExplorerLines, type ExplorerReadModel, type ExplorerReadPort } fr
 import { resolveFileIcon, type IconColorToken } from '../../explorer/icons';
 import { formatSearchLines, searchRowIds, type SearchReadPort } from '../../search/index';
 import { formatGitLines, gitRowIds, type GitReadPort } from '../../git/index';
-import { formatProblemsLines, type ProblemsReadPort } from '../../problems/index';
+import { diagnosticColor, formatProblemsLines, type ProblemsReadPort } from '../../problems/index';
 import { formatGitDiffLines, type GitDiffReadPort } from '../../git/diff';
 import { formatTaskOutputLines, type TaskOutputReadPort } from '../../output/index';
 import { formatHierarchyLines, formatOutlineLines, formatHoverLines, measureHover, type OutlineReadPort, type HierarchyReadPort, type HoverReadPort } from '../../navigation/index';
@@ -169,7 +169,7 @@ function pickerRows(model: PickerReadPort['model'], width: number, maxRows: numb
   const headerBackground = helixThemeColor(theme, 'ui.picker.header', 'bg', background);
   const headerForeground = helixThemeColor(theme, 'ui.picker.header', 'fg', foreground);
   const directoryStyle = helixThemeStyle(theme, 'ui.text.directory');
-  const title = ({ file: 'Files', buffer: 'Buffers', command: 'Commands', theme: 'Themes', config: 'Config', git: 'Git' } as const)[model.mode];
+  const title = ({ file: 'Files', buffer: 'Buffers', command: 'Commands', theme: 'Themes', config: 'Config', git: 'Git', diagnostic: 'Diagnostics' } as const)[model.mode];
   const rows: SurfaceRow[] = [{
     segments: clipSegments([
       { text: `${title}${model.mode === 'theme' ? '  ·  Live preview' : ''}  > `, foreground: headerForeground, bold: true },
@@ -180,14 +180,14 @@ function pickerRows(model: PickerReadPort['model'], width: number, maxRows: numb
   const entries = model.entries.slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, maxRows - 2));
   for (const entry of entries) {
     const selected = entry.id === model.selectedId;
-    const slash = Math.max(entry.label.lastIndexOf('/'), entry.label.lastIndexOf('\\'));
+    const slash = entry.mode === 'diagnostic' ? -1 : Math.max(entry.label.lastIndexOf('/'), entry.label.lastIndexOf('\\'));
     const parent = slash < 0 ? '' : entry.label.slice(0, slash + 1);
     const label = slash < 0 ? entry.label : entry.label.slice(slash + 1);
     rows.push({
       segments: clipSegments([
         { text: selected ? '▸ ' : '  ', foreground: selected ? theme.accent : theme.muted },
         ...(parent.length === 0 ? [] : [{ text: parent, foreground: helixThemeColor(theme, 'ui.text.directory', 'fg', theme.muted), ...(directoryStyle === undefined ? {} : { style: directoryStyle }) }]),
-        { text: label, foreground: selected ? selectedForeground : foreground, bold: selected },
+        { text: label, foreground: entry.severity === undefined ? selected ? selectedForeground : foreground : diagnosticColor(theme, entry.severity), bold: selected },
         ...(entry.detail.length === 0 ? [] : [{ text: `  ${entry.detail}`, foreground: theme.muted }]),
       ], width),
       background: selected ? selectedBackground : entry.id === hoveredId ? theme.selectionSecondary ?? selectedBackground : background,
@@ -204,6 +204,14 @@ function pickerRows(model: PickerReadPort['model'], width: number, maxRows: numb
     background,
   });
   return rows;
+}
+
+function pickerPaneBounds(width: number, height: number, preview: boolean, mode: string | undefined): ReturnType<typeof getPickerBounds> {
+  const bounds = getPickerBounds(width, height);
+  const split = width >= 100 && (mode === 'diagnostic' || mode === 'file');
+  if (!split) return preview ? { ...bounds, width: 0, height: 0 } : bounds;
+  const leftWidth = Math.floor(bounds.width / 2);
+  return preview ? { ...bounds, left: bounds.left + leftWidth, width: bounds.width - leftWidth } : { ...bounds, width: leftWidth };
 }
 
 function gitStateColor(state: GitReadPort['model']['sections'][number]['entries'][number]['state'], theme: WorkbenchTheme): import('../workbench').ThemeColor {
@@ -683,7 +691,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         maxRows: Number.POSITIVE_INFINITY,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: getPickerBounds,
+        bounds: (width, height) => pickerPaneBounds(width, height, false, options.picker?.read.model.mode),
         panel: 'picker',
         generation: model => model.generation,
         rowIds: pickerRowIds,
@@ -697,6 +705,27 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         zIndex: 100,
         border: true,
         previewOnHover: model => model.mode === 'theme',
+      }, scopeColors('ui.menu', 'ui.picker.header'))}
+      {options.picker !== undefined && rows({
+        read: options.picker.read,
+        isOpen: () => dimensions().width >= 100 && options.picker?.isOpen() === true && (options.picker.read.model.mode === 'diagnostic' || options.picker.read.model.mode === 'file'),
+        format: () => [],
+        formatRows: (_model, width, maxRows) => {
+          const preview = options.picker?.preview?.();
+          const theme = props.themeBridge.current();
+          if (preview === undefined) return [{ text: 'No preview', foreground: theme.muted }];
+          return [{ text: preview.title, foreground: theme.accent, bold: true }, ...preview.lines.slice(0, maxRows - 1).map((text, index) => ({
+            text: `${String((preview.startLine ?? 0) + index + 1).padStart(4)} ${text}`,
+            foreground: theme.foreground,
+            background: index === preview.selectedLine ? theme.surfaceActive : theme.surface,
+          }))];
+        },
+        maxRows: Number.POSITIVE_INFINITY,
+        background: props.theme.surface,
+        foreground: props.theme.foreground,
+        bounds: (width, height) => pickerPaneBounds(width, height, true, options.picker?.read.model.mode),
+        zIndex: 100,
+        border: true,
       }, scopeColors('ui.menu', 'ui.picker.header'))}
       {rows<SearchReadPort['model']>({
         read: searchSurface.read,

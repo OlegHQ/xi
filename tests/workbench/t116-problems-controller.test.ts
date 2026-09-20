@@ -182,6 +182,10 @@ assert.equal(typeof firstGeneration, 'number', 'sanity: first generation recorde
 assert.equal(typeof secondGeneration, 'number', 'sanity: second generation recorded');
 assert.ok((secondGeneration as number) > (firstGeneration as number), 'T116-PROBLEMS-04g the second run used a strictly higher generation than the first');
 
+const beforeStaleJump = session.readView(problemViewId)?.selections;
+await controller.openProblem({ ...selected, documentVersion: Number(problemDocument.version) + 1, range: { startLine: 0, startUtf16: 0 } });
+assert.equal(session.readView(problemViewId)?.selections, beforeStaleJump, 'stale diagnostics cannot move the cursor');
+assert.match(errors.at(-1) ?? '', /diagnostic is stale/u);
 controller.dispose();
 
 console.log('T116 ProblemsController passed selection-clamp/open-through-host, escape-close and increasing-task-generation fixtures');

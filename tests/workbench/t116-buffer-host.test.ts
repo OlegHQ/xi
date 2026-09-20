@@ -128,3 +128,24 @@ assert.equal(host.sessions.size, 0, 'T116-HOST-07a dispose() clears every sessio
 assert.equal(session.buffers().length, 0, 'T116-HOST-07b the underlying workbench session is disposed too');
 
 console.log('T116 BufferHost passed bookkeeping, focus-reuse, preview-discard, panel-exclusivity and dispose fixtures');
+
+for (const preview of [false, true]) {
+  const scratch = document(id<DocumentId>(`scratch-${preview}`), '');
+  const workspace = new WorkbenchSession({ workspaceId: 'scratch-replacement' });
+  assert.ok(workspace.openBuffer(scratch, { viewId: launchViewId }).ok);
+  const scratchHost = new BufferHost(workspace, scratch, {
+    openDocument: async (_path, documentId) => document(documentId, 'file\n'),
+    workspaceRelativePath: path => path, marker: () => {}, launchViewId,
+  });
+  scratchHost.createSession(scratch, launchViewId);
+  const openedFile = await scratchHost.openBufferAtPath('/workspace/file.txt', { preview });
+  assert.ok(openedFile);
+  if (preview) {
+    assert.ok(workspace.buffer(scratch.id), 'preview keeps scratch available for Escape');
+    scratchHost.promoteBuffer(openedFile.bufferId, openedFile.viewId);
+  }
+  assert.equal(workspace.buffers().length, 1, 'committing a file replaces the empty clean scratch');
+  assert.equal(scratchHost.documents.has(scratch.id), false);
+  assert.equal(scratchHost.sessions.has(launchViewId), false);
+  scratchHost.dispose();
+}

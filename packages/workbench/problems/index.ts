@@ -16,6 +16,7 @@ export interface ProblemsDiagnostic {
   readonly id: string;
   readonly uri: string;
   readonly range: ProblemsDiagnosticRange;
+  readonly documentVersion?: number | undefined;
 }
 
 /** Mirrors `DiagnosticStore`'s `DiagnosticReadModel`. */
@@ -160,11 +161,13 @@ export class ProblemsController {
     this.#problemsOpen = true;
     this.#problemSelectedIndex = Math.min(this.#problemSelectedIndex, Math.max(0, this.#options.diagnostics.model.all.length - 1));
     this.#options.marker('XI_PROBLEMS_OPEN', { count: this.#options.diagnostics.model.all.length });
+    this.#options.host.notifySurfaceChange();
   }
 
   closeProblems(): void {
     this.#problemsOpen = false;
     this.#options.marker('XI_PROBLEMS_CLOSED');
+    this.#options.host.notifySurfaceChange();
   }
 
   /** Direct pointer-driven selection, mirroring `handleProblemsKeypress`'s up/down clamp
@@ -172,6 +175,7 @@ export class ProblemsController {
    * generation. */
   setSelectedProblemIndex(index: number): void {
     this.#problemSelectedIndex = index;
+    this.#options.host.notifySurfaceChange();
   }
 
   handleProblemsKeypress(event: OwnedVimKeyEvent): boolean {
@@ -182,7 +186,7 @@ export class ProblemsController {
     }
     if (key === 'up' || key === 'k' || key === 'down' || key === 'j') {
       const count = this.#options.diagnostics.model.all.length;
-      if (count > 0) this.#problemSelectedIndex = Math.max(0, Math.min(count - 1, this.#problemSelectedIndex + (key === 'up' || key === 'k' ? -1 : 1)));
+      if (count > 0) this.setSelectedProblemIndex(Math.max(0, Math.min(count - 1, this.#problemSelectedIndex + (key === 'up' || key === 'k' ? -1 : 1))));
       return true;
     }
     if (key === 'enter' || key === 'return' || event.raw === '\r' || event.raw === '\n') {
@@ -197,6 +201,11 @@ export class ProblemsController {
     if (path === undefined) return;
     const opened = await this.#options.host.openBufferAtPath(path);
     if (opened === undefined) return;
+    const current = this.#options.host.documents.get(opened.bufferId);
+    if (problem.documentVersion !== undefined && current !== undefined && problem.documentVersion !== Number(current.version)) {
+      this.#options.onError('xi: diagnostic is stale; waiting for current diagnostics\n');
+      return;
+    }
     const session = this.#options.host.sessions.get(opened.viewId);
     const positioned = session?.setCursorPosition(problem.range.startLine, problem.range.startUtf16) ?? false;
     if (!positioned && session !== undefined) {

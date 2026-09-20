@@ -125,7 +125,8 @@ export interface Controllers {
   readonly jobControlDisposables: Disposable[];
   /** Helix-style picker preview: leading lines of a file, read once in the background and
    * cached; `undefined` while loading (a surface change re-renders once it lands). */
-  readonly pickerPreview: (path: string) => { readonly title: string; readonly lines: readonly string[] } | undefined;
+  readonly pickerPreview: (entry: PickerEntry) => { readonly title: string; readonly lines: readonly string[]; readonly selectedLine?: number; readonly startLine?: number } | undefined;
+  readonly editorDiagnostics: (documentId: import('../../../../packages/primitives/src/entrypoints/launch').DocumentId) => ReturnType<InstanceType<CoreServicesModule['DiagnosticStore']>['diagnosticsFor']>;
   readonly fileIndexStarter: { readonly schedule: () => void; readonly cancel: () => void };
   readonly ensureGitAndOpenPicker: () => Promise<void>;
 }
@@ -445,6 +446,7 @@ function createPickerModel(
   forward: ForwardRefs,
   workbench: WorkbenchSession,
   fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>,
+  diagnostics: InstanceType<CoreServicesModule['DiagnosticStore']>,
 ): InstanceType<CoreServicesModule['BoundedPickerModel']> {
   const { deps, filesystem, workspaceRoot } = ctx;
   const { BoundedPickerModel, BufferPickerProvider, FilePickerProvider, StaticPickerProvider } = deps.coreServices;
@@ -457,9 +459,17 @@ function createPickerModel(
   return new BoundedPickerModel({ providers: [
     new FilePickerProvider(fileIndex),
     bufferProvider,
+    new BufferPickerProvider('xi.navigation.diagnostics', () => diagnostics.model.all.map(problem => ({
+      id: problem.id,
+      label: `${problem.severity === 1 ? 'E' : problem.severity === 2 ? 'W' : problem.severity === 3 ? 'I' : 'H'} ${problem.code === undefined ? '' : `${problem.code}: `}${problem.message.replace(/\s+/gu, ' ')}`,
+      detail: `${deps.coreServices.workspaceRelativePathFromUri(filesystem, workspaceRoot, problem.uri) ?? problem.uri}:${problem.range.startLine + 1}:${problem.range.startUtf16 + 1}`,
+      value: problem.id,
+      ...(problem.severity === undefined ? {} : { severity: problem.severity }),
+    })), 'diagnostic'),
     new StaticPickerProvider('xi.navigation.commands', 'command', [
       { id: 'files.pick', mode: 'command', label: 'Files', detail: 'Open file picker', value: 'file' },
       { id: 'buffers.pick', mode: 'command', label: 'Buffers', detail: 'Switch open buffer', value: 'buffer' },
+      { id: 'diagnostics.pick', mode: 'command', label: 'Diagnostics', detail: 'Search diagnostics', value: 'diagnostic' },
       { id: 'theme.pick', mode: 'command', label: 'Themes', detail: 'Choose a theme', value: 'theme' },
       { id: 'config.open', mode: 'command', label: 'Config', detail: 'Open configuration', value: 'config' },
       { id: 'mouse.toggle', mode: 'command', label: 'Toggle Mouse', detail: 'Enable/disable mouse reporting; disable for terminal-native click-drag text selection', value: 'toggle-mouse' },
@@ -543,6 +553,7 @@ function createOptionalServicesAndPicker(
   pickerModel: InstanceType<CoreServicesModule['BoundedPickerModel']>,
   mouseMode: ReturnType<typeof createMouseModeToggle>,
   fileUri: CoreServicesModule['fileUri'],
+  openDiagnostic: (id: string) => Promise<void>,
 ): { readonly optionalServices: OptionalServicesWiring; readonly picker: PickerController<PickerEntry, WorkbenchTheme> } {
   const { deps, filesystem, clock, marker, workspaceRoot } = ctx;
   const optionalServices = createOptionalServicesWiring({
@@ -566,6 +577,7 @@ function createOptionalServicesAndPicker(
     marker,
     startFileIndexPopulation: () => forward.startFileIndexPopulation(),
     toggleMouseMode: mouseMode.toggle,
+    openDiagnostic,
     openFile: async (path, preview) => {
       const opened = await host.openBufferAtPath(path, { preview });
       // The Files tree follows a picker commit (VS Code "reveal in explorer"); previews
@@ -1149,9 +1161,13 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const contextMenuStore = new deps.ContextMenuStore();
   const { languageWiring, taskWiring, syntaxResultSubscription } = createLanguageAndTaskWiring(ctx, forward, workbench, syntaxTracker, diagnostics, fileUri);
   const { fileIndex, commandRegistry, contributionRegistry, commandAliasRegistration } = await createRegistries(ctx);
-  const pickerModel = createPickerModel(ctx, forward, workbench, fileIndex);
+  const pickerModel = createPickerModel(ctx, forward, workbench, fileIndex, diagnostics);
   const host = createHostController(ctx, forward, workbench, syntaxTracker);
-  const { optionalServices, picker } = createOptionalServicesAndPicker(ctx, forward, host, pickerModel, mouseMode, fileUri);
+  const { optionalServices, picker } = createOptionalServicesAndPicker(ctx, forward, host, pickerModel, mouseMode, fileUri, async diagnosticId => {
+    const problem = diagnostics.model.all.find(candidate => candidate.id === diagnosticId);
+    if (problem !== undefined) await problemsFeature.openProblem(problem);
+  });
+  diagnostics.subscribe(() => { if (picker.isOpen && picker.mode === 'diagnostic') picker.refresh(); });
   const { explorerFeature, directoryDraftController } = createExplorerAndDirectory(ctx, forward, host, workbench);
   const { searchFeature, gitPanelFeature, gitDiffFeature, problemsFeature, overlayFeature, sidebarController } = createSearchProblemsOverlaySidebar(ctx, forward, host, workbench, diagnostics, taskWiring, fileUri, workspacePathFromUri);
   forward.sidebarController = sidebarController;
@@ -1212,7 +1228,11 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     mouseMode,
     jobControlDisposables,
     fileIndexStarter,
-    pickerPreview: createPickerPreview(ctx, host),
+    pickerPreview: createPickerPreview(ctx, host, workbench, diagnostics),
+    editorDiagnostics: documentId => {
+      const path = workbench.buffer(documentId)?.path;
+      return path === undefined ? [] : diagnostics.diagnosticsFor(fileUri(path));
+    },
     ensureGitAndOpenPicker,
   };
 }
@@ -1250,7 +1270,7 @@ function createFormatterPipelineFromEnvironment(
 
 /** Bounded (32 entries) preview cache for the file picker; reads go through the platform
  * filesystem port off the input path and wake one frame via `notifySurfaceChange`. */
-function createPickerPreview(ctx: BuildContext, host: BufferHost): Controllers['pickerPreview'] {
+function createPickerPreview(ctx: BuildContext, host: BufferHost, workbench: WorkbenchSession, diagnostics: InstanceType<CoreServicesModule['DiagnosticStore']>): Controllers['pickerPreview'] {
   const cache = new Map<string, { readonly title: string; readonly lines: readonly string[] } | 'loading'>();
   // `fatal: true` mirrors `openTextDocument`'s own binary detection (packages/document/src/
   // text-fidelity.ts): a picker preview must never hand raw/invalid-UTF-8 bytes to the
@@ -1258,7 +1278,26 @@ function createPickerPreview(ctx: BuildContext, host: BufferHost): Controllers['
   // otherwise be written straight to the pty and corrupt the whole screen, not just the
   // preview pane.
   const decoder = new TextDecoder('utf-8', { fatal: true });
-  return (path) => {
+  return (entry) => {
+    const problem = entry.mode === 'diagnostic' ? diagnostics.model.all.find(candidate => candidate.id === entry.value) : undefined;
+    const path = problem === undefined ? entry.mode === 'file' ? entry.value : undefined : ctx.deps.coreServices.workspacePathFromUri(problem.uri);
+    if (path === undefined) return undefined;
+    const live = workbench.buffers().find(buffer => buffer.path === path);
+    const snapshot = live === undefined ? undefined : host.documents.get(live.documentId)?.snapshot();
+    if (snapshot !== undefined) {
+      const target = problem?.range.startLine ?? 0;
+      const startLine = Math.max(0, target - 8);
+      const lines: string[] = [];
+      for (let line = startLine; line < Math.min(snapshot.lineCount, startLine + 40); line++) {
+        const start = snapshot.lineStartOffset(line as Parameters<typeof snapshot.lineStartOffset>[0]);
+        const next = snapshot.lineStartOffset((line + 1) as Parameters<typeof snapshot.lineStartOffset>[0]);
+        if (!start.ok) break;
+        const end = Math.min(next.ok ? Number(next.value) - 1 : snapshot.lengthUtf16, Number(start.value) + 500);
+        const text = snapshot.slice(start.value, end as Parameters<typeof snapshot.slice>[1]);
+        lines.push(text.ok ? text.value : '');
+      }
+      return { title: ctx.filesystem.workspaceRelativePath(ctx.workspaceRoot, path) ?? path, lines, startLine, selectedLine: target - startLine };
+    }
     const cached = cache.get(path);
     if (cached !== undefined) return cached === 'loading' ? undefined : cached;
     cache.set(path, 'loading');

@@ -34,6 +34,8 @@ export { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, BUI
 export { helixTextAttributes, helixThemeColor, themeColor } from '../theme/color-input';
 import { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, type WorkbenchTheme } from '../theme/workbench-themes';
 import { themeColor } from '../theme/color-input';
+import { diagnosticColor, type Problem } from '../problems/index';
+import { inlineDiagnosticLines, type DiagnosticLine } from '../problems/inline';
 
 export interface WorkbenchLayout {
   readonly compact: boolean;
@@ -103,6 +105,7 @@ export interface WorkbenchRenderableOptions extends RenderableOptions<WorkbenchR
   readonly presentation?: EditorPresentationReadPort;
   /** Optional read-only syntax boundary; painted only when its version matches the frame's. */
   readonly syntax?: SyntaxReadPort;
+  readonly editorDiagnostics?: (documentId: import('../../contracts/src/index').DocumentId) => readonly Problem[];
   readonly motionTrail?: MotionTrailMode;
   readonly reducedMotion?: boolean;
   readonly colorMode?: EditorColorMode;
@@ -308,6 +311,7 @@ export class WorkbenchRenderable extends Renderable {
   readonly #tabs: ((viewId?: string) => readonly WorkbenchTabSnapshot[]) | undefined;
   #sidebarSplitterCapture = false;
   readonly #syntax: SyntaxReadPort | undefined;
+  readonly #editorDiagnostics: WorkbenchRenderableOptions['editorDiagnostics'];
   readonly #motionTrail: MotionTrailMode;
   readonly #reducedMotion: boolean;
   readonly #colorMode: EditorColorMode;
@@ -381,6 +385,7 @@ export class WorkbenchRenderable extends Renderable {
     this.#sidebar = options.sidebar;
     this.#tabs = options.tabs;
     this.#syntax = options.syntax;
+    this.#editorDiagnostics = options.editorDiagnostics;
     this.#motionTrail = options.motionTrail ?? 'off';
     this.#reducedMotion = options.reducedMotion ?? true;
     this.#colorMode = options.colorMode ?? 'truecolor';
@@ -630,6 +635,11 @@ export class WorkbenchRenderable extends Renderable {
   #resolveAndReportAnchor(
     viewId: string, view: WorkbenchViewSnapshot, widthCells: number, heightCells: number,
   ): { readonly anchor: ViewportAnchor; readonly scrollLeft: number } | undefined {
+    const diagnostics = this.#editorDiagnostics?.(view.document.id) ?? [];
+    const lines = inlineDiagnosticLines(view.document, diagnostics, view.scrollTop, widthCells + gutterWidthFor(view.document.lineCount), heightCells, gutterWidthFor(view.document.lineCount), view.scrollLeft);
+    const head = view.selections.members.find(member => member.id === view.selections.primaryId)?.head;
+    const cursorLine = head === undefined ? undefined : view.document.lineIndexAt(head.at.offset);
+    if (cursorLine?.ok) heightCells = Math.max(1, heightCells - lines.filter(line => Number(line.beforeLine) <= Number(cursorLine.value)).length);
     const previousTop = view.scrollTop;
     const previousLeft = view.scrollLeft;
     if (this.#reportedViewportHeights.get(viewId) !== heightCells) {
@@ -745,6 +755,7 @@ export class WorkbenchRenderable extends Renderable {
       return;
     }
     this.#comparisonPaint = undefined;
+    const diagnosticLines = view === undefined ? [] : inlineDiagnosticLines(view.document, this.#editorDiagnostics?.(view.document.id) ?? [], Number(anchor?.anchor.lineIndex ?? view.scrollTop), geometry.editorWidth, geometry.editorHeight, gutterWidthFor(view.document.lineCount), anchor?.scrollLeft ?? 0);
     const projected = activeViewId === undefined || view === undefined || geometry.compact
       ? undefined
       : this.#layout.project({
@@ -753,7 +764,7 @@ export class WorkbenchRenderable extends Renderable {
         selection: view.selections,
         widthCells: geometry.editorWidth,
         heightCells: geometry.editorHeight,
-        options: { wrap: false, gutterWidthCells: gutterWidthFor(view.document.lineCount), horizontalScrollCells: anchor?.scrollLeft ?? 0 },
+        options: { wrap: false, gutterWidthCells: gutterWidthFor(view.document.lineCount), horizontalScrollCells: anchor?.scrollLeft ?? 0, diffFillerRows: diagnosticLines },
         ...(anchor === undefined ? {} : { anchor: anchor.anchor }),
       });
     const frame = projected?.ok === true ? projected.value : undefined;
@@ -802,6 +813,7 @@ export class WorkbenchRenderable extends Renderable {
         });
       }
       this.#lastPaintStats = paintStats ?? this.#lastPaintStats;
+      this.paintDiagnostics(buffer, frame, diagnosticLines, geometry.editorX, geometry.editorTop);
       this.#lastCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead, this.#lastCurrentSyntax) ?? this.#lastCurrentSyntax;
       const primary = frame.selections.find((selection) => selection.primary);
       const point = primary?.head.position;
@@ -851,13 +863,14 @@ export class WorkbenchRenderable extends Renderable {
       }
       // Read-only: resolved (and reported) by `syncAnchors()` before this render.
       const paneAnchor = this.#resolvedAnchors.get(pane.viewId);
+      const diagnosticLines = inlineDiagnosticLines(view.document, this.#editorDiagnostics?.(view.document.id) ?? [], Number(paneAnchor?.anchor.lineIndex ?? view.scrollTop), pane.width, pane.height, gutterWidthFor(view.document.lineCount), paneAnchor?.scrollLeft ?? 0);
       const projected = paneLayout.project({
         viewId: pane.viewId as import('../../contracts/src/index').ViewId,
         snapshot: view.document,
         selection: view.selections,
         widthCells: pane.width,
         heightCells: pane.height,
-        options: { wrap: false, gutterWidthCells: gutterWidthFor(view.document.lineCount), horizontalScrollCells: paneAnchor?.scrollLeft ?? 0 },
+        options: { wrap: false, gutterWidthCells: gutterWidthFor(view.document.lineCount), horizontalScrollCells: paneAnchor?.scrollLeft ?? 0, diffFillerRows: diagnosticLines },
         ...(paneAnchor === undefined ? {} : { anchor: paneAnchor.anchor }),
       });
       if (!projected.ok) {
@@ -895,6 +908,7 @@ export class WorkbenchRenderable extends Renderable {
         });
       }
       this.#paneLastFrames.set(pane.viewId, Object.freeze({ layout: geometry, frame, view }));
+      this.paintDiagnostics(buffer, frame, diagnosticLines, pane.x, pane.y);
       this.#paneLastPresentations.set(pane.viewId, presentation);
       this.#paneLastSyntaxReads.set(pane.viewId, syntaxRead);
       const paneCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead, previousPaneCurrentSyntax);
@@ -916,6 +930,27 @@ export class WorkbenchRenderable extends Renderable {
     this.#lastFrame = Object.freeze({ layout: geometry, frame: activeFrame, view: activeView });
     this.#lastPresentation = activePresentation;
     this.#lastPaintStats = activePaint ?? (fullRepaint ? undefined : this.#lastPaintStats);
+  }
+
+  private paintDiagnostics(buffer: OptimizedBuffer, frame: VisibleFrame, lines: readonly DiagnosticLine[], x: number, y: number): void {
+    let diagnosticIndex = 0;
+    for (let row = 0; row < frame.rows.length; row++) {
+      const screen = frame.rows[row]!;
+      if (screen.kind === 'diff-filler') {
+        const target = screen.cells[0]?.target;
+        const line = target?.kind === 'diff-filler' ? lines[target.ordinal] : undefined;
+        if (line === undefined) continue;
+        const color = parseColor(themeColor(diagnosticColor(this.#theme, line.problem.severity), 'fg'));
+        buffer.fillRect(x, y + row, frame.widthCells, 1, this.#background);
+        buffer.drawText(this.#ascii ? line.text.replace(/[└├]─/u, '+-').replace('│', '|') : line.text, x + line.column, y + row, color, this.#background);
+      } else if (screen.lineIndex !== null) {
+        if (this.#editorDiagnostics !== undefined) buffer.drawText(screen.cells[0]?.text ?? ' ', x, y + row, this.#muted, this.#background);
+        while (diagnosticIndex < lines.length && lines[diagnosticIndex]!.problem.range.startLine < Number(screen.lineIndex)) diagnosticIndex++;
+        const candidate = lines[diagnosticIndex];
+        const line = candidate?.problem.range.startLine === Number(screen.lineIndex) ? candidate : undefined;
+        if (line !== undefined) buffer.drawText(line.problem.severity === 1 ? 'E' : line.problem.severity === 2 ? 'W' : line.problem.severity === 3 ? 'I' : 'H', x, y + row, parseColor(themeColor(diagnosticColor(this.#theme, line.problem.severity), 'fg')), this.#background);
+      }
+    }
   }
 
   private paneAt(x: number, y: number): PaneRect | undefined {

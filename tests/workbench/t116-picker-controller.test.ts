@@ -82,6 +82,7 @@ theme.bindSetTheme((value) => { appliedTheme = value; });
 const model = new FakePickerModel<FixtureEntry>();
 const markers: Array<{ readonly name: string; readonly payload: unknown }> = [];
 const secondaryActions: Array<{ readonly entryId: string; readonly key: string }> = [];
+const diagnosticJumps: string[] = [];
 
 const testClock: ClockPort = {
   monotonicMilliseconds: () => Date.now(),
@@ -100,6 +101,7 @@ const picker = new PickerController<FixtureEntry, string>({
   marker: (name, payload) => { markers.push({ name, payload }); },
   startFileIndexPopulation: async () => {},
   toggleMouseMode: () => true,
+  openDiagnostic: async diagnosticId => { diagnosticJumps.push(diagnosticId); },
   openFile: (path, preview) => host.openBufferAtPath(path, { preview }),
   onSecondaryAction: (entry, key) => { secondaryActions.push({ entryId: entry.id, key }); },
 });
@@ -198,6 +200,19 @@ secondaryActions.length = 0;
 await picker.handleKeypress({ name: 's', raw: 's', shift: false, option: false, ctrl: false, meta: false });
 assert.equal(secondaryActions.length, 0, 'T116-PICKER-05b s/u outside git mode falls through to the ordinary filter-query path');
 await picker.close(true);
+
+// Diagnostics reuse query/selection/cancel without opening a preview buffer.
+model.entries = [{ id: 'problem-1', mode: 'diagnostic', value: 'problem-1' }, { id: 'problem-2', mode: 'diagnostic', value: 'problem-2' }];
+picker.open('diagnostic');
+await flush();
+model.selectedId = 'problem-2';
+picker.refresh();
+await flush();
+assert.equal(model.selectedId, 'problem-2', 'live diagnostic refresh retains selected identity');
+assert.equal(diagnosticJumps.length, 0, 'preview never changes editor position');
+await picker.handleKeypress({ name: 'return', raw: '\r', shift: false, option: false, ctrl: false, meta: false });
+assert.deepEqual(diagnosticJumps, ['problem-2']);
+assert.equal(picker.isOpen, false);
 
 // A new preview during asynchronous persistence must not replace the committed id on disk.
 let releaseDirectory: () => void = () => {};
