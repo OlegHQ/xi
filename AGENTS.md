@@ -53,6 +53,28 @@ No input debounce, blocking service work, unbounded copying or growing input bac
 Background work is bounded and cancellable. Missing or noisy measurements remain
 unproven; never weaken a budget or disable a feature to claim success.
 
+### Open audit: loaded CLI latency
+
+`.artifacts/config-audit/AUDIT.md` is not fully closed. Its remaining release gate is the
+`docs/performance.md` requirement that Xi's key-to-correct-terminal-output p95 be within
+3 ms of clean pinned Neovim on the same host and corpus, including a loaded 10 MiB file.
+The measurement writes each key to a real PTY and stops when the correct edited cell is
+observed; it is not physical keyboard-to-screen latency.
+
+Commit `df95a39` removed OpenTUI's 1 ms request-frame throttle. The full
+`bun run verify:release`, `bun run package:build`, and `bun run package:smoke` then passed.
+Packaged Xi idle p95 was 2.711 ms. Loaded packaged Xi p95 was 3.618 and 3.899 ms across
+two 1,000-key runs; paired loaded Neovim p95 was 0.591 ms. The first pair misses the
+relative limit by 0.027 ms, and the second misses it more. Source runs also varied, so
+the loaded comparison is unproven even though the absolute CLI budgets pass. Raw reports
+are under `.artifacts/config-audit/latency-*.json` and are not committed.
+
+Resume with `python3 tests/support/input-latency-pty.py --pairs 500 --file-bytes 10000000
+--binary dist/xi --output .artifacts/config-audit/latency-next.json` and the same command
+with `--nvim` instead of `--binary dist/xi`. Investigate the loaded path and host variance,
+make a root-cause fix if needed, then repeat paired idle/loaded measurements and the
+affected release/package checks. Do not declare the audit complete from one borderline run.
+
 ## Validation and changes
 
 Follow [testing](docs/testing.md). Run checks proportional to the change, including a real
