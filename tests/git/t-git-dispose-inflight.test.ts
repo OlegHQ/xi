@@ -43,6 +43,21 @@ async function run(): Promise<void> {
   await pending;
   assert.equal(publishedAfterDispose, false, 'F2-7: a stale in-flight result must not notify listeners after dispose');
 
+  let trusted = true;
+  const revocable = new GitStatusService({ process: port, root: '/repo', allowed: () => trusted });
+  let publishedTrustedResult = false;
+  revocable.subscribe((snapshot) => { if (snapshot.entries.length > 0) publishedTrustedResult = true; });
+  const pendingRevocation = revocable.refresh();
+  const revocationToken = capturedToken;
+  trusted = false;
+  await revocable.refresh();
+  assert.equal(revocationToken?.isCancelled, true, 'T-GIT-TRUST-01 revocation cancels an in-flight status process');
+  trusted = true;
+  resolveExit?.({ ok: true, value: { code: 0, signal: null } });
+  await pendingRevocation;
+  assert.equal(publishedTrustedResult, false, 'T-GIT-TRUST-02 a cancelled status cannot publish stale entries after a quick re-grant');
+  revocable.dispose();
+
   console.log('T-GIT-DISPOSE-INFLIGHT passed: dispose cancels the in-flight status process and suppresses its stale publish');
 }
 

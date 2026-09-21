@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "suite": "vim",
+  "fixtures": ["config insert behavior"]
+}

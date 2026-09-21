@@ -45,5 +45,6 @@ function makeFrame(selectionKind: 'normal-cursor' | 'insert-caret' | 'visual-cha
 assert.equal(canPaintPlainFrame(makeFrame('normal-cursor'), undefined), true, 'T124-PLAIN-01 a normal-mode block cursor keeps taking the plain path');
 assert.equal(canPaintPlainFrame(makeFrame('insert-caret'), undefined), true, 'T124-PLAIN-02 an insert-mode caret with no masks now takes the plain path too');
 assert.equal(canPaintPlainFrame(makeFrame('visual-character'), undefined), false, 'T124-PLAIN-03 a visual selection (which does populate masks) still rejects the plain path');
+assert.equal(canPaintPlainFrame(makeFrame('normal-cursor'), { documentHighlight: { documentId: 'T124-doc', documentVersion: 1, ranges: [{ start: 0, end: 1 }] } }), false, 'document highlights require the mask painter');
 
 console.log('T124 insert-mode plain paint passed: insert-caret frames with no masks use the cheap run-based path.');

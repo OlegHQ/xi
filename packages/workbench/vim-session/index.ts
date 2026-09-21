@@ -370,9 +370,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   let macroRecording: VimMacroRecordingSession | null = null;
   let lastMacroRegister: VimMacroRegisterName | undefined;
   let lastExCommand: string | undefined;
-  // No timers or document/prefix-help subscriptions are held by this factory: every
-  // handle above is a plain closure variable owned by this session. dispose() only
-  // needs to drop pending state and stop publishing further state changes.
+  const clipboardReads = new Set<CancellationSource>();
   let disposed = false;
   const readPort: DocumentReadPort = {
     snapshot: () => document.snapshot(),
@@ -682,13 +680,19 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     const clipboard = options.clipboard;
     if (clipboard === undefined) { message('xi: clipboard is unavailable\n'); return undefined; }
     const cancellation = new CancellationSource();
+    const version = document.version;
+    const generation = selections.selectionGeneration;
+    const currentMode = mode;
+    const currentInsert = insert;
+    clipboardReads.add(cancellation);
     try {
       const read = selection === 'primary' ? clipboard.readPrimaryText?.(cancellation.token) : clipboard.readText(cancellation.token);
       if (read === undefined) { message('xi: primary selection is unavailable\n'); return undefined; }
       const result = await read;
+      if (disposed || options.isActive?.() === false || document.version !== version || selections.selectionGeneration !== generation || mode !== currentMode || insert !== currentInsert) return undefined;
       if (!result.ok) { message(`xi: clipboard read failed: ${result.error.message}\n`); return undefined; }
       return result.value;
-    } finally { cancellation.dispose(); }
+    } finally { clipboardReads.delete(cancellation); cancellation.dispose(); }
   }
 
   function storeClipboardTextAndPut(text: string, registerName: VimRegisterName, command: 'p' | 'P', count = 1): boolean {
@@ -722,6 +726,12 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
   const session: OwnedVimSession = {
     get activeViewId(): ViewId { return viewId; },
+    get indentStyle(): string {
+      if (options.insertOptions?.expandtab !== true) return 'tabs';
+      const tabstop = options.insertOptions.tabstop ?? 8;
+      const width = options.insertOptions.shiftwidth || tabstop;
+      return `${width} space${width === 1 ? '' : 's'}`;
+    },
     clearMotionGhost,
     get motionGhost(): VimMotionGhost | undefined { return currentMotionGhost(); },
     get commandLineActive(): boolean { return commandLine !== undefined; },
@@ -981,6 +991,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      for (const read of clipboardReads) read.cancel();
       clearMotionGhost();
       closeCommandLine();
       prefixKeys = EMPTY_PREFIX_KEYS;
@@ -1169,7 +1180,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         }
         if (prepared.value.edits.length > 0) {
           const committed = document.commit({
-            documentId: prepared.value.edits.length > 0 ? current.id : current.id,
+            documentId: current.id,
             expectedVersion: current.version,
             edits: prepared.value.edits,
             origin: 'vim',
@@ -1186,6 +1197,10 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         for (const effect of prepared.value.hostEffects) {
           if (effect.kind === 'write') {
             if (options.onSave === undefined || !(await options.onSave(effect.path ?? undefined))) return 'stay';
+          } else if (effect.kind === 'open') {
+            if (document.isDirty && !effect.bang) { message('xi: unsaved changes (use :e! to open anyway)\n'); return 'stay'; }
+            if (effect.path === null || options.onHostCommand === undefined) { message('xi: :edit requires an available file path\n'); return 'stay'; }
+            await options.onHostCommand({ kind: 'open-file', target: effect.path, split: false });
           } else if (effect.kind === 'quit') {
             if (document.isDirty && !effect.bang) {
               message('xi: unsaved changes (use :q! or :wq)\n');

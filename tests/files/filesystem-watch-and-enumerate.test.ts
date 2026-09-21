@@ -93,8 +93,8 @@ async function testEnumerateDirectoryCapsAndBatchesEntries(root: string): Promis
   const filesystem = new NodeFilesystemPort();
   const cancellation = new CancellationSource();
   const capped = await filesystem.enumerateDirectory(directory, directory, cancellation.token, { maxEntries: 100 });
-  assert.equal(capped.ok, true, 'T-FS-ENUM-01 enumeration succeeds under a cap');
-  if (capped.ok) assert.equal(capped.value.length, 100, 'T-FS-ENUM-02 enumeration is capped rather than unbounded');
+  assert.equal(capped.ok, false, 'T-FS-ENUM-01 enumeration reports an exceeded cap');
+  if (!capped.ok) assert.equal(capped.error.code, 'enumeration-limit', 'T-FS-ENUM-02 a cap never silently drops entries');
   const uncapped = await filesystem.enumerateDirectory(directory, directory, cancellation.token);
   assert.equal(uncapped.ok, true, 'T-FS-ENUM-03 enumeration succeeds under the default cap');
   if (uncapped.ok) assert.equal(uncapped.value.length, total, 'T-FS-ENUM-04 a directory under the default 120k cap is fully enumerated');

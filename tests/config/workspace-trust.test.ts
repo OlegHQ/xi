@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { CancellationSource } from '../../packages/primitives/src/entrypoints/launch';
 import { NodeFilesystemPort } from '../../packages/platform/src/entrypoints/launch';
-import { createWorkspaceTrustWiring } from '../../apps/xi/src/wiring/workspace-trust';
+import { createWorkspaceTrustWiring } from '../../packages/services/src/entrypoints/config';
 
 const root = await mkdtemp(join(tmpdir(), 'xi-workspace-trust-'));
 const state = join(root, 'state');

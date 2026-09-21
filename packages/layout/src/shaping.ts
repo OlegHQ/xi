@@ -909,7 +909,7 @@ export function prependGutter(row: ScreenRow, gutterWidth: number, gutter: Gutte
     ...row,
     cells,
     text: gutter.text + row.text,
-    contentKey: row.contentKey === null ? null : `${row.contentKey}|g:${gutterWidth}:${gutterKey}:${row.lineIndex}:${row.wrapIndex}`,
+    contentKey: row.contentKey === null ? null : `${row.contentKey}|g:${gutterWidth}:${gutterKey}:${row.lineIndex}:${row.wrapIndex}:${gutter.text}`,
   };
 }
 

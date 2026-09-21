@@ -6,6 +6,7 @@ export { resolveVimFind } from '../../motions/find';
 export { prepareVimOperator } from '../../operators/core';
 export { prepareVimDirectChange } from '../../operators/direct-changes';
 export { beginVimMultiInsert, planVimMultiInsertInput } from '../../insert/multi';
+export { commentContinuationPrefix } from '../../insert';
 export { parseVimExSequence, prepareVimEx } from '../../ex';
 export { prepareVimMultiOperator, resolveVimMultiVisualFind, resolveVimMultiVisualMotion, resolveVimMultiVisualTextObject } from '../../multi';
 export { convertVimVisualSelection, exchangeVimVisualEndpoints, exchangeVimVisualBlockColumns, createVimMotionGhost, beginVimVisualSelection, extendVimVisualSelection } from '../../visual';

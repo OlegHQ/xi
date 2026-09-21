@@ -10,7 +10,7 @@ import { createSelectionSet, updateSelectionSet, type SelectionMemberInput, type
  * technique) must cost the same near line-start as near line-end, not scale with the
  * cursor's column offset within the line. 200 cursors on one 20k-char mixed-script line,
  * one `l`-style motion (every member's offset advanced by one scalar) mapped through
- * updateSelectionSet: p95 < 1 ms over 30 iterations, and near-start vs near-end cost
+ * updateSelectionSet: p95 < 1 ms over 100 iterations, and near-start vs near-end cost
  * ratio < 2.
  */
 const LINE_LENGTH = 20_000;

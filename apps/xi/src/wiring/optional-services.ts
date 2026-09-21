@@ -64,6 +64,7 @@ export interface OptionalServicesWiring {
   ensure(): Promise<OptionalServices>;
   awaitPending(): Promise<OptionalServices | undefined>;
   scheduleGitRefresh(delayMilliseconds?: number): void;
+  reconcileTrust(): void;
   /** Clears the coalesced git-refresh timer, unsubscribes from git status changes and disposes
    * gitStatusService/gitMutationCoordinator -- none of which main.ts's teardown previously
    * touched. Safe to call whether or not `ensure()` ever resolved. */
@@ -137,7 +138,7 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
         createCtagsNavigationHost,
       } = services;
       hostNavigation = new HostNavigationController(createCtagsNavigationHost({ filesystem: deps.filesystem, workspaceRoot: deps.workspaceRoot, fileUri: deps.fileUri }));
-      const gitEnabled = deps.gitEnabled?.() ?? true;
+      const gitEnabled = deps.gitEnabled ?? (() => true);
       const nextGitStatus = new git.GitStatusService({ process: new deps.ProcessPort(), root: deps.workspaceRoot, env: deps.processEnvironment(), allowed: gitEnabled });
       gitStatusSubscription = nextGitStatus.subscribe(() => {
         refreshExplorerGitDecorations();
@@ -146,7 +147,7 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
       gitStatusService = nextGitStatus;
       gitMutationCoordinator = new git.GitMutationCoordinator(git.createProcessGitMutationExecutor(new deps.ProcessPort(), deps.workspaceRoot, deps.processEnvironment()), gitEnabled);
       gitDiffService = new git.GitDiffService({ process: new deps.ProcessPort(), filesystem: deps.filesystem, env: deps.processEnvironment(), allowed: gitEnabled });
-      if (gitEnabled) void nextGitStatus.refresh();
+      if (gitEnabled()) void nextGitStatus.refresh();
       const nextExplorer = new ExplorerTree(
         deps.createExplorerFilesystem(deps.filesystem, deps.workspaceRoot, () => scheduleGitRefresh(), deps.explorerIgnore),
         { includeHidden: deps.explorerIncludeHidden ?? false, followSymlinks: deps.explorerFollowSymlinks ?? false, flattenDirs: deps.explorerFlattenDirs ?? true, git: deps.createGitDecorationPort(nextGitStatus, deps.workspaceRoot, deps.filesystem) },
@@ -187,6 +188,7 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
     ensure,
     awaitPending: () => initialization ?? Promise.resolve(undefined),
     scheduleGitRefresh,
+    reconcileTrust(): void { if (gitWatchRefreshTimer !== undefined) { clearTimeout(gitWatchRefreshTimer); gitWatchRefreshTimer = undefined; } void gitStatusService?.refresh(); },
     dispose(): void {
       if (gitWatchRefreshTimer !== undefined) { clearTimeout(gitWatchRefreshTimer); gitWatchRefreshTimer = undefined; }
       gitStatusSubscription?.dispose();

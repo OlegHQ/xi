@@ -1,5 +1,4 @@
-import type { ClockPort, CommandId, Disposable, DocumentVersion, Utf16Offset, ViewId } from '../../contracts/src/index';
-import type { LineIndex } from '../../primitives/src/index';
+import type { ClockPort, CommandId, Disposable, DocumentVersion, LineIndex, Utf16Offset, ViewId } from '../../contracts/src/index';
 import type { BufferHost } from '../host';
 import type { WorkbenchSession } from '../session';
 import { CommandRegistry } from '../commands/registry';
@@ -311,15 +310,20 @@ export class WorkbenchInputRouter implements Disposable {
     const viewportHeight = Math.max(1, this.#options.getViewportHeight(viewId) ?? 24);
     const topLine = Math.max(0, Math.min(view.document.lineCount - 1, Math.floor(view.scrollTop)));
     const lastLine = Math.min(view.document.lineCount, topLine + viewportHeight + 1);
-    // ponytail: visible-window scan keeps goto-word bounded; add a full-document jump index only if workspace-wide labels are required.
+    // ponytail: scan at most 4 Ki UTF-16 units per request; a huge visible line
+    // may have unlabeled words beyond that ceiling. Add a viewport-aware index if needed.
     let labelIndex = 0;
+    let remaining = 4 * 1024;
     const labelCount = alphabet.length * alphabet.length;
-    for (let line = topLine; line < lastLine && labelIndex < labelCount; line += 1) {
+    for (let line = topLine; line < lastLine && labelIndex < labelCount && remaining > 0; line += 1) {
       const start = view.document.lineStartOffset(line as LineIndex);
       const end = line + 1 < view.document.lineCount ? view.document.lineStartOffset((line + 1) as LineIndex) : { ok: true as const, value: view.document.lengthUtf16 as Utf16Offset };
       if (!start.ok || !end.ok) continue;
-      const text = view.document.slice(start.value, end.value);
+      let limit = Math.min(Number(end.value), Number(start.value) + remaining);
+      let text = view.document.slice(start.value, limit as Utf16Offset);
+      if (!text.ok && limit > Number(start.value)) text = view.document.slice(start.value, (limit - 1) as Utf16Offset);
       if (!text.ok) continue;
+      remaining -= text.value.length;
       let inWord = false;
       for (let index = 0; index < text.value.length && labelIndex < labelCount;) {
         const codePoint = text.value.codePointAt(index);
@@ -715,7 +719,7 @@ export class WorkbenchInputRouter implements Disposable {
       case 'diagnostics.pick': picker.open('diagnostic'); return true;
       case 'command.pick': picker.open('command'); return true;
       case 'theme.pick': picker.open('theme'); return true;
-      case 'config.open': picker.open('config'); return true;
+      case 'config.open': await this.#options.executeWorkbenchCommand?.('config-open', this.#options.launchViewId); return true;
       case 'config.reload': {
         if (this.#options.reloadConfig === undefined) {
           this.#options.onError('xi: config reload is unavailable in this session\n');

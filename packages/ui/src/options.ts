@@ -40,6 +40,7 @@ export interface OpenTuiWorkbenchOptions {
    * repaint the whole workbench with a new theme immediately (preview), and revert it just as
    * immediately (cancel) -- no renderer teardown/recreation involved. */
   readonly registerThemeSwitch?: (setTheme: (theme: WorkbenchTheme) => void) => void;
+  readonly registerViewportConfig?: (update: (config: { readonly lineNumber: 'absolute' | 'relative'; readonly rulers: readonly number[] }) => void) => void;
   /**
    * Hands the application the renderer-side half of terminal job control (Ctrl-Z/`fg`):
    * `suspend` releases pointer capture and stops the renderer painting; `resume` starts it
@@ -78,9 +79,11 @@ export interface OpenTuiWorkbenchOptions {
   readonly workspaceRoot?: string;
   /** Live statusline metadata for the stable Helix element catalog. */
   readonly statuslineFileType?: () => string | undefined;
+  readonly statuslineIndentStyle?: () => string | undefined;
   readonly statuslineLspActivity?: () => boolean;
   readonly statuslineRegister?: () => string | undefined;
   readonly statuslineCodeActionHints?: () => number;
+  readonly workspaceTrustRestricted?: () => boolean;
   readonly editorCodeActionHints?: (documentId: string, documentVersion: number) => number;
   /** Helix-compatible popup border policy. */
   readonly popupBorder?: 'none' | 'popup' | 'menu' | 'all';

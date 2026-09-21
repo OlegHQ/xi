@@ -55,13 +55,17 @@ type RelaxedWorkbenchUiOptions = Omit<WorkbenchUiOptions, 'explorer' | 'search' 
   readonly output?: WorkbenchUiOptions['output'] | undefined;
 };
 
-function buildStatuslineCallbacks(workbench: Controllers['workbench'], controllers: Controllers): Pick<WorkbenchUiOptions, 'statuslineFileType' | 'statuslineLspActivity' | 'statuslineRegister' | 'statuslineCodeActionHints'> {
+function buildStatuslineCallbacks(workbench: Controllers['workbench'], controllers: Controllers): Pick<WorkbenchUiOptions, 'statuslineFileType' | 'statuslineIndentStyle' | 'statuslineLspActivity' | 'statuslineRegister' | 'statuslineCodeActionHints'> {
   return {
     statuslineFileType: () => {
       const viewId = workbench.activeViewId;
       const view = viewId === undefined ? undefined : workbench.readView(viewId);
       const path = view === undefined ? undefined : workbench.buffer(view.document.id)?.path;
       return controllers.languageWiring.resolveLanguageId(path) ?? 'text';
+    },
+    statuslineIndentStyle: () => {
+      const viewId = workbench.activeViewId;
+      return viewId === undefined ? undefined : controllers.host.sessions.get(viewId)?.indentStyle;
     },
     statuslineLspActivity: () => (controllers.languageWiring.session?.health.progress.length ?? 0) > 0,
     statuslineRegister: () => controllers.startupConfig?.editor.defaultYankRegister ?? '"',
@@ -159,6 +163,10 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     renderer,
     colorMode, undercurl: controllers.startupConfig?.editor.undercurl ?? false,
     theme: themeWiring.themeController.get(themeWiring.themeController.activeId) ?? LIGHT_WORKBENCH_THEME,
+    registerViewportConfig: (update) => controllers.registerUiReload(() => update({
+      lineNumber: controllers.startupConfig?.editor.lineNumber ?? 'absolute',
+      rulers: controllers.startupConfig?.editor.rulers ?? [],
+    })),
     ...(themeVariants === undefined ? {} : { themeVariants, onThemeMode: (mode: 'dark' | 'light' | 'fallback', id: string) => { themeWiring.themeController.setActiveId(id); marker('XI_THEME_MODE', { mode, id }); } }),
     mouseEnabled: controllers.startupConfig?.editor.mouse.enabled ?? true, kittyKeyboardProtocol: controllers.startupConfig?.editor.kittyKeyboardProtocol ?? 'auto',
     syntax: syntaxTracker,
@@ -172,6 +180,12 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     comparison: gitDiffFeature,
     gitBranch: () => optionalServices.current?.gitStatusService.snapshot?.branch, workspaceRoot: process.cwd(),
     ...buildStatuslineCallbacks(workbench, controllers),
+    workspaceTrustRestricted: () => {
+      const viewId = workbench.activeViewId;
+      const view = viewId === undefined ? undefined : workbench.readView(viewId);
+      const path = view === undefined ? undefined : workbench.buffer(view.document.id)?.path;
+      return controllers.workspaceTrust.restricted((controllers.startupConfig?.editor.lsp.enable ?? true) && controllers.languageWiring.hasServerForPath(path));
+    },
     registerMouseToggle: mouseMode.registered,
     registerThemeSwitch: (setTheme) => { themeWiring.themeController.bindSetTheme(setTheme); },
     registerJobControl: (control: { suspend: () => void; resume: () => void }) => { jobControlDisposables.push(installJobControl(control)); },
@@ -191,7 +205,6 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     onPointerCancel: (reason) => pointerRouter.handlePointerCancel(reason),
     onFrame: () => {
       sidebarController.refreshOutline();
-      if (process.env.XI_PERF_TRACE === '1') process.stderr.write(`XI_FRAME ${process.hrtime.bigint().toString()}\r\n`);
     },
     sidebar: () => sidebarController.readModel(),
     tabs: viewId => workbench.readTabs(viewId as ViewId | undefined),

@@ -12,6 +12,7 @@ import tempfile
 import termios
 import time
 from pathlib import Path
+from terminal_screen import Screen
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -58,12 +59,10 @@ with tempfile.TemporaryDirectory(prefix="xi-soft-wrap-limits-pty-") as temporary
         if b"XI_WORKBENCH_READY" not in captured:
             raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
         read_for(master, captured, 0.5)
-        row_one = captured.rfind(b"\x1b[1;6H")
-        row_two = captured.rfind(b"\x1b[2;1H")
-        if row_one < 0 or b" a" not in captured[row_one : row_one + 500]:
-            raise SystemExit(f"max-wrap=0 did not split at the viewport edge: {captured[-4000:]!r}")
-        if row_two < 0 or b"bc" not in captured[row_two : row_two + 500]:
-            raise SystemExit(f"max-wrap=0 continuation row missing: {captured[-4000:]!r}")
+        screen = Screen(14, 40)
+        screen.feed(captured)
+        if "123456789012345678901234567890123" not in screen.row_text(1) or "4 abc" not in screen.row_text(2):
+            raise SystemExit(f"max-wrap=0 did not split at the viewport edge: {screen.row_text(1)!r}, {screen.row_text(2)!r}")
         os.write(master, b"q")
         child.wait(timeout=5)
     finally:

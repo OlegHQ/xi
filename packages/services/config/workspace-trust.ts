@@ -1,6 +1,10 @@
-import { CancellationSource, type CancellationToken } from '../../../../packages/primitives/src/entrypoints/launch';
-import type { NodeFilesystemPort } from '../../../../packages/platform/src/entrypoints/launch';
-import { workspaceTrustAllows, type WorkspaceTrustConfig, type WorkspaceTrustDecision, type WorkspaceTrustResolver } from '../../../../packages/services/src/entrypoints/config';
+import { CancellationSource, type CancellationToken, type FilesystemPort, type PlatformFailure, type Result } from '../../contracts/src/index';
+import { workspaceTrustAllows, type WorkspaceTrustConfig, type WorkspaceTrustDecision, type WorkspaceTrustResolver } from './index';
+
+interface WorkspaceTrustFilesystemPort extends Pick<FilesystemPort, 'readFile' | 'writeFileAtomic'> {
+  makeDirectory(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
+  enumerateFiles(root: string, cancellation: CancellationToken, onBatch: (entries: readonly { readonly relativePath: string; readonly absolutePath: string }[]) => void, options: { readonly maxEntries: number; readonly ignoredDirectoryNames: readonly string[]; readonly followSymlinks: boolean; readonly deduplicateLinks: boolean }): Promise<Result<void, PlatformFailure>>;
+}
 
 const RECORD_VERSION = 1;
 const MAX_RECORD_BYTES = 16 * 1024;
@@ -25,25 +29,35 @@ export interface WorkspaceTrustCommands {
 export interface WorkspaceTrustWiring extends WorkspaceTrustResolver, WorkspaceTrustCommands {
   readonly allowsServers: () => boolean;
   readonly allowsGit: () => boolean;
+  readonly restricted: (serverWouldStart?: boolean) => boolean;
+  readonly shouldPrompt: (serverWouldStart?: boolean) => boolean;
+  dismissPrompt(): void;
 }
 
-export function workspaceTrustStateDirectory(environment: Readonly<Record<string, string | undefined>> = process.env): string {
+export function workspaceTrustStateDirectory(environment: Readonly<Record<string, string | undefined>>): string {
   const home = environment.HOME ?? process.cwd();
   return `${environment.XDG_DATA_HOME ?? `${home}/.local/share`}/xi/workspace_trust`;
 }
 
 export function createWorkspaceTrustWiring(
-  filesystem: NodeFilesystemPort,
+  filesystem: WorkspaceTrustFilesystemPort,
   workspaceRoot: string,
   stateDirectory: string,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
+  environment: Readonly<Record<string, string | undefined>>,
 ): WorkspaceTrustWiring {
   let reload: (() => Promise<boolean>) | undefined;
   let lastDecision: WorkspaceTrustDecision | undefined;
+  let hasLocalConfig = false;
+  let promptEnabled = true;
+  let promptDismissed = false;
+  let excluded = false;
   const root = normalizePath(workspaceRoot);
 
   const resolve = async (currentRoot: string, config: WorkspaceTrustConfig, cancellation: CancellationToken): Promise<WorkspaceTrustDecision> => {
     const normalizedRoot = normalizePath(currentRoot);
+    promptEnabled = config.prompt;
+    const probes = await Promise.all(['config.toml', 'languages.toml'].map((name) => filesystem.readFile(`${normalizedRoot}/.helix/${name}`, cancellation, { maxBytes: 0 })));
+    hasLocalConfig = probes.some((probe) => probe.ok || (probe.error.code !== 'ENOENT' && probe.error.code !== 'ENOTDIR'));
     const implicit = workspaceTrustAllows(normalizedRoot, config, environment);
     const defaults = (workspaceConfigAllowed: boolean, stale: boolean): WorkspaceTrustDecision => Object.freeze({
       workspaceConfigAllowed,
@@ -52,6 +66,7 @@ export function createWorkspaceTrustWiring(
       stale,
     });
     const record = await readRecord(filesystem, recordPath(stateDirectory, normalizedRoot), cancellation);
+    excluded = record?.excluded === true;
     if (record !== undefined && record.path !== normalizedRoot) {
       lastDecision = defaults(false, false);
       return lastDecision;
@@ -92,6 +107,7 @@ export function createWorkspaceTrustWiring(
   };
 
   const command = async (kind: 'trust' | 'untrust' | 'exclude'): Promise<boolean> => {
+    promptDismissed = true;
     const cancellation = new CancellationSource();
     try {
       const hash = kind === 'trust' ? await hashHelixDirectory(filesystem, `${root}/.helix`, cancellation.token) : null;
@@ -108,6 +124,9 @@ export function createWorkspaceTrustWiring(
     resolve,
     allowsServers: () => lastDecision?.serversAllowed ?? true,
     allowsGit: () => lastDecision?.gitAllowed ?? true,
+    restricted: (serverWouldStart = false) => (hasLocalConfig && lastDecision?.workspaceConfigAllowed === false) || (serverWouldStart && lastDecision?.serversAllowed === false),
+    shouldPrompt: (serverWouldStart = false) => promptEnabled && !promptDismissed && !excluded && ((hasLocalConfig && lastDecision?.workspaceConfigAllowed === false) || (serverWouldStart && lastDecision?.serversAllowed === false)),
+    dismissPrompt: () => { promptDismissed = true; },
     trust: () => command('trust'),
     untrust: () => command('untrust'),
     exclude: () => command('exclude'),
@@ -115,7 +134,7 @@ export function createWorkspaceTrustWiring(
   };
 }
 
-async function readRecord(filesystem: NodeFilesystemPort, path: string, cancellation: CancellationToken): Promise<WorkspaceTrustRecord | undefined> {
+async function readRecord(filesystem: WorkspaceTrustFilesystemPort, path: string, cancellation: CancellationToken): Promise<WorkspaceTrustRecord | undefined> {
   const read = await filesystem.readFile(path, cancellation, { maxBytes: MAX_RECORD_BYTES });
   if (!read.ok) return undefined;
   try {
@@ -128,7 +147,7 @@ async function readRecord(filesystem: NodeFilesystemPort, path: string, cancella
   }
 }
 
-async function hashHelixDirectory(filesystem: NodeFilesystemPort, directory: string, cancellation: CancellationToken): Promise<string | undefined> {
+async function hashHelixDirectory(filesystem: WorkspaceTrustFilesystemPort, directory: string, cancellation: CancellationToken): Promise<string | undefined> {
   const entries: { readonly relativePath: string; readonly absolutePath: string }[] = [];
   const enumerated = await filesystem.enumerateFiles(directory, cancellation, (batch) => {
     for (const entry of batch) entries.push({ relativePath: entry.relativePath, absolutePath: entry.absolutePath });

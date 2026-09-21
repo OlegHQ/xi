@@ -3,6 +3,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { validateConfigLedger } from './check-config-ledger';
 
 type SuiteId = 'unit' | 'vim' | 'services' | 'ui' | 'e2e' | 'bench';
 type SuiteSpec = Readonly<{
@@ -16,10 +17,10 @@ const standaloneUnitFixtures = ['verify.ts', 't010-text-fidelity.ts', 't011-tran
 const specs: Readonly<Record<SuiteId, SuiteSpec>> = {
   unit: {
     fixtureRoot: 'tests/unit',
-    roots: ['tests/architecture', 'tests/config', 'tests/document', ...standaloneUnitFixtures.map((name) => `tests/document/${name}`), 'tests/layout', 'tests/persistence', 'tests/selections', 'tests/workbench'],
+    roots: ['tests/architecture', 'tests/config', 'tests/document', ...standaloneUnitFixtures.map((name) => `tests/document/${name}`), 'tests/layout', 'tests/persistence', 'tests/platform', 'tests/selections', 'tests/workbench'],
     selectors: { contributions: ['tests/architecture/t091-lifecycle.test.ts', 'tests/workbench/t090-contributions.test.ts'] },
   },
-  vim: { fixtureRoot: 'tests/fixtures/vim', roots: ['tests/vim', 'tests/oracle'], selectors: {} },
+  vim: { fixtureRoot: 'tests/fixtures/vim', roots: ['tests/vim', 'tests/oracle'], selectors: { config: ['tests/vim/insert-auto-pairs.test.ts', 'tests/vim/insert-smarttab.test.ts', 'tests/vim/t022/t022-insert.test.ts'] } },
   services: {
     fixtureRoot: 'tests/fixtures/services',
     roots: ['tests/files', 'tests/formatting', 'tests/git', 'tests/lsp', 'tests/search', 'tests/services', 'tests/syntax', 'tests/tasks'],
@@ -59,7 +60,12 @@ if (manifest === null || manifest.suite !== suite || manifest.fixtures.length ==
   console.error(`Required suite "${suite}" has no valid manifest at ${manifestPath}.`);
   process.exit(1);
 }
-const roots = selector === undefined ? spec.roots : spec.selectors[selector] ?? [];
+const roots = [
+  ...(selector === undefined ? spec.roots : spec.selectors[selector] ?? []),
+  ...(suite === 'e2e' && selector === 'interaction'
+    ? (await readdir('tests/e2e')).filter((name) => /^config-.*-pty\.py$/u.test(name)).map((name) => `tests/e2e/${name}`)
+    : []),
+];
 if (roots.length === 0) {
   console.error(`Required suite "${suite}" has no fixtures for selector "${selector}".`);
   process.exit(1);
@@ -69,10 +75,24 @@ if (suite === 'bench' && (manifest.executables === undefined || (selector !== un
 }
 const files = suite === 'bench'
   ? await discover(selector === undefined ? manifest.executables ?? [] : roots, (name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
-  : await discover(roots, (name) => name.endsWith('.test.ts') || (suite === 'unit' && (standaloneUnitFixtures.includes(name) || (name.startsWith('test_') && name.endsWith('.py')))) || (suite === 'e2e' && name.endsWith('.py')));
+  : await discover(roots, (name) => executable(suite, name));
 if (files.length === 0) {
   console.error(`Required suite "${suite}" discovered zero executable fixtures.`);
   process.exit(1);
+}
+if (suite === 'e2e' && selector === 'interaction') {
+  const ledger: unknown = JSON.parse(await readFile('docs/configuration-ledger.json', 'utf8'));
+  const errors = validateConfigLedger(ledger);
+  if (errors.length > 0) throw new Error(`Config ledger is invalid: ${errors.join('; ')}`);
+  const selected = new Set(files.map((file) => relative(process.cwd(), file)));
+  for (const id of ['unit', 'vim', 'services', 'ui'] as const) {
+    const suiteRoots = id === 'vim' ? specs.vim.selectors.config! : specs[id].roots;
+    for (const file of await discover(suiteRoots, (name) => executable(id, name))) selected.add(relative(process.cwd(), file));
+  }
+  const evidence = (ledger as { items: { validation: Record<string, string[]> }[] }).items
+    .flatMap((item) => Object.values(item.validation).flatMap((tests) => tests.map((test) => test.split('#', 1)[0]!)));
+  const missing = [...new Set(evidence)].filter((path) => !selected.has(path));
+  if (missing.length > 0) throw new Error(`Config ledger evidence is absent from release suites: ${missing.join(', ')}`);
 }
 console.log(`Suite "${suite}"${selector === undefined ? '' : ` selector "${selector}"`} executing ${files.length} fixture(s).`);
 for (const file of files) {
@@ -94,6 +114,10 @@ function option(name: string): string | undefined {
     throw new Error(`${name} requires exactly one nonempty value`);
   }
   return value;
+}
+
+function executable(id: SuiteId, name: string): boolean {
+  return name.endsWith('.test.ts') || (id === 'unit' && (standaloneUnitFixtures.includes(name) || (name.startsWith('test_') && name.endsWith('.py')))) || (id === 'e2e' && name.endsWith('.py'));
 }
 
 async function readManifest(path: string): Promise<{ readonly suite: string; readonly fixtures: readonly string[]; readonly executables?: readonly string[] } | null> {

@@ -246,7 +246,11 @@ export class PersistenceService {
     if (initial.value.kind !== 'file' && initial.value.kind !== 'symlink') {
       return { ok: false, error: { kind: 'invalid-open', reason: `path is ${initial.value.kind}` } };
     }
-    const textOptions: OpenTextDocumentOptions = options.fileFormat === undefined ? {} : { fileFormat: options.fileFormat };
+    const textOptions: OpenTextDocumentOptions = {
+      ...(options.fileFormat === undefined ? {} : { fileFormat: options.fileFormat }),
+      ...(options.defaultLineEnding === undefined ? {} : { defaultLineEnding: options.defaultLineEnding }),
+      ...(options.editorConfigLineEnding === undefined ? {} : { editorConfigLineEnding: options.editorConfigLineEnding }),
+    };
     const readChunks = this.#filesystem.readFileChunks;
     if (readChunks !== undefined && initial.value.sizeBytes > SMALL_FILE_READ_THRESHOLD_BYTES) {
       const streamed = await readChunks.call(this.#filesystem, path, cancellation);

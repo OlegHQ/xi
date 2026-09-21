@@ -22,9 +22,11 @@ export interface ChromeSurfaceSpec {
   readonly statusline?: { readonly left: readonly string[]; readonly center: readonly string[]; readonly right: readonly string[]; readonly separator: string; readonly mode: { readonly normal: string; readonly insert: string; readonly select: string }; readonly diagnostics: readonly ('hint' | 'info' | 'warning' | 'error')[]; readonly workspaceDiagnostics: readonly ('hint' | 'info' | 'warning' | 'error')[] };
   readonly workspaceRoot?: string;
   readonly statuslineFileType?: () => string | undefined;
+  readonly statuslineIndentStyle?: () => string | undefined;
   readonly statuslineLspActivity?: () => boolean;
   readonly statuslineRegister?: () => string | undefined;
   readonly statuslineCodeActionHints?: () => number;
+  readonly workspaceTrustRestricted?: () => boolean;
   readonly colorModes?: boolean;
   readonly colorMode?: 'truecolor' | 'ansi256' | 'no-color';
   readonly bufferline?: 'always' | 'never' | 'multiple';
@@ -111,23 +113,26 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
     return values.length === 0 ? '' : `${workspace ? ' W ' : ' '}${values.join(' ')}`;
   };
   const statuslineElement = (element: string, view: ReturnType<WorkbenchReadPort['readView']>, modeLabel: string, branch: string | undefined): string => {
+    const activeTab = view === undefined ? undefined : spec.tabs?.(String(view.session.viewId)).find(tab => tab.active);
     switch (element) {
       case 'mode': return ` ${modeLabel} `;
       case 'spinner': return spec.statuslineLspActivity?.() === true ? ' ⠋ ' : '';
-      case 'file-name':
-      case 'file-absolute-path': return ` ${spec.fileLabel} `;
-      case 'file-base-name': return ` ${spec.fileLabel.split(/[\\/]/u).at(-1) ?? spec.fileLabel} `;
+      case 'file-name': return ` ${activeTab?.path ?? activeTab?.label ?? spec.fileLabel} `;
+      case 'file-absolute-path': return ` ${activeTab?.path ?? activeTab?.label ?? spec.fileLabel} `;
+      case 'file-base-name': return ` ${activeTab?.label ?? spec.fileLabel.split(/[\\/]/u).at(-1) ?? spec.fileLabel} `;
       case 'file-modification-indicator': {
-        const active = view === undefined ? undefined : spec.tabs?.(String(view.session.viewId)).find(tab => tab.active);
-        return active?.dirty === true ? '[+]' : '   ';
+        return activeTab?.dirty === true ? '[+]' : '   ';
       }
       case 'read-only-indicator': return view?.document.readOnly === true ? ' [readonly] ' : '';
       case 'file-encoding': return '';
       case 'file-line-ending': {
-        const ending = (view?.document as unknown as { readonly defaultLineEnding?: string }).defaultLineEnding;
-        return ending === 'crlf' ? ' CRLF ' : ending === 'cr' ? ' CR ' : ending === 'lf' ? ' LF ' : '';
+        const ending = view !== undefined && 'defaultLineEnding' in view.document ? view.document.defaultLineEnding : undefined;
+        return ending === 'crlf' ? ' CRLF ' : ending === 'cr' ? ' CR ' : ending === 'lf' ? ' LF ' : ending === 'ff' ? ' FF ' : ending === 'nel' ? ' NEL ' : '';
       }
-      case 'file-indent-style': return '';
+      case 'file-indent-style': {
+        const style = spec.statuslineIndentStyle?.();
+        return style === undefined ? '' : ` ${style} `;
+      }
       case 'file-type': return spec.statuslineFileType?.() ?? '';
       case 'version-control': return branch ?? '';
       case 'selections': {
@@ -139,7 +144,14 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
       case 'primary-selection-length': {
         const selection = view?.selections.members.find(member => member.id === view.selections.primaryId);
         if (selection === undefined) return '';
-        const length = Math.abs(Number(selection.head.at.offset) - Number(selection.anchor.at.offset));
+        const start = Number(selection.head.at.offset) < Number(selection.anchor.at.offset) ? selection.head.at.offset : selection.anchor.at.offset;
+        const anchorEnd = selection.anchor.kind === 'character' ? selection.anchor.after.offset : selection.anchor.at.offset;
+        const headEnd = selection.head.kind === 'character' ? selection.head.after.offset : selection.head.at.offset;
+        const end = Number(headEnd) > Number(anchorEnd) ? headEnd : anchorEnd;
+        const first = view?.document.utf32OffsetAt(start);
+        const last = view?.document.utf32OffsetAt(end);
+        if (first?.ok !== true || last?.ok !== true) return '';
+        const length = Number(last.value) - Number(first.value);
         return ` ${length} char${length === 1 ? '' : 's'} `;
       }
       case 'total-line-numbers': return view === undefined ? '' : ` ${view.document.lineCount} `;
@@ -149,7 +161,9 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
         if (head === undefined) return '';
         const line = view.document.lineIndexAt(head.at.offset);
         const start = line.ok ? view.document.lineStartOffset(line.value) : undefined;
-        return line.ok && start?.ok ? ` ${Number(line.value) + 1}:${Number(head.at.offset) - Number(start.value) + 1} ` : '';
+        const first = start?.ok === true ? view.document.utf32OffsetAt(start.value) : undefined;
+        const last = view.document.utf32OffsetAt(head.at.offset);
+        return line.ok && first?.ok === true && last.ok ? ` ${Number(line.value) + 1}:${Number(last.value) - Number(first.value) + 1} ` : '';
       }
       case 'position-percentage': {
         const head = view?.selections.members.find(member => member.id === view.selections.primaryId)?.head;
@@ -184,7 +198,8 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
     const statusline = spec.statusline;
     const left = statusline === undefined ? `${modeLabel}   ${spec.fileLabel}${branch === undefined ? '' : ` (${branch})`}` : statuslineArea(statusline.left, view, modeLabel, branch);
     const center = statusline === undefined ? '' : statuslineArea(statusline.center, view, modeLabel, branch);
-    const right = statusline === undefined ? `${view?.selections.members.length ?? 0} cursor${(view?.selections.members.length ?? 0) === 1 ? '' : 's'}` : statuslineArea(statusline.right, view, modeLabel, branch);
+    const rightContent = statusline === undefined ? `${view?.selections.members.length ?? 0} cursor${(view?.selections.members.length ?? 0) === 1 ? '' : 's'}` : statuslineArea(statusline.right, view, modeLabel, branch);
+    const right = `${rightContent}${spec.workspaceTrustRestricted?.() === true ? spec.ascii === true ? ' [!] ' : ' [⚠] ' : ''}`;
     const cells = Array.from({ length: width }, () => ' ');
     const write = (text: string, start: number): void => { let index = Math.max(0, start); for (const cell of text) { if (index >= cells.length) break; cells[index] = cell; index += 1; } };
     write(` ${left}`, 0);

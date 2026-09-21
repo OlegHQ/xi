@@ -107,7 +107,7 @@ export interface ProblemsControllerOptions {
   /** PTY-visible stderr sink; never writes to `process.stderr` itself. */
   readonly onError: (message: string) => void;
   readonly workspaceRoot: string;
-  readonly shell: readonly [string, string];
+  readonly shell: readonly [string, ...string[]];
   /** `filesystem.resolvePath`'s subset this controller needs for a configured task's `cwd`
    * and for resolving a problem matcher's relative file path against it. */
   readonly resolvePath: (base: string, relative: string) => string;
@@ -287,7 +287,7 @@ export class ProblemsController {
     });
     const started = await controller.start({
       id: 'shell',
-      argv: [this.#options.shell[0], this.#options.shell[1], value],
+      argv: [...this.#options.shell, value],
       cwd: this.#options.workspaceRoot,
       env: this.#options.processEnvironment(),
     });

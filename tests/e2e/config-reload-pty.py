@@ -12,6 +12,7 @@ import tempfile
 import termios
 import time
 from pathlib import Path
+from terminal_screen import Screen
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,9 +36,9 @@ with tempfile.TemporaryDirectory(prefix="xi-config-reload-pty-") as temporary:
     root = Path(temporary)
     config = root / ".config" / "xi" / "config.toml"
     config.parent.mkdir(parents=True)
-    config.write_text('schema-version = 1\n\n[keys.normal]\nx = "config.reload"\n', encoding="utf-8")
+    config.write_text('schema-version = 1\n[editor]\nline-number = "absolute"\ninsert-final-newline = false\natomic-save = true\n[keys.normal]\nx = "config.reload"\n', encoding="utf-8")
     source = root / "main.txt"
-    source.write_text("config reload\n", encoding="utf-8")
+    source.write_text("one\ntwo\nthree", encoding="utf-8")
 
     master, slave = pty.openpty()
     fcntl = __import__("fcntl")
@@ -57,15 +58,42 @@ with tempfile.TemporaryDirectory(prefix="xi-config-reload-pty-") as temporary:
     output = bytearray()
     try:
         read_until(master, output, b"XI_WORKBENCH_READY")
+        time.sleep(0.2)
+        if select.select([master], [], [], 0.05)[0]:
+            output.extend(os.read(master, 65536))
+        screen = Screen(24, 80)
+        screen.feed(output)
+        if "2  two" not in screen.row_text(2):
+            raise SystemExit(f"initial absolute line numbers were not visible: {screen.row_text(2)!r}")
 
-        config.write_text('schema-version = 1\n\n[keys.normal]\nx = "editor.mouse.toggle"\n', encoding="utf-8")
+        config.write_text('schema-version = 1\n[editor]\nline-number = "relative"\ninsert-final-newline = true\natomic-save = false\n[keys.normal]\nx = "editor.mouse.toggle"\n', encoding="utf-8")
         os.write(master, b"x")
         read_until(master, output, b"XI_CONFIG_RELOAD {\"ok\":true")
+        read_until(master, output, b'"restartRequired":true}')
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], 0.05)[0]:
+                output.extend(os.read(master, 65536))
+            screen = Screen(24, 80)
+            screen.feed(output)
+            if "1  two" in screen.row_text(2):
+                break
+        else:
+            raise SystemExit(f"reloaded relative line numbers were not visible: {screen.row_text(2)!r}")
         time.sleep(0.25)
         os.write(master, b"x")
         read_until(master, output, b"XI_MOUSE_MODE {\"enabled\":false}")
 
-        config.write_text('schema-version = 1\n\n[keys.normal]\ny = "editor.mouse.toggle"\n', encoding="utf-8")
+        os.write(master, b"\x13")
+        read_until(master, output, b'"atomic":false}')
+        deadline = time.monotonic() + 5
+        while source.read_bytes() != b"one\ntwo\nthree\n" and time.monotonic() < deadline:
+            if select.select([master], [], [], 0.05)[0]:
+                output.extend(os.read(master, 65536))
+        if source.read_bytes() != b"one\ntwo\nthree\n":
+            raise SystemExit(f"reloaded save policy did not insert final newline: {source.read_bytes()!r}")
+
+        config.write_text('schema-version = 1\n[editor]\nline-number = "relative"\ninsert-final-newline = true\natomic-save = false\n[keys.normal]\ny = "editor.mouse.toggle"\n', encoding="utf-8")
         os.kill(process.pid, signal.SIGUSR1)
         read_until(master, output, b"XI_CONFIG_RELOAD {\"ok\":true")
         time.sleep(0.25)

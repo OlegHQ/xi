@@ -15,6 +15,7 @@ import {
 import {
   offsetToPosition,
   openTextDocument,
+  openTextDocumentChunks,
   positionToOffset,
   type EncodedTextPosition,
   type LineEnding,
@@ -360,7 +361,7 @@ function checkRopeRejectsUnnormalizedLineEndings(): void {
   console.log('T010-ROPE-EOL-01 passed: raw ropes reject CR while the text-file boundary normalizes it.');
 }
 
-function checkConfiguredDefaultLineEndings(): void {
+async function checkConfiguredDefaultLineEndings(): Promise<void> {
   for (const [ending, bytes] of [['lf', '\n'], ['crlf', '\r\n'], ['cr', '\r'], ['ff', '\f'], ['nel', '\u0085']] as const) {
     const opened = openTextDocument(documentId, new Uint8Array(), 41027, { defaultLineEnding: ending });
     assert.equal(opened.kind, 'editable', `T010-DEFAULT-EOL-01 ${ending} opens an editable new buffer`);
@@ -368,8 +369,29 @@ function checkConfiguredDefaultLineEndings(): void {
     const applied = opened.document.apply({ start: offset(0), end: offset(0), text: '\n' }, opened.document.version);
     assert.equal(applied.ok, true, `T010-DEFAULT-EOL-02 ${ending} inserts a normalized line break`);
     assert.deepEqual(opened.document.serialize(), { ok: true, value: new TextEncoder().encode(bytes) }, `T010-DEFAULT-EOL-03 ${ending} serializes through its configured ending`);
+    const encoded = new TextEncoder().encode(bytes);
+    const reopened = openTextDocument(documentId, encoded);
+    assert.equal(reopened.kind, 'editable');
+    if (reopened.kind === 'editable') {
+      assert.equal(readAll(reopened.document.snapshot()), '\n', `R02-DEFAULT-EOL-REOPEN-01 ${ending} reopens as a logical line break`);
+      assert.deepEqual(reopened.document.serialize(), { ok: true, value: encoded });
+    }
+    const chunked = await openTextDocumentChunks(documentId, (async function* () { for (const byte of encoded) yield Uint8Array.of(byte); })());
+    assert.equal(chunked.kind, 'editable');
+    if (chunked.kind === 'editable') {
+      assert.equal(readAll(chunked.document.snapshot()), '\n', `R02-DEFAULT-EOL-STREAM-01 ${ending} streaming reopen agrees with regular open`);
+      assert.deepEqual(chunked.document.serialize(), { ok: true, value: encoded });
+    }
+    if (ending === 'ff' || ending === 'nel') {
+      const literal = openTextDocument(documentId, encoded, 41027, { fileFormat: 'unix' });
+      assert.equal(literal.kind, 'editable');
+      if (literal.kind === 'editable') assert.equal(readAll(literal.document.snapshot()), bytes, `R02-LITERAL-CONTROL-01 ${ending} remains literal in explicit unix mode`);
+    }
   }
-  console.log('T010-DEFAULT-EOL-01 passed: LF, CRLF, CR, FF and NEL defaults serialize new line breaks exactly.');
+  const empty = await openTextDocumentChunks(documentId, (async function* () { yield new Uint8Array(); })(), 41027, { defaultLineEnding: 'nel' });
+  assert.equal(empty.kind, 'editable');
+  if (empty.kind === 'editable') assert.equal(empty.document.defaultLineEnding, 'nel', 'R02-DEFAULT-EOL-STREAM-EMPTY-01 preserves configured default for an empty named file');
+  console.log('T010-DEFAULT-EOL-01-PART2 passed: LF, CRLF, CR, FF and NEL defaults serialize new line breaks exactly.');
 }
 
 function editable(bytes: Uint8Array): TextFileDocument {
@@ -432,4 +454,4 @@ checkLosslessTextOpenAndSave();
 checkLineEndingEditsAndReadOnlyBytes();
 checkPersistentMixedEndingMetadata();
 checkRopeRejectsUnnormalizedLineEndings();
-checkConfiguredDefaultLineEndings();
+await checkConfiguredDefaultLineEndings();

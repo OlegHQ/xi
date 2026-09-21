@@ -1,4 +1,4 @@
-import { asIdentifier, asUtf16Offset, type CancellationToken, CancellationSource, type ClockPort, type Disposable, type DocumentId, type Result, type UndoGroupId, type ViewId } from '../../contracts/src/index';
+import { asIdentifier, asUtf16Offset, type CancellationToken, CancellationSource, type ClockPort, type Disposable, type DocumentId, type Result, type UndoGroupId, type Utf16Offset, type ViewId } from '../../contracts/src/index';
 import type { DocumentEdit, DocumentSnapshot } from '../../document/src/index';
 import type { TextFileDocument } from '../../document/src/entrypoints/launch';
 import type { BufferHost } from '../host';
@@ -42,20 +42,25 @@ export interface SaveCoordinatorOptions {
   readonly marker: (name: string, payload?: unknown) => void;
   /** PTY-visible stderr sink; never writes to `process.stderr` itself. */
   readonly onError: (message: string) => void;
+  /** Tentative completion edits are visible in the document but must never reach persistence. */
+  readonly isTransientEditActive?: (documentId: DocumentId) => boolean;
   readonly formatOnSave: boolean;
+  readonly formatOnSaveForPath?: (path: string) => boolean;
+  readonly formatterKeyForPath?: (path: string) => string;
   /** Helix's `editor.insert-final-newline`; omitted keeps the compatibility default. */
   readonly insertFinalNewline?: boolean;
   /** Helix's `editor.trim-final-newlines`; omitted disables save trimming. */
   readonly trimFinalNewlines?: boolean;
   /** Helix's `editor.trim-trailing-whitespace`; omitted disables save trimming. */
   readonly trimTrailingWhitespace?: boolean;
+  readonly editorConfigForPath?: (path: string) => { readonly insertFinalNewline?: boolean; readonly trimTrailingWhitespace?: boolean } | undefined;
   /** Fired after a file is actually written to disk (not on a directory-draft review or a
    * failed save); the composition root uses this to refresh Git status without polling. */
   readonly onSaved?: (path: string) => void;
   /** Lazily constructs (memoized here) the environment-configured formatter pipeline;
    * `process.env` reads and the services-owned `FormatterPipeline`/`createExternalFormatter`
    * dynamic import stay composition-root work in `apps/xi/src/main.ts`. */
-  readonly createFormatterPipeline: () => Promise<FormatterPipelinePort | undefined>;
+  readonly createFormatterPipeline: (path?: string) => Promise<FormatterPipelinePort | undefined>;
   /** Checkpoint debounce, in milliseconds. Defaults to 1500 (E13 crash recovery). */
   readonly checkpointDebounceMilliseconds?: number;
   /** Helix `editor.auto-save.after-delay`; disabled unless explicitly enabled. */
@@ -65,6 +70,15 @@ export interface SaveCoordinatorOptions {
   /** Helix's `editor.atomic-save`; omitted keeps atomic replacement enabled. */
   readonly atomicSave?: boolean;
 }
+
+type SavePolicy = {
+  readonly atomicSave: boolean;
+  readonly insertFinalNewline: boolean;
+  readonly trimFinalNewlines: boolean;
+  readonly trimTrailingWhitespace: boolean;
+  readonly autoSaveAfterDelay: SaveCoordinatorOptions['autoSaveAfterDelay'];
+  readonly autoSaveFocusLost: boolean;
+};
 
 /**
  * Owns save/format/checkpoint state that used to live as closure state inside
@@ -86,10 +100,9 @@ export class SaveCoordinator implements Disposable {
   // started while it is running can await it instead of racing it to disk.
   readonly #inFlightCheckpoints = new Map<string, Promise<void>>();
   readonly #checkpointDebounceMilliseconds: number;
-  readonly #autoSaveAfterDelay: SaveCoordinatorOptions['autoSaveAfterDelay'];
-  readonly #autoSaveFocusLost: boolean;
-  #formatterPipeline: FormatterPipelinePort | undefined;
-  #formattingInitialization: Promise<void> | undefined;
+  #savePolicy: SavePolicy;
+  readonly #formatterPipelines = new Map<string, FormatterPipelinePort | undefined>();
+  readonly #formattingInitializations = new Map<string, Promise<void>>();
   #formatterOperationNumber = 0;
   #saveNormalizationOperationNumber = 0;
   #tornDown = false;
@@ -97,21 +110,45 @@ export class SaveCoordinator implements Disposable {
   constructor(options: SaveCoordinatorOptions) {
     this.#options = options;
     this.#checkpointDebounceMilliseconds = options.checkpointDebounceMilliseconds ?? 1500;
-    this.#autoSaveAfterDelay = options.autoSaveAfterDelay;
-    this.#autoSaveFocusLost = options.autoSaveFocusLost === true;
+    this.#savePolicy = {
+      atomicSave: options.atomicSave ?? true,
+      insertFinalNewline: options.insertFinalNewline ?? false,
+      trimFinalNewlines: options.trimFinalNewlines ?? false,
+      trimTrailingWhitespace: options.trimTrailingWhitespace ?? false,
+      autoSaveAfterDelay: options.autoSaveAfterDelay,
+      autoSaveFocusLost: options.autoSaveFocusLost ?? false,
+    };
   }
 
-  get formatterPipeline(): FormatterPipelinePort | undefined { return this.#formatterPipeline; }
+  updateSavePolicy(policy: SavePolicy): void {
+    this.#savePolicy = policy;
+    for (const timer of this.#autoSaveTimers.values()) timer.dispose();
+    this.#autoSaveTimers.clear();
+    if (policy.autoSaveAfterDelay?.enable === true) {
+      for (const buffer of this.#options.session.buffers()) if (buffer.dirty) this.scheduleAutoSave(buffer.documentId);
+    }
+  }
 
-  ensureFormatting(): Promise<void> {
-    this.#formattingInitialization ??= (async () => {
-      this.#formatterPipeline = await this.#options.createFormatterPipeline();
-    })();
-    return this.#formattingInitialization;
+  get formatterPipeline(): FormatterPipelinePort | undefined { return this.#formatterPipelines.get(''); }
+
+  #formatterKey(path: string): string { return this.#options.formatterKeyForPath?.(path) ?? path; }
+
+  ensureFormatting(path = ''): Promise<void> {
+    const key = this.#formatterKey(path);
+    let initialization = this.#formattingInitializations.get(key);
+    if (initialization === undefined) {
+      initialization = this.#options.createFormatterPipeline(path || undefined).then((pipeline) => { this.#formatterPipelines.set(key, pipeline); });
+      this.#formattingInitializations.set(key, initialization);
+    }
+    return initialization;
   }
 
   requestSave(sessionDocument: TextFileDocument, path: string, viewId: ViewId | undefined): Promise<boolean> {
     const key = String(sessionDocument.id);
+    if (this.#options.isTransientEditActive?.(sessionDocument.id) === true) {
+      this.#options.onError('xi: accept, dismiss, or undo the completion preview before saving\n');
+      return Promise.resolve(false);
+    }
     this.#autoSaveTimers.get(key)?.dispose();
     this.#autoSaveTimers.delete(key);
     const requestedVersion = sessionDocument.version;
@@ -131,12 +168,13 @@ export class SaveCoordinator implements Disposable {
     const existingTimer = this.#checkpointTimers.get(key);
     if (existingTimer !== undefined) { existingTimer.dispose(); this.#checkpointTimers.delete(key); }
     const inFlightCheckpoint = this.#inFlightCheckpoints.get(key);
+    const policy = this.#savePolicy;
     const save = async (): Promise<boolean> => {
       if (inFlightCheckpoint !== undefined) await inFlightCheckpoint;
       await this.#options.persistence.cancelPendingCheckpoint?.(path);
-      return this.#saveWithConfiguredFormatter(sessionDocument, path, viewId);
+      return this.#saveWithConfiguredFormatter(sessionDocument, path, viewId, policy);
     };
-    const pending = this.#options.formatOnSave ? this.ensureFormatting().then(save) : save();
+    const pending = (this.#options.formatOnSaveForPath?.(path) ?? this.#options.formatOnSave) ? this.ensureFormatting(path).then(save) : save();
     this.#pendingSaveVersions.set(key, requestedVersion);
     this.#pendingSaves.set(key, pending);
     void pending.then(
@@ -162,7 +200,7 @@ export class SaveCoordinator implements Disposable {
 
   /** Schedule one bounded, reset-on-edit save through the same guarded save path as `:w`. */
   scheduleAutoSave(documentId: DocumentId): void {
-    const config = this.#autoSaveAfterDelay;
+    const config = this.#savePolicy.autoSaveAfterDelay;
     if (config?.enable !== true) return;
     const key = String(documentId);
     this.#autoSaveTimers.get(key)?.dispose();
@@ -177,8 +215,8 @@ export class SaveCoordinator implements Disposable {
 
   /** Save every dirty file when the terminal reports focus leaving Xi. */
   handleFocusChange(focused: boolean): void {
-    this.#options.marker('XI_AUTO_SAVE_FOCUS', { focused, enabled: this.#autoSaveFocusLost });
-    if (focused || !this.#autoSaveFocusLost || this.#tornDown) return;
+    this.#options.marker('XI_AUTO_SAVE_FOCUS', { focused, enabled: this.#savePolicy.autoSaveFocusLost });
+    if (focused || !this.#savePolicy.autoSaveFocusLost || this.#tornDown) return;
     for (const buffer of this.#options.session.buffers()) {
       if (!buffer.dirty || buffer.path === undefined) continue;
       const document = this.#options.host.documents.get(buffer.documentId);
@@ -189,11 +227,6 @@ export class SaveCoordinator implements Disposable {
   /** Runs the environment-configured formatter over the active view's document, then
    * (if changed) applies the result through the view's own undo group. */
   async formatView(viewId: ViewId): Promise<boolean> {
-    await this.ensureFormatting();
-    if (this.#formatterPipeline === undefined) {
-      this.#reportFormatterFailure('failed', 'no formatter is configured');
-      return false;
-    }
     const view = this.#options.session.views().find((candidate) => candidate.viewId === viewId);
     const document = view === undefined ? undefined : this.#options.host.documents.get(view.bufferId);
     const path = view === undefined ? undefined : this.#options.session.buffer(view.bufferId)?.path;
@@ -201,7 +234,13 @@ export class SaveCoordinator implements Disposable {
       this.#reportFormatterFailure('failed', 'active buffer is unavailable');
       return false;
     }
-    return this.#applyConfiguredFormatter(document, path, this.#formatterPipeline, viewId);
+    await this.ensureFormatting(path);
+    const pipeline = this.#formatterPipelines.get(this.#formatterKey(path));
+    if (pipeline === undefined) {
+      this.#reportFormatterFailure('failed', 'no formatter is configured');
+      return false;
+    }
+    return this.#applyConfiguredFormatter(document, path, pipeline, viewId);
   }
 
   dispose(): void {
@@ -210,11 +249,13 @@ export class SaveCoordinator implements Disposable {
     this.#checkpointTimers.clear();
     for (const timer of this.#autoSaveTimers.values()) timer.dispose();
     this.#autoSaveTimers.clear();
-    this.#formatterPipeline?.dispose();
+    for (const pipeline of this.#formatterPipelines.values()) pipeline?.dispose();
+    this.#formatterPipelines.clear();
   }
 
   async #writeCheckpoint(documentId: DocumentId): Promise<void> {
     if (this.#tornDown) return;
+    if (this.#options.isTransientEditActive?.(documentId) === true) return;
     const { host, session, persistence, marker } = this.#options;
     const targetDocument = host.documents.get(documentId);
     const buffer = session.buffers().find((candidate) => candidate.documentId === documentId);
@@ -228,19 +269,21 @@ export class SaveCoordinator implements Disposable {
     }
   }
 
-  async #saveWithConfiguredFormatter(document: TextFileDocument, path: string, viewId: ViewId | undefined): Promise<boolean> {
-    if (this.#options.formatOnSave && this.#formatterPipeline !== undefined && !(await this.#applyConfiguredFormatter(document, path, this.#formatterPipeline, viewId))) return false;
-    if (!(await this.#normalizeForSave(document, viewId))) return false;
-    const saved = await this.#saveDocument(document, path);
+  async #saveWithConfiguredFormatter(document: TextFileDocument, path: string, viewId: ViewId | undefined, policy: SavePolicy): Promise<boolean> {
+    const pipeline = this.#formatterPipelines.get(this.#formatterKey(path));
+    if ((this.#options.formatOnSaveForPath?.(path) ?? this.#options.formatOnSave) && pipeline !== undefined && !(await this.#applyConfiguredFormatter(document, path, pipeline, viewId))) return false;
+    if (!(await this.#normalizeForSave(document, path, viewId, policy))) return false;
+    const saved = await this.#saveDocument(document, path, policy);
     if (!saved) this.#reportFormatterFailure('failed', `save failed for ${path}`);
     return saved;
   }
 
-  async #saveDocument(document: TextFileDocument, path: string): Promise<boolean> {
+  async #saveDocument(document: TextFileDocument, path: string, policy: SavePolicy): Promise<boolean> {
+    if (this.#options.isTransientEditActive?.(document.id) === true) return false;
     const cancellation = new CancellationSource();
     try {
-      this.#options.marker('XI_SAVE_POLICY', { path, atomic: this.#options.atomicSave ?? true });
-      const saved = await this.#options.persistence.saveFile(document, path, cancellation.token, this.#options.atomicSave === undefined ? undefined : { atomic: this.#options.atomicSave });
+      this.#options.marker('XI_SAVE_POLICY', { path, atomic: policy.atomicSave });
+      const saved = await this.#options.persistence.saveFile(document, path, cancellation.token, { atomic: policy.atomicSave });
       if (!saved.ok) {
         this.#options.onError(`xi: cannot save ${path}: ${saved.error.kind}\n`);
         return false;
@@ -257,13 +300,18 @@ export class SaveCoordinator implements Disposable {
     }
   }
 
-  async #normalizeForSave(document: TextFileDocument, viewId: ViewId | undefined): Promise<boolean> {
-    const insertFinalNewline = this.#options.insertFinalNewline === true;
-    const trimFinalNewlines = this.#options.trimFinalNewlines === true;
-    const trimTrailingWhitespace = this.#options.trimTrailingWhitespace === true;
+  async #normalizeForSave(document: TextFileDocument, path: string, viewId: ViewId | undefined, policy: SavePolicy): Promise<boolean> {
+    const fileSettings = this.#options.editorConfigForPath?.(path);
+    const insertFinalNewline = fileSettings?.insertFinalNewline ?? policy.insertFinalNewline;
+    const trimFinalNewlines = policy.trimFinalNewlines;
+    const trimTrailingWhitespace = fileSettings?.trimTrailingWhitespace ?? policy.trimTrailingWhitespace;
     if (!insertFinalNewline && !trimFinalNewlines && !trimTrailingWhitespace) return true;
     const snapshot = document.snapshot();
     const applyEdits = async (edits: readonly DocumentEdit[]): Promise<boolean> => {
+      if (document.version !== snapshot.version) {
+        this.#options.onError('xi: document changed during save normalization; retry the save\n');
+        return false;
+      }
       const group = asIdentifier<UndoGroupId>(`xi-save-normalization-${Date.now()}-${this.#saveNormalizationOperationNumber += 1}`, 'undoGroupId');
       if (!group.ok) {
         this.#options.onError(`xi: cannot normalize document before save: ${group.error.message}\n`);
@@ -288,11 +336,6 @@ export class SaveCoordinator implements Disposable {
       }
       return applyEdits([{ start: end.value, end: end.value, text: '\n' }]);
     }
-    const text = fullDocumentText(snapshot);
-    if (!text.ok) {
-      this.#options.onError(`xi: cannot normalize document before save: ${text.error.kind}\n`);
-      return false;
-    }
     const edits: DocumentEdit[] = [];
     const addEdit = (startValue: number, endValue: number, replacement: string): boolean => {
       const start = asUtf16Offset(startValue);
@@ -302,20 +345,36 @@ export class SaveCoordinator implements Disposable {
       return true;
     };
     let rangesValid = true;
-    if (trimTrailingWhitespace) {
-      for (let index = 0; index < text.value.length; index += 1) {
-        if (text.value[index] !== '\n') continue;
-        let start = index;
-        while (start > 0 && (text.value[start - 1] === ' ' || text.value[start - 1] === '\t')) start -= 1;
-        if (start < index && !addEdit(start, index, '')) rangesValid = false;
+    let whitespaceStart: number | undefined;
+    let finalNewlineStart: number | undefined;
+    let lastCharacter = '';
+    for (let offset = 0; offset < snapshot.lengthUtf16;) {
+      let end = Math.min(snapshot.lengthUtf16, offset + 16_384);
+      let chunk = snapshot.slice(offset as Utf16Offset, end as Utf16Offset);
+      if (!chunk.ok && end < snapshot.lengthUtf16) chunk = snapshot.slice(offset as Utf16Offset, --end as Utf16Offset);
+      if (!chunk.ok) {
+        this.#options.onError(`xi: cannot normalize document before save: ${chunk.error.kind}\n`);
+        return false;
       }
+      for (let index = 0; index < chunk.value.length; index += 1) {
+        const absolute = offset + index;
+        const character = chunk.value[index]!;
+        if (character === '\n') {
+          if (trimTrailingWhitespace && whitespaceStart !== undefined && !addEdit(whitespaceStart, absolute, '')) rangesValid = false;
+          whitespaceStart = undefined;
+          finalNewlineStart ??= absolute;
+        } else {
+          finalNewlineStart = undefined;
+          if (trimTrailingWhitespace && (character === ' ' || character === '\t')) whitespaceStart ??= absolute;
+          else whitespaceStart = undefined;
+        }
+        lastCharacter = character;
+      }
+      offset = end;
+      await new Promise<void>((done) => setImmediate(done));
     }
-    if (trimFinalNewlines && text.value.endsWith('\n')) {
-      let start = text.value.length;
-      while (start > 0 && text.value[start - 1] === '\n') start -= 1;
-      if (text.value.length - start > 1 && !addEdit(start + 1, text.value.length, '')) rangesValid = false;
-    }
-    if (insertFinalNewline && !text.value.endsWith('\n') && !addEdit(text.value.length, text.value.length, '\n')) rangesValid = false;
+    if (trimFinalNewlines && finalNewlineStart !== undefined && snapshot.lengthUtf16 - finalNewlineStart > 1 && !addEdit(finalNewlineStart + 1, snapshot.lengthUtf16, '')) rangesValid = false;
+    if (insertFinalNewline && lastCharacter !== '\n' && !addEdit(snapshot.lengthUtf16, snapshot.lengthUtf16, '\n')) rangesValid = false;
     if (edits.length === 0) return true;
     if (!rangesValid) {
       this.#options.onError('xi: cannot normalize document before save: invalid document range\n');

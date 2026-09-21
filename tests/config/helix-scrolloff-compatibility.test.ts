@@ -19,7 +19,23 @@ try {
     maxBuffer: 4 * 1024 * 1024,
   });
   assert.match(output, /Config file:/, 'T036-SCROLLOFF-HELIX-03 Helix accepts the canonical config fixture');
-  console.log('T036-SCROLLOFF-HELIX-03 passed: pinned Helix 25.07.1 accepted the canonical config fixture containing editor.scrolloff.');
+  for (const [name, source, valid] of [
+    ['shell args', '[editor]\nshell = ["bash", "--noprofile", "-c"]\n', true],
+    ['large scrolloff', '[editor]\nscrolloff = 1001\n', true],
+    ['zero trigger', '[editor]\ncompletion-trigger-len = 0\n', true],
+    ['max trigger', '[editor]\ncompletion-trigger-len = 255\n', true],
+    ['overflow trigger', '[editor]\ncompletion-trigger-len = 256\n', false],
+  ] as const) {
+    writeFileSync(fixture, source);
+    const result = execFileSync(helix, ['-c', fixture, '--health'], {
+      cwd: temporary,
+      env: { ...process.env, HOME: temporary, XDG_CONFIG_HOME: join(temporary, 'config'), XDG_CACHE_HOME: join(temporary, 'cache') },
+      encoding: 'utf8',
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    assert.equal(/Configuration file malformed/u.test(result), !valid, `pinned Helix ${name} boundary`);
+  }
+  console.log('T036-SCROLLOFF-HELIX-03-PART2 passed: pinned Helix 25.07.1 accepted the canonical config fixture containing editor.scrolloff.');
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }

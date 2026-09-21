@@ -598,13 +598,13 @@ function planKey(
   if (text === undefined) return success(ignored(snapshot, session));
   if (session.mode === 'insert' && session.pending.kind === 'none') {
     const cursor = (session.cursorOffset as number) - base;
-    if (isAutoPairCloser(session.options.autoPairs, text)
+    const pair = autoPairFor(session.options.autoPairs, text);
+    if (isAutoPairCloser(session.options.autoPairs, text) && (pair === undefined || pair === text)
       && source.slice(cursor, cursor + text.length) === text) {
       return success(advanceInsertCursor(snapshot, session, base + cursor + text.length));
     }
-    const pair = autoPairFor(session.options.autoPairs, text);
     if (pair !== undefined) {
-      if (source.slice(cursor, cursor + pair.length) === pair) {
+      if (pair === text && source.slice(cursor, cursor + pair.length) === pair) {
         return success(advanceInsertCursor(snapshot, session, base + cursor + pair.length));
       }
       return insertPair(snapshot, source, base, session, text, pair, lineStart);
@@ -838,6 +838,20 @@ function insertNewline(snapshot: DocumentSnapshot, source: string, base: number,
     desiredColumn: null,
   });
   return success(continued(snapshot, next, [makeEdit(base + cursor, base + cursor, value)], 'continued'));
+}
+
+/** Recognize a bounded leading line comment; cached syntax can reject a lexical false positive. */
+export function commentContinuationPrefix(snapshot: DocumentSnapshot, lineStart: number, cursorOffset: number, isComment?: (start: number, end: number) => boolean): string | undefined {
+  if (cursorOffset < lineStart || cursorOffset > snapshot.lengthUtf16) return undefined;
+  const read = snapshot.slice(offset(lineStart), offset(Math.min(cursorOffset, lineStart + 256)));
+  if (!read.ok) return undefined;
+  const match = /^(?:[ \t]*)(\/\/+|#+|;+|--+|%+|<!--)([ \t]*)/u.exec(read.value);
+  const marker = match?.[1];
+  const spacing = match?.[2];
+  if (match === null || marker === undefined || spacing === undefined || cursorOffset < lineStart + match[0].length) return undefined;
+  const markerStart = lineStart + match[0].length - marker.length - spacing.length;
+  if (isComment?.(markerStart, markerStart + marker.length) === false) return undefined;
+  return `${marker}${spacing}`;
 }
 
 function backspace(snapshot: DocumentSnapshot, source: string, base: number, session: VimInsertSession, lineStart: number): VimInsertResult<VimInsertTransition> {

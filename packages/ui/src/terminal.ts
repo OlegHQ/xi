@@ -273,6 +273,8 @@ export async function runOpenTuiWorkbench(
   const viewport = new WorkbenchRenderable(renderer.root.ctx, {
     workbench,
     ...(options.editorDiagnostics === undefined ? {} : { editorDiagnostics: options.editorDiagnostics }),
+    ...(options.virtualAnnotations === undefined ? {} : { virtualAnnotations: options.virtualAnnotations }),
+    ...(options.editorCodeActionHints === undefined ? {} : { editorCodeActionHints: options.editorCodeActionHints }),
     ...(options.scrolloff === undefined ? {} : { scrolloff: options.scrolloff }),
     ...(options.lineNumber === undefined ? {} : { lineNumber: options.lineNumber }),
     ...(options.lineNumberMinWidth === undefined ? {} : { lineNumberMinWidth: options.lineNumberMinWidth }),
@@ -333,6 +335,7 @@ export async function runOpenTuiWorkbench(
     solidTheme.set(theme);
     requestFrame(true);
   });
+  options.registerViewportConfig?.((config) => { viewport.updateViewportConfig(config); requestFrame(true); });
   const pendingKeys: KeyEvent[] = [];
   let pendingKeyHead = 0;
   let drainingKeys = false;
@@ -363,7 +366,7 @@ export async function runOpenTuiWorkbench(
     themeBridge: solidTheme,
     requestFrame,
   })], viewport.forwardPointerEvent.bind(viewport));
-  const surfaceWakeSubscription = options.subscribeSurfaceChanges?.(requestFrame);
+  const surfaceWakeSubscription = options.subscribeSurfaceChanges?.(() => requestFrame());
 
   function drainKeys(): void {
     if (drainingKeys) return;

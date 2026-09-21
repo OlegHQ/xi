@@ -188,8 +188,8 @@ model.entries = session.buffers().map((buffer) => ({ id: String(buffer.bufferId)
 picker.open('buffer');
 await flush();
 assert.equal(model.selectedId, String(openedGit?.bufferId), 'T036-BUFFER-PICKER-UNIT-01 current start-position selects the active buffer');
-assert.ok(markers.some((entry) => entry.name === 'XI_BUFFER_PICKER' && (entry.payload as { readonly startPosition: string }).startPosition === 'current'), 'T036-BUFFER-PICKER-UNIT-01 picker reports the configured start position');
-assert.equal(host.bufferPickerSelection('previous'), String(opened?.bufferId), 'T036-BUFFER-PICKER-UNIT-01 previous start-position resolves the alternate buffer');
+assert.ok(markers.some((entry) => entry.name === 'XI_BUFFER_PICKER' && (entry.payload as { readonly startPosition: string }).startPosition === 'current'), 'T036-BUFFER-PICKER-UNIT-01-PART2 picker reports the configured start position');
+assert.equal(host.bufferPickerSelection('previous'), String(opened?.bufferId), 'T036-BUFFER-PICKER-UNIT-01-PART3 previous start-position resolves the alternate buffer');
 await picker.close(true);
 
 // T116-PICKER-05: 's'/'u' in git mode dispatch onSecondaryAction instead of typing into the

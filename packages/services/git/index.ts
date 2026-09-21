@@ -32,8 +32,8 @@ export interface GitMutationContext { readonly root: string; readonly generation
 export type GitMutationFailure = GitFailure | { readonly kind: 'invalid-message' | 'stale-generation' | 'no-target'; readonly message: string };
 /** Explicit Git mutations; callers must choose stage/unstage/discard/commit separately. */
 export class GitMutationCoordinator implements Disposable {
-  readonly #executor: GitMutationExecutor; readonly #allowed: boolean; #disposed = false; #busy = false;
-  constructor(executor: GitMutationExecutor, allowed = true) { this.#executor = executor; this.#allowed = allowed; }
+  readonly #executor: GitMutationExecutor; readonly #allowed: () => boolean; #disposed = false; #busy = false;
+  constructor(executor: GitMutationExecutor, allowed: boolean | (() => boolean) = true) { this.#executor = executor; this.#allowed = typeof allowed === 'function' ? allowed : () => allowed; }
   async stage(paths: readonly string[], context: GitMutationContext): Promise<Result<void, GitMutationFailure>> { return this.run(['git', 'add', '--', ...paths], paths, context); }
   async unstage(paths: readonly string[], context: GitMutationContext): Promise<Result<void, GitMutationFailure>> { return this.run(['git', 'reset', '--', ...paths], paths, context); }
   async discard(paths: readonly string[], context: GitMutationContext): Promise<Result<void, GitMutationFailure>> { return this.run(['git', 'restore', '--', ...paths], paths, context); }
@@ -41,7 +41,7 @@ export class GitMutationCoordinator implements Disposable {
   async checkoutBranch(name: string, context: GitMutationContext): Promise<Result<void, GitMutationFailure>> { if (!/^[A-Za-z0-9._/-]+$/u.test(name) || name.startsWith('-')) return { ok: false, error: { kind: 'invalid-message', message: 'branch name is invalid' } }; return this.run(['git', 'switch', name], [name], context); }
   async stash(action: 'push' | 'pop' | 'list', context: GitMutationContext, message?: string): Promise<Result<void, GitMutationFailure>> { const argv = action === 'push' ? ['git', 'stash', 'push', ...(message === undefined ? [] : ['-m', message])] : ['git', 'stash', action]; return this.run(argv, ['stash'], context); }
   async remote(action: 'fetch' | 'pull' | 'push', remote: string, context: GitMutationContext): Promise<Result<void, GitMutationFailure>> { if (!/^[A-Za-z0-9._/-]+$/u.test(remote) || remote.startsWith('-')) return { ok: false, error: { kind: 'invalid-message', message: 'remote name is invalid' } }; return this.run(['git', action, remote], [remote], context); }
-  private async run(argv: readonly string[], paths: readonly string[], context: GitMutationContext, input?: string): Promise<Result<void, GitMutationFailure>> { if (this.#disposed) return { ok: false, error: { kind: 'disposed', message: 'git mutation disposed' } }; if (!this.#allowed) return { ok: false, error: { kind: 'unavailable', message: 'Git is disabled in this untrusted workspace' } }; if (this.#busy) return { ok: false, error: { kind: 'apply', message: 'another git mutation is running' } }; if (context.expectedGeneration !== context.generation) return { ok: false, error: { kind: 'stale-generation', message: 'Git status changed; refresh before mutating' } }; if (paths.length === 0) return { ok: false, error: { kind: 'no-target', message: 'Git mutation has no target' } }; this.#busy = true; try { const result = await this.#executor.run(argv, input); return result.ok && result.value.code === 0 ? { ok: true, value: undefined } : result.ok ? { ok: false, error: { kind: 'unavailable', message: result.value.stderr || 'Git command failed' } } : result; } finally { this.#busy = false; } }
+  private async run(argv: readonly string[], paths: readonly string[], context: GitMutationContext, input?: string): Promise<Result<void, GitMutationFailure>> { if (this.#disposed) return { ok: false, error: { kind: 'disposed', message: 'git mutation disposed' } }; if (!this.#allowed()) return { ok: false, error: { kind: 'unavailable', message: 'Git is disabled in this untrusted workspace' } }; if (this.#busy) return { ok: false, error: { kind: 'apply', message: 'another git mutation is running' } }; if (context.expectedGeneration !== context.generation) return { ok: false, error: { kind: 'stale-generation', message: 'Git status changed; refresh before mutating' } }; if (paths.length === 0) return { ok: false, error: { kind: 'no-target', message: 'Git mutation has no target' } }; this.#busy = true; try { const result = await this.#executor.run(argv, input); if (!this.#allowed()) return { ok: false, error: { kind: 'unavailable', message: 'Git is disabled in this untrusted workspace' } }; return result.ok && result.value.code === 0 ? { ok: true, value: undefined } : result.ok ? { ok: false, error: { kind: 'unavailable', message: result.value.stderr || 'Git command failed' } } : result; } finally { this.#busy = false; } }
   dispose(): void { this.#disposed = true; }
 }
 
@@ -70,7 +70,7 @@ export interface GitStatusServiceOptions {
   readonly root: string;
   readonly env?: Readonly<Record<string, string>>;
   readonly timeoutMilliseconds?: number;
-  readonly allowed?: boolean;
+  readonly allowed?: boolean | (() => boolean);
 }
 
 /**
@@ -83,7 +83,7 @@ export class GitStatusService implements Disposable {
   readonly #root: string;
   readonly #env: Readonly<Record<string, string>>;
   readonly #timeoutMilliseconds: number;
-  readonly #allowed: boolean;
+  readonly #allowed: () => boolean;
   readonly #cache = new GitStatusCache();
   readonly #listeners = new Set<(snapshot: GitStatusSnapshot) => void>();
   #generation = 0;
@@ -98,7 +98,7 @@ export class GitStatusService implements Disposable {
     this.#root = options.root;
     this.#env = options.env ?? {};
     this.#timeoutMilliseconds = options.timeoutMilliseconds ?? DEFAULT_STATUS_TIMEOUT_MILLISECONDS;
-    this.#allowed = options.allowed !== false;
+    this.#allowed = typeof options.allowed === 'function' ? options.allowed : () => options.allowed !== false;
   }
 
   get snapshot(): GitStatusSnapshot | undefined { return this.#cache.snapshot; }
@@ -111,20 +111,25 @@ export class GitStatusService implements Disposable {
 
   async refresh(): Promise<void> {
     if (this.#disposed || this.#notRepo) return;
-    if (!this.#allowed) return;
+    if (!this.#allowed()) {
+      this.#activeCancellation?.cancel();
+      if (this.#cache.snapshot !== undefined) this.#publishEmpty(++this.#generation);
+      return;
+    }
     if (this.#running) { this.#rerunRequested = true; return; }
     this.#running = true;
     try {
       do {
         this.#rerunRequested = false;
         await this.#runOnce();
-      } while (this.#rerunRequested && !this.#disposed && !this.#notRepo);
+      } while (this.#rerunRequested && !this.#disposed && !this.#notRepo && this.#allowed());
     } finally {
       this.#running = false;
     }
   }
 
   async #runOnce(): Promise<void> {
+    if (!this.#allowed()) return;
     const generation = ++this.#generation;
     const cancellation = new CancellationSource();
     this.#activeCancellation = cancellation;
@@ -144,7 +149,7 @@ export class GitStatusService implements Disposable {
         drain(handle.stderr, DEFAULT_MAX_OUTPUT_BYTES),
         handle.exit,
       ]);
-      if (this.#disposed) return;
+      if (this.#disposed || cancellation.token.isCancelled || !this.#allowed()) return;
       if (!exit.ok || !stdout.ok) { this.#publishEmpty(generation); return; }
       if (exit.value.code !== 0) {
         const stderrText = stderr.ok ? new TextDecoder('utf-8').decode(stderr.value) : '';

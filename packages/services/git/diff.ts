@@ -189,7 +189,7 @@ export interface GitDiffServiceOptions {
   readonly filesystem: FilesystemPort;
   readonly env?: Readonly<Record<string, string>>;
   readonly timeoutMilliseconds?: number;
-  readonly allowed?: boolean;
+  readonly allowed?: boolean | (() => boolean);
 }
 
 function looksBinary(bytes: Uint8Array): boolean {
@@ -212,18 +212,18 @@ export class GitDiffService {
   readonly #filesystem: FilesystemPort;
   readonly #env: Readonly<Record<string, string>>;
   readonly #timeoutMilliseconds: number;
-  readonly #allowed: boolean;
+  readonly #allowed: () => boolean;
 
   constructor(options: GitDiffServiceOptions) {
     this.#process = options.process;
     this.#filesystem = options.filesystem;
     this.#env = options.env ?? {};
     this.#timeoutMilliseconds = options.timeoutMilliseconds ?? DEFAULT_TIMEOUT_MILLISECONDS;
-    this.#allowed = options.allowed !== false;
+    this.#allowed = typeof options.allowed === 'function' ? options.allowed : () => options.allowed !== false;
   }
 
   async load(options: GitDiffLoadOptions): Promise<Result<GitDiffResult, { readonly message: string }>> {
-    if (!this.#allowed) return { ok: false, error: { message: 'Git is disabled in this untrusted workspace' } };
+    if (!this.#allowed()) return { ok: false, error: { message: 'Git is disabled in this untrusted workspace' } };
     const cancellation = options.cancellation ?? new CancellationSource().token;
     const leftLabel = options.target === 'index' ? 'BASE' : 'INDEX';
     const rightLabel = options.target === 'index' ? 'INDEX' : 'WORKTREE';
@@ -231,7 +231,7 @@ export class GitDiffService {
       options.target === 'index' ? this.#readGitObject(options.root, `HEAD:${options.relativePath}`, cancellation) : this.#readGitObject(options.root, `:${options.relativePath}`, cancellation),
       options.target === 'index' ? this.#readGitObject(options.root, `:${options.relativePath}`, cancellation) : this.#readWorktreeFile(options.root, options.relativePath, cancellation),
     ]);
-    if (cancellation.isCancelled) return { ok: false, error: { message: 'cancelled' } };
+    if (cancellation.isCancelled || !this.#allowed()) return { ok: false, error: { message: 'cancelled' } };
     if (left.kind === 'unavailable' || right.kind === 'unavailable') {
       return { ok: true, value: { kind: 'unavailable', message: 'diff side exceeds the size limit or could not be read' } };
     }
@@ -241,7 +241,7 @@ export class GitDiffService {
     const oldLines = left.kind === 'missing' ? [] : left.lines ?? [];
     const newLines = right.kind === 'missing' ? [] : right.lines ?? [];
     const diff = await compareAsync(oldLines, newLines, cancellation);
-    if (cancellation.isCancelled) return { ok: false, error: { message: 'cancelled' } };
+    if (cancellation.isCancelled || !this.#allowed()) return { ok: false, error: { message: 'cancelled' } };
     return { ok: true, value: { kind: 'ready', leftLabel, rightLabel, leftText: oldLines.join(''), rightText: newLines.join(''), diff } };
   }
 

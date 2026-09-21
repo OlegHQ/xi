@@ -29,6 +29,7 @@ export interface OwnedVimSessionOptions {
   /** Helix master: completed mouse selections are yanked into this Vim register. */
   readonly mouseYankRegister?: string;
   readonly clipboard?: ClipboardPort;
+  readonly isActive?: () => boolean;
   /** Helix editor.smart-tab.enable mapped to Vim's existing bounded insert option. */
   readonly insertOptions?: VimInsertOptions;
   /** Monotonic time source for repeat-timing/dot-repeat bookkeeping. Defaults to a
@@ -87,6 +88,8 @@ export interface VimSearchHighlightState {
 }
 
 export interface OwnedVimSession extends WorkbenchReadPort {
+  /** Effective insert indentation for this buffer, formatted for the statusline. */
+  readonly indentStyle: string;
   handleKey(event: OwnedVimKeyEvent): boolean | 'quit' | Promise<boolean | 'quit'>;
   clearMotionGhost(): void;
   readonly motionGhost: import('../../vim/src/entrypoints/launch').VimMotionGhost | undefined;

@@ -69,10 +69,8 @@ def launch(source: Path) -> bytes:
         os.write(master, mouse(0, 10, 2) + mouse(0, 10, 2, True))
         os.write(master, mouse(0, 10, 2) + mouse(0, 10, 2, True))
         read_for(master, captured, 0.15)
-        # Three clicks promote the gesture to a line selection.
-        os.write(master, mouse(0, 7, 3) + mouse(0, 7, 3, True))
-        os.write(master, mouse(0, 7, 3) + mouse(0, 7, 3, True))
-        os.write(master, mouse(0, 7, 3) + mouse(0, 7, 3, True))
+        # The third click on the same cell promotes the word selection to a line.
+        os.write(master, mouse(0, 10, 2) + mouse(0, 10, 2, True))
         read_for(master, captured, 0.15)
         os.write(master, b"\x1b")
         read_for(master, captured, 0.1)
@@ -121,7 +119,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t086-pointer-pty-") as temporary:
     kinds = [state.get("kind") for state in states]
     required = {"click", "word", "line", "add-caret", "block"}
     if not required.issubset(kinds):
-        raise SystemExit(f"missing pointer kinds {sorted(required - set(kinds))}: {capture[-8000:]!r}")
+        raise SystemExit(f"missing pointer kinds {sorted(required - set(kinds))}; observed={[(state.get('kind'), state.get('row'), state.get('column')) for state in states]!r}")
     if not scrolls:
         raise SystemExit(f"missing pointer scroll marker: {capture[-8000:]!r}")
     cancels = [json.loads(match.group("body")) for match in MARKER.finditer(capture) if b"XI_POINTER_CANCEL" in match.group(0)]

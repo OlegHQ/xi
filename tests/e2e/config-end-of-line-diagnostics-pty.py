@@ -5,7 +5,6 @@ from __future__ import annotations
 import fcntl
 import os
 import pty
-import re
 import select
 import shutil
 import struct
@@ -15,27 +14,24 @@ import termios
 import time
 from pathlib import Path
 
+from terminal_screen import Screen
+
 ROOT = Path(__file__).resolve().parents[2]
-ANSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
-MESSAGE = b"Type 'string' is not assignable to type 'number'."
+MESSAGE = "Type 'string' is not assignable to type 'number'."
 
 
-def read_for(master: int, captured: bytearray, seconds: float) -> None:
+def read_for(master: int, stderr: int, screen: Screen, diagnostics: bytearray, seconds: float) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        if not select.select([master], [], [], 0.05)[0]:
-            continue
-        try:
-            chunk = os.read(master, 65536)
-        except OSError:
-            return
-        if not chunk:
-            return
-        captured.extend(chunk)
-
-
-def visible(captured: bytearray) -> bytes:
-    return ANSI.sub(b"", bytes(captured)).replace(b"\r", b"")
+        for descriptor in select.select([master, stderr], [], [], 0.05)[0]:
+            try:
+                chunk = os.read(descriptor, 65536)
+            except OSError:
+                continue
+            if descriptor == master:
+                screen.feed(chunk)
+            else:
+                diagnostics.extend(chunk)
 
 
 def run_case(config_source: str, label: str) -> None:
@@ -60,21 +56,22 @@ def run_case(config_source: str, label: str) -> None:
             env=environment,
             stdin=slave,
             stdout=slave,
-            stderr=slave,
+            stderr=subprocess.PIPE,
             close_fds=True,
         )
         os.close(slave)
-        captured = bytearray()
+        screen = Screen(40, 120)
+        diagnostics = bytearray()
+        assert child.stderr is not None
         try:
             deadline = time.monotonic() + 45
             os.write(master, b" k")
             while time.monotonic() < deadline:
-                read_for(master, captured, 0.5)
-                lines = visible(captured).splitlines()
-                if any(b"const x: number" in line and MESSAGE in line for line in lines):
+                read_for(master, child.stderr.fileno(), screen, diagnostics, 0.5)
+                if "const x: number" in screen.row_text(1) and MESSAGE in screen.row_text(2):
                     break
             else:
-                raise SystemExit(f"{label} end-of-line diagnostic did not render on the source row: {visible(captured)[-6000:]!r}")
+                raise SystemExit(f"{label} end-of-line diagnostic did not render below the source line: rows={[screen.row_text(index) for index in range(1, 3)]!r}; diagnostics={diagnostics[-1000:]!r}")
             os.write(master, b"q")
             child.wait(timeout=10)
         finally:
@@ -83,7 +80,7 @@ def run_case(config_source: str, label: str) -> None:
                 child.wait()
             os.close(master)
         if child.returncode != 0:
-            raise SystemExit(f"{label} Xi exited {child.returncode}: {visible(captured)[-6000:]!r}")
+            raise SystemExit(f"{label} Xi exited {child.returncode}: {diagnostics[-1000:]!r}")
 
 
 if shutil.which("typescript-language-server") is None:
@@ -91,4 +88,4 @@ if shutil.which("typescript-language-server") is None:
 else:
     run_case("schema-version = 1\n[editor]\nend-of-line-diagnostics = \"error\"\n", "configured")
     run_case("schema-version = 1\n", "master default")
-    print("Config end-of-line-diagnostics PTY passed: explicit and master-default diagnostics rendered on the source row.")
+    print("Config end-of-line-diagnostics PTY passed: explicit and master-default diagnostics rendered below the source row.")

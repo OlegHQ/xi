@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-keyboard-only-") as temporary:
     (workspace / "other.txt").write_text("needle target\n", encoding="utf-8")
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "COLORTERM": "truecolor", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "journey.txt"],
         cwd=workspace,

@@ -16,6 +16,7 @@ export type {
 } from './overlays';
 
 export { CompletionSnippetController, createWordCompletionProvider, nonOverlappingDocumentEdits, pathCompletionToken, planCompletionEdits } from './completion';
+export { createPathCompletionProvider } from './path-completion';
 export type {
   CompletionControllerPort,
   CompletionKeyEvent,

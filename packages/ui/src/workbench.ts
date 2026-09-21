@@ -360,7 +360,7 @@ export class WorkbenchRenderable extends Renderable {
   #comparisonPaint: ComparisonPaint | undefined;
   readonly #workbench: WorkbenchReadPort;
   readonly #scrolloff: number;
-  readonly #lineNumber: 'absolute' | 'relative';
+  #lineNumber: 'absolute' | 'relative';
   readonly #lineNumberMinWidth: number;
   readonly #gutters: readonly GutterType[];
   readonly #indentGuides: { readonly render: boolean; readonly character: string; readonly skipLevels: number };
@@ -381,7 +381,7 @@ export class WorkbenchRenderable extends Renderable {
   readonly #cursorLine: boolean | undefined;
   readonly #cursorColumn: boolean | undefined;
   readonly #undercurl: boolean;
-  readonly #rulers: readonly number[] | undefined;
+  #rulers: readonly number[] | undefined;
   #theme: WorkbenchTheme;
   readonly #ascii: boolean;
   readonly #showBottomPanel: boolean;
@@ -662,6 +662,12 @@ export class WorkbenchRenderable extends Renderable {
   get lastPaintStats(): MotionPaintStats | undefined { return this.#lastPaintStats; }
   /** State changed: resolve cursor-follow anchors (memoized per view state) and mark for paint. */
   refresh(): void { this.syncAnchors(); this.markDirty(); }
+  updateViewportConfig(config: { readonly lineNumber: 'absolute' | 'relative'; readonly rulers: readonly number[] }): void {
+    this.#lineNumber = config.lineNumber;
+    this.#rulers = config.rulers;
+    this.#lastViewportSize = undefined;
+    this.markDirty();
+  }
   get theme(): WorkbenchTheme { return this.#theme; }
   /** Apply a new theme immediately, live -- used for the theme picker's preview/cancel/commit
    * flow. Every color the renderer paints with is cached from `#theme` at construction time
@@ -767,9 +773,15 @@ export class WorkbenchRenderable extends Renderable {
     const memo = this.#anchorMemo.get(viewId);
     if (memo !== undefined && memo.document === view.document && memo.selections === view.selections && memo.top === previousTop
       && memo.left === previousLeft && memo.width === widthCells && memo.height === heightCells) return memo.result;
+    const candidateFrame = this.#paneFrames.get(viewId) ?? (String(this.#lastFrame?.frame?.identity.viewId) === viewId ? this.#lastFrame?.frame : undefined);
+    const previousFrame = candidateFrame?.widthCells === widthCells + gutter && candidateFrame.heightCells === heightCells ? candidateFrame : undefined;
     const resolved = resolveScrollAnchor(view.document, view.selections, previousTop, heightCells, widthCells, previousLeft, {
       scrolloff: this.#scrolloff,
       wrap: this.#wrap,
+      ...(memo?.top === previousTop && memo.width === widthCells && memo.height === heightCells ? {
+        previousAnchor: memo.result.anchor,
+        ...(previousFrame === undefined ? {} : { previousFrame }),
+      } : {}),
       ...(this.#wrapWidth === undefined ? {} : { wrapWidth: this.#wrapWidth }),
     });
     if (!resolved.ok) return undefined;

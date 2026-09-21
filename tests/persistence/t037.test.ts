@@ -17,10 +17,26 @@ const cancellation = new CancellationSource().token;
 
 async function main(): Promise<void> {
   await testExactRoundTripAndSafeBinaryFallback();
+  await testEmptyNamedFileDefaultEndings();
   await testFaultRecoveryAndDivergence();
   await testFailurePolicies();
   testSessionSchema();
   console.log('T037 persistence passed UTF-8/EOL round-trip, binary fallback, atomic fault recovery, divergence reporting, failure policies and session schema fixtures');
+}
+
+async function testEmptyNamedFileDefaultEndings(): Promise<void> {
+  for (const [ending, bytes] of [['lf', '\n'], ['crlf', '\r\n'], ['cr', '\r'], ['ff', '\f'], ['nel', '\u0085']] as const) {
+    const fs = new FakeFilesystem();
+    const path = `/tmp/T037-empty-${ending}`;
+    fs.seed(path, new Uint8Array());
+    const service = new PersistenceService(fs, undefined, testDocumentFactory);
+    const opened = await service.openFile(path, id(`T037-empty-${ending}`), cancellation, { defaultLineEnding: ending });
+    assert.equal(opened.ok && opened.value.kind === 'editable', true, `T037-EMPTY-EOL-01 ${ending} opens editable`);
+    if (!opened.ok || opened.value.kind !== 'editable') continue;
+    assert.equal(opened.value.document.apply({ start: offset(0), end: offset(0), text: 'x\n' }, opened.value.document.version).ok, true);
+    assert.equal((await service.saveFile(opened.value.document, path, cancellation)).ok, true);
+    assert.deepEqual(fs.bytes(path), new TextEncoder().encode(`x${bytes}`), `T037-EMPTY-EOL-02 ${ending} saves configured bytes`);
+  }
 }
 
 async function testExactRoundTripAndSafeBinaryFallback(): Promise<void> {

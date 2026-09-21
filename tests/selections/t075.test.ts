@@ -125,6 +125,15 @@ function checkAdjacentVisualLines(): void {
 
 function checkDuplicateCaretsAndPostDeletionCollision(): void {
   const document = openEditable('duplicate-carets', 'abcd');
+  const left = id('normal-distinct-left');
+  const right = id('normal-distinct-right');
+  const distinct = expectOk(createSelectionSet(document.snapshot(), {
+    primaryId: right,
+    members: [normal(right, character(3), 'forward', 9), normal(left, character(0), 'forward', 2)],
+  }), 'T075-MC02-DISTINCT-NORMAL-01');
+  assert.deepEqual(distinct.selectionSet.members.map((member) => member.id), [left, right], 'distinct normal cursors retain document order');
+  assert.equal(distinct.selectionSet.primaryId, right, 'distinct normal cursors retain primary identity');
+  assert.deepEqual(distinct.idMap, [{ from: left, to: left }, { from: right, to: right }], 'identity map remains in creation order');
   const primary = id('duplicate-primary');
   const duplicate = id('duplicate-secondary');
   const initial = expectOk(createSelectionSet(document.snapshot(), {

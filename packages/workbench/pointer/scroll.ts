@@ -38,8 +38,9 @@ export function scrollViewBy(
     const scrolloff = Number.isSafeInteger(configuredScrolloff) && configuredScrolloff >= 0 ? configuredScrolloff : 0;
     const topMargin = Math.min(scrolloff, Math.floor(Math.max(0, height - 1) / 2));
     const bottomMargin = Math.min(scrolloff, Math.floor(height / 2));
-    const bottom = Math.min(view.document.lineCount - 1, scrollTop + height - bottomMargin - 1);
-    const lower = Math.min(view.document.lineCount - 1, scrollTop + topMargin);
+    const lastLine = view.document.lineCount - 1;
+    const bottom = scrollTop + height > lastLine ? lastLine : scrollTop + height - bottomMargin - 1;
+    const lower = scrollTop === 0 ? 0 : Math.min(lastLine, scrollTop + topMargin);
     const clamped = line < lower ? lower : line > bottom ? bottom : line;
     if (clamped !== line) {
       const lineStart = view.document.lineStartOffset(cursorLine.value);

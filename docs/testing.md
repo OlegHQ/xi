@@ -19,6 +19,10 @@ tests and a real CLI PTY journey. Inspect generated screenshots rather than acce
 snapshot by filename. Filesystem, LSP and Git tests use disposable roots and cover stale
 responses, cancellation, malformed input and process failure.
 
+`bun run verify:release` also runs `bun run ./tools/verify-suite.ts vim --suite config`
+for Vim-owned configuration evidence. Its interaction gate rejects any ledger test file
+that the release suites do not select.
+
 Tests should describe behavior even when an older filename still contains a retired
 ticket number. Rename such files when they are already being substantially edited; do not
 delete a useful regression merely to remove historical naming.
@@ -33,12 +37,19 @@ A parser-only assertion proves only parsing. Unknown keys, wrong types, invalid 
 values and unsafe workspace executable settings need negative tests. Reference Helix
 binaries and source checkouts live under ignored `.artifacts/reference/helix/`; no external
 editor is a Xi runtime dependency.
+The master trust reference PTY uses the `hx` binary at pinned commit `079a789e8cb08ead67f19e1971a1b7438b37354b`.
+Build it in `.artifacts/reference/helix/master` with
+`HELIX_DISABLE_AUTO_GRAMMAR_BUILD=1 cargo build --locked --release -p helix-term`
+after expanding the sparse checkout.
 
 Every config change updates [`configuration-ledger.json`](configuration-ledger.json).
 `bun run check:config-ledger` rejects duplicate or unsealed inventory entries, fixture
 paths missing from the ledger, invalid status transitions, nonexistent evidence and an
 `effective` claim without schema, default, runtime, invalid-input, unit, PTY and Helix
 tests. Xi-only extensions require the same dimensions except Helix comparison.
+An anchored evidence reference must name one unique assertion label. Bare paths are
+reserved for dedicated config PTYs; the interaction gate checks that every referenced
+file is selected by a release suite.
 
 Performance checks follow [performance.md](performance.md). A clean component benchmark
 cannot certify the production CLI, and a noisy or missing measurement is unproven rather

@@ -27,8 +27,24 @@ const missingTest = structuredClone(source) as MutableLedger;
 missingTest.items[0]!.validation.schema = ['tests/config/does-not-exist.test.ts'];
 assert.ok(validateConfigLedger(missingTest).some((error) => error.includes('test does not exist')));
 
+const missingAnchor = structuredClone(source) as MutableLedger;
+missingAnchor.items[0]!.validation.schema = ['tests/config/t036-config.test.ts#DOES-NOT-EXIST'];
+assert.ok(validateConfigLedger(missingAnchor).some((error) => error.includes('test anchor does not exist')));
+
+const commentOnlyAnchor = structuredClone(source) as MutableLedger;
+commentOnlyAnchor.items[0]!.validation.schema = ['tests/workbench/t116-pointer-router.test.ts#T116-POINTER-05'];
+assert.ok(validateConfigLedger(commentOnlyAnchor).some((error) => error.includes('test anchor does not exist')));
+
+const duplicateAnchor = structuredClone(source) as MutableLedger;
+duplicateAnchor.items[0]!.validation.schema = ['tests/config/t036-config.test.ts#T036-SOFT-WRAP-05'];
+assert.ok(validateConfigLedger(duplicateAnchor).some((error) => error.includes('test anchor is not unique')));
+
+const unrelatedPath = structuredClone(source) as MutableLedger;
+unrelatedPath.items[0]!.validation.schema = ['tests/config/t036-config.test.ts'];
+assert.ok(validateConfigLedger(unrelatedPath).some((error) => error.includes('needs an assertion anchor')));
+
 const unsealedRemoval = structuredClone(source) as MutableLedger;
 unsealedRemoval.items.pop();
 assert.ok(validateConfigLedger(unsealedRemoval).some((error) => error.startsWith('inventory hash changed:')));
 
-console.log('Configuration ledger rejects duplicate, unproven, missing-test and unsealed inventory states');
+console.log('Configuration ledger rejects duplicate IDs/anchors, unproven paths, missing tests and unsealed inventory states');

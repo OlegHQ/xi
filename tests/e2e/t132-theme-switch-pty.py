@@ -83,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "COLORTERM": "truecolor", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "theme.txt"],
         cwd=temporary,
@@ -109,9 +109,8 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
         if DARK_BACKGROUND in captured[before_open:]:
             raise SystemExit(f"opening the theme picker did not keep the current theme selected: {captured[before_open:][-2000:]!r}")
 
-        # At 120x40 the picker starts at (6,5), with a border and query header.
         # Hover the first visible result (Xi Dark), then the second (Xi Light).
-        for row, expected in [(8, DARK_BACKGROUND), (9, LIGHT_BACKGROUND), (8, DARK_BACKGROUND)]:
+        for row, expected in [(7, DARK_BACKGROUND), (8, LIGHT_BACKGROUND), (7, DARK_BACKGROUND)]:
             before_hover = len(captured)
             os.write(master, mouse(35, 12, row))
             read_for(master, captured, 0.3)

@@ -176,6 +176,20 @@ async function main(): Promise<void> {
     assert.equal(s.text(), 'alphaalpha beta', 'T036-MOUSE-YANK-REGISTER-UNIT-02 completed pointer selection is stored in the configured register');
   }
 
+  // Xi's automatic pairs replay the typed keys, including a skipped closer.
+  {
+    const s = session('');
+    await type(s, keys('i(x)<Esc>.'));
+    assert.equal(s.text(), '(x(x))', 'AUTO-PAIRS-DOT-01 dot repeats a balanced pair at the current cursor');
+    await type(s, keys('u'));
+    assert.equal(s.text(), '(x)', 'AUTO-PAIRS-DOT-02 undo removes only the repeated pair');
+  }
+  {
+    const s = session('', { insertOptions: { autoPairs: { x: 'y' } } });
+    await type(s, keys('ix<Esc>.'));
+    assert.equal(s.text(), 'xyxy', 'AUTO-PAIRS-DOT-03 custom pair replay stays balanced');
+  }
+
   console.log('vim-session-insert-register: all fixtures passed');
 }
 

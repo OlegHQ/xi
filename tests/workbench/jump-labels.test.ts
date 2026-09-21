@@ -36,7 +36,7 @@ const created = TextFileDocument.create(identifier<DocumentId>('jump-label-docum
 if (!created.ok) throw new Error(created.error.kind);
 const document = created.value;
 const viewId = identifier<ViewId>('jump-label-view');
-const snapshot = document.snapshot();
+let snapshot = document.snapshot();
 const cursorCalls: { readonly line: number; readonly utf16: number }[] = [];
 const session = {
   activeViewId: viewId,
@@ -92,6 +92,11 @@ const annotations = router.jumpLabelAnnotations(String(snapshot.id), Number(snap
 assert.deepEqual(annotations.map(annotation => annotation.text).slice(0, 4), ['xx', 'xy', 'yx', 'yy'], 'JUMP-LABEL-UNIT-01 configured alphabet determines label order');
 assert.equal(await router.dispatchKey(key('x')), 'consumed');
 assert.equal(await router.dispatchKey(key('x')), 'consumed');
-assert.deepEqual(cursorCalls, [{ line: 0, utf16: 0 }], 'JUMP-LABEL-UNIT-01 selecting xx moves the owned session to alpha');
-assert.equal(markers.some(marker => marker.name === 'XI_JUMP_LABEL_SELECTED'), true, 'JUMP-LABEL-UNIT-01 selection emits the production marker');
+assert.deepEqual(cursorCalls, [{ line: 0, utf16: 0 }], 'JUMP-LABEL-UNIT-01-PART2 selecting xx moves the owned session to alpha');
+assert.equal(markers.some(marker => marker.name === 'XI_JUMP_LABEL_SELECTED'), true, 'JUMP-LABEL-UNIT-01-PART3 selection emits the production marker');
+const huge = TextFileDocument.create(identifier<DocumentId>('jump-label-huge-document'), `alpha beta\n${' '.repeat(70_000)}\ngamma delta\n`, ['lf', 'lf', 'lf'], 'lf');
+if (!huge.ok) throw new Error(huge.error.kind);
+snapshot = huge.value.snapshot();
+assert.equal(router.openJumpLabels(), true);
+assert.deepEqual(router.jumpLabelAnnotations(String(snapshot.id), Number(snapshot.version)).map(annotation => annotation.text), ['xx', 'xy'], 'JUMP-LABEL-UNIT-02 huge visible line stops the bounded scan before later words');
 router.dispose();

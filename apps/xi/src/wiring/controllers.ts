@@ -18,6 +18,7 @@ import {
   buildNavigationRequest,
   BufferHost,
   CompletionSnippetController,
+  createPathCompletionProvider,
   createWordCompletionProvider,
   DiffViewController,
   ExplorerController,
@@ -49,16 +50,16 @@ import { DirectoryDraft, JournaledFilesystemOperations, type DirectoryOperationP
 // the async round trip optional-services.ts's lazy `import('.../entrypoints/git')` avoids.
 import { toExplorerGitDecoration, createGitDecorationPort } from '../../../../packages/services/src/entrypoints/git';
 import { resolveFormatOnSave, resolveFormatterSelection } from '../../../../packages/services/src/entrypoints/config';
-import type { CompiledConfig, LanguageConfig, LanguageServerConfig, loadStartupXiConfig } from '../../../../packages/services/src/entrypoints/config';
+import type { CompiledConfig, EditorConfigProperties, LanguageConfig, LanguageServerConfig, loadStartupXiConfig } from '../../../../packages/services/src/entrypoints/config';
 import { SyntaxDocumentTracker } from '../../../../packages/services/src/entrypoints/syntax';
+import { commentContinuationPrefix } from '../../../../packages/vim/src/entrypoints/launch';
 import { createBundledGrammarProvider, resolveTreeSitterRuntimeOptions } from '../syntax-assets';
 import type { StatusMessageController } from '../../../../packages/workbench/src/entrypoints/launch';
 import type { ThemeWiring } from './theme';
 import { createTaskWiring, type TaskWiring } from './tasks';
 import { createLanguageWiring, type LanguageWiring } from './language';
-import { createPathCompletionProvider } from './path-completion';
 import { createOptionalServicesWiring, type OptionalServicesWiring } from './optional-services';
-import type { WorkspaceTrustWiring } from './workspace-trust';
+import type { WorkspaceTrustWiring } from '../../../../packages/services/src/entrypoints/config';
 import type { ResolvedFileArgument } from '../cli';
 
 type CoreServicesModule = typeof import('../../../../packages/services/src/entrypoints/launch-core');
@@ -82,6 +83,7 @@ export interface ControllersDeps {
   readonly createClock: typeof createNodeClock;
   readonly positionToOffset: typeof import('../../../../packages/document/src/entrypoints/launch').positionToOffset;
   readonly openDocumentAt: (path: string | undefined, documentId: DocumentId) => Promise<TextFileDocument | undefined>;
+  readonly editorConfigForPath: (path: string) => EditorConfigProperties | undefined;
   readonly marker: (name: string, payload?: unknown) => void;
   readonly xiUiTestMarkersEnabled: boolean;
   readonly startupTrace: (label: string) => void;
@@ -99,7 +101,9 @@ export interface Controllers {
   readonly editorState: EditorStatePersistence;
   readonly startupConfig: StartupConfig;
   readonly reloadConfig: () => Promise<boolean>;
+  readonly registerUiReload: (listener: () => void) => void;
   readonly statusMessages: StatusMessageController;
+  readonly workspaceTrust: WorkspaceTrustWiring;
   readonly workbench: InstanceType<typeof WorkbenchSession>;
   readonly host: BufferHost;
   readonly saveCoordinator: SaveCoordinator;
@@ -167,13 +171,14 @@ function createDeferredStart(delayMilliseconds: number, start: () => void): { re
   };
 }
 
-async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions): Promise<void> {
+async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onError: (message: string) => void): Promise<void> {
   const cancellation = new CancellationSource();
   try {
-    await filesystem.enumerateFiles(root, cancellation.token, (entries) => {
+    const result = await filesystem.enumerateFiles(root, cancellation.token, (entries) => {
       const indexed = entries.map((entry) => ({ rootId: 'workspace' as const, relativePath: entry.relativePath, absolutePath: entry.absolutePath, hidden: entry.hidden }));
       index.addPaths('workspace', indexed);
     }, { maxEntries: 120_000, followSymlinks, deduplicateLinks, ...(maxDepth === undefined ? {} : { maxDepth }), ignore });
+    if (!result.ok) onError(`xi: file picker index incomplete: ${result.error.message}`);
   } finally {
     index.markReady();
     cancellation.dispose();
@@ -182,10 +187,10 @@ async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePat
 
 /** A single lazily-started, memoized population run -- replaces a bare `let ...Population`
  * closure with one owned handle. */
-function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onDone: () => void): () => Promise<void> {
+function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onDone: () => void, onError: (message: string) => void): () => Promise<void> {
   let population: Promise<void> | undefined;
   return () => {
-    population ??= populateFileIndex(fileIndex, filesystem, root, followSymlinks, deduplicateLinks, maxDepth, ignore).then(onDone);
+    population ??= populateFileIndex(fileIndex, filesystem, root, followSymlinks, deduplicateLinks, maxDepth, ignore, onError).then(onDone);
     return population;
   };
 }
@@ -339,7 +344,7 @@ function createWorkbenchCore(ctx: BuildContext, forward: ForwardRefs, syntaxTrac
       // to every typed character; external LSP/workspace commits still map
       // every live session sharing the document.
       if (change.origin !== 'vim') for (const session of forward.host.sessions.values()) session.applyExternalChange(change);
-      forward.completionFeature.cancelSnippetOnExternalChange();
+      forward.completionFeature.cancelSnippetOnExternalChange(change);
       forward.saveCoordinator.scheduleCheckpoint(change.snapshot.id);
       forward.saveCoordinator.scheduleAutoSave(change.snapshot.id);
     },
@@ -388,6 +393,7 @@ function createLanguageAndTaskWiring(
   syntaxTracker: SyntaxDocumentTracker,
   diagnostics: InstanceType<CoreServicesModule['DiagnosticStore']>,
   fileUri: CoreServicesModule['fileUri'],
+  currentConfig: () => StartupConfig,
 ): { readonly languageWiring: LanguageWiring; readonly taskWiring: TaskWiring; readonly syntaxResultSubscription: Disposable } {
   const { deps, filesystem, workspaceRoot, configuredLanguages, startupConfig, marker } = ctx;
   const { document, filePath } = deps;
@@ -402,7 +408,7 @@ function createLanguageAndTaskWiring(
     diagnostics,
     configuredLanguages,
     configuredLanguageServers: startupConfig?.languageServers,
-    lspEnabled: () => (startupConfig?.editor.lsp.enable ?? true) && deps.workspaceTrust.allowsServers(),
+    lspEnabled: () => (currentConfig()?.editor.lsp.enable ?? true) && deps.workspaceTrust.allowsServers(),
     snippets: startupConfig?.editor.lsp.snippets ?? true,
     displayLspMessages: startupConfig?.editor.lsp.displayMessages ?? true,
     displayLspProgressMessages: startupConfig?.editor.lsp.displayProgressMessages ?? false,
@@ -538,6 +544,12 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
   const { document, filePath } = deps;
   const indentHeuristic = ctx.startupConfig?.editor.indentHeuristic;
   const motionTrail = ctx.startupConfig?.editor.motionTrail ?? 'last-motion';
+  const continueComment = (snapshot: DocumentSnapshot, lineStart: number, cursorOffset: number): string | undefined => {
+    const syntax = syntaxTracker.readSyntax(snapshot.id);
+    return commentContinuationPrefix(snapshot, lineStart, cursorOffset, syntax !== undefined && syntax.documentVersion === snapshot.version
+      ? (start, end) => syntax.spansInRange(start, end).some((span) => span.kind === 'comment')
+      : undefined);
+  };
   marker('XI_CONFIG_PROFILE', {
     profile: ctx.startupConfig?.profile ?? 'xi',
     schemaVersion: ctx.startupConfig?.schemaVersion ?? 1,
@@ -562,9 +574,22 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
     insertOptions: {
       autoindent,
       continueComments: ctx.startupConfig?.editor.continueComments ?? true,
-      commentContinuation: (snapshot, lineStart, cursorOffset) => commentContinuationPrefix(snapshot, syntaxTracker, lineStart, cursorOffset),
+      commentContinuation: continueComment,
       smarttab: ctx.startupConfig?.editor.smartTab.enable ?? true,
       ...(ctx.startupConfig?.editor.autoPairs === undefined ? {} : { autoPairs: ctx.startupConfig.editor.autoPairs }),
+    },
+    insertOptionsForPath: (path) => {
+      const settings = path === undefined ? undefined : deps.editorConfigForPath(path);
+      if (settings === undefined) return undefined;
+      const tabstop = settings.tabWidth ?? (typeof settings.indentSize === 'number' ? settings.indentSize : 8);
+      const shiftwidth = settings.indentSize === 'tab' ? tabstop : settings.indentSize ?? tabstop;
+      return { autoindent, continueComments: ctx.startupConfig?.editor.continueComments ?? true,
+        commentContinuation: continueComment,
+        smarttab: ctx.startupConfig?.editor.smartTab.enable ?? true,
+        ...(ctx.startupConfig?.editor.autoPairs === undefined ? {} : { autoPairs: ctx.startupConfig.editor.autoPairs }),
+        tabstop, shiftwidth, softtabstop: shiftwidth,
+        ...(settings.indentStyle === undefined ? {} : { expandtab: settings.indentStyle === 'space' }),
+      };
     },
     openDocument: async (path, documentId) => (path === undefined ? undefined : await forward.directoryDraftController.openDocumentIfDirectory(path, documentId)) ?? deps.openDocumentAt(path, documentId),
     workspaceRelativePath: (path) => filesystem.workspaceRelativePath(workspaceRoot, path),
@@ -914,29 +939,6 @@ function createSearchProblemsOverlaySidebar(
   return { searchFeature, gitPanelFeature, gitDiffFeature, problemsFeature, overlayFeature, sidebarController };
 }
 
-/** Return a bounded line-comment prefix for a newly opened line. Cached syntax confirms the
- * marker when available; the lexical fallback keeps Enter useful before the background parse
- * completes and only recognizes comment markers at the line start. */
-function commentContinuationPrefix(snapshot: DocumentSnapshot, syntaxTracker: SyntaxDocumentTracker, lineStart: number, cursorOffset: number): string | undefined {
-  if (cursorOffset < lineStart || cursorOffset > snapshot.lengthUtf16) return undefined;
-  const end = Math.min(cursorOffset, lineStart + 256);
-  const startOffset = asUtf16Offset(lineStart);
-  const endOffset = asUtf16Offset(end);
-  if (!startOffset.ok || !endOffset.ok) return undefined;
-  const read = snapshot.slice(startOffset.value, endOffset.value);
-  if (!read.ok) return undefined;
-  const match = /^(?:[ \t]*)(\/\/+|#+|;+|--+|%+|<!--)([ \t]*)/u.exec(read.value);
-  const marker = match?.[1];
-  const spacing = match?.[2];
-  if (match === null || marker === undefined || spacing === undefined || cursorOffset < lineStart + match[0].length) return undefined;
-  const markerStart = lineStart + (match[0].length - marker.length - spacing.length);
-  const markerEnd = markerStart + marker.length;
-  const syntax = syntaxTracker.readSyntax(snapshot.id);
-  if (syntax !== undefined && (syntax.documentVersion as unknown as number) === (snapshot.version as unknown as number)
-    && !syntax.spansInRange(markerStart, markerEnd).some((span) => span.kind === 'comment')) return undefined;
-  return `${marker}${spacing}`;
-}
-
 /** Completion/snippets and workspace-edit (rename/code-action) controllers, plus connecting
  * `languageWiring` to the feature controllers it dispatches LSP notifications into. */
 function createCompletionAndWorkspaceEdits(
@@ -1030,6 +1032,7 @@ function createPointerCapture(ctx: BuildContext, host: BufferHost, workbench: Wo
   return new WorkbenchPointerCapture({
     cancelPendingOperator: () => { host.activeSession()?.cancelPendingOperator(); },
     place: (intent) => {
+      workbench.focus(intent.viewId as ViewId);
       const session = host.sessions.get(intent.viewId as ViewId);
       const applied = session?.placePointer(intent) ?? false;
       if (deps.xiUiTestMarkersEnabled) {
@@ -1055,7 +1058,6 @@ function createSaveAndHostCommands(
   workspacePathFromUri: CoreServicesModule['workspacePathFromUri'],
 ): { readonly saveCoordinator: SaveCoordinator; readonly hostCommands: WorkbenchHostCommands } {
   const { deps, filesystem, clock, persistence, marker, workspaceRoot, formatOnSave, configuredLanguages, startupConfig } = ctx;
-  const { languageId } = deps;
   const saveCoordinator = new SaveCoordinator({
     host,
     session: workbench,
@@ -1063,16 +1065,24 @@ function createSaveAndHostCommands(
     clock,
     marker,
     onError: (message) => ctx.deps.statusMessages.publish(message),
+    isTransientEditActive: (documentId) => forward.completionFeature?.isCompletionPreviewActiveFor(documentId) === true,
     formatOnSave,
+    formatOnSaveForPath: (path) => {
+      const language = languageIdForPath(path);
+      return resolveFormatOnSave(process.env, language !== undefined && (configuredLanguages?.find((entry) => entry.name === language)?.autoFormat ?? false), startupConfig?.editor.autoFormat ?? true);
+    },
+    formatterKeyForPath: (path) => languageIdForPath(path) ?? '',
     insertFinalNewline: startupConfig?.editor.insertFinalNewline ?? true,
     trimFinalNewlines: startupConfig?.editor.trimFinalNewlines ?? false,
     trimTrailingWhitespace: startupConfig?.editor.trimTrailingWhitespace ?? false,
+    editorConfigForPath: deps.editorConfigForPath,
     atomicSave: startupConfig?.editor.atomicSave ?? true,
     ...(startupConfig?.editor.autoSave.afterDelay === undefined ? {} : { autoSaveAfterDelay: startupConfig.editor.autoSave.afterDelay }),
     autoSaveFocusLost: startupConfig?.editor.autoSave.focusLost ?? false,
-    createFormatterPipeline: async () => {
+    createFormatterPipeline: async (path) => {
       const { FormatterPipeline, createExternalFormatter } = await import('../../../../packages/services/src/entrypoints/formatting');
-      const configuredFormatter = languageId === undefined ? undefined : configuredLanguages?.find((entry) => entry.name === languageId)?.formatter;
+      const language = path === undefined ? deps.languageId : languageIdForPath(path);
+      const configuredFormatter = language === undefined ? undefined : configuredLanguages?.find((entry) => entry.name === language)?.formatter;
       return createFormatterPipelineFromEnvironment(workspaceRoot, FormatterPipeline, createExternalFormatter, deps.NodeProcessPort, marker, ctx.deps.statusMessages, configuredFormatter);
     },
     onSaved: () => { void forward.optionalServices.current?.gitStatusService.refresh(); },
@@ -1342,6 +1352,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const jobControlDisposables: Disposable[] = [];
 
   const settings = await loadStartupSettings(deps);
+  let currentConfig = settings.startupConfig;
   const { syntaxAssetsCancellation, syntaxTracker } = createSyntaxTracker(filesystem, settings.startupConfig?.editor.rainbowBrackets ?? false);
   forward.syntaxTracker = syntaxTracker;
   const editorState = deps.themeWiring.editorState;
@@ -1350,7 +1361,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const workbench = createWorkbenchCore(ctx, forward, syntaxTracker);
   const diagnostics = new ctx.deps.coreServices.DiagnosticStore();
   const contextMenuStore = new deps.ContextMenuStore();
-  const { languageWiring, taskWiring, syntaxResultSubscription } = createLanguageAndTaskWiring(ctx, forward, workbench, syntaxTracker, diagnostics, fileUri);
+  const { languageWiring, taskWiring, syntaxResultSubscription } = createLanguageAndTaskWiring(ctx, forward, workbench, syntaxTracker, diagnostics, fileUri, () => currentConfig);
   const { fileIndex, commandRegistry, contributionRegistry, commandAliasRegistration } = await createRegistries(ctx);
   const pickerModel = createPickerModel(ctx, forward, workbench, fileIndex, diagnostics);
   const host = createHostController(ctx, forward, workbench, syntaxTracker);
@@ -1368,8 +1379,8 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   createSaveAndHostCommands(ctx, forward, host, workbench, workspaceEditsFeature, problemsFeature, workspacePathFromUri);
   let applyReloadedConfig: () => Promise<boolean> = async () => false;
   const { inputRouter, pointerRouter } = createInputAndPointerRouters(ctx, forward, host, workbench, commandRegistry, picker, problemsFeature, overlayFeature, workspaceEditsFeature, sidebarController, pointerCapture, contextMenuStore, pickerModel, diagnostics, mouseMode, directoryDraftController, gitDiffFeature, () => applyReloadedConfig());
-  let currentConfig = ctx.startupConfig;
   let reloadInFlight: Promise<boolean> | undefined;
+  let uiReload: (() => void) | undefined;
   const reloadConfig = (): Promise<boolean> => {
     if (reloadInFlight !== undefined) return reloadInFlight;
     const attempt = (async (): Promise<boolean> => {
@@ -1381,6 +1392,16 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
         return false;
       }
       currentConfig = loaded.config;
+      forward.saveCoordinator.updateSavePolicy({
+        atomicSave: loaded.config.editor.atomicSave ?? true,
+        insertFinalNewline: loaded.config.editor.insertFinalNewline,
+        trimFinalNewlines: loaded.config.editor.trimFinalNewlines,
+        trimTrailingWhitespace: loaded.config.editor.trimTrailingWhitespace,
+        autoSaveAfterDelay: loaded.config.editor.autoSave.afterDelay,
+        autoSaveFocusLost: loaded.config.editor.autoSave.focusLost,
+      });
+      optionalServices.reconcileTrust();
+      await languageWiring.reconcileTrust();
       inputRouter.updateConfig({
         bindings: loaded.config.bindings,
         autoInfo: loaded.config.editor.autoInfo,
@@ -1388,8 +1409,9 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
         scrolloff: loaded.config.editor.scrolloff,
         jumpLabelAlphabet: loaded.config.editor.jumpLabelAlphabet,
       });
-      deps.statusMessages.publish(`xi: configuration reloaded (generation ${loaded.config.generation})`, 'info');
-      marker('XI_CONFIG_RELOAD', { ok: true, generation: loaded.config.generation });
+      uiReload?.();
+      deps.statusMessages.publish(`xi: configuration reloaded; restart for remaining settings (generation ${loaded.config.generation})`, 'info');
+      marker('XI_CONFIG_RELOAD', { ok: true, generation: loaded.config.generation, restartRequired: true });
       return true;
     })().finally(() => { reloadInFlight = undefined; });
     reloadInFlight = attempt;
@@ -1402,9 +1424,19 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   // (`inputRouter`, constructed above) exists: `createSession`'s initial state publish can
   // invoke those callbacks synchronously.
   host.createSession(deps.document, id<ViewId>('xi-launch-view'));
+  if (deps.workspaceTrust.shouldPrompt((currentConfig?.editor.lsp.enable ?? true) && languageWiring.hasServerForPath(deps.filePath?.path))) {
+    contextMenuStore.openAt(Math.max(0, Math.floor((process.stdout.columns ?? 80) / 2) - 16), Math.max(0, Math.floor((process.stdout.rows ?? 24) / 2) - 1), [
+      { id: 'trust', label: 'Trust workspace', enabled: true },
+      { id: 'never', label: 'Never trust workspace', enabled: true },
+    ], (choice) => {
+      deps.workspaceTrust.dismissPrompt();
+      const changed = choice === 'trust' ? deps.workspaceTrust.trust() : deps.workspaceTrust.exclude();
+      void changed.then((ok) => { if (!ok) deps.statusMessages.publish('xi: workspace trust change failed'); host.notifySurfaceChange(); }).catch(() => deps.statusMessages.publish('xi: workspace trust change failed'));
+    });
+  }
 
   const filePicker = ctx.startupConfig?.editor.filePicker;
-  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd() }, () => host.notifySurfaceChange());
+  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd() }, () => host.notifySurfaceChange(), message => deps.statusMessages.publish(message));
   forward.startFileIndexPopulation = startFileIndexPopulation;
   const fileIndexStarter = createDeferredStart(1000, () => { void startFileIndexPopulation(); });
   async function ensureGitAndOpenPicker(): Promise<void> {
@@ -1417,7 +1449,9 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     editorState,
     get startupConfig() { return currentConfig; },
     reloadConfig,
+    registerUiReload: (listener) => { uiReload = listener; },
     statusMessages: deps.statusMessages,
+    workspaceTrust: deps.workspaceTrust,
     workbench,
     host,
     saveCoordinator: forward.saveCoordinator,

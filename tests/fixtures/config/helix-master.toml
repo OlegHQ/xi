@@ -1,0 +1,32 @@
+theme = { dark = "default", light = "default", fallback = "default" }
+[editor]
+end-of-line-diagnostics = "hint"
+mouse-yank-register = "*"
+rainbow-brackets = false
+kitty-keyboard-protocol = "auto"
+[editor.file-explorer]
+hidden = false
+follow-symlinks = false
+parents = false
+ignore = false
+git-ignore = false
+git-global = false
+git-exclude = false
+flatten-dirs = true
+[editor.buffer-picker]
+start-position = "current"
+[editor.statusline]
+left = ["current-working-directory", "code-action-hint"]
+[editor.lsp]
+auto-document-highlight = false
+[editor.gutters]
+layout = ["code-action-hint"]
+[editor.inline-diagnostics]
+cursor-line = "warning"
+[editor.word-completion]
+enable = true
+trigger-length = 7
+[editor.workspace-trust]
+level = "servers"
+prompt = true
+trusted = []

@@ -1,12 +1,18 @@
-import type { CancellationToken, Result } from '../../../../packages/primitives/src/entrypoints/launch';
-import type { NodeFilesystemPort } from '../../../../packages/platform/src/entrypoints/launch';
-import { pathCompletionToken, type CompletionProviderPort, type LanguageWorkbenchSessionPort, type WorkbenchCompletionList, type WorkbenchCompletionRequest } from '../../../../packages/workbench/src/entrypoints/launch';
+import type { CancellationToken, Result } from '../../contracts/src/index';
+import { pathCompletionToken, type CompletionProviderPort, type WorkbenchCompletionList, type WorkbenchCompletionRequest } from './completion';
+import type { LanguageWorkbenchSessionPort } from './overlays';
 
 const PATH_COMPLETION_LIMIT = 200;
 
-/** Local path completion stays a filesystem concern at the composition boundary. */
+interface PathCompletionFilesystemPort {
+  directoryPath(path: string): string;
+  resolvePath(base: string, path: string): string;
+  enumerateDirectory(path: string, root: string, cancellation: CancellationToken, options: { readonly maxEntries: number }): Promise<Result<readonly { readonly name: string; readonly kind: 'directory' | 'file' | 'symlink' | 'other'; readonly relativePath: string }[], { readonly message: string }>>;
+}
+
+/** Local path completion is workbench behavior over a typed filesystem port. */
 export function createPathCompletionProvider(
-  filesystem: NodeFilesystemPort,
+  filesystem: PathCompletionFilesystemPort,
   session: LanguageWorkbenchSessionPort,
   workspaceRoot: string,
 ): CompletionProviderPort {

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import { parseToml } from '../packages/services/config/index';
@@ -12,6 +13,7 @@ const MASTER_COMMIT = '079a789e8cb08ead67f19e1971a1b7438b37354b';
 
 export function validateConfigLedger(value: unknown, root = process.cwd()): string[] {
   const errors: string[] = [];
+  const tracked = new Set(execFileSync('git', ['ls-files', '--cached', '--', 'tests'], { cwd: root, encoding: 'utf8' }).split('\n'));
   if (!record(value)) return ['ledger must be an object'];
   if (value.schemaVersion !== 1) errors.push('schemaVersion must be 1');
   const references = object(value, 'references', errors);
@@ -69,7 +71,7 @@ export function validateConfigLedger(value: unknown, root = process.cwd()): stri
         errors.push(`${at}.validation.${dimension} must name at least one test`);
         continue;
       }
-      for (const namedTest of evidence) validateTestPath(namedTest, root, `${at}.validation.${dimension}`, errors);
+      for (const namedTest of evidence) validateTestPath(namedTest, root, tracked, dimension, `${at}.validation.${dimension}`, errors);
     }
     if (status === 'missing' && dimensions.length > 0) errors.push(`${at} cannot be missing with passing validation`);
     if (status === 'parsed-only' && (validation.runtime !== undefined || validation.pty !== undefined)) {
@@ -111,13 +113,24 @@ function covers(item: Record<string, unknown>, candidate: string): boolean {
     && candidate.startsWith(`${item.path}.`);
 }
 
-function validateTestPath(value: string, root: string, label: string, errors: string[]): void {
-  const path = value.split('#', 1)[0] ?? '';
+function validateTestPath(value: string, root: string, tracked: ReadonlySet<string>, dimension: string, label: string, errors: string[]): void {
+  const [path = '', anchor] = value.split('#', 2);
   const absolute = resolve(root, path);
   if (!path.startsWith('tests/') || (!path.endsWith('.ts') && !path.endsWith('.py'))) {
     errors.push(`${label} must point to a committed TypeScript or Python test: ${value}`);
   } else if (!absolute.startsWith(`${resolve(root)}${sep}`) || !existsSync(absolute)) {
     errors.push(`${label} test does not exist: ${value}`);
+  } else {
+    if (!tracked.has(path)) errors.push(`${label} test is not committed: ${value}`);
+    if (anchor === undefined) {
+      if (!path.startsWith('tests/e2e/') || !path.endsWith('-pty.py') || !['runtime', 'pty', 'invalid'].includes(dimension)) {
+        errors.push(`${label} needs an assertion anchor: ${value}`);
+      }
+    } else {
+      const labels = anchor ? readFileSync(absolute, 'utf8').match(new RegExp(`[\\'"\x60]${anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'g')) : null;
+      if (labels === null) errors.push(`${label} test anchor does not exist as an assertion label: ${value}`);
+      else if (labels.length !== 1) errors.push(`${label} test anchor is not unique: ${value}`);
+    }
   }
 }
 

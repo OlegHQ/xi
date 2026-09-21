@@ -42,7 +42,7 @@ try:
                 undo()
                 type_keys('gg0V'); key('ctrl+d'); capture('visual-line-half-page')
                 type_keys('d'); save()
-                assert target.read_text() == ''.join(lines[20:]), '38-row viewport: half-page extends to line 20 inclusively'
+                assert target.read_text() == ''.join(lines[25:]), '39-row viewport and scrolloff=5: half-page extends through row023 (Neovim oracle line 25)'
                 undo()
                 type_keys('gg020jV'); key('ctrl+u'); type_keys('d'); save()
                 assert target.read_text() == lines[0] + ''.join(lines[21:]), 'Ctrl-U extends backward across 20 selected lines'

@@ -12,6 +12,7 @@ import tempfile
 import termios
 import time
 from pathlib import Path
+from terminal_screen import Screen
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,12 +48,11 @@ with tempfile.TemporaryDirectory(prefix="xi-text-width-pty-") as temporary:
         if b"XI_WORKBENCH_READY" not in captured:
             raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
         read_for(master, captured, 0.5)
-        row_two = captured.rfind(b"\x1b[2;5H")
-        row_three = captured.rfind(b"\x1b[3;5H")
-        if row_two < 0 or b"56789" not in captured[row_two:row_two + 300]:
-            raise SystemExit(f"text-width second segment missing: {captured[-4000:]!r}")
-        if row_three < 0 or b"ABCDE" not in captured[row_three:row_three + 300]:
-            raise SystemExit(f"text-width third segment missing: {captured[-4000:]!r}")
+        screen = Screen(14, 40)
+        screen.feed(captured)
+        for row, segment in enumerate(("01234", "56", "78", "9A", "BC", "DE"), 1):
+            if segment not in screen.row_text(row):
+                raise SystemExit(f"text-width segment {segment!r} missing at row {row}: {screen.row_text(row)!r}")
         os.write(master, b"q")
         child.wait(timeout=5)
     finally:
@@ -63,4 +63,4 @@ with tempfile.TemporaryDirectory(prefix="xi-text-width-pty-") as temporary:
     if child.returncode != 0:
         raise SystemExit(f"Xi exited {child.returncode}: {captured[-4000:]!r}")
 
-print("Config text-width PTY passed: wrap-at-text-width constrained launched Xi to five-cell segments.")
+print("Config text-width PTY passed: wrap-at-text-width constrained rows to five cells including continuation indicators.")

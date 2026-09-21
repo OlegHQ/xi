@@ -453,7 +453,7 @@ function checkScrolloffKeepsCursorAwayFromViewportEdges(): void {
   const resolved = resolveScrollAnchor(document.snapshot(), selection, 0, heightCells, 80, 0, { scrolloff: 5 });
   assert.equal(resolved.ok, true, 'T014-SCROLLOFF-01 resolveScrollAnchor accepts Helix scrolloff');
   if (!resolved.ok) return;
-  assert.equal(resolved.value.scrollTop, 11, 'T014-SCROLLOFF-01 bottom margin leaves five rows below the cursor');
+  assert.equal(resolved.value.scrollTop, 11, 'T014-SCROLLOFF-01-PART2 bottom margin leaves five rows below the cursor');
 
   const nearTop = resolveScrollAnchor(document.snapshot(), selectionAtLine(document, 12), 11, heightCells, 80, 0, { scrolloff: 5 });
   assert.equal(nearTop.ok, true, 'T014-SCROLLOFF-02 top-margin resolution succeeds');
@@ -463,7 +463,44 @@ function checkScrolloffKeepsCursorAwayFromViewportEdges(): void {
   const horizontal = resolveScrollAnchor(horizontalDocument.snapshot(), selectionAt(horizontalDocument, 500), 0, heightCells, 80, 0, { scrolloff: 5 });
   assert.equal(horizontal.ok, true, 'T014-SCROLLOFF-03 horizontal scrolloff resolution succeeds');
   if (horizontal.ok) assert.equal(horizontal.value.scrollLeft, 426, 'T014-SCROLLOFF-03 right margin leaves five cells after the cursor');
-  console.log('T014-SCROLLOFF-01 passed: Helix scrolloff applies asymmetric vertical and horizontal cursor margins and caps at the viewport edge.');
+  console.log('T014-SCROLLOFF-01-PART3 passed: Helix scrolloff applies asymmetric vertical and horizontal cursor margins and caps at the viewport edge.');
+}
+
+function checkWrappedCursorFollowsWithinOneLongLine(): void {
+  const document = editable('x'.repeat(600));
+  const layout = new ViewportLayout();
+  const firstSelection = selectionAt(document, 450);
+  const first = resolveScrollAnchor(document.snapshot(), firstSelection, 0, 5, 20, 0, { wrap: true, scrolloff: 2 });
+  assert.equal(first.ok, true, 'T014-WRAPPED-FOLLOW-01 anchor resolves for a cursor deep in one wrapped line');
+  if (!first.ok) return;
+  const firstFrame = project(layout, document, 20, 5, firstSelection, { wrap: true }, first.value.anchor);
+  assert.equal(firstFrame.selections.find((member) => member.primary)?.head.clipped, false, 'T014-WRAPPED-FOLLOW-01 cursor is visible after a long jump');
+  assert.equal(first.value.anchor.offset, 450, 'T014-WRAPPED-FOLLOW-01 long jump anchors at the cursor instead of the logical line start');
+
+  const movedSelection = selectionAt(document, 520);
+  const moved = resolveScrollAnchor(document.snapshot(), movedSelection, 0, 5, 20, 0, {
+    wrap: true, scrolloff: 2, previousAnchor: first.value.anchor, previousFrame: firstFrame,
+  });
+  assert.equal(moved.ok, true, 'T014-WRAPPED-FOLLOW-02 moving within the wrapped line resolves');
+  if (!moved.ok) return;
+  const movedFrame = project(layout, document, 20, 5, movedSelection, { wrap: true }, moved.value.anchor);
+  assert.equal(moved.value.anchor.offset, 470, 'T014-WRAPPED-FOLLOW-02 visual-row scroll preserves preceding context');
+  assert.equal(movedFrame.selections.find((member) => member.primary)?.head.clipped, false, 'T014-WRAPPED-FOLLOW-02 moved cursor remains visible');
+
+  const resized = resolveScrollAnchor(document.snapshot(), movedSelection, 0, 3, 10, 0, { wrap: true, scrolloff: 1 });
+  assert.equal(resized.ok, true, 'T014-WRAPPED-FOLLOW-03 resize resolves');
+  if (resized.ok) assert.equal(project(layout, document, 10, 3, movedSelection, { wrap: true }, resized.value.anchor).selections.find((member) => member.primary)?.head.clipped, false,
+    'T014-WRAPPED-FOLLOW-03 resize keeps the cursor visible');
+  const unicodeDocument = editable(`${'x'.repeat(448)}\t界Z${'x'.repeat(80)}`);
+  const unicodeSelection = selectionAt(unicodeDocument, 450);
+  const unicode = resolveScrollAnchor(unicodeDocument.snapshot(), unicodeSelection, 0, 5, 20, 0, { wrap: true });
+  assert.equal(unicode.ok, true, 'T014-WRAPPED-FOLLOW-04 Unicode jump resolves');
+  if (unicode.ok) {
+    assert.equal(unicode.value.anchor.displayCellColumn, 458, 'T014-WRAPPED-FOLLOW-04 tab and wide glyph preserve the global display column');
+    assert.equal(project(layout, unicodeDocument, 20, 5, unicodeSelection, { wrap: true }, unicode.value.anchor).selections.find((member) => member.primary)?.head.clipped, false,
+      'T014-WRAPPED-FOLLOW-04 Unicode cursor remains visible');
+  }
+  console.log('T014-WRAPPED-FOLLOW-01 passed: a long wrapped line follows cursor jumps, visual-row movement and resize.');
 }
 
 function checkRelativeLineNumbersFollowPrimaryCursor(): void {
@@ -476,9 +513,14 @@ function checkRelativeLineNumbersFollowPrimaryCursor(): void {
     relativeLineNumberCursor: 1,
   });
   assert.equal(frame.rows[0]?.text.startsWith('  1 '), true, 'T014-LINE-NUMBER-01 line above the cursor shows relative distance 1');
-  assert.equal(frame.rows[1]?.text.startsWith('  2 '), true, 'T014-LINE-NUMBER-01 the cursor line shows its absolute line number 2');
-  assert.equal(frame.rows[2]?.text.startsWith('  1 '), true, 'T014-LINE-NUMBER-01 line below the cursor shows relative distance 1');
-  console.log('T014-LINE-NUMBER-01 passed: relative gutter labels follow the primary cursor while retaining an absolute label on the cursor line.');
+  assert.equal(frame.rows[1]?.text.startsWith('  2 '), true, 'T014-LINE-NUMBER-01-PART2 the cursor line shows its absolute line number 2');
+  assert.equal(frame.rows[2]?.text.startsWith('  1 '), true, 'T014-LINE-NUMBER-01-PART3 line below the cursor shows relative distance 1');
+  const moved = project(layout, document, 12, 3, selectionAtLine(document, 0), {
+    wrap: false, gutterWidthCells: 4, lineNumberMode: 'relative', relativeLineNumberCursor: 0,
+  });
+  assert.equal(moved.rows[2]?.text.startsWith('  2 '), true);
+  assert.notEqual(moved.rows[2]?.contentKey, frame.rows[2]?.contentKey, 'a changed relative gutter label invalidates its row');
+  console.log('T014-LINE-NUMBER-01-PART4 passed: relative gutter labels follow the primary cursor while retaining an absolute label on the cursor line.');
 }
 
 function checkSoftWrapProjectsOneLogicalLineAcrossRows(): void {
@@ -486,10 +528,10 @@ function checkSoftWrapProjectsOneLogicalLineAcrossRows(): void {
   const layout = new ViewportLayout();
   const frame = project(layout, document, 10, 4, selectionAt(document), { wrap: true, gutterWidthCells: 4 });
   assert.equal(frame.rows[0]?.lineIndex, 0, 'T014-SOFT-WRAP-01 first wrapped row maps to the logical line');
-  assert.equal(frame.rows[1]?.lineIndex, 0, 'T014-SOFT-WRAP-01 continuation row maps to the same logical line');
-  assert.equal(frame.rows[1]?.wrapIndex, 1, 'T014-SOFT-WRAP-01 continuation row carries the next wrap index');
-  assert.equal(frame.rows[2]?.lineIndex, 1, 'T014-SOFT-WRAP-01 following logical line starts after wrapped content');
-  console.log('T014-SOFT-WRAP-01 passed: one logical line wraps through the production viewport rows without changing document line identity.');
+  assert.equal(frame.rows[1]?.lineIndex, 0, 'T014-SOFT-WRAP-01-PART2 continuation row maps to the same logical line');
+  assert.equal(frame.rows[1]?.wrapIndex, 1, 'T014-SOFT-WRAP-01-PART3 continuation row carries the next wrap index');
+  assert.equal(frame.rows[2]?.lineIndex, 1, 'T014-SOFT-WRAP-01-PART4 following logical line starts after wrapped content');
+  console.log('T014-SOFT-WRAP-01-PART5 passed: one logical line wraps through the production viewport rows without changing document line identity.');
 }
 
 function checkSoftWrapIndicatorIsNonEditableAndThemeable(): void {
@@ -497,14 +539,14 @@ function checkSoftWrapIndicatorIsNonEditableAndThemeable(): void {
   const layout = new ViewportLayout();
   const frame = project(layout, document, 4, 3, selectionAt(document), { wrap: true, wrapIndicator: '> ' });
   assert.equal(frame.rows[0]?.text, 'abcd', 'T014-WRAP-INDICATOR-01 first row keeps source text');
-  assert.equal(frame.rows[1]?.text.startsWith('> '), true, 'T014-WRAP-INDICATOR-01 continuation row begins with configured indicator');
+  assert.equal(frame.rows[1]?.text.startsWith('> '), true, 'T014-WRAP-INDICATOR-01-PART2 continuation row begins with configured indicator');
   const hit = layout.hitTest(frame.identity.frameId, { row: 1, column: 0 });
   assert.equal(hit.ok, true, 'T014-WRAP-INDICATOR-02 indicator cell is hit-testable');
   if (hit.ok) {
     assert.equal(hit.value.target.kind, 'virtual-annotation', 'T014-WRAP-INDICATOR-02 indicator is not editable text');
     assert.equal(hit.value.target.annotationId, 'wrap-indicator:1', 'T014-WRAP-INDICATOR-02 indicator target is stable');
   }
-  console.log('T014-WRAP-INDICATOR-01 passed: soft-wrap continuation rows paint the configured non-editable indicator.');
+  console.log('T014-WRAP-INDICATOR-01-PART3 passed: soft-wrap continuation rows paint the configured non-editable indicator.');
 }
 
 function checkSoftWrapLimitsControlWordAndIndentRetention(): void {
@@ -522,7 +564,7 @@ function checkSoftWrapLimitsControlWordAndIndentRetention(): void {
   });
   assert.deepEqual(split.rows.slice(0, 2).map(row => row.text), ['12345678 a', 'bc        '], 'T014-SOFT-WRAP-LIMIT-03 zero max-wrap permits mid-word splitting');
   assert.deepEqual(split.rows.slice(2, 4).map(row => row.text), ['    alpha ', 'beta      '], 'T014-SOFT-WRAP-LIMIT-04 zero max-indent-retain removes continuation indentation');
-  console.log('T014-SOFT-WRAP-LIMIT-01 passed: max-wrap and max-indent-retain alter the production row geometry.');
+  console.log('T014-SOFT-WRAP-LIMIT-01-PART2 passed: max-wrap and max-indent-retain alter the production row geometry.');
 }
 
 /**
@@ -609,6 +651,7 @@ checkRaggedRowsAndWideGlyphClippedAtViewportEdge();
 checkTypingOnFirstLineKeepsLowerRowContentIdentityAndShiftsOffsetsCorrectly();
 checkHorizontalScrollFollowsCursorOffScreen();
 checkScrolloffKeepsCursorAwayFromViewportEdges();
+checkWrappedCursorFollowsWithinOneLongLine();
 checkRelativeLineNumbersFollowPrimaryCursor();
 checkSoftWrapProjectsOneLogicalLineAcrossRows();
 checkSoftWrapIndicatorIsNonEditableAndThemeable();

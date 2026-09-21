@@ -110,10 +110,10 @@ const followRoot = followTree.addRoot({ id: 'follow-workspace', label: 'workspac
 if (!followRoot.ok) throw new Error(`follow root fixture failed: ${followRoot.error.kind}`);
 assert.equal((await followTree.expand(followRoot.value)).ok, true, 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02 follow-symlinks=true expands the root');
 const followLinkId = followTree.model.visibleRows.map((row) => followTree.readNode(row.nodeId)).find((node) => node?.name === 'link')?.id;
-assert.ok(followLinkId !== undefined, 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02 followable symlink remains visible');
+assert.ok(followLinkId !== undefined, 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02-PART2 followable symlink remains visible');
 if (followLinkId !== undefined) {
-  assert.equal((await followTree.expand(followLinkId)).ok, true, 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02 follow-symlinks=true traverses the link');
-  assert.ok(followTree.model.visibleRows.some((row) => followTree.readNode(row.nodeId)?.relativePath === 'link/main.ts'), 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02 traversed symlink exposes its child');
+  assert.equal((await followTree.expand(followLinkId)).ok, true, 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02-PART3 follow-symlinks=true traverses the link');
+  assert.ok(followTree.model.visibleRows.some((row) => followTree.readNode(row.nodeId)?.relativePath === 'link/main.ts'), 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02-PART4 traversed symlink exposes its child');
 }
 followTree.dispose();
 
@@ -147,7 +147,7 @@ if (chainId !== undefined) {
   const chainTwoId = tree.model.nodes.find((node) => node.relativePath === 'chain/one/two')?.id;
   assert.ok(chainTwoId !== undefined, 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-03 second child directory retains a stable identity');
   if (chainTwoId === undefined) throw new Error('chain/one/two fixture missing');
-  assert.equal(tree.model.visibleRows.find((row) => row.nodeId === chainTwoId)?.label, 'chain/one/two', 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-03 consecutive single child directories are flattened');
+  assert.equal(tree.model.visibleRows.find((row) => row.nodeId === chainTwoId)?.label, 'chain/one/two', 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-03-PART2 consecutive single child directories are flattened');
 }
 const unflattenedTree = new ExplorerTree(filesystem, { includeHidden: false, includeIgnored: false, flattenDirs: false });
 const unflattenedRoot = unflattenedTree.addRoot({ id: 'unflattened-workspace', label: 'workspace', path: '/workspace' });

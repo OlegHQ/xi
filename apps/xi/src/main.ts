@@ -5,15 +5,14 @@ import type { ClipboardPort } from '../../../packages/contracts/src/entrypoints/
 import type { LineEnding, TextFileDocument } from '../../../packages/document/src/entrypoints/launch';
 import type { PersistenceService } from '../../../packages/services/src/entrypoints/launch';
 import { languageIdForPath, VIEW_COMMAND_IDS, StatusMessageController } from '../../../packages/workbench/src/entrypoints/launch';
-import { loadStartupXiConfig } from '../../../packages/services/src/entrypoints/config';
+import { createWorkspaceTrustWiring, loadStartupXiConfig, readEditorConfig, workspaceTrustStateDirectory, type EditorConfigProperties } from '../../../packages/services/src/entrypoints/config';
+import { createConfiguredClipboardPort, type NodeFilesystemPort } from '../../../packages/platform/src/entrypoints/launch';
 import { parseCliArgs, resolveFileArgument } from './cli';
 import { installCrashHandlers } from './lifecycle';
 import { createThemeWiring, themeStateDirectory } from './wiring/theme';
 import { createControllers, id, type Controllers } from './wiring/controllers';
 import { wireControllerPanels } from './wiring/pointer';
 import { buildWorkbenchUiOptions } from './wiring/ui';
-import { createConfiguredClipboardPort } from './wiring/clipboard';
-import { createWorkspaceTrustWiring, workspaceTrustStateDirectory } from './wiring/workspace-trust';
 
 const XI_VERSION = '0.0.1';
 
@@ -79,11 +78,12 @@ async function main(): Promise<void> {
   const configPath = action.configPath === undefined ? undefined : (action.configPath.startsWith('/') ? action.configPath : `${process.cwd()}/${action.configPath}`);
   const loadConfig = (): ReturnType<typeof loadStartupXiConfig> => loadStartupXiConfig(filesystem, themeStateDirectory(), configCancellation.token, VIEW_COMMAND_IDS, `${process.env.HOME ?? process.cwd()}/.xi.toml`, configPath, `${process.cwd()}/.helix/config.toml`, process.env, workspaceTrust);
   const startupConfigPromise = loadConfig();
+  const editorConfigByPath = new Map<string, EditorConfigProperties>();
   // The document open and the theme-state read are independent IO: overlap them. Custom
   // theme files are only enumerated before the first frame when the persisted theme is not
   // builtin; otherwise they load after the first frame for the picker.
   const themeWiringPromise = createThemeWiring(filesystem, statusMessages);
-  const documentPromise = openDocument(openTextDocument, persistence, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages, startupConfigPromise);
+  const documentPromise = openDocument(openTextDocument, persistence, filesystem, editorConfigByPath, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages, startupConfigPromise);
   const themeWiring = await themeWiringPromise;
   const document = await documentPromise;
   if (document === undefined) {
@@ -124,7 +124,8 @@ async function main(): Promise<void> {
       createClock: createNodeClock,
       positionToOffset,
       statusMessages,
-      openDocumentAt: (path, documentId) => openDocument(openTextDocument, persistence, path, documentId, statusMessages, startupConfigPromise),
+      openDocumentAt: (path, documentId) => openDocument(openTextDocument, persistence, filesystem, editorConfigByPath, path, documentId, statusMessages, startupConfigPromise),
+      editorConfigForPath: (path) => editorConfigByPath.get(path),
       marker,
       xiUiTestMarkersEnabled: XI_UI_TEST_MARKERS_ENABLED,
       startupTrace,
@@ -226,7 +227,7 @@ async function teardownControllers(controllers: Controllers, persistence: Persis
   await controllers.contributionRegistry.dispose();
   marker('XI_TEARDOWN', { step: 'contributions-disposed' });
   controllers.commandRegistry.dispose();
-  controllers.completionFeature.dispose();
+  await controllers.completionFeature.dispose();
   controllers.inputRouter.dispose();
   controllers.pointerCapture.dispose();
   controllers.saveCoordinator.dispose();
@@ -241,6 +242,8 @@ async function teardownControllers(controllers: Controllers, persistence: Persis
 async function openDocument(
   openTextDocument: typeof import('../../../packages/document/src/entrypoints/launch').openTextDocument,
   persistence: PersistenceService,
+  filesystem: NodeFilesystemPort,
+  editorConfigByPath: Map<string, EditorConfigProperties>,
   path: string | undefined,
   documentId: DocumentId,
   statusMessages: StatusMessageController,
@@ -257,7 +260,21 @@ async function openDocument(
   }
   const cancellation = new CancellationSource();
   try {
-    const opened = await persistence.openFile(path, documentId, cancellation.token);
+    const config = (await startupConfigPromise).config;
+    if (config?.editor.editorConfig !== false) {
+      const properties = await readEditorConfig(filesystem, path, cancellation.token);
+      if (properties.ok) editorConfigByPath.set(path, properties.value);
+      else statusMessages.publish(`xi: ${properties.error.message}`);
+    }
+    const lineEnding = editorConfigByPath.get(path)?.endOfLine;
+    const configuredEnding = config?.editor.defaultLineEnding;
+    const defaultLineEnding = configuredEnding === undefined || configuredEnding === 'native'
+      ? process.platform === 'win32' ? 'crlf' : 'lf'
+      : configuredEnding;
+    const opened = await persistence.openFile(path, documentId, cancellation.token, {
+      defaultLineEnding: defaultLineEnding as LineEnding,
+      ...(lineEnding === undefined ? {} : { editorConfigLineEnding: lineEnding }),
+    });
     if (!opened.ok) {
       statusMessages.publish(`xi: cannot open ${path}: ${opened.error.kind}`);
       return undefined;

@@ -2,6 +2,7 @@ import { compileConfig, DEFAULT_CONFIG_TOML } from '../../packages/services/conf
 import { strict as assert } from 'node:assert';
 import type { ClockPort, Disposable } from '../../packages/contracts/src/index';
 import { CommandRegistry } from '../../packages/workbench/commands/registry';
+import { scrollViewBy } from '../../packages/workbench/pointer/scroll';
 import {
   WorkbenchInputRouter,
   type RouterBindingConfig,
@@ -21,6 +22,27 @@ function key(name: string, raw: string, overrides: Partial<{ shift: boolean; ctr
 const defaults = compileConfig([{ name: 'defaults', kind: 'defaults', source: DEFAULT_CONFIG_TOML }]);
 assert.ok(defaults.ok);
 const defaultBindings = defaults.value.bindings;
+
+// Vim relaxes scrolloff at the first and last document lines, while retaining
+// the margin in the middle of a document.
+{
+  let top = 0;
+  let cursor = 1;
+  const moves: number[] = [];
+  const workbench = {
+    readView: () => ({ scrollTop: top, scrollLeft: 0, document: { lineCount: 100, lineIndexAt: () => ({ ok: true, value: cursor }), lineStartOffset: () => ({ ok: true, value: 0 }) }, selections: { primaryId: 'primary', members: [{ id: 'primary', head: { kind: 'line', at: { offset: cursor } }, desiredColumn: { logicalUtf16: 0 } }] } }),
+    setViewScroll: (_viewId: unknown, next: number) => { top = next; },
+  };
+  const session = { setCursorPosition: (line: number) => { moves.push(line); cursor = line; return true; } };
+  scrollViewBy(workbench as never, () => session, 'view-1' as never, 0, 10, 3);
+  assert.deepEqual(moves, [], 'SCROLL-EDGE-01 top document edge relaxes scrolloff');
+  top = 90; cursor = 99;
+  scrollViewBy(workbench as never, () => session, 'view-1' as never, 0, 10, 3);
+  assert.deepEqual(moves, [], 'SCROLL-EDGE-02 bottom document edge relaxes scrolloff');
+  top = 10; cursor = 10;
+  scrollViewBy(workbench as never, () => session, 'view-1' as never, 0, 10, 3);
+  assert.deepEqual(moves, [13], 'SCROLL-EDGE-03 interior viewport retains scrolloff');
+}
 
 const testClock: ClockPort = {
   monotonicMilliseconds: () => Date.now(),
@@ -424,6 +446,6 @@ console.log('T116 WorkbenchInputRouter passed leader-open-explorer, command-line
     { mode: 'select', keys: ['<C-s>'], commandId: 'ex:write' },
   ]);
   assert.equal(await selectRouter.dispatchKey(key('s', '\u0013', { ctrl: true })), 'consumed');
-  assert.deepEqual(selectVim.submittedCommands, [':write'], 'T036-KEYS-UNIT-01 [keys.select] reaches Xi visual modes');
+  assert.deepEqual(selectVim.submittedCommands, [':write'], 'T036-KEYS-UNIT-01-PART2 [keys.select] reaches Xi visual modes');
   selectRouter.dispose();
 }

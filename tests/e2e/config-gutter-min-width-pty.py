@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix="xi-gutter-min-width-pty-") as temporary
     root = Path(temporary)
     config = root / ".config" / "xi" / "config.toml"
     config.parent.mkdir(parents=True)
-    config.write_text("schema-version = 1\n[editor.gutters.diagnostics]\n[editor.gutters.diff]\n[editor.gutters.spacer]\n[editor.gutters.line-numbers]\nmin-width = 5\n", encoding="utf-8")
+    config.write_text("schema-version = 1\n[editor.gutters.line-numbers]\nmin-width = 5\n", encoding="utf-8")
     source = root / "gutter-min-width.txt"
     source.write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
 

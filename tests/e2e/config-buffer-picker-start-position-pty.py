@@ -74,7 +74,7 @@ with tempfile.TemporaryDirectory(prefix="xi-buffer-picker-pty-") as temporary:
                 break
         if alpha.read_text(encoding="utf-8") != "alphaP\n":
             raise SystemExit(f"selected previous buffer was not edited and saved: {alpha.read_bytes()!r}, output={captured[-5000:]!r}")
-        os.write(master, b"\x1bq!")
+        os.write(master, b"\x1b:qa!\r")
         deadline = time.monotonic() + 5
         while child.poll() is None and time.monotonic() < deadline:
             if select.select([master], [], [], 0.05)[0]:

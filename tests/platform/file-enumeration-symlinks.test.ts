@@ -13,6 +13,9 @@ try {
   await writeFile(join(root, 'target', 'linked.txt'), 'linked\n');
   await symlink(join(root, 'target'), join(root, 'alias'));
   const filesystem = new NodeFilesystemPort();
+  const cappedDirectory = await filesystem.enumerateDirectory(root, root, new CancellationSource().token, { maxEntries: 1 });
+  assert.equal(cappedDirectory.ok, false, 'F23-DIRECTORY-LIMIT a directory above the cap reports truncation');
+  if (!cappedDirectory.ok) assert.equal(cappedDirectory.error.code, 'enumeration-limit');
   const collect = async (followSymlinks: boolean, deduplicateLinks = true, maxDepth?: number): Promise<readonly string[]> => {
     const entries: string[] = [];
     const result = await filesystem.enumerateFiles(root, new CancellationSource().token, batch => { entries.push(...batch.map(entry => entry.relativePath)); }, { followSymlinks, deduplicateLinks, ...(maxDepth === undefined ? {} : { maxDepth }) });
@@ -22,11 +25,27 @@ try {
   assert.deepEqual(await collect(false), ['target/linked.txt'], 'T-FILES-SYMLINKS-01 false omits symlink targets');
   const followed = await collect(true);
   assert.equal(followed.length, 1, 'T-FILES-SYMLINKS-02 true deduplicates the real directory identity while following it');
-  assert.match(followed[0] ?? '', /(?:alias|target)\/linked\.txt/u, 'T-FILES-SYMLINKS-02 followed path is retained');
+  assert.match(followed[0] ?? '', /(?:alias|target)\/linked\.txt/u, 'T-FILES-SYMLINKS-02-PART2 followed path is retained');
   const duplicated = await collect(true, false);
   assert.deepEqual([...duplicated].sort(), ['alias/linked.txt', 'target/linked.txt'], 'T-FILES-SYMLINKS-03 false keeps both linked paths while still stopping cycles');
   assert.deepEqual(await collect(false, true, 0), [], 'T-FILES-MAX-DEPTH-01 zero depth keeps root files only');
   assert.deepEqual(await collect(false, true, 1), ['target/linked.txt'], 'T-FILES-MAX-DEPTH-02 depth one includes direct child directories');
+  await symlink(join(root, 'target', 'linked.txt'), join(root, 'linked-alias.txt'));
+  await symlink(root, join(root, 'target', 'loop'));
+  assert.equal((await collect(true, true)).length, 1, 'F21-01 directory and file symlinks to the same target emit one file');
+  assert.deepEqual([...await collect(true, false)].sort(), ['alias/linked.txt', 'linked-alias.txt', 'target/linked.txt'], 'F21-02 deduplication off retains file aliases while ancestor checks stop cycles');
+  await mkdir(join(root, 'dist'));
+  await mkdir(join(root, '.hidden'));
+  await writeFile(join(root, 'dist', 'a.txt'), 'visible\n');
+  await writeFile(join(root, '.hidden', 'a.txt'), 'hidden\n');
+  const visibleEntries: { readonly relativePath: string; readonly hidden: boolean }[] = [];
+  const visibleResult = await filesystem.enumerateFiles(root, new CancellationSource().token, batch => { visibleEntries.push(...batch); }, { followSymlinks: false, ignore: { parents: false, ignore: false, gitIgnore: false, gitGlobal: false, gitExclude: false } });
+  assert.equal(visibleResult.ok, true);
+  assert.equal(visibleEntries.some(entry => entry.relativePath === 'dist/a.txt' && !entry.hidden), true, 'F21-03 disabled ignore sources expose dist');
+  assert.equal(visibleEntries.some(entry => entry.relativePath === '.hidden/a.txt' && entry.hidden), true, 'F21-04 hidden ancestry marks descendants hidden');
+  const directory = await filesystem.enumerateDirectory(root, root, new CancellationSource().token, { ignore: { parents: false, ignore: false, gitIgnore: false, gitGlobal: false, gitExclude: false } });
+  assert.equal(directory.ok, true);
+  if (directory.ok) assert.equal(directory.value.find(entry => entry.name === 'dist')?.ignored, false, 'F21-05 Explorer does not invent a dist exclusion');
   await mkdir(join(root, '.git', 'info'), { recursive: true });
   await mkdir(join(root, 'ignored-dir'));
   await writeFile(join(root, 'ignored.txt'), 'ignored\n');
@@ -34,7 +53,7 @@ try {
   await writeFile(join(root, 'git.txt'), 'ignored\n');
   await writeFile(join(root, 'global.txt'), 'ignored\n');
   await writeFile(join(root, 'exclude.txt'), 'ignored\n');
-  await writeFile(join(root, '.ignore'), 'ignored.txt\nignored-dir/\n!ignored-dir/child.txt\n');
+  await writeFile(join(root, '.ignore'), 'ignored.txt\nignored-dir/*\n!ignored-dir/child.txt\n');
   await writeFile(join(root, '.gitignore'), 'git.txt\n');
   await writeFile(join(root, '.git', 'info', 'exclude'), 'exclude.txt\n');
   const parent = parentRoot;

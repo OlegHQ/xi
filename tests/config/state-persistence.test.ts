@@ -9,7 +9,7 @@ assert.equal(updateSidebarVisibility(patched, false), patched);
 for (const source of ['', '[editor]\ntheme="xi-dark"\n', 'editor.theme="xi-dark"\n']) {
   const result = parseToml(updateSidebarVisibility(source, false));
   assert.ok(result.ok);
-  assert.equal((result.value.value.editor as Record<string, unknown>)['sidebar-visible'], false);
+  assert.equal(((result.value.value.xi as Record<string, unknown>).sidebar as Record<string, unknown>).visible, false);
 }
 assert.throws(() => updateSidebarVisibility('[editor]\nsidebar-visible="bad"', false));
 assert.throws(() => updateSidebarVisibility('invalid', false));
@@ -26,6 +26,12 @@ for (const source of ['editor = {} # keep', 'editor = { theme = "xi-dark" } # ke
   assert.equal(parsedInline.editor['sidebar-visible'], false);
   assert.ok(patchedInline.endsWith('# keep'));
 }
+const canonical = updateSidebarVisibility('[xi.sidebar]\nvisible = true # keep\nwidth = 28\n', false);
+assert.equal(canonical, '[xi.sidebar]\nvisible = false # keep\nwidth = 28\n');
+const canonicalAdded = updateSidebarVisibility('[xi.sidebar]\nwidth = 28\n', false);
+const canonicalParsed = parseToml(canonicalAdded);
+assert.ok(canonicalParsed.ok);
+assert.deepEqual((canonicalParsed.value.value.xi as Record<string, unknown>).sidebar, { visible: false, width: 28 });
 
 const files = new Map<string, Uint8Array>();
 const errors: string[] = [];
@@ -51,7 +57,10 @@ state.setSidebarPanel('git');
 state.setSidebarWidth(34);
 await state.dispose();
 assert.equal(writes, 1, 'burst toggles coalesce to one pending value');
-assert.equal(new TextDecoder().decode(files.get('/.xi.toml')), 'editor.sidebar-width = 34\neditor.sidebar-panel = "git"\neditor.theme = "xi-dark"\neditor.sidebar-visible = false\n');
+const saved = parseToml(new TextDecoder().decode(files.get('/.xi.toml')));
+assert.ok(saved.ok);
+assert.equal((saved.value.value.editor as Record<string, unknown>).theme, 'xi-dark');
+assert.deepEqual((saved.value.value.xi as Record<string, unknown>).sidebar, { visible: false, panel: 'git', width: 34 });
 files.set('/.xi.toml', new TextEncoder().encode(original));
 fail = true;
 const failure = new EditorStatePersistence(filesystem, '/.xi.toml', message => errors.push(message));

@@ -721,7 +721,8 @@ export function canPaintPlainFrame(
   if (
     presentation?.motionPreview != null ||
     presentation?.operatorPreview != null ||
-    presentation?.searchHighlight != null
+    presentation?.searchHighlight != null ||
+    presentation?.documentHighlight != null
   )
     return false;
   for (const selection of frame.selections) {
@@ -1049,7 +1050,7 @@ function buildPaintMasks(
     const lowest = (firstRow?.startOffset as number | null | undefined) ?? 0;
     const highest = (lastRow?.endOffset as number | null | undefined) ?? Number.MAX_SAFE_INTEGER;
     for (const range of documentHighlight.ranges) {
-      if (range.start > highest) break;
+      if (range.start > highest) continue;
       if (range.end < lowest) continue;
       paintOffsetRange(frame, range.start, range.end, (row, column) => setMask(row, column, PAINT_DOCUMENT_HIGHLIGHT), rowRange);
     }

@@ -538,6 +538,15 @@ function canonicalize(
   }
 
   const ordered = [...inputMembers].sort(compareMembers);
+  if (kind === 'normal-cursor' && ordered.every((member, index) => index === 0 || member.anchor.at.offset !== ordered[index - 1]?.anchor.at.offset)) {
+    const selectionSet: SelectionSet = Object.freeze({
+      documentId: snapshot.id, documentVersion: snapshot.version, selectionGeneration, primaryId,
+      members: Object.freeze(ordered as [SelectionMember, ...SelectionMember[]]),
+    });
+    const idMap = [...inputMembers].sort((left, right) => (left.creationOrdinal as number) - (right.creationOrdinal as number))
+      .map((member) => Object.freeze({ from: member.id, to: member.id }));
+    return success(Object.freeze({ selectionSet, idMap: Object.freeze(idMap) }));
+  }
   const groups: SelectionGroup[] = [];
   const duplicateCarets = new Map<string, SelectionGroup>();
   for (const member of ordered) {
@@ -595,7 +604,10 @@ function validateMember(snapshot: DocumentSnapshot, member: SelectionMember): bo
     if (!sameEndpoint(member.anchor, member.head)) return false;
   }
   const anchors: DocumentAnchor[] = [];
-  for (const endpoint of [member.anchor, member.head]) {
+  // createMember reuses the same endpoint for a normal cursor/caret whose input
+  // anchor and head are identical. Validate that immutable endpoint once.
+  const endpoints = member.anchor === member.head ? [member.anchor] : [member.anchor, member.head];
+  for (const endpoint of endpoints) {
     anchors.push(endpoint.at);
     if (endpoint.kind === 'character') anchors.push(endpoint.after);
     if (member.kind === 'normal-cursor' && !isNormalEndpoint(endpoint)) return false;

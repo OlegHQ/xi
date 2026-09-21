@@ -13,6 +13,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from terminal_screen import Screen
+
 ROOT = Path(__file__).resolve().parents[2]
 HINTS = re.compile(rb"XI_CODE_ACTION_HINT_STATE (\{[^\r\n]*\})")
 SERVER = r'''#!/usr/bin/env python3
@@ -54,15 +56,19 @@ while True:
         send({"jsonrpc": "2.0", "id": message["id"], "result": None})
 '''
 
-def read_for(master: int, captured: bytearray, seconds: float) -> None:
+def read_for(master: int, stderr: int, captured: bytearray, diagnostics: bytearray, screen: Screen, seconds: float) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        if not select.select([master], [], [], 0.05)[0]:
-            continue
-        try:
-            captured.extend(os.read(master, 65536))
-        except OSError:
-            return
+        for descriptor in select.select([master, stderr], [], [], 0.05)[0]:
+            try:
+                data = os.read(descriptor, 65536)
+            except OSError:
+                continue
+            if descriptor == master:
+                captured.extend(data)
+                screen.feed(data)
+            else:
+                diagnostics.extend(data)
 
 
 with tempfile.TemporaryDirectory(prefix="xi-config-code-action-hint-pty-") as temporary:
@@ -85,18 +91,21 @@ with tempfile.TemporaryDirectory(prefix="xi-config-code-action-hint-pty-") as te
         env=environment,
         stdin=slave,
         stdout=slave,
-        stderr=slave,
+        stderr=subprocess.PIPE,
         close_fds=True,
     )
     os.close(slave)
     captured = bytearray()
+    diagnostics = bytearray()
+    screen = Screen(24, 80)
+    assert child.stderr is not None
     try:
         deadline = time.monotonic() + 15
-        while not HINTS.search(captured) and time.monotonic() < deadline:
-            read_for(master, captured, 0.05)
-        matches = [json.loads(match.group(1)) for match in HINTS.finditer(captured)]
-        if not matches or matches[-1].get("count") != 1 or b"C:1" not in captured:
-            raise SystemExit(f"production code-action hints were not requested/rendered: {matches!r}; output={captured[-7000:]!r}")
+        while (not HINTS.search(diagnostics) or "C:1" not in screen.row_text(24) or not screen.row_text(1).startswith("Cconst")) and time.monotonic() < deadline:
+            read_for(master, child.stderr.fileno(), captured, diagnostics, screen, 0.05)
+        matches = [json.loads(match.group(1)) for match in HINTS.finditer(diagnostics)]
+        if not matches or matches[-1].get("count") != 1 or "C:1" not in screen.row_text(24) or not screen.row_text(1).startswith("Cconst"):
+            raise SystemExit(f"production code-action hints were not requested/rendered: {matches!r}; status={screen.row_text(24)!r}; row={screen.row_text(1)!r}")
         os.write(master, b"q")
         child.wait(timeout=5)
     finally:

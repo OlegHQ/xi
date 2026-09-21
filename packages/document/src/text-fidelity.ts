@@ -67,6 +67,8 @@ export interface OpenTextDocumentOptions {
   readonly fileFormat?: TextFileFormat;
   /** Applied only to an empty, newly-created document; existing file EOL metadata wins. */
   readonly defaultLineEnding?: LineEnding;
+  /** EditorConfig end_of_line overrides both existing EOL metadata and future inserts. */
+  readonly editorConfigLineEnding?: LineEnding;
 }
 
 export interface TextFileSnapshot extends DocumentSnapshot {
@@ -167,8 +169,8 @@ export function openTextDocument(
   const opened = TextFileDocument.create(
     id,
     normalized.text,
-    normalized.lineEndingSequence,
-    bytes.length === 0 ? resolveDefaultLineEnding(options) ?? normalized.defaultLineEnding : normalized.defaultLineEnding,
+    options.editorConfigLineEnding === undefined ? normalized.lineEndingSequence : LineEndingSequence.fromUniform(countLineFeeds(normalized.text), options.editorConfigLineEnding),
+    options.editorConfigLineEnding ?? (bytes.length === 0 ? resolveDefaultLineEnding(options) ?? normalized.defaultLineEnding : normalized.defaultLineEnding),
     hasUtf8Bom,
     seed,
     normalizedHasCarriageReturn ? 'literal-control' : undefined,
@@ -249,7 +251,7 @@ export async function openTextDocumentChunks(
     }
     // Fast path: chunks without a bare/leading CR need no per-line splitting;
     // append the decoded text whole and only tally its LF count.
-    if (text.indexOf('\r') === -1) {
+    if (text.indexOf('\r') === -1 && (fileFormat === 'dos' || (text.indexOf('\f') === -1 && text.indexOf('\u0085') === -1))) {
       let lfCount = 0;
       for (let index = 0; index < text.length; index += 1) {
         if (text.charCodeAt(index) === 10) lfCount += 1;
@@ -262,14 +264,22 @@ export async function openTextDocumentChunks(
     let start = 0;
     let index = 0;
     for (; index < text.length; index += 1) {
-      if (text.charCodeAt(index) === 10) {
+      const code = text.charCodeAt(index);
+      if (fileFormat !== 'dos' && (code === 12 || code === 133)) {
+        if (index > start) parts.push(text.slice(start, index));
+        endings.push(code === 12 ? 'ff' : 'nel');
+        parts.push('\n');
+        start = index + 1;
+        continue;
+      }
+      if (code === 10) {
         if (index > start) parts.push(text.slice(start, index));
         endings.push('lf');
         parts.push('\n');
         start = index + 1;
         continue;
       }
-      if (text.charCodeAt(index) !== 13) continue;
+      if (code !== 13) continue;
       if (index > start) parts.push(text.slice(start, index));
       if (index + 1 === text.length) {
         pendingCR = true;
@@ -352,8 +362,8 @@ export async function openTextDocumentChunks(
   original.length = 0;
   const opened = TextFileDocument.createFromRope(
     textDocument,
-    finished.sequence,
-    finished.defaultLineEnding,
+    options.editorConfigLineEnding === undefined ? finished.sequence : LineEndingSequence.fromUniform(textDocument.metrics().lineBreaks, options.editorConfigLineEnding),
+    options.editorConfigLineEnding ?? (textDocument.metrics().utf16Length === 0 ? resolveDefaultLineEnding(options) ?? finished.defaultLineEnding : finished.defaultLineEnding),
     hasUtf8Bom,
   );
   if (!opened.ok) {
@@ -1367,7 +1377,7 @@ function normalizeLineEndings(
 ): { readonly text: string; readonly lineEndingSequence: LineEndingSequence; readonly defaultLineEnding: LineEnding } | undefined {
   // hasLoneCarriageReturn cannot be true when the caller's scan already found no CR at all.
   if (fileFormat === 'auto' && hasCarriageReturn && hasLoneCarriageReturn(text)) return undefined;
-  if (!hasCarriageReturn) {
+  if (!hasCarriageReturn && !text.includes('\f') && !text.includes('\u0085')) {
     return { text, lineEndingSequence: LineEndingSequence.fromUniform(countLineFeeds(text), 'lf'), defaultLineEnding: 'lf' };
   }
 
@@ -1376,13 +1386,17 @@ function normalizeLineEndings(
   }
 
   const builder = new LineEndingSequenceBuilder();
-  const normalized = text.replace(/\r\n|\r|\n/gu, (match: string) => {
+  const normalized = text.replace(/\r\n|\r|\n|\f|\u0085/gu, (match: string) => {
     if (match === '\n') {
       builder.push('lf');
       return '\n';
     }
     if (match === '\r\n') {
       builder.push('crlf');
+      return '\n';
+    }
+    if (fileFormat !== 'dos' && (match === '\f' || match === '\u0085')) {
+      builder.push(match === '\f' ? 'ff' : 'nel');
       return '\n';
     }
     if ((fileFormat === 'legacy' || fileFormat === 'mac') && match === '\r') {
@@ -1407,8 +1421,9 @@ function resolveFileFormat(options: OpenTextDocumentOptions): TextFileFormat | u
   try {
     if (typeof options !== 'object' || options === null || Array.isArray(options)
       || (Object.getPrototypeOf(options) !== Object.prototype && Object.getPrototypeOf(options) !== null)
-      || Object.keys(options).some((key) => key !== 'fileFormat' && key !== 'defaultLineEnding')
-      || (options.defaultLineEnding !== undefined && !isLineEnding(options.defaultLineEnding))) return undefined;
+      || Object.keys(options).some((key) => key !== 'fileFormat' && key !== 'defaultLineEnding' && key !== 'editorConfigLineEnding')
+      || (options.defaultLineEnding !== undefined && !isLineEnding(options.defaultLineEnding))
+      || (options.editorConfigLineEnding !== undefined && !isLineEnding(options.editorConfigLineEnding))) return undefined;
     const selected = options.fileFormat ?? 'legacy';
     return selected === 'auto' || selected === 'unix' || selected === 'dos'
       || selected === 'mac' || selected === 'legacy'

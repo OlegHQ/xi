@@ -12,11 +12,17 @@ export type EditorStateKey = 'sidebar-visible' | 'sidebar-width' | 'sidebar-pane
 export function updateEditorState(source: string, key: EditorStateKey, value: boolean | string | number): string {
   const parsed = parseToml(source);
   if (!parsed.ok) throw new Error('invalid TOML; state file left unchanged');
+  const sidebarField = key === 'sidebar-visible' ? 'visible' : key === 'sidebar-width' ? 'width' : key === 'sidebar-panel' ? 'panel' : undefined;
+  const canonical = sidebarField === undefined ? undefined : parsed.value.entries.find(candidate => candidate.path.join('.') === `xi.sidebar.${sidebarField}`);
+  if (canonical !== undefined) return patchTomlScalar(source, canonical.location.line, value);
   const entry = parsed.value.entries.find(candidate => candidate.path.length === 2 && candidate.path[0] === 'editor' && candidate.path[1] === key);
   if (entry !== undefined) return patchTomlScalar(source, entry.location.line, value);
   const newline = source.includes('\r\n') ? '\r\n' : '\n';
   const lines = source.split(newline);
   const header = lines.findIndex(line => /^\s*\[\s*(?:editor|"editor"|'editor')\s*\]\s*(?:#.*)?$/u.test(line));
+  if (sidebarField !== undefined && !parsed.value.entries.some(candidate => candidate.path.length === 1 && candidate.path[0] === 'editor')) {
+    return `xi.sidebar.${sidebarField} = ${JSON.stringify(value)}${newline}${source}`;
+  }
   if (header >= 0) {
     lines.splice(header + 1, 0, `${key} = ${JSON.stringify(value)}`);
     return lines.join(newline);

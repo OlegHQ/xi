@@ -7,5 +7,14 @@ const mutations = new GitMutationCoordinator(executor); const context = { root: 
 assert.equal((await mutations.stage(['a.ts'], context)).ok, true); assert.deepEqual(argv[0], ['git', 'add', '--', 'a.ts']);
 assert.equal((await mutations.unstage(['a.ts'], context)).ok, true); assert.equal((await mutations.discard(['a.ts'], context)).ok, true); assert.equal((await mutations.commit('message', context)).ok, true); assert.equal(argv[3]?.includes('-F'), true, 'T058-COMMIT-01 commit message passes stdin flag');
 assert.equal((await mutations.commit('', context)).ok, false, 'T058-COMMIT-FAIL-01 empty commit blocked'); assert.equal((await mutations.stage(['a'], { ...context, expectedGeneration: 1 })).ok, false, 'T058-STALE-01 stale status blocks mutation');
+let allowed = true;
+const policyMutations = new GitMutationCoordinator(executor, () => allowed);
+allowed = false;
+const beforeRevoked = argv.length;
+assert.equal((await policyMutations.stage(['blocked.ts'], context)).ok, false, 'T058-TRUST-01 revoked Git mutation is rejected');
+assert.equal(argv.length, beforeRevoked, 'T058-TRUST-02 revoked Git mutation never invokes executor');
+allowed = true;
+assert.equal((await policyMutations.stage(['granted.ts'], context)).ok, true, 'T058-TRUST-03 granted Git mutation executes');
+policyMutations.dispose();
 mutations.dispose();
 console.log('T058 Git mutations passed explicit stage/unstage/discard/commit argv, empty-message and stale-generation safeguards');

@@ -48,7 +48,7 @@ export interface LanguageCodeActionPort {
 /** Mirrors `packages/services/language`'s `LanguageServerWorkspaceEditProvider`, subset used
  * here. */
 export interface WorkspaceEditProviderPort {
-  codeActions(request: WorkspaceEditRequestPort & { readonly diagnostics?: readonly unknown[] }): Promise<Result<readonly LanguageCodeActionPort[], WorkspaceEditProviderFailurePort>>;
+  codeActions(request: WorkspaceEditRequestPort & { readonly diagnostics?: readonly unknown[]; readonly cancellation?: CancellationToken }): Promise<Result<readonly LanguageCodeActionPort[], WorkspaceEditProviderFailurePort>>;
   resolveCodeAction?(action: LanguageCodeActionPort): Promise<Result<LanguageCodeActionPort, WorkspaceEditProviderFailurePort>>;
   prepareRename(request: WorkspaceEditRequestPort): Promise<Result<{ readonly start: number; readonly end: number; readonly placeholder?: string } | undefined, WorkspaceEditProviderFailurePort>>;
   rename(request: WorkspaceEditRequestPort, newName: string): Promise<Result<WorkspaceEditProposalPort, WorkspaceEditProviderFailurePort>>;
@@ -149,18 +149,19 @@ export class WorkspaceEditsController {
     const provider = this.#provider;
     const session = this.#session;
     if (request === undefined || request.uri === undefined || provider === undefined || session === undefined) return;
-    const ready = await session.waitForReady();
-    if (!ready.ok || !session.supportsRequest('textDocument/codeAction', request.uri)) return;
     this.#codeActionHintCancellation?.cancel();
     const cancellation = new CancellationSource();
     this.#codeActionHintCancellation = cancellation;
     try {
+      const ready = await session.waitForReady();
+      if (cancellation.token.isCancelled || !ready.ok || !session.supportsRequest('textDocument/codeAction', request.uri)) return;
       const result = await provider.codeActions({
         documentId: request.documentId,
         uri: request.uri,
         version: request.documentVersion,
         position: request.position,
         diagnostics: this.#options.readDiagnostics(),
+        cancellation: cancellation.token,
       });
       if (cancellation.token.isCancelled) return;
       if (!result.ok) return;

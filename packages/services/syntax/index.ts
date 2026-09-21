@@ -242,7 +242,7 @@ function translateLuaPattern(pattern: string): string | undefined {
 }
 
 /** A predicate text a capture's text can never equal; used to neuter an untranslatable pattern in place. */
-const NEVER_MATCHES_SENTINEL = ' -xi-untranslatable-lua-pattern';
+const NEVER_MATCHES_SENTINEL = '\0-xi-untranslatable-lua-pattern';
 
 /**
  * Preprocess a nvim-treesitter highlights.scm source for web-tree-sitter, which leaves
@@ -365,10 +365,10 @@ function resolveSpans(captures: readonly ResolvedCapture[]): SyntaxHighlightSpan
 
 // --- Lazy, windowed, cached, non-blocking highlight result. ---------------------------------
 
-const CAPTURE_WINDOW_UNITS = 512;
+const CAPTURE_WINDOW_UNITS = 256;
 const CAPTURE_WINDOW_PAD = 64;
-const MAX_CACHED_WINDOWS = 64;
-const MAX_QUEUED_WINDOWS = 32;
+const MAX_CACHED_WINDOWS = 128;
+const MAX_QUEUED_WINDOWS = 64;
 
 /**
  * Owns an independent `tree.copy()` (never edited; the highlighter keeps editing its own

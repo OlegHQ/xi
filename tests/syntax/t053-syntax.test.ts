@@ -256,7 +256,7 @@ async function slicingBoundProducesSameResult(): Promise<void> {
   assert.ok(snapshotSliceCalls <= 12, `T053-SLICE-05f computing one window issues only a handful of snapshot.slice calls, not one per capture (was ${snapshotSliceCalls} for ${drainedSpans.length}+ spans)`);
   console.log('T053 snapshot.slice calls for the drained window:', snapshotSliceCalls, 'spans:', drainedSpans.length);
 
-  // (b) each background window tick (CAPTURE_WINDOW_UNITS=1,024, padded 128 each side) stays
+  // (b) each background window tick (CAPTURE_WINDOW_UNITS=256, padded 64 each side) stays
   // bounded on this densely-tokenized 300k+-unit fixture. Printed, not just asserted.
   assert.ok(windowTickDurations.length > 0, 'T053-SLICE-05c background window ticks ran');
   const worstWindowTick = Math.max(...windowTickDurations);
@@ -264,15 +264,6 @@ async function slicingBoundProducesSameResult(): Promise<void> {
   const windowMedian = windowMedianSorted[Math.floor(windowMedianSorted.length / 2)] ?? 0;
   assert.ok(worstWindowTick < 4, `T053-SLICE-05d no background capture-window tick exceeds ~4ms (worst ${worstWindowTick.toFixed(3)}ms, median ${windowMedian.toFixed(3)}ms of ${windowTickDurations.length} ticks)`);
   console.log('T053 background window tick ms: worst', worstWindowTick.toFixed(3), 'median', windowMedian.toFixed(3), 'count', windowTickDurations.length);
-  // Window-size sweep measured this session on the same fixture/host, after adding the
-  // aligned-chunk callback cache (see createCachedSnapshotCallback): predicate text retrieval
-  // during captures() previously re-issued a full DocumentSnapshot#slice per captured node
-  // (cost scaling with PARSE_CHUNK_UNITS regardless of predicate need); caching it dropped a
-  // 1,024-unit window from 23ms to ~2-4ms. 512 is the largest power of two that stayed
-  // reliably <=2ms worst across repeated runs; 1,024 was borderline/noisy (2.1-4.3ms) and
-  // 2,048/4,096 were clearly over budget (8ms/11ms). CAPTURE_WINDOW_UNITS is set to 512.
-  console.log('T053 window-size sweep (units -> worst/median ms, post-cache-fix): '
-    + '128 -> 0.42/0.29, 512 -> 1.3-2.1/0.9-1.4, 1024 -> 2.1-4.3/1.7-3.2, 2048 -> 8.07/8.07, 4096 -> 11.04/11.04');
 
 
   // (d) Full-document spansInRange (after draining) crosses many windows; the merged result
@@ -346,7 +337,7 @@ async function slicingBoundProducesSameResult(): Promise<void> {
 async function luaMatchTranslation(): Promise<void> {
   assert.equal(preprocessHighlightsQuerySource('((identifier) @type\n  (#lua-match? @type "^[A-Z]"))'), '((identifier) @type\n  (#match? @type "^[A-Z]"))');
   const untranslatable = preprocessHighlightsQuerySource('((identifier) @x (#lua-match? @x "%bxy"))');
-  assert.equal(untranslatable, '((identifier) @x (#eq? @x " -xi-untranslatable-lua-pattern"))', 'T053-LUA-01 an untranslatable Lua class is neutered to a never-matching predicate in place');
+  assert.equal(untranslatable, '((identifier) @x (#eq? @x "\0-xi-untranslatable-lua-pattern"))', 'T053-LUA-01 an untranslatable Lua class is neutered to a never-matching predicate in place');
 
   const result = await tsHighlightOnce(1, 'const FOO = 1; const foo = 2;');
   const constantSpan = result.spans.find((span) => span.kind === 'constant');

@@ -19,6 +19,7 @@ export interface WorkspaceFileEntry {
 
 export interface WorkspaceFileEnumerationOptions {
   readonly maxEntries?: number;
+  readonly maxVisitedEntries?: number;
   readonly ignoredDirectoryNames?: readonly string[];
   readonly followSymlinks?: boolean;
   readonly deduplicateLinks?: boolean;
@@ -62,8 +63,11 @@ export interface WorkspaceDirectoryWatchEvent {
 
 interface IgnoreRule {
   readonly base: string;
-  readonly expression: RegExp;
+  readonly glob: Bun.Glob;
+  readonly basenameOnly: boolean;
+  readonly directoryOnly: boolean;
   readonly negated: boolean;
+  readonly priority: number;
 }
 
 /** Small, bounded gitignore-compatible matcher for the file-picker index. */
@@ -72,9 +76,10 @@ class WorkspaceIgnoreMatcher {
   readonly #options: Required<Pick<WorkspaceIgnoreOptions, 'parents' | 'ignore' | 'gitIgnore' | 'gitGlobal' | 'gitExclude'>>;
   readonly #rules: IgnoreRule[] = [];
   readonly #loaded = new Set<string>();
-  readonly #repository: boolean;
+  readonly #gitDirectory: string | undefined;
+  readonly #cancellation: CancellationToken;
 
-  private constructor(root: string, options: WorkspaceIgnoreOptions, repository: boolean) {
+  private constructor(root: string, options: WorkspaceIgnoreOptions, gitDirectory: string | undefined, cancellation: CancellationToken) {
     this.#root = root;
     this.#options = {
       parents: options.parents === true,
@@ -83,39 +88,48 @@ class WorkspaceIgnoreMatcher {
       gitGlobal: options.gitGlobal === true,
       gitExclude: options.gitExclude === true,
     };
-    this.#repository = repository;
+    this.#gitDirectory = gitDirectory;
+    this.#cancellation = cancellation;
   }
 
   static async create(root: string, options: WorkspaceIgnoreOptions | undefined, cancellation: CancellationToken): Promise<Result<WorkspaceIgnoreMatcher, PlatformFailure>> {
+    if (cancellation.isCancelled) return cancelled();
     const selected = options ?? {};
-    const gitDirectory = await safeLstat(join(root, '.git'));
-    const matcher = new WorkspaceIgnoreMatcher(root, selected, gitDirectory?.isDirectory() === true || gitDirectory?.isFile() === true);
+    let gitDirectory: string | undefined;
+    try { if (selected.gitIgnore === true || selected.gitExclude === true) gitDirectory = await discoverGitDirectory(root); }
+    catch (error: unknown) { return { ok: false, error: platformFailure(error, 'discover-git') }; }
+    if (cancellation.isCancelled) return cancelled();
+    const matcher = new WorkspaceIgnoreMatcher(root, selected, gitDirectory, cancellation);
     if (selected.homeDirectory !== undefined && matcher.#options.ignore) {
-      const loaded = await matcher.readFile(join(selected.homeDirectory, '.config/helix/ignore'), root);
+      const loaded = await matcher.readFile(join(selected.homeDirectory, '.config/helix/ignore'), root, 0);
       if (!loaded.ok) return loaded;
     }
     if (selected.homeDirectory !== undefined && matcher.#options.gitGlobal) {
       const home = selected.homeDirectory;
-      for (const path of [join(home, '.config/git/ignore'), join(home, '.gitignore')]) {
-        const loaded = await matcher.readFile(path, root);
+      for (const path of [join(home, '.config/git/ignore')]) {
+        const loaded = await matcher.readFile(path, root, 1);
         if (!loaded.ok) return loaded;
       }
       for (const configPath of [join(home, '.config/git/config'), join(home, '.gitconfig')]) {
         let source: string;
-        try { source = await fs.readFile(configPath, 'utf8'); } catch (error: unknown) {
+        try {
+          const info = await fs.stat(configPath);
+          if (info.size > 1024 * 1024) return { ok: false, error: { code: 'git-config-too-large', message: `${configPath} exceeds 1 MiB`, retryable: false } };
+          source = await fs.readFile(configPath, 'utf8');
+        } catch (error: unknown) {
           if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') continue;
           return { ok: false, error: platformFailure(error, 'read-git-config') };
         }
         const configured = /^\s*excludesfile\s*=\s*(.+?)\s*$/imu.exec(source)?.[1]?.trim();
         if (configured !== undefined) {
           const expanded = configured.startsWith('~/') ? join(home, configured.slice(2)) : configured.startsWith('/') ? configured : join(home, configured);
-          const loaded = await matcher.readFile(expanded, root);
+          const loaded = await matcher.readFile(expanded, root, 1);
           if (!loaded.ok) return loaded;
         }
       }
     }
-    if (matcher.#repository && matcher.#options.gitExclude) {
-      const loaded = await matcher.readFile(join(root, '.git/info/exclude'), root);
+    if (gitDirectory !== undefined && matcher.#options.gitExclude) {
+      const loaded = await matcher.readFile(join(gitDirectory, 'info/exclude'), root, 2);
       if (!loaded.ok) return loaded;
     }
     if (matcher.#options.parents) {
@@ -126,53 +140,85 @@ class WorkspaceIgnoreMatcher {
         parent = dirname(parent);
       }
       for (const directory of parents.reverse()) {
-        if (matcher.#options.ignore) { const loaded = await matcher.readFile(join(directory, '.ignore'), directory); if (!loaded.ok) return loaded; }
-        if (matcher.#repository && matcher.#options.gitIgnore) { const loaded = await matcher.readFile(join(directory, '.gitignore'), directory); if (!loaded.ok) return loaded; }
+        if (gitDirectory !== undefined && matcher.#options.gitIgnore) { const loaded = await matcher.readFile(join(directory, '.gitignore'), directory, 3); if (!loaded.ok) return loaded; }
+        if (matcher.#options.ignore) { const loaded = await matcher.readFile(join(directory, '.ignore'), directory, 4); if (!loaded.ok) return loaded; }
       }
     }
     return { ok: true, value: matcher };
   }
 
   async loadDirectory(directory: string): Promise<Result<void, PlatformFailure>> {
+    if (this.#cancellation.isCancelled) return cancelled();
     if (this.#loaded.has(directory)) return { ok: true, value: undefined };
     this.#loaded.add(directory);
-    if (this.#options.ignore) { const loaded = await this.readFile(join(directory, '.ignore'), directory); if (!loaded.ok) return loaded; }
-    if (this.#repository && this.#options.gitIgnore) { const loaded = await this.readFile(join(directory, '.gitignore'), directory); if (!loaded.ok) return loaded; }
+    if (this.#gitDirectory !== undefined && this.#options.gitIgnore) { const loaded = await this.readFile(join(directory, '.gitignore'), directory, 3); if (!loaded.ok) return loaded; }
+    if (this.#options.ignore) { const loaded = await this.readFile(join(directory, '.ignore'), directory, 4); if (!loaded.ok) return loaded; }
     return { ok: true, value: undefined };
   }
 
-  ignored(relativePath: string, isDirectory: boolean, absolutePath = resolve(this.#root, relativePath)): boolean {
-    let ignored = false;
-    for (const rule of this.#rules) {
-      const candidate = relative(rule.base, absolutePath).replaceAll('\\', '/');
-      if (candidate === '..' || candidate.startsWith('../') || !rule.expression.test(candidate)) continue;
-      ignored = !rule.negated;
+  async ignored(relativePath: string, isDirectory: boolean, absolutePath = resolve(this.#root, relativePath)): Promise<boolean> {
+    const parts = relativePath.split('/');
+    for (let count = 1; count <= parts.length; count += 1) {
+      const current = count === parts.length ? absolutePath : resolve(this.#root, ...parts.slice(0, count));
+      const directory = count < parts.length || isDirectory;
+      let matched: IgnoreRule | undefined;
+      for (let index = 0; index < this.#rules.length; index += 1) {
+        if (index % 256 === 255) await new Promise<void>((done) => setImmediate(done));
+        const rule = this.#rules[index]!;
+        if (rule.directoryOnly && !directory) continue;
+        const candidate = relative(rule.base, current).replaceAll('\\', '/');
+        if (candidate === '..' || candidate.startsWith('../') || candidate === '') continue;
+        const subject = rule.basenameOnly ? basename(candidate) : candidate;
+        if (!rule.glob.match(subject)) continue;
+        if (matched === undefined || rule.priority > matched.priority || (rule.priority === matched.priority && rule.base.length >= matched.base.length)) matched = rule;
+      }
+      if (matched !== undefined && !matched.negated) return true;
     }
-    void isDirectory;
-    return ignored;
+    return false;
   }
 
-  private async readFile(path: string, base: string): Promise<Result<void, PlatformFailure>> {
+  private async readFile(path: string, base: string, priority: number): Promise<Result<void, PlatformFailure>> {
+    if (this.#cancellation.isCancelled) return cancelled();
     if (this.#loaded.has(`file:${path}`)) return { ok: true, value: undefined };
     this.#loaded.add(`file:${path}`);
     let source: string;
     try {
-      source = await fs.readFile(path, 'utf8');
+      const file = await fs.open(path, 'r');
+      try {
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        while (bytes <= 1024 * 1024) {
+          if (this.#cancellation.isCancelled) return cancelled();
+          const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, 1024 * 1024 + 1 - bytes));
+          const read = await file.read(buffer, 0, buffer.length, null);
+          if (read.bytesRead === 0) break;
+          bytes += read.bytesRead;
+          chunks.push(buffer.subarray(0, read.bytesRead));
+        }
+        if (bytes > 1024 * 1024) return { ok: false, error: { code: 'ignore-file-too-large', message: `${path} exceeds 1 MiB`, retryable: false } };
+        source = Buffer.concat(chunks, bytes).toString('utf8');
+      } finally { await file.close(); }
     } catch (error: unknown) {
       if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') return { ok: true, value: undefined };
       return { ok: false, error: platformFailure(error, 'read-ignore') };
     }
     const lines = source.split(/\r?\n/u).slice(0, 16_384);
-    for (const line of lines) {
-      const rule = parseIgnoreRule(line, base);
-      if (rule !== undefined) this.#rules.push(rule);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (this.#cancellation.isCancelled) return cancelled();
+      const line = lines[index]!;
+      const rule = parseIgnoreRule(line, base, priority);
+      if (rule !== undefined) {
+        if (this.#rules.length >= 65_536) return { ok: false, error: { code: 'ignore-rule-limit', message: 'ignore rule limit reached', retryable: false } };
+        this.#rules.push(rule);
+      }
+      if (index % 256 === 255) await new Promise<void>((done) => setImmediate(done));
     }
     return { ok: true, value: undefined };
   }
 }
 
-function parseIgnoreRule(raw: string, base: string): IgnoreRule | undefined {
-  let pattern = raw.trim();
+function parseIgnoreRule(raw: string, base: string, priority: number): IgnoreRule | undefined {
+  let pattern = raw.replace(/(?<!\\) +$/u, '');
   if (pattern.length === 0 || pattern.startsWith('#')) return undefined;
   const negated = pattern.startsWith('!');
   if (negated) pattern = pattern.slice(1);
@@ -182,24 +228,44 @@ function parseIgnoreRule(raw: string, base: string): IgnoreRule | undefined {
   const anchored = pattern.startsWith('/');
   if (anchored) pattern = pattern.slice(1);
   if (pattern.length === 0) return undefined;
-  const hasSlash = pattern.includes('/');
-  const source = globToRegex(pattern);
-  const expression = hasSlash
-    ? new RegExp(`^${anchored ? '' : '(?:.*/)?'}${source}${directoryOnly ? '(?:/.*)?' : ''}$`, 'u')
-    : new RegExp(`(?:^|/)${source}${directoryOnly ? '(?:/.*)?' : ''}$`, 'u');
-  return { base, expression, negated };
+  try { return { base, glob: new Bun.Glob(pattern), basenameOnly: !anchored && !pattern.includes('/'), directoryOnly, negated, priority }; }
+  catch { return undefined; }
 }
 
-function globToRegex(pattern: string): string {
-  let result = '';
-  for (let index = 0; index < pattern.length; index += 1) {
-    const character = pattern[index] as string;
-    if (character === '*' && pattern[index + 1] === '*') { result += '.*'; index += 1; continue; }
-    if (character === '*') { result += '[^/]*'; continue; }
-    if (character === '?') { result += '[^/]'; continue; }
-    result += /[\\^$+{}.[\]|()]/u.test(character) ? `\\${character}` : character;
+async function discoverGitDirectory(root: string): Promise<string | undefined> {
+  let directory = resolve(root);
+  for (let depth = 0; depth < 32; depth += 1) {
+    const marker = join(directory, '.git');
+    const info = await safeLstat(marker);
+    if (info?.isDirectory()) return marker;
+    if (info?.isFile()) {
+      const source = await readSmallGitMarker(marker);
+      const target = /^gitdir:\s*(.+)\s*$/mu.exec(source ?? '')?.[1];
+      if (target !== undefined) {
+        const gitDirectory = resolve(directory, target);
+        const common = await readSmallGitMarker(join(gitDirectory, 'commondir'));
+        return common === undefined ? gitDirectory : resolve(gitDirectory, common.trim());
+      }
+    }
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
   }
-  return result;
+  return undefined;
+}
+
+async function readSmallGitMarker(path: string): Promise<string | undefined> {
+  try {
+    const file = await fs.open(path, 'r');
+    try {
+      const bytes = Buffer.alloc(4097);
+      const read = await file.read(bytes, 0, bytes.length, 0);
+      return read.bytesRead > 4096 ? undefined : bytes.toString('utf8', 0, read.bytesRead);
+    } finally { await file.close(); }
+  } catch (error: unknown) {
+    if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') return undefined;
+    throw error;
+  }
 }
 
 /** Coalescing window for `watchDirectory`'s 'changed' events; bounded below the 8ms/25ms latency budgets. */
@@ -320,7 +386,7 @@ export class NodeFilesystemPort implements FilesystemPort {
     options: WorkspaceDirectoryEnumerationOptions = {},
   ): Promise<Result<readonly WorkspaceDirectoryEntry[], PlatformFailure>> {
     if (cancellation.isCancelled) return cancelled();
-    const ignoredNames = new Set(options.ignoredDirectoryNames ?? ['.git', 'node_modules', '.artifacts', '.cache', 'dist', '.xi-trash']);
+    const ignoredNames = new Set(options.ignoredDirectoryNames ?? []);
     const ignoreMatcher = await WorkspaceIgnoreMatcher.create(root, options.ignore, cancellation);
     if (!ignoreMatcher.ok) return ignoreMatcher;
     const loadedDirectories: string[] = [];
@@ -340,17 +406,22 @@ export class NodeFilesystemPort implements FilesystemPort {
     // Capped consistent with enumerateFiles's 120k background-index limit, and
     // batched with bounded concurrency instead of one sequential lstat per child.
     const maxEntries = options.maxEntries ?? 120_000;
+    if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) return { ok: false, error: { code: 'invalid-limit', message: 'directory enumeration limit must be positive', retryable: false } };
     const concurrency = 64;
     try {
-      const entries = await fs.readdir(path, { withFileTypes: true });
-      const capped = entries.length > maxEntries ? entries.slice(0, maxEntries) : entries;
       const result: WorkspaceDirectoryEntry[] = [];
-      for (let start = 0; start < capped.length; start += concurrency) {
+      const pending: import('node:fs').Dirent[] = [];
+      const directory = await fs.opendir(path);
+      for await (const entry of directory) {
         if (cancellation.isCancelled) return cancelled();
-        const slice = capped.slice(start, start + concurrency);
-        const rows = await Promise.all(slice.map((entry) => this.statDirectoryEntry(path, root, entry, ignoredNames, ignoreMatcher.value)));
-        for (const row of rows) result.push(row);
+        if (result.length + pending.length >= maxEntries) return { ok: false, error: { code: 'enumeration-limit', message: 'directory enumeration limit reached', retryable: false } };
+        pending.push(entry);
+        if (pending.length === concurrency) {
+          const rows = await Promise.all(pending.splice(0).map((item) => this.statDirectoryEntry(path, root, item, ignoredNames, ignoreMatcher.value)));
+          result.push(...rows);
+        }
       }
+      if (pending.length > 0) result.push(...await Promise.all(pending.map((item) => this.statDirectoryEntry(path, root, item, ignoredNames, ignoreMatcher.value))));
       return cancellation.isCancelled ? cancelled() : { ok: true, value: Object.freeze(result) };
     } catch (error: unknown) {
       return { ok: false, error: platformFailure(error, 'enumerate-directory') };
@@ -366,7 +437,7 @@ export class NodeFilesystemPort implements FilesystemPort {
   ): Promise<WorkspaceDirectoryEntry> {
     const absolutePath = join(path, entry.name);
     const relativePath = relative(root, absolutePath).split('\\').join('/');
-    const ignored = ignoredNames.has(entry.name) || ignoreMatcher.ignored(relativePath, entry.isDirectory(), absolutePath);
+    const ignored = ignoredNames.has(entry.name) || await ignoreMatcher.ignored(relativePath, entry.isDirectory(), absolutePath);
     let kind: WorkspaceDirectoryEntry['kind'] = entry.isDirectory()
       ? 'directory'
       : entry.isFile() ? 'file' : entry.isSymbolicLink() ? 'symlink' : 'other';
@@ -486,7 +557,9 @@ export class NodeFilesystemPort implements FilesystemPort {
     if (cancellation.isCancelled) return cancelled();
     const maxEntries = options.maxEntries ?? 120_000;
     if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) return { ok: false, error: { code: 'invalid-limit', message: 'file enumeration limit must be positive', retryable: false } };
-    const ignored = new Set(options.ignoredDirectoryNames ?? ['.git', 'node_modules', '.artifacts', '.cache', 'dist', '.xi-trash']);
+    const maxVisitedEntries = options.maxVisitedEntries ?? 500_000;
+    if (!Number.isSafeInteger(maxVisitedEntries) || maxVisitedEntries < 1) return { ok: false, error: { code: 'invalid-limit', message: 'file enumeration visit limit must be positive', retryable: false } };
+    const ignored = new Set(options.ignoredDirectoryNames ?? []);
     const followSymlinks = options.followSymlinks === true;
     const deduplicateLinks = options.deduplicateLinks !== false;
     const maxDepth = options.maxDepth;
@@ -495,17 +568,18 @@ export class NodeFilesystemPort implements FilesystemPort {
     if (!ignoreMatcher.ok) return { ok: false, error: ignoreMatcher.error };
     const queue: Array<{ readonly absolute: string; readonly relative: string; readonly ancestors: readonly string[]; readonly depth: number }> = [{ absolute: root, relative: '', ancestors: [], depth: 0 }];
     const visitedDirectories = new Set<string>();
+    const visitedFiles = new Set<string>();
     const batch: WorkspaceFileEntry[] = [];
     let total = 0;
+    let visited = 0;
     try {
       while (queue.length > 0 && total < maxEntries) {
         if (cancellation.isCancelled) return cancelled();
+        if (++visited > maxVisitedEntries) return { ok: false, error: { code: 'enumeration-limit', message: 'file enumeration visit limit reached', retryable: false } };
         let directory = queue.shift();
         if (directory === undefined) break;
         const loadedRules = await ignoreMatcher.value.loadDirectory(directory.absolute);
         if (!loadedRules.ok) return loadedRules;
-        // Keep walking an ignored directory so a later negative rule can unignore a child;
-        // the maxEntries bound keeps this recovery path finite.
         if (followSymlinks) {
           const realDirectory = await fs.realpath(directory.absolute);
           if (directory.ancestors.includes(realDirectory)) continue;
@@ -513,22 +587,24 @@ export class NodeFilesystemPort implements FilesystemPort {
           if (deduplicateLinks) visitedDirectories.add(realDirectory);
           directory = { ...directory, ancestors: [...directory.ancestors, realDirectory] };
         }
-        let entries: import('node:fs').Dirent[];
+        let entries: Awaited<ReturnType<typeof fs.opendir>>;
         try {
-          entries = await fs.readdir(directory.absolute, { withFileTypes: true });
+          entries = await fs.opendir(directory.absolute);
         } catch (error: unknown) {
           if (directory.relative.length === 0) return { ok: false, error: platformFailure(error, 'enumerate-files') };
           continue;
         }
-        for (const entry of entries) {
+        for await (const entry of entries) {
           if (cancellation.isCancelled) return cancelled();
+          if (++visited > maxVisitedEntries) return { ok: false, error: { code: 'enumeration-limit', message: 'file enumeration visit limit reached', retryable: false } };
           const relativePath = directory.relative.length === 0 ? entry.name : `${directory.relative}/${entry.name}`;
           const absolutePath = join(directory.absolute, entry.name);
-          if (ignoreMatcher.value.ignored(relativePath, entry.isDirectory(), absolutePath) && !entry.isDirectory()) continue;
+          if (await ignoreMatcher.value.ignored(relativePath, entry.isDirectory(), absolutePath)) continue;
           if (entry.isDirectory()) {
             if (!ignored.has(entry.name) && (maxDepth === undefined || directory.depth < maxDepth)) queue.push({ absolute: absolutePath, relative: relativePath, ancestors: directory.ancestors, depth: directory.depth + 1 });
             continue;
           }
+          let fileIdentity = resolve(directory.ancestors.at(-1) ?? directory.absolute, entry.name);
           if (entry.isSymbolicLink() && followSymlinks) {
             let target: import('node:fs').Stats;
             try { target = await fs.stat(absolutePath); } catch { continue; }
@@ -537,8 +613,13 @@ export class NodeFilesystemPort implements FilesystemPort {
               continue;
             }
             if (!target.isFile()) continue;
+            if (deduplicateLinks) {
+              try { fileIdentity = await fs.realpath(absolutePath); } catch { continue; }
+            }
           } else if (!entry.isFile() || entry.isSymbolicLink()) continue;
-          batch.push(Object.freeze({ relativePath, absolutePath, hidden: entry.name.startsWith('.') }));
+          if (deduplicateLinks && visitedFiles.has(fileIdentity)) continue;
+          if (deduplicateLinks) visitedFiles.add(fileIdentity);
+          batch.push(Object.freeze({ relativePath, absolutePath, hidden: relativePath.startsWith('.') || relativePath.includes('/.') }));
           total += 1;
           if (batch.length >= 512) {
             await onBatch(Object.freeze(batch.splice(0, batch.length)));
@@ -548,6 +629,7 @@ export class NodeFilesystemPort implements FilesystemPort {
         }
       }
       if (batch.length > 0) await onBatch(Object.freeze(batch.splice(0, batch.length)));
+      if (total >= maxEntries) return { ok: false, error: { code: 'enumeration-limit', message: 'file enumeration result limit reached', retryable: false } };
       return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
     } catch (error: unknown) {
       return { ok: false, error: platformFailure(error, 'enumerate-files') };

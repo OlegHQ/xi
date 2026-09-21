@@ -30,11 +30,12 @@ with tempfile.TemporaryDirectory(prefix="xi-rulers-pty-") as temporary:
     root = Path(temporary)
     config = root / ".config" / "xi" / "config.toml"
     config.parent.mkdir(parents=True)
-    config.write_text("schema-version = 1\n[editor]\nrulers = [5]\n", encoding="utf-8")
+    config.write_text("schema-version = 1\n[editor]\nrulers = [5]\ncursorline = false\n", encoding="utf-8")
     source = root / "rulers.txt"
-    source.write_text("0123456789\n", encoding="utf-8")
+    source.write_text("0123456789\nabcdefghij\n", encoding="utf-8")
     master, slave = pty.openpty()
     environment = os.environ.copy()
+    environment.pop("NO_COLOR", None)
     environment.update({"HOME": temporary, "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(["bun", "run", "apps/xi/src/main.ts", str(source)], cwd=ROOT, env=environment, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
     os.close(slave)
@@ -44,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix="xi-rulers-pty-") as temporary:
         if b"XI_WORKBENCH_READY" not in captured:
             raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
         read_for(master, captured, 0.5)
-        if not re.search(rb"\x1b\[2;10H[^\r\n]*\x1b\[48;2;211;216;223m", captured):
+        if not re.search(rb"\x1b\[2;13H\x1b\[38;2;[0-9;]+m\x1b\[48;2;(?!255;255;255m)[0-9;]+mf", captured):
             raise SystemExit(f"configured ruler background was not painted: {captured[-4000:]!r}")
         os.write(master, b"q")
         child.wait(timeout=5)

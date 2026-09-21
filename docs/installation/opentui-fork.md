@@ -21,6 +21,24 @@ fork release must publish matching owned platform packages before a fresh
 registry install can use underline colours. This checkout is exercised with a
 rebuilt Linux/arm64 library; other platforms still need release qualification.
 
+The Linux/arm64 glibc asset in `native-assets.sha256` is built from submodule
+`ac9a6156d17680c4b6f8b7ddd45a1a96424c3be7` with Zig 0.16.0:
+
+```sh
+cd vendor/opentui/packages/native
+bun run prepare:zig
+zig build -Doptimize=ReleaseFast
+cp lib/aarch64-linux/libopentui.so /tmp/xi-libopentui.so
+strip --strip-all /tmp/xi-libopentui.so
+sha256sum /tmp/xi-libopentui.so
+```
+
+The stripped result is `e1652d0ab20c2c1c23df7a50c54c9445c7496af0197f15fd3cbc7029cdac4681`.
+The published 0.5.11 Linux/arm64 asset hashes to
+`4cedc1bc049c2e498923f2647280c1f5c0a370feac9de87675a689f6dfa57c23`;
+it predates the fork's native underline symbols. `bun run package:audit` checks
+that the installed asset matches the manifest.
+
 The pinned Solid 0.5.11 package also receives
 `patches/opentui-solid-0.5.11.patch`. It defers Babel until an actual TSX transform
 is needed and supports Xi's disposable `.cache/solid` transform cache. Source

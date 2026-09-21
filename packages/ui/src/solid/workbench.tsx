@@ -659,9 +659,11 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         {...(options.statusline === undefined ? {} : { statusline: options.statusline })}
         {...(options.workspaceRoot === undefined ? {} : { workspaceRoot: options.workspaceRoot })}
         {...(options.statuslineFileType === undefined ? {} : { statuslineFileType: options.statuslineFileType })}
+        {...(options.statuslineIndentStyle === undefined ? {} : { statuslineIndentStyle: options.statuslineIndentStyle })}
         {...(options.statuslineLspActivity === undefined ? {} : { statuslineLspActivity: options.statuslineLspActivity })}
         {...(options.statuslineRegister === undefined ? {} : { statuslineRegister: options.statuslineRegister })}
         {...(options.statuslineCodeActionHints === undefined ? {} : { statuslineCodeActionHints: options.statuslineCodeActionHints })}
+        {...(options.workspaceTrustRestricted === undefined ? {} : { workspaceTrustRestricted: options.workspaceTrustRestricted })}
         {...(options.colorModes === undefined ? {} : { colorModes: options.colorModes })}
         {...(options.bufferline === undefined ? {} : { bufferline: options.bufferline })}
         {...(options.editorDiagnostics === undefined ? {} : { editorDiagnostics: options.editorDiagnostics })}

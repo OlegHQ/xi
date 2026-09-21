@@ -18,7 +18,6 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DISPLAY = ":97"
 
 
 def require(*tools: str) -> str | None:
@@ -48,14 +47,17 @@ def run_xterm() -> str:
     if missing is not None:
         return f"SKIPPED direct-xterm: {missing!r} is not installed on this host"
     with tempfile.TemporaryDirectory(prefix="xi-t128-xterm-") as temporary:
+        display = f":{1000 + os.getpid() % 50000}"
         workspace = Path(temporary)
         (workspace / "main.ts").write_text("const value = 1;\n", encoding="utf-8")
         stderr_path = workspace / "stderr.log"
         stderr_path.write_text("", encoding="utf-8")
-        xvfb = subprocess.Popen(["Xvfb", DISPLAY, "-screen", "0", "1280x800x24"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        xvfb = subprocess.Popen(["Xvfb", display, "-screen", "0", "1280x800x24"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1.0)
+        if xvfb.poll() is not None:
+            raise SystemExit(f"Xvfb exited before xterm launched on {display}")
         environment = os.environ.copy()
-        environment["DISPLAY"] = DISPLAY
+        environment["DISPLAY"] = display
         script = (
             f"cd {workspace} && HOME={workspace} XI_UI_TEST_MARKERS=1 "
             f"bun run {ROOT / 'apps/xi/src/main.ts'} main.ts 2>{stderr_path}"

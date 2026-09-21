@@ -11,7 +11,10 @@ import {
   type ThemeColor,
   type WorkbenchTheme,
 } from '../../packages/ui/src/index';
-import { contrastRatio as rgbaContrastRatio, pickCursorForeground } from '../../packages/ui/theme/motion-tokens';
+import { contrastRatio as rgbaContrastRatio, pickCursorForeground, resolvePaintColor } from '../../packages/ui/theme/motion-tokens';
+
+assert.deepEqual(resolvePaintColor('#FFFFFF', 'ansi256').toInts().slice(0, 3), [255, 255, 255], 'T063-ANSI256-01 white stays white after palette quantization');
+assert.notDeepEqual(resolvePaintColor('#D5D4CF', 'ansi256').toInts().slice(0, 3), [0, 0, 0], 'T063-ANSI256-02 ruler background does not quantize to black');
 
 const themes: readonly { readonly name: string; readonly theme: WorkbenchTheme }[] = [
   { name: 'xi-light', theme: LIGHT_WORKBENCH_THEME },

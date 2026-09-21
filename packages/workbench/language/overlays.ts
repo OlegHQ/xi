@@ -192,6 +192,13 @@ export class LanguageOverlayController {
     });
   }
 
+  detachNavigation(): void {
+    this.closeOutline();
+    this.closeHover();
+    this.#navigation = undefined;
+    this.#session = undefined;
+  }
+
   openOutline(): void {
     this.#options.host.closeAllPanels('outline');
     this.#outlineOpen = true;

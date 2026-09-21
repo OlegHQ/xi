@@ -76,7 +76,7 @@ failed check.
 | User `config.toml` | Platform config directory | Effective at `~/.config/xi/config.toml` | Keep the Xi directory but make file contents compatible. |
 | Workspace `.helix/config.toml` merge | Built-in → user → workspace | Effective when no explicit `-c`/Xi config overrides it | Reads the optional `.helix/config.toml` workspace layer after defaults and user config, preserving explicit CLI precedence. |
 | `-c/--config` | Explicit config path | Effective | Loads the selected file as the highest user-facing config layer before persisted Xi state overrides. |
-| `:config-open`, `:config-reload`, USR1 | Open/reload atomically | Effective; both reload paths compile the full config and update live input settings; invalid reloads retain the last-good behavior | Reload is serialized, validated before publication, reports diagnostics, and updates keybindings plus scroll/input settings without restarting Xi. |
+| `:config-open`, `:config-reload`, USR1 | Open/reload atomically | Partial live reload; invalid reloads retain the last-good behavior | Reload is serialized and validated before publication. Bindings, input, trust, line numbers, rulers and save policy update live; other settings require restart, which Xi reports. |
 | Unknown fields | Rejected by Helix schema | Rejected by Xi's hand-maintained list | Preserve strict rejection. A key enters the list only with a production consumer. |
 
 ## `[editor]` scalar and union keys
@@ -114,7 +114,7 @@ compatibility decision.
 | `editor.color-modes` | `false` | — | Effective | Gates the mode-specific statusline theme scopes. |
 | `editor.text-width` | `80` | stable | Effective | Supplies the configured content wrap width when wrap-at-text-width is enabled. |
 | `editor.workspace-lsp-roots` | `[]` | — | Effective | Validated relative directories select the deepest matching LSP session root. |
-| `editor.default-line-ending` | `native` | — | Effective | Applies `native`/`lf`/`crlf`/`ff`/`cr`/`nel` to new documents and preserves existing file EOL metadata. |
+| `editor.default-line-ending` | `native` | — | Effective | Applies `native`/`lf`/`crlf`/`ff`/`cr`/`nel` to new documents and preserves existing file EOL metadata. FF and NEL bytes reopen as line endings in the default file format; use explicit `unix` or `dos` file format to keep them as literal controls. |
 | `editor.insert-final-newline` | `true` | — | Effective | Adds the final line ending through the document transaction before persistence, preserving the save version boundary. |
 | `editor.atomic-save` | `true` | — | Effective | Selects atomic replacement or direct writes for persistence. |
 | `editor.trim-final-newlines` | `false` | — | Effective | Removes line endings after the final one through one document transaction before persistence. |
@@ -125,7 +125,7 @@ compatibility decision.
 | `editor.end-of-line-diagnostics` | `disable` | Master default `hint` | Effective | Shows the highest-severity diagnostic not rendered inline at the source line end; `disable` suppresses it. |
 | `editor.preview-completion-insert` | `true` | `true` | Effective | Selecting a completion applies a reversible, versioned preview; accepting keeps it, while moving or closing restores the prior text. |
 | `editor.clipboard-provider` | platform-specific union | — | Effective | Built-ins use Helix’s provider-specific commands, `termcode` emits OSC52, `none` disables reads/writes, and custom commands remain argv-native. |
-| `editor.editor-config` | `true` | — | Effective; gates the project `.helix/config.toml` layer | User config is compiled first so this setting controls whether the workspace layer is admitted. |
+| `editor.editor-config` | `true` | — | Partial | Workspace `.helix/config.toml` loading is governed by workspace trust. When enabled, `.editorconfig` applies indentation, line endings, final-newline insertion, and trailing-whitespace trimming per file. |
 | `editor.mouse-yank-register` | — | `*` on master | Effective | Completed mouse selections are yanked into this owned Vim register; explicit register commands remain authoritative. |
 | `editor.rainbow-brackets` | `false` | — | Effective | Colors Tree-sitter `punctuation.bracket` spans by containing delimiter depth using `rainbow.N` theme scopes; keep off by default. |
 | `editor.kitty-keyboard-protocol` | — | `auto` on master | Effective | Controls the existing OpenTUI Kitty keyboard negotiation and parser. |
@@ -169,8 +169,6 @@ Brace notation below classifies every listed child key separately.
 | `editor.indent-guides.{render,character,skip-levels}` | false/`│`/0 | stable | Effective | Visible leading indentation renders the configured glyph, honoring skipped levels in the launched editor. |
 | `editor.gutters.layout` | standard five entries | stable | Effective | Ordered gutter components reach the bounded viewport geometry; scalar `gutters` and table `layout` forms share validation. |
 | `editor.gutters.line-numbers.min-width` | `3` | stable | Effective | Reserves the configured minimum number width and composes with absolute/relative numbering. |
-| Empty `editor.gutters.{diagnostics,diff,spacer}` sections | no children | stable | Effective | Empty optionless sections are accepted and preserve Xi's existing diagnostic, spacer, and line-number gutter rendering; unknown children still fail. |
-| Empty `editor.gutters.code-action-hint` section | no children | master | Effective | Accepted as an optionless section; the gutter is enabled only when included in the gutter layout. |
 | `editor.soft-wrap.{enable,max-wrap,max-indent-retain,wrap-indicator}` | false/20/40/`↪ ` | stable | Effective | Soft-wrap limits now control bounded word breaks and continuation indentation; indicators remain non-editable layout annotations. |
 | `editor.soft-wrap.wrap-at-text-width` | `false` | stable | Effective | Uses `editor.text-width` as a bounded layout wrap width. |
 | `editor.smart-tab.enable` | `true` | stable | Effective; maps the launched editor setting to owned Vim insertion | |
@@ -184,6 +182,10 @@ Brace notation below classifies every listed child key separately.
 | `editor.workspace-trust.{level,prompt,trusted}` | servers/true/[] | master | Effective | Gates workspace config, LSP/DAP and Git execution; hashes trusted `.helix` inputs and detects changes. |
 | `editor.clipboard-provider.custom.{yank,paste,primary-yank,primary-paste}` | required yank/paste; primary optional | stable | Effective | Each command is validated argv; stdin/stdout carry contents. |
 | `editor.terminal.{command,args}` | optional | source schema | Missing | Treat as source-backed, not documented stable compatibility. |
+
+The pinned Helix binaries reject empty `[editor.gutters.diagnostics]`, `.diff`,
+`.spacer`, and `.code-action-hint` tables despite headings in the reference docs.
+Xi rejects them too; enable a gutter through `editor.gutters.layout` instead.
 
 ## Xi extensions and migration
 

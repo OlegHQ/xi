@@ -10,8 +10,8 @@ assert.equal(decoded.ok, true, 'T036-LSP-INLAY-HINTS-UNIT-01 decoder accepts LSP
 if (decoded.ok) {
   assert.deepEqual(decoded.value.hints.map((hint) => hint.label), [': nu', 'abcd'], 'T036-LSP-INLAY-HINTS-LIMIT-UNIT-01 decoder applies the configured UTF-16 label limit');
   const presentation = new LanguagePresentationFeatures();
-  assert.equal(presentation.applyHints(decoded.value).ok, true, 'T036-LSP-INLAY-HINTS-UNIT-01 presentation accepts the versioned result');
-  assert.equal(presentation.visibleHints('doc', 1, 2)?.hints.length, 1, 'T036-LSP-INLAY-HINTS-UNIT-01 presentation filters by visible line');
+  assert.equal(presentation.applyHints(decoded.value).ok, true, 'T036-LSP-INLAY-HINTS-UNIT-01-PART2 presentation accepts the versioned result');
+  assert.equal(presentation.visibleHints('doc', 1, 2)?.hints.length, 1, 'T036-LSP-INLAY-HINTS-UNIT-01-PART3 presentation filters by visible line');
   presentation.dispose();
 }
 
@@ -29,7 +29,7 @@ if (highlights.ok) {
 assert.equal(decodeDocumentHighlights([{ range: { start: { line: 1, character: 0 }, end: { line: 0, character: 0 } } }], 'doc', 3, 6).ok, false, 'T036-LSP-DOCUMENT-HIGHLIGHT-INVALID-UNIT-01 rejects reversed ranges');
 
 assert.equal(decodeInlayHints([{ position: { line: -1, character: 0 }, label: 'bad' }], 'doc', 3, 2).ok, false, 'T036-LSP-INLAY-HINTS-INVALID-UNIT-01 rejects invalid positions');
-assert.equal(decodeInlayHints(null, 'doc', 3, 2).ok, true, 'T036-LSP-INLAY-HINTS-UNIT-01 accepts a null LSP result');
+assert.equal(decodeInlayHints(null, 'doc', 3, 2).ok, true, 'T036-LSP-INLAY-HINTS-UNIT-01-PART4 accepts a null LSP result');
 const colors = decodeDocumentColors([{ range: { start: { line: 0, character: 6 }, end: { line: 0, character: 12 } }, color: { red: 1, green: 0.5, blue: 0, alpha: 1 } }], 'doc', 3, 4);
 assert.equal(colors.ok, true, 'T036-LSP-COLOR-SWATCHES-UNIT-01 decoder accepts a valid LSP document color');
 if (colors.ok) {
@@ -41,4 +41,38 @@ if (colors.ok) {
   assert.equal(decodeDocumentColors([{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, color: { red: 2, green: 0, blue: 0, alpha: 1 } }], 'doc', 3, 6).ok, false, 'T036-LSP-COLOR-SWATCHES-INVALID-UNIT-02 rejects out-of-range channels');
   presentation.dispose();
 }
+
+const pending: Array<(value: unknown) => void> = [];
+const session = {
+  supportsRequest: () => true,
+  waitForReady: async () => ({ ok: true as const, value: undefined }),
+  request: <T>() => new Promise<T>((resolve) => { pending.push((value) => resolve(value as T)); }),
+};
+const live = new LanguagePresentationFeatures();
+let version = 3;
+const oldRequest = live.refreshInlayHints(session, { id: 'live', uri: 'file:///live', version: 3, lineCount: 1 }, undefined, () => version);
+await Promise.resolve();
+version = 4;
+const newRequest = live.refreshInlayHints(session, { id: 'live', uri: 'file:///live', version: 4, lineCount: 1 }, undefined, () => version);
+await Promise.resolve();
+assert.equal(pending.length, 2, 'F26-LSP-DECORATION-01 both requests reached the delayed server');
+pending[1]?.([{ position: { line: 0, character: 0 }, label: 'new' }]);
+await newRequest;
+pending[0]?.([{ position: { line: 0, character: 0 }, label: 'old' }]);
+await oldRequest;
+assert.deepEqual(live.hints('live')?.hints.map((hint) => hint.label), ['new'], 'F26-LSP-DECORATION-02 a cancelled stale response cannot replace the current hint');
+version = 5;
+const closingRequest = live.refreshInlayHints(session, { id: 'live', uri: 'file:///live', version: 5, lineCount: 1 }, undefined, () => version);
+await Promise.resolve();
+live.clear('live');
+pending[2]?.([{ position: { line: 0, character: 0 }, label: 'closed' }]);
+await closingRequest;
+assert.equal(live.hints('live'), undefined, 'F26-LSP-DECORATION-03 closing a document cancels its pending decoration');
+const editedRequest = live.refreshDocumentHighlights(session, { id: 'live', uri: 'file:///live', version: 5, lineCount: 1 }, 0, 0, () => version);
+await Promise.resolve();
+version = 6;
+pending[3]?.([{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } }]);
+await editedRequest;
+assert.equal(live.documentHighlights('live'), undefined, 'F26-LSP-DECORATION-04 an edit invalidates a highlight without requiring another request');
+live.dispose();
 console.log('LSP inlay-hints unit checks passed.');

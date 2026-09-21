@@ -845,6 +845,10 @@ function defaultAnchor(snapshot: DocumentSnapshot): { readonly ok: true; readonl
  * viewport, leaving at least one line between the margins. Callers must report the returned `scrollTop`
  * back to the read model so scroll position and the rendered anchor never drift.
  *
+ * For a wrapped line taller than the viewport, the previous frame's visual-row
+ * boundaries advance the anchor within that logical line. A distant jump anchors
+ * at the cursor; the logical `scrollTop` still names its line.
+ *
  * `scrollLeft` follows the same rule horizontally over the primary head's display
  * column when wrapping is disabled. Wrapped rows reset horizontal scrolling because
  * their screen columns are derived from the wrapped row start.
@@ -859,7 +863,7 @@ export function resolveScrollAnchor(
   heightCells: number,
   widthCells: number,
   scrollLeft: number,
-  options?: { readonly tabSize?: number; readonly widthPolicy?: CellWidthPolicy; readonly scrolloff?: number; readonly wrap?: boolean },
+  options?: { readonly tabSize?: number; readonly widthPolicy?: CellWidthPolicy; readonly scrolloff?: number; readonly wrap?: boolean; readonly previousAnchor?: ViewportAnchor; readonly previousFrame?: VisibleFrame },
 ): { readonly ok: true; readonly value: { readonly anchor: ViewportAnchor; readonly scrollTop: number; readonly scrollLeft: number } } | { readonly ok: false; readonly error: LayoutFailure } {
   const lastLine = Math.max(0, snapshot.lineCount - 1);
   const visibleRows = Math.max(1, heightCells);
@@ -897,14 +901,62 @@ export function resolveScrollAnchor(
   }
   const offset = snapshot.lineStartOffset(lineIndex(top));
   if (!offset.ok) return readFailure(offset.error.kind);
+  let anchor: ViewportAnchor = { documentVersion: snapshot.version, lineIndex: lineIndex(top), offset: offset.value, displayCellColumn: cellColumn(0) };
+  const cursor = primary?.head.at.offset;
+  const cursorLine = cursor === undefined ? undefined : snapshot.lineIndexAt(cursor);
+  if (options?.wrap === true && cursor !== undefined && cursorLine?.ok === true && cursorLine.value === anchor.lineIndex) {
+    anchor = resolveWrappedCursorAnchor(snapshot, anchor, cursor, visibleColumns, visibleRows, scrolloffBottom, options);
+  }
   return {
     ok: true,
     value: {
-      anchor: Object.freeze({ documentVersion: snapshot.version, lineIndex: lineIndex(top), offset: offset.value, displayCellColumn: cellColumn(0) }),
+      anchor: Object.freeze(anchor),
       scrollTop: top,
       scrollLeft: left,
     },
   };
+}
+
+function resolveWrappedCursorAnchor(
+  snapshot: DocumentSnapshot, lineAnchor: ViewportAnchor, cursor: Utf16Offset, width: number, height: number, bottomMargin: number,
+  options: { readonly tabSize?: number; readonly widthPolicy?: CellWidthPolicy; readonly previousAnchor?: ViewportAnchor; readonly previousFrame?: VisibleFrame },
+): ViewportAnchor {
+  const previous = options.previousAnchor;
+  const frame = options.previousFrame;
+  if (previous !== undefined && previous.documentVersion === snapshot.version && previous.lineIndex === lineAnchor.lineIndex
+    && frame?.identity.documentId === snapshot.id && frame.identity.documentVersion === snapshot.version
+    && frame.anchor.offset === previous.offset && frame.heightCells === height) {
+    const rows = frame.rows;
+    const cursorRow = rows.findIndex((row) => row.kind === 'text' && row.lineIndex === lineAnchor.lineIndex && row.startOffset !== null && row.endOffset !== null
+      && (row.startOffset as number) <= (cursor as number) && (cursor as number) < (row.endOffset as number));
+    if (cursorRow >= 0) {
+      const shift = Math.max(0, cursorRow - (height - bottomMargin - 1));
+      const row = rows[shift];
+      if (row?.kind === 'text' && row.lineIndex === lineAnchor.lineIndex && row.startOffset !== null) return { documentVersion: snapshot.version, lineIndex: lineAnchor.lineIndex, offset: row.startOffset, displayCellColumn: cellColumn(row.displayStartCell) };
+    }
+    let last: ScreenRow | undefined;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (row?.kind === 'text' && row.lineIndex === lineAnchor.lineIndex) { last = row; break; }
+    }
+    if (last?.endOffset !== null && last?.endOffset !== undefined && (cursor as number) >= (last.endOffset as number)
+      && (cursor as number) - (last.endOffset as number) < width) {
+      const next = rows[1];
+      if (next?.kind === 'text' && next.lineIndex === lineAnchor.lineIndex && next.startOffset !== null) return { documentVersion: snapshot.version, lineIndex: lineAnchor.lineIndex, offset: next.startOffset, displayCellColumn: cellColumn(next.displayStartCell) };
+    }
+  } else if ((cursor as number) - (lineAnchor.offset as number) < width * height / 2) return lineAnchor;
+
+  // A jump beyond the prior frame needs an anchor near the cursor. ASCII columns
+  // are indexed by the document; the bounded fallback keeps a rare Unicode jump
+  // from scanning an arbitrarily long logical line in an input step.
+  const distance = (cursor as number) - (lineAnchor.offset as number);
+  const ascii = distance > 8_192 ? snapshot.isPrintableAsciiRange?.(lineAnchor.offset, cursor) : undefined;
+  const column = distance <= 8_192
+    ? measureDisplayColumn(snapshot, lineAnchor.offset, cursor, options.tabSize ?? 8, options.widthPolicy ?? DEFAULT_WIDTH_POLICY)
+    : ascii?.ok === true && ascii.value ? distance : undefined;
+  // ponytail: Unicode jumps beyond 8 Ki UTF-16 reset tab alignment; add a
+  // document-owned display-column index if that path becomes common.
+  return { documentVersion: snapshot.version, lineIndex: lineAnchor.lineIndex, offset: cursor, displayCellColumn: cellColumn(column ?? 0) };
 }
 
 /**

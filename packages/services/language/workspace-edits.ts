@@ -1,4 +1,4 @@
-import type { Disposable, Result } from '../../contracts/src/index';
+import type { CancellationToken, Disposable, Result } from '../../contracts/src/index';
 import { requestIsSupported, type LanguageProviderSession } from './provider-session';
 
 export interface WorkspaceTextEdit {
@@ -37,7 +37,7 @@ export interface WorkspaceEditDocument {
   readonly offset: (position: WorkspaceEditPosition) => Result<number, WorkspaceEditProviderFailure>;
 }
 export interface WorkspaceEditRequest { readonly documentId: string; readonly uri: string; readonly version: number; readonly position: WorkspaceEditPosition; }
-export interface CodeActionRequest extends WorkspaceEditRequest { readonly diagnostics?: readonly unknown[]; readonly only?: readonly string[]; }
+export interface CodeActionRequest extends WorkspaceEditRequest { readonly diagnostics?: readonly unknown[]; readonly only?: readonly string[]; readonly cancellation?: CancellationToken; }
 export interface LanguageCodeAction {
   readonly id: string;
   readonly title: string;
@@ -98,7 +98,7 @@ export class LanguageServerWorkspaceEditProvider {
         textDocument: { uri: request.uri },
         range: { start: { line: request.position.line, character: request.position.utf16 }, end: { line: request.position.line, character: request.position.utf16 } },
         context: { diagnostics: request.diagnostics ?? [], ...(request.only === undefined ? {} : { only: request.only }) },
-      });
+      }, request.cancellation);
       if (response === null) return { ok: true, value: Object.freeze([]) };
       if (!Array.isArray(response)) return unavailable('language server returned invalid code actions');
       const actions: LanguageCodeAction[] = [];

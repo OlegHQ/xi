@@ -327,7 +327,7 @@ async function syntaxStylesPaintBackgroundAndModifiers(): Promise<void> {
       (attribute) =>
         (attribute & TextAttributes.UNDERLINE_STYLE_CURL) !== TextAttributes.UNDERLINE_STYLE_CURL,
     ),
-    "T036-UNDERCURL-UNIT-01 disabled undercurl does not emit curl attributes",
+    "T036-UNDERCURL-UNIT-01-PART2 disabled undercurl does not emit curl attributes",
   );
   fallback.renderer.destroy();
 }

@@ -26,11 +26,12 @@ import select
 import shutil
 import struct
 import subprocess
-import sys
 import tempfile
 import termios
 import time
 from pathlib import Path
+
+from terminal_screen import Screen
 
 ROOT = Path(__file__).resolve().parents[2]
 PANEL_POINTER = re.compile(rb"XI_PANEL_POINTER (\{[^\r\n]*\})")
@@ -44,24 +45,26 @@ def require(*tools: str) -> str | None:
     return None
 
 
-def read_for(master: int, captured: bytearray, seconds: float) -> None:
+def read_for(master: int, stderr: int, screen: Screen, diagnostics: bytearray, seconds: float) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        readable, _, _ = select.select([master], [], [], 0.05)
-        if not readable:
-            continue
-        try:
-            captured.extend(os.read(master, 65536))
-        except OSError:
-            return
+        for descriptor in select.select([master, stderr], [], [], 0.05)[0]:
+            try:
+                data = os.read(descriptor, 65536)
+            except OSError:
+                continue
+            if descriptor == master:
+                screen.feed(data)
+            else:
+                diagnostics.extend(data)
 
 
-def read_until(master: int, captured: bytearray, marker: bytes, seconds: float) -> None:
+def read_until(master: int, stderr: int, screen: Screen, diagnostics: bytearray, marker: bytes, seconds: float) -> None:
     deadline = time.monotonic() + seconds
-    while marker not in captured and time.monotonic() < deadline:
-        read_for(master, captured, 0.05)
-    if marker not in captured:
-        raise SystemExit(f"missing PTY marker {marker!r}: {captured[-5000:]!r}")
+    while marker not in diagnostics and time.monotonic() < deadline:
+        read_for(master, stderr, screen, diagnostics, 0.05)
+    if marker not in diagnostics:
+        raise SystemExit(f"missing PTY marker {marker!r}: {diagnostics[-5000:]!r}")
 
 
 def mouse(button: int, x: int, y: int, release: bool = False) -> bytes:
@@ -94,45 +97,47 @@ def main() -> None:
             env=environment,
             stdin=slave,
             stdout=slave,
-            stderr=slave,
+            stderr=subprocess.PIPE,
             close_fds=True,
         )
         os.close(slave)
-        captured = bytearray()
+        diagnostics = bytearray()
+        screen = Screen(40, 120)
+        assert child.stderr is not None
         try:
-            read_until(master, captured, b"XI_WORKBENCH_READY", 10)
+            read_until(master, child.stderr.fileno(), screen, diagnostics, b"XI_WORKBENCH_READY", 10)
             # Trigger the (currently lazy) language-session start via hover, then poll Problems
             # until real diagnostics arrive — LSP project setup + typecheck takes a few seconds.
             os.write(master, b" k")
             count = 0
             deadline = time.monotonic() + 40
             while time.monotonic() < deadline:
-                before = len(captured)
+                before = len(diagnostics)
                 os.write(master, b" e")
-                read_for(master, captured, 1.5)
-                match = PROBLEMS_OPEN.search(captured[before:])
+                read_for(master, child.stderr.fileno(), screen, diagnostics, 1.5)
+                match = PROBLEMS_OPEN.search(diagnostics[before:])
                 if match is not None:
                     count = json.loads(match.group(1))["count"]
                     if count > 0:
                         break
                 os.write(master, b"\x1b")
-                read_for(master, captured, 0.3)
+                read_for(master, child.stderr.fileno(), screen, diagnostics, 0.3)
             if count == 0:
-                raise SystemExit(f"no real diagnostics arrived within 40s: {captured[-4000:]!r}")
-            if b"\xe2\x97\x8f 1" not in captured:
-                raise SystemExit(f"configured statusline did not render the filtered diagnostic count: {captured[-4000:]!r}")
+                raise SystemExit(f"no real diagnostics arrived within 40s: {diagnostics[-4000:]!r}")
+            if re.search(r"●\s*1", screen.row_text(40)) is None:
+                raise SystemExit(f"configured statusline did not render the filtered diagnostic count: {screen.row_text(40)!r}")
 
             # Real click activation of the diagnostic row (T127's own acceptance scenario).
             # Problems panel bounds at 120x40: left=1, top=27, height=12 -> header at PTY row
             # 28 (1-based), the first diagnostic row at PTY row 29.
-            before = len(captured)
+            before = len(diagnostics)
             os.write(master, mouse(0, 5, 29))
             os.write(master, mouse(0, 5, 29, True))
-            read_for(master, captured, 1.0)
-            events = [json.loads(m.group(1)) for m in PANEL_POINTER.finditer(captured[before:])]
+            read_for(master, child.stderr.fileno(), screen, diagnostics, 1.0)
+            events = [json.loads(m.group(1)) for m in PANEL_POINTER.finditer(diagnostics[before:])]
             hit = next((event for event in events if event.get("panel") == "problems" and event.get("action") == "activate"), None)
             if hit is None:
-                raise SystemExit(f"no production Problems row activated by stable id: {captured[before:][-4000:]!r}")
+                raise SystemExit(f"no production Problems row activated by stable id: {diagnostics[before:][-4000:]!r}")
 
             os.write(master, b":q!\r")
             child.wait(timeout=10)

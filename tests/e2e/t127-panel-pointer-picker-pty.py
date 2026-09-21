@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from terminal_screen import Screen
 
 ROOT = Path(__file__).resolve().parents[2]
 PANEL_POINTER = re.compile(rb"XI_PANEL_POINTER (\{[^\r\n]*\})")
@@ -74,12 +75,14 @@ def run_picker() -> None:
             os.write(master, b"zztarget")
             read_until(master, captured, b"XI_PICKER_PREVIEW", 5)
             read_for(master, captured, 0.3)
-            # Picker panel: the 60-cell bounded panel is centered at left=30, top=5 at
-            # 120x40; its bordered content begins at x=7, header row y=7, and the
-            # first (filtered) entry occupies y=8.
+            screen = Screen(40, 120)
+            screen.feed(captured)
+            picker_row = next((row for row in range(1, 41) if "▸ zztarget.txt" in screen.row_text(row)), None)
+            if picker_row is None:
+                raise SystemExit("filtered picker entry did not render")
             before = len(captured)
-            os.write(master, mouse(0, 13, 8))
-            os.write(master, mouse(0, 13, 8, True))
+            os.write(master, mouse(0, 13, picker_row))
+            os.write(master, mouse(0, 13, picker_row, True))
             read_for(master, captured, 0.6)
             events = [json.loads(match.group(1)) for match in PANEL_POINTER.finditer(captured[before:])]
             hit = next((event for event in events if event.get("panel") == "picker" and event.get("action") == "activate"), None)

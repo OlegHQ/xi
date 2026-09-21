@@ -39,6 +39,7 @@ export interface BufferHostOptions {
   readonly mouseYankRegister?: string;
   readonly clipboard?: ClipboardPort;
   readonly insertOptions?: VimInsertOptions;
+  readonly insertOptionsForPath?: (path: string | undefined) => VimInsertOptions | undefined;
   readonly onMessage?: (message: string) => void;
   readonly onSave?: (document: TextFileDocument, viewId: ViewId, target: string | undefined) => Promise<boolean>;
   readonly onExCommand?: (source: string, viewId: ViewId) => Promise<'handled' | 'unhandled' | 'quit'> | 'handled' | 'unhandled' | 'quit';
@@ -148,6 +149,7 @@ export class BufferHost {
     const options = this.#options;
     const resolvedInitialLine = initialLine ?? (viewId === options.launchViewId ? options.launchInitialLine : undefined);
     const workbenchSession = this.#session;
+    const insertOptions = options.insertOptionsForPath?.(workbenchSession.buffer(document.id)?.path) ?? options.insertOptions;
     let publishedMode = 'normal';
     const session = createOwnedVimSession(document, {
       viewId,
@@ -157,7 +159,8 @@ export class BufferHost {
       ...(options.defaultYankRegister === undefined ? {} : { defaultYankRegister: options.defaultYankRegister }),
       ...(options.mouseYankRegister === undefined ? {} : { mouseYankRegister: options.mouseYankRegister }),
       ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard }),
-      ...(options.insertOptions === undefined ? {} : { insertOptions: options.insertOptions }),
+      isActive: () => workbenchSession.activeViewId === viewId,
+      ...(insertOptions === undefined ? {} : { insertOptions }),
       ...(options.clock === undefined ? {} : { clock: options.clock }),
       files: {
         currentPath: () => workbenchSession.buffer(document.id)?.path,

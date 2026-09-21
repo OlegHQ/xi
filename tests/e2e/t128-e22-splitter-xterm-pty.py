@@ -18,6 +18,7 @@ small motion events, so this is the correct way to simulate one — not a workar
 from __future__ import annotations
 
 import os
+import select
 import shutil
 import subprocess
 import tempfile
@@ -25,7 +26,6 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DISPLAY = ":88"
 
 
 def require(*tools: str) -> str | None:
@@ -59,10 +59,17 @@ def run() -> str:
         source.write_text("alpha\nbeta\n", encoding="utf-8")
         stderr_path = workspace / "stderr.log"
         stderr_path.write_text("", encoding="utf-8")
-        xvfb = subprocess.Popen(["Xvfb", DISPLAY, "-screen", "0", "1280x800x24"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(1.2)
+        xvfb = subprocess.Popen(["Xvfb", "-displayfd", "1", "-screen", "0", "1280x800x24"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if xvfb.stdout is None or not select.select([xvfb.stdout], [], [], 5)[0]:
+            xvfb.terminate()
+            raise SystemExit("Xvfb did not allocate a display")
+        display_number = xvfb.stdout.readline().decode().strip()
+        if not display_number.isdecimal():
+            xvfb.terminate()
+            raise SystemExit(f"Xvfb did not start: {display_number!r}")
+        display = f":{display_number}"
         environment = os.environ.copy()
-        environment["DISPLAY"] = DISPLAY
+        environment["DISPLAY"] = display
         script = (
             f"cd {workspace} && HOME={workspace} XI_UI_TEST_MARKERS=1 "
             f"bun run {ROOT / 'apps/xi/src/main.ts'} split.txt 2>{stderr_path}"
@@ -98,7 +105,9 @@ def run() -> str:
                 subprocess.run(["xdotool", "key", "--window", window_id, *names], env=environment, check=True)
 
             def type_text(text: str) -> None:
-                subprocess.run(["xdotool", "type", "--window", window_id, text], env=environment, check=True)
+                result = subprocess.run(["xdotool", "type", "--window", window_id, text], env=environment, capture_output=True)
+                if result.returncode != 0:
+                    raise SystemExit(f"xdotool could not type {text!r}; xterm={xterm.poll()} output={result.stderr[-1000:]!r} Xi={stderr_path.read_bytes()[-4000:]!r}")
 
             def click(col: int, row: int) -> None:
                 x, y = cell(col, row)
@@ -156,13 +165,26 @@ def run() -> str:
             # test-observability gap in the marker, not a functional one — so this is verified by
             # the resulting saved bytes instead of a marker).
             click(95, 3)
-            key("i")
+            type_text("i")
             type_text("RIGHT")
             key("Escape")
+            time.sleep(0.5)
             # The sidebar occupies columns 1..28; the left editor pane begins after it.
-            click(40, 3)
-            key("End")
-            type_text("aLEFT")
+            subprocess.run(["xdotool", "windowfocus", window_id], env=environment, check=True)
+            click(50, 2)
+            if xterm.poll() is not None:
+                raise SystemExit(f"Xi exited after left-pane click: {stderr_path.read_bytes()[-3000:]!r}")
+            # Let xterm deliver the pane click before typing into that view.
+            time.sleep(0.2)
+            if xterm.poll() is not None:
+                raise SystemExit(f"Xi exited while settling left-pane click: {stderr_path.read_bytes()[-3000:]!r}")
+            type_text("i")
+            key("Right")
+            time.sleep(0.1)
+            if xterm.poll() is not None:
+                raise SystemExit(f"Xi exited after Insert/Right: {stderr_path.read_bytes()[-3000:]!r}")
+            type_text("LEFT")
+            time.sleep(0.1)
             key("Escape")
 
             # A real window resize (not a raw TIOCSWINSZ ioctl) after the edits: xterm delivers
@@ -184,7 +206,7 @@ def run() -> str:
             while xterm.poll() is None and time.monotonic() < wait_deadline:
                 time.sleep(0.2)
             final_text = source.read_text(encoding="utf-8")
-            if "RIGHT" not in final_text or "LEFT" not in final_text or final_text.count("\n") != 2:
+            if final_text != "alpha\nbetaLEFT\nRIGHT\n":
                 raise SystemExit(f"exact saved bytes were not preserved through the real-terminal split/resize/quit sequence: {final_text!r}")
         finally:
             if xterm.poll() is None:

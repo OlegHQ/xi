@@ -72,6 +72,21 @@ function enter(doc: TextFileDocument, options: VimInsertOptions = {}) {
 }
 
 {
+  const doc = document('AUTO-PAIRS-NESTED', '');
+  let session = typeKey(doc, enter(doc), '(');
+  session = typeKey(doc, session, '(');
+  assert.equal(source(doc), '(())', 'typing an opener before an existing closer creates a nested pair');
+  assert.equal(session.cursorOffset, offset(2));
+}
+
+{
+  const doc = document('AUTO-PAIRS-EXISTING', ')');
+  const session = typeKey(doc, enter(doc), '(');
+  assert.equal(source(doc), '())', 'an opening character is not dropped before a preexisting closer');
+  assert.equal(session.cursorOffset, offset(1));
+}
+
+{
   const doc = document('AUTO-PAIRS-DISABLED', '');
   const session = typeKey(doc, enter(doc, { autoPairs: false }), '(');
   assert.equal(source(doc), '(', 'T036-AUTO-PAIRS-UNIT-06 false disables automatic pairs');

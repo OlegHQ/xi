@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { asIdentifier, type DocumentId, type ViewId } from '../../packages/primitives/src/index';
-import type { Result } from '../../packages/contracts/src/index';
+import type { CancellationToken, Result } from '../../packages/contracts/src/index';
 import { TextFileDocument } from '../../packages/document/src/index';
 import { WorkbenchSession } from '../../packages/workbench/session/index';
 import { BufferHost } from '../../packages/workbench/host/index';
@@ -43,7 +43,9 @@ class ReadyLanguageSession implements LanguageServerSessionPort {
 // cannot answer the request (e.g. project not yet indexed). --
 class FailingRenameProvider implements WorkspaceEditProviderPort {
   readonly renameCalls: Array<{ readonly request: WorkspaceEditRequestPort; readonly newName: string }> = [];
-  async codeActions(): Promise<Result<readonly LanguageCodeActionPort[], WorkspaceEditProviderFailurePort>> {
+  readonly hintTokens: CancellationToken[] = [];
+  async codeActions(request: WorkspaceEditRequestPort & { readonly cancellation?: CancellationToken }): Promise<Result<readonly LanguageCodeActionPort[], WorkspaceEditProviderFailurePort>> {
+    if (request.cancellation !== undefined) this.hintTokens.push(request.cancellation);
     return { ok: true, value: [{ id: 'quickfix', title: 'Fix value' }, { id: 'disabled', title: 'Disabled', disabledReason: 'not applicable' }] };
   }
   async prepareRename(): Promise<Result<undefined, WorkspaceEditProviderFailurePort>> { return { ok: true, value: undefined }; }
@@ -96,7 +98,19 @@ const controller = new WorkspaceEditsController({
 const provider = new FailingRenameProvider();
 controller.attachLanguage(new ReadyLanguageSession(), provider);
 await controller.refreshCodeActionHints();
+assert.equal(provider.hintTokens.length, 1, 'a refresh superseded during readiness does not issue a stale request');
 assert.equal(controller.codeActionHint(String(launchDocument.id), Number(launchDocument.version)), 1, 'T116-CODE-ACTION-HINT-UNIT-01 enabled code actions are exposed for the current document version');
+
+let releaseReady!: () => void;
+const readyGate = new Promise<void>((resolve) => { releaseReady = resolve; });
+controller.attachLanguage({
+  waitForReady: async () => { await readyGate; return { ok: true, value: undefined }; },
+  supportsRequest: (method) => method === 'textDocument/codeAction',
+}, provider);
+const latestHint = controller.refreshCodeActionHints();
+releaseReady();
+await latestHint;
+assert.equal(provider.hintTokens.length, 2, 'T116-CODE-ACTION-HINT-READY-01 stale refreshes waiting for server readiness do not issue requests');
 
 // T116-WORKSPACE-EDIT-01: renaming with a provider that fails reports the failure through
 // `onError`, never touches the open document, and never reaches `runWorkspaceEditProposal`.

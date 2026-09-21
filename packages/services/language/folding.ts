@@ -1,4 +1,12 @@
-import type { Disposable, Result } from '../../contracts/src/index';
+import { CancellationSource, type Disposable, type Result } from '../../contracts/src/index';
+import type { LanguageProviderSession } from './provider-session';
+
+interface DecorationSession extends LanguageProviderSession {
+  supportsRequest(method: string, uri?: string): boolean;
+  waitForReady(uri?: string): Promise<Result<unknown, unknown>>;
+}
+
+interface DecorationDocument { readonly id: string; readonly uri: string; readonly version: number; readonly lineCount: number; }
 
 const EMPTY_FOLDS: readonly FoldRange[] = Object.freeze([]);
 const EMPTY_SELECTION_RANGES: readonly SelectionRange[] = Object.freeze([]);
@@ -167,7 +175,60 @@ export class LanguagePresentationFeatures implements Disposable {
   #colors = new Map<string, ColorResult>();
   #documentHighlights = new Map<string, DocumentHighlightResult>();
   #resolutionTokens = new Map<string, number>();
+  #requestGenerations = new Map<string, number>();
+  #pendingRequests = new Map<string, CancellationSource>();
   #disposed = false;
+
+  refreshInlayHints(session: DecorationSession, document: DecorationDocument, lengthLimit: number | undefined, currentVersion: () => number | undefined, onApplied?: (result: HintResult) => void): Promise<void> {
+    return this.requestDecoration('textDocument/inlayHint', session, document,
+      { textDocument: { uri: document.uri }, range: { start: { line: 0, character: 0 }, end: { line: Math.max(0, document.lineCount), character: 0 } } },
+      (value, generation) => decodeInlayHints(value, document.id, document.version, generation, lengthLimit),
+      (result) => this.applyHints(result), currentVersion, onApplied);
+  }
+
+  refreshDocumentColors(session: DecorationSession, document: DecorationDocument, currentVersion: () => number | undefined, onApplied?: (result: ColorResult) => void): Promise<void> {
+    return this.requestDecoration('textDocument/documentColor', session, document, { textDocument: { uri: document.uri } },
+      (value, generation) => decodeDocumentColors(value, document.id, document.version, generation),
+      (result) => this.applyColors(result), currentVersion, onApplied);
+  }
+
+  refreshDocumentHighlights(session: DecorationSession, document: DecorationDocument, line: number, utf16: number, currentVersion: () => number | undefined, onApplied?: (result: DocumentHighlightResult) => void): Promise<void> {
+    if (!Number.isSafeInteger(line) || line < 0 || !Number.isSafeInteger(utf16) || utf16 < 0) return Promise.resolve();
+    return this.requestDecoration('textDocument/documentHighlight', session, document,
+      { textDocument: { uri: document.uri }, position: { line, character: utf16 } },
+      (value, generation) => decodeDocumentHighlights(value, document.id, document.version, generation),
+      (result) => this.applyDocumentHighlights(result), currentVersion, onApplied);
+  }
+
+  private async requestDecoration<T>(
+    method: string, session: DecorationSession, document: DecorationDocument, params: unknown,
+    decode: (value: unknown, generation: number) => Result<T, FoldingFailure>,
+    apply: (result: T) => Result<T, FoldingFailure>, currentVersion: () => number | undefined, onApplied?: (result: T) => void,
+  ): Promise<void> {
+    const key = `${method}\0${document.id}`;
+    this.#pendingRequests.get(key)?.cancel();
+    if (this.#disposed || !session.supportsRequest(method, document.uri)) return;
+    const cancellation = new CancellationSource();
+    const generation = (this.#requestGenerations.get(key) ?? 0) + 1;
+    this.#requestGenerations.set(key, generation);
+    this.#pendingRequests.set(key, cancellation);
+    try {
+      const ready = await session.waitForReady(document.uri);
+      if (!ready.ok || cancellation.token.isCancelled || this.#disposed || currentVersion() !== document.version || !session.supportsRequest(method, document.uri)) return;
+      const value = await session.request<unknown>(method, params, cancellation.token);
+      if (cancellation.token.isCancelled || this.#disposed || currentVersion() !== document.version) return;
+      const decoded = decode(value, generation);
+      if (decoded.ok) {
+        const applied = apply(decoded.value);
+        if (applied.ok) onApplied?.(applied.value);
+      }
+    } catch {
+      // Optional providers may withdraw capability or stop while a request is in flight.
+    } finally {
+      if (this.#pendingRequests.get(key) === cancellation) this.#pendingRequests.delete(key);
+      cancellation.dispose();
+    }
+  }
 
   applyFolds(result: FoldingResult): Result<FoldingResult, FoldingFailure> {
     if (this.#disposed) return failure('disposed', 'presentation features disposed');
@@ -324,6 +385,8 @@ export class LanguagePresentationFeatures implements Disposable {
   }
 
   clear(documentId: string): void {
+    for (const [key, cancellation] of this.#pendingRequests) if (key.endsWith(`\0${documentId}`)) { cancellation.cancel(); this.#pendingRequests.delete(key); }
+    for (const key of this.#requestGenerations.keys()) if (key.endsWith(`\0${documentId}`)) this.#requestGenerations.delete(key);
     this.#folds.delete(documentId);
     this.#selectionRanges.delete(documentId);
     this.#hints.delete(documentId);
@@ -334,6 +397,9 @@ export class LanguagePresentationFeatures implements Disposable {
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    for (const cancellation of this.#pendingRequests.values()) cancellation.cancel();
+    this.#pendingRequests.clear();
+    this.#requestGenerations.clear();
     this.#folds.clear();
     this.#selectionRanges.clear();
     this.#hints.clear();

@@ -52,7 +52,9 @@ def run_case(root: Path, enabled: bool, idle_timeout: int) -> None:
             raise SystemExit(f"workbench did not start ({enabled=})\n{captured[-3000:]!r}")
 
         os.write(master, b" ")
-        read_for(master, captured, 0.05)
+        deadline = time.monotonic() + (2 if enabled else 0.3)
+        while b"Prefix <Sp" not in captured and time.monotonic() < deadline:
+            read_for(master, captured, 0.05)
         visible = b"Prefix <Sp" in captured
         if visible != enabled:
             raise SystemExit(f"auto-info gate mismatch ({enabled=} {visible=})\n{captured[-5000:]!r}")

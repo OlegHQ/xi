@@ -41,6 +41,7 @@ export interface ParsedToml {
   readonly fileName: string;
   readonly value: { readonly [key: string]: TomlValue };
   readonly entries: readonly TomlEntry[];
+  readonly tables: readonly { readonly path: readonly string[]; readonly location: SourceLocation }[];
 }
 
 export interface TomlParseFailure {
@@ -178,7 +179,7 @@ export interface EditorConfig {
   readonly scrolloff: number;
   readonly idleTimeout: number;
   readonly mouse: MouseConfig;
-  readonly shell: readonly [string, string];
+  readonly shell: readonly [string, ...string[]];
   readonly kittyKeyboardProtocol: 'auto' | 'enabled' | 'disabled';
   readonly mouseYankRegister: string;
   readonly clipboardProvider: ClipboardProviderConfig;
@@ -375,6 +376,7 @@ const defaultSearch: SearchConfig = Object.freeze({ debounceMs: 40, maxVisibleRe
 export function parseToml(source: string, fileName = 'config.toml'): Result<ParsedToml, TomlParseFailure> {
   const root: Record<string, TomlValue> = Object.create(null) as Record<string, TomlValue>;
   const entries: TomlEntry[] = [];
+  const tables: { readonly path: readonly string[]; readonly location: SourceLocation }[] = [];
   let table: string[] = [];
   const diagnostics: ConfigDiagnostic[] = [];
   const lines = logicalTomlLines(source);
@@ -408,6 +410,7 @@ export function parseToml(source: string, fileName = 'config.toml'): Result<Pars
       list.push(item);
       parent[key] = list;
       table = [...path.slice(0, -1), key, String(list.length - 1)];
+      tables.push({ path: Object.freeze(path), location: { fileName, line: lineIndex + 1, column } });
       continue;
     }
     if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
@@ -423,6 +426,7 @@ export function parseToml(source: string, fileName = 'config.toml'): Result<Pars
       }
       ensureTable(root, path);
       table = path;
+      tables.push({ path: Object.freeze(path), location: { fileName, line: lineIndex + 1, column } });
       continue;
     }
     const equals = findEquals(clean);
@@ -453,7 +457,7 @@ export function parseToml(source: string, fileName = 'config.toml'): Result<Pars
     entries.push(Object.freeze({ path: Object.freeze(fullPath), value: parsed.value, location: Object.freeze({ fileName, line: lineIndex + 1, column }) }));
   }
   return diagnostics.length === 0
-    ? { ok: true, value: Object.freeze({ fileName, value: freezeValue(root) as { readonly [key: string]: TomlValue }, entries: Object.freeze(entries) }) }
+    ? { ok: true, value: Object.freeze({ fileName, value: freezeValue(root) as { readonly [key: string]: TomlValue }, entries: Object.freeze(entries), tables: Object.freeze(tables) }) }
     : { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
 }
 
@@ -482,12 +486,49 @@ export function compileConfig(layers: readonly ConfigLayer[], options: ConfigCom
     validateKnownKeys(document, layer, diagnostics);
     for (const entry of document.entries) locations.set(entry.path.join('.'), entry.location);
     mergeValue(merged, document.value, '', layer.name, provenance, locations);
+    applyLegacyAliases(merged, document.value, layer.name, provenance, locations);
   }
   if (diagnostics.length > 0) return { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
   const compiled = validateMerged(merged, profile, catalog, provenance, locations);
   if (!compiled.ok) return compiled;
   const generation = (options.initialGeneration ?? 0) + 1;
   return { ok: true, value: Object.freeze({ ...compiled.value, generation }) };
+}
+
+const LEGACY_ALIASES = [
+  ['editor.sidebar-visible', 'xi.sidebar.visible'],
+  ['editor.sidebar-width', 'xi.sidebar.width'],
+  ['editor.sidebar-panel', 'xi.sidebar.panel'],
+  ['editor.mouse.modifier', 'xi.mouse.modifier'],
+  ['editor.selection-limit', 'xi.selection.limit'],
+  ['editor.selection-history-limit', 'xi.selection.history-limit'],
+  ['editor.hints.delay-ms', 'xi.hints.delay-ms'],
+  ['search.debounce-ms', 'xi.search.debounce-ms'],
+  ['search.max-visible-results', 'xi.search.max-visible-results'],
+] as const;
+
+function pathValue(root: { readonly [key: string]: TomlValue }, path: string): TomlValue | undefined {
+  let current: TomlValue = root;
+  for (const key of path.split('.')) {
+    const table = asRecord(current);
+    if (table === undefined) return undefined;
+    current = table[key] as TomlValue;
+    if (current === undefined) return undefined;
+  }
+  return current;
+}
+
+function applyLegacyAliases(merged: Record<string, TomlValue>, layer: { readonly [key: string]: TomlValue }, name: string, provenance: Record<string, string>, locations: Map<string, SourceLocation>): void {
+  for (const [legacy, canonical] of LEGACY_ALIASES) {
+    const value = pathValue(layer, legacy);
+    if (value === undefined || pathValue(layer, canonical) !== undefined) continue;
+    const keys = canonical.split('.');
+    let nested: TomlValue = value;
+    for (let index = keys.length - 1; index >= 0; index -= 1) nested = { [keys[index] as string]: nested };
+    mergeValue(merged, nested as Record<string, TomlValue>, '', name, provenance, locations);
+    const location = locations.get(legacy);
+    if (location !== undefined) locations.set(canonical, location);
+  }
 }
 
 function inferProfile(parsed: readonly { readonly layer: ConfigLayer; readonly document: ParsedToml }[]): ConfigProfile {
@@ -1088,18 +1129,25 @@ export async function loadStartupXiConfig(
   const configToml = await filesystem.readFile(configPath ?? `${configDirectory}/config.toml`, cancellation);
   if (configToml.ok) layers.push({ name: configPath === undefined ? 'user' : 'cli', kind: configPath === undefined ? 'user' : 'cli', source: new TextDecoder('utf-8').decode(configToml.value), fileName: configPath ?? 'config.toml' });
   else if (configPath !== undefined) return { config: undefined, diagnostics: [`${configPath}: ${configToml.error.message}`] };
+  let overrideLayer: ConfigLayer | undefined;
+  if (overridesPath !== undefined) {
+    const overrides = await filesystem.readFile(overridesPath, cancellation);
+    if (overrides.ok) {
+      try { overrideLayer = { name: 'state-overrides', kind: 'user', source: new TextDecoder('utf-8', { fatal: true }).decode(overrides.value), fileName: overridesPath }; }
+      catch { return { config: undefined, diagnostics: [`${overridesPath}: invalid UTF-8`] }; }
+    }
+  }
   const commandCatalog = { ...DEFAULT_COMMAND_CATALOG, commandIds: [...DEFAULT_COMMAND_CATALOG.commandIds, ...extraCommandIds] };
   const workspaceDiagnostics: string[] = [];
   if (workspaceConfigPath !== undefined) {
-    const userConfig = compileConfig(layers, { commandCatalog });
-    const editorConfigEnabled = !userConfig.ok || userConfig.value.editor.editorConfig;
+    const userConfig = compileConfig(overrideLayer === undefined ? layers : [...layers, overrideLayer], { commandCatalog });
     const trust = userConfig.ok ? userConfig.value.editor.workspaceTrust : defaultEditor.workspaceTrust;
     const workspaceRoot = workspaceRootFromConfigPath(workspaceConfigPath);
     const implicit = workspaceTrustAllows(workspaceRoot, trust, environment);
     const decision = workspaceTrustResolver === undefined
       ? { workspaceConfigAllowed: implicit, serversAllowed: trust.level !== 'none' || implicit, gitAllowed: trust.level === 'insecure' || implicit, stale: false }
       : await workspaceTrustResolver.resolve(workspaceRoot, trust, cancellation);
-    if (configPath === undefined && editorConfigEnabled) {
+    if (configPath === undefined) {
       const workspaceToml = await filesystem.readFile(workspaceConfigPath, cancellation);
       const workspaceLanguagesPath = workspaceConfigPath.replace(/config\.toml$/u, 'languages.toml');
       const workspaceLanguagesToml = await filesystem.readFile(workspaceLanguagesPath, cancellation);
@@ -1113,16 +1161,7 @@ export async function loadStartupXiConfig(
   }
   const languagesToml = await filesystem.readFile(`${configDirectory}/languages.toml`, cancellation);
   if (languagesToml.ok) layers.push({ name: 'languages', kind: 'language', source: new TextDecoder('utf-8').decode(languagesToml.value), fileName: 'languages.toml' });
-  if (overridesPath !== undefined) {
-    const overrides = await filesystem.readFile(overridesPath, cancellation);
-    if (overrides.ok) {
-      try {
-        layers.push({ name: 'state-overrides', kind: 'user', source: new TextDecoder('utf-8', { fatal: true }).decode(overrides.value), fileName: overridesPath });
-      } catch {
-        return { config: undefined, diagnostics: [`${overridesPath}: invalid UTF-8`] };
-      }
-    }
-  }
+  if (overrideLayer !== undefined) layers.push(overrideLayer);
   const compiled = compileConfig(layers, { commandCatalog });
   if (!compiled.ok) return { config: undefined, diagnostics: compiled.error.diagnostics.map((diagnostic) => diagnostic.message) };
   return { config: compiled.value, diagnostics: Object.freeze(workspaceDiagnostics) };
@@ -1485,6 +1524,10 @@ selection = "#D6E5F2"
 `;
 
 function validateKnownKeys(document: ParsedToml, layer: ConfigLayer, diagnostics: ConfigDiagnostic[]): void {
+  for (const table of document.tables) {
+    const path = table.path.join('.');
+    if (!isKnownPath(table.path)) diagnostics.push({ ...table.location, path, code: 'unknown-key', message: `unknown configuration table ${path}` });
+  }
   for (const entry of document.entries) {
     const path = entry.path.join('.');
     if (isKnownPath(entry.path)) continue;
@@ -1500,6 +1543,9 @@ function validateMerged(
   provenance: Record<string, string>, locations: Map<string, SourceLocation>,
 ): ConfigCompileResult {
   const diagnostics: ConfigDiagnostic[] = [];
+  for (const key of ['editor', 'keys', 'search', 'aliases', 'xi'] as const) {
+    if (root[key] !== undefined && asRecord(root[key]) === undefined) diagnostics.push(issue(key, 'invalid-type', `${key} must be a table`, locations));
+  }
   const editor = asRecord(root.editor) ?? Object.create(null) as Record<string, TomlValue>;
   const xi = asRecord(root.xi);
   const xiSidebar = asRecord(xi?.sidebar);
@@ -1554,7 +1600,7 @@ function validateMerged(
   if (editor.cursorcolumn !== undefined && typeof editor.cursorcolumn !== 'boolean') diagnostics.push(issue('editor.cursorcolumn', 'invalid-type', 'editor.cursorcolumn must be a boolean', locations));
   if (editor['editor-config'] !== undefined && typeof editor['editor-config'] !== 'boolean') diagnostics.push(issue('editor.editor-config', 'invalid-type', 'editor.editor-config must be a boolean', locations));
   if (editor['atomic-save'] !== undefined && typeof editor['atomic-save'] !== 'boolean') diagnostics.push(issue('editor.atomic-save', 'invalid-type', 'editor.atomic-save must be a boolean', locations));
-  if (editor.shell !== undefined && (!Array.isArray(editor.shell) || editor.shell.length !== 2 || editor.shell.some((value) => typeof value !== 'string' || value.length === 0))) diagnostics.push(issue('editor.shell', 'invalid-value', 'editor.shell must be a two-element non-empty string array', locations));
+  if (editor.shell !== undefined && (!Array.isArray(editor.shell) || editor.shell.length < 1 || editor.shell.some((value) => typeof value !== 'string' || value.length === 0))) diagnostics.push(issue('editor.shell', 'invalid-value', 'editor.shell must be a non-empty string array', locations));
   if (editor.rulers !== undefined && integerArrayField(editor, 'rulers') === undefined) diagnostics.push(issue('editor.rulers', 'invalid-type', 'editor.rulers must be an array of positive integers', locations));
   if (editor['workspace-lsp-roots'] !== undefined && stringArrayField(editor, 'workspace-lsp-roots') === undefined) diagnostics.push(issue('editor.workspace-lsp-roots', 'invalid-type', 'editor.workspace-lsp-roots must be an array of relative directory strings', locations));
   if (stringArrayField(editor, 'workspace-lsp-roots')?.some((root) => root.length === 0 || root.startsWith('/') || root.includes('\\') || root.split('/').some((part) => part === '' || part === '.' || part === '..'))) diagnostics.push(issue('editor.workspace-lsp-roots', 'invalid-value', 'editor.workspace-lsp-roots must contain non-empty relative directory paths', locations));
@@ -1674,10 +1720,10 @@ function validateMerged(
   const wordCompletionConfig: WordCompletionConfig = Object.freeze({ enable: booleanField(wordCompletion ?? Object.create(null), 'enable') ?? true, triggerLength: boundedInteger(wordCompletion ?? Object.create(null), 'trigger-length', 1, 255, 7, diagnostics, locations, 'editor.word-completion.trigger-length') });
   const workspaceTrustConfig: WorkspaceTrustConfig = Object.freeze({ level: enumField(workspaceTrust ?? Object.create(null), 'level', ['none', 'servers', 'insecure'] as const, 'servers', diagnostics, locations, 'editor.workspace-trust.level'), prompt: booleanField(workspaceTrust ?? Object.create(null), 'prompt') ?? true, trusted: Object.freeze([...(stringArrayField(workspaceTrust ?? Object.create(null), 'trusted') ?? [])]) });
   const statuslineConfig: StatuslineConfig = Object.freeze({ left: statuslineElementsField(statusline ?? Object.create(null), 'left', ['mode', 'spinner', 'file-name', 'read-only-indicator', 'file-modification-indicator'], diagnostics, locations, 'editor.statusline.left'), center: statuslineElementsField(statusline ?? Object.create(null), 'center', [], diagnostics, locations, 'editor.statusline.center'), right: statuslineElementsField(statusline ?? Object.create(null), 'right', ['diagnostics', 'selections', 'register', 'position', 'file-encoding'], diagnostics, locations, 'editor.statusline.right'), separator: textField(statusline ?? Object.create(null), 'separator') ?? '│', mode: Object.freeze({ normal: textField(statuslineMode ?? Object.create(null), 'normal') ?? 'NOR', insert: textField(statuslineMode ?? Object.create(null), 'insert') ?? 'INS', select: textField(statuslineMode ?? Object.create(null), 'select') ?? 'SEL' }), diagnostics: statuslineSeverityField(statusline ?? Object.create(null), 'diagnostics', ['warning', 'error'], diagnostics, locations, 'editor.statusline.diagnostics'), workspaceDiagnostics: statuslineSeverityField(statusline ?? Object.create(null), 'workspace-diagnostics', ['warning', 'error'], diagnostics, locations, 'editor.statusline.workspace-diagnostics') });
-  const scrolloff = boundedInteger(editor, 'scrolloff', 0, 1000, 5, diagnostics, locations, 'editor.scrolloff');
+  const scrolloff = boundedInteger(editor, 'scrolloff', 0, Number.MAX_SAFE_INTEGER, 5, diagnostics, locations, 'editor.scrolloff');
   const idleTimeout = boundedInteger(editor, 'idle-timeout', 0, 2_147_483_647, 250, diagnostics, locations, 'editor.idle-timeout');
   const completionTimeout = boundedInteger(editor, 'completion-timeout', 0, 2_147_483_647, 250, diagnostics, locations, 'editor.completion-timeout');
-  const completionTriggerLen = boundedInteger(editor, 'completion-trigger-len', 1, 1000, 2, diagnostics, locations, 'editor.completion-trigger-len');
+  const completionTriggerLen = boundedInteger(editor, 'completion-trigger-len', 0, 255, 2, diagnostics, locations, 'editor.completion-trigger-len');
   const textWidth = boundedInteger(editor, 'text-width', 1, 10_000, 80, diagnostics, locations, 'editor.text-width');
   if (editor['soft-wrap'] !== undefined && softWrap === undefined) {
     diagnostics.push(issue('editor.soft-wrap', 'invalid-type', 'editor.soft-wrap must be a table', locations));
@@ -1833,11 +1879,13 @@ function compileBindings(value: TomlValue | undefined, profile: ConfigProfile, c
         seen.set(`${mode}\u0000${normalized}`, binding);
         output.push(binding);
       } else if (asRecord(child) !== undefined) walk(asRecord(child) as Record<string, TomlValue>, [...path, key], [...keys, normalizeKeyToken(key) ?? key]);
+      else diagnostics.push(issue(['keys', ...path, key].join('.'), 'invalid-type', 'key binding must be a command, sequence, or table', locations));
     }
   };
   for (const [mode, valueForMode] of Object.entries(modes)) {
     const record = asRecord(valueForMode);
     if (record !== undefined) walk(record, [mode], []);
+    else diagnostics.push(issue(`keys.${mode}`, 'invalid-type', 'key mode must be a table', locations));
   }
   return output;
 }
@@ -1974,9 +2022,9 @@ function formatterValue(value: TomlValue | undefined, fileName: string, path: st
 
 const BUILTIN_CLIPBOARD_PROVIDERS = ['pasteboard', 'wayland', 'x-clip', 'x-sel', 'tmux', 'termux', 'win32-yank', 'windows', 'termcode', 'none'] as const;
 
-function parseShell(value: TomlValue | undefined): readonly [string, string] {
-  return Array.isArray(value) && value.length === 2 && value.every((item) => typeof item === 'string' && item.length > 0)
-    ? [value[0] as string, value[1] as string]
+function parseShell(value: TomlValue | undefined): readonly [string, ...string[]] {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'string' && item.length > 0)
+    ? [value[0] as string, ...value.slice(1) as string[]]
     : ['sh', '-c'];
 }
 
@@ -2026,9 +2074,9 @@ function isKnownPath(path: readonly string[]): boolean {
   if (joined === 'editor.auto-pairs' || joined.startsWith('editor.auto-pairs.')) return true;
   const editorPaths = new Set([
     'editor.true-color', 'editor.undercurl', 'editor.path-completion',
-    'editor.theme', 'editor.editor-config', 'editor.line-number', 'editor.gutters', 'editor.gutters.layout', 'editor.gutters.line-numbers', 'editor.gutters.line-numbers.min-width', 'editor.gutters.diagnostics', 'editor.gutters.diff', 'editor.gutters.spacer', 'editor.cursorline', 'editor.cursorcolumn', 'editor.rulers', 'editor.text-width', 'editor.scrolloff', 'editor.idle-timeout', 'editor.scroll-lines', 'editor.mouse', 'editor.wrap', 'editor.auto-completion', 'editor.completion-timeout', 'editor.completion-trigger-len', 'editor.preview-completion-insert', 'editor.auto-info', 'editor.completion-replace', 'editor.color-modes', 'editor.bufferline', 'editor.default-line-ending', 'editor.statusline', 'editor.statusline.left', 'editor.statusline.center', 'editor.statusline.right', 'editor.statusline.separator', 'editor.statusline.mode', 'editor.statusline.mode.normal', 'editor.statusline.mode.insert', 'editor.statusline.mode.select', 'editor.statusline.diagnostics', 'editor.statusline.workspace-diagnostics', 'editor.auto-format', 'editor.auto-save', 'editor.auto-save.focus-lost', 'editor.auto-save.after-delay', 'editor.auto-save.after-delay.enable', 'editor.auto-save.after-delay.timeout', 'editor.default-yank-register', 'editor.insert-final-newline', 'editor.trim-final-newlines', 'editor.trim-trailing-whitespace', 'editor.end-of-line-diagnostics', 'editor.search', 'editor.search.smart-case', 'editor.search.wrap-around', 'editor.soft-wrap', 'editor.soft-wrap.enable', 'editor.soft-wrap.wrap-at-text-width', 'editor.soft-wrap.wrap-indicator', 'editor.inline-diagnostics', 'editor.inline-diagnostics.cursor-line', 'editor.inline-diagnostics.other-lines', 'editor.inline-diagnostics.prefix-len', 'editor.inline-diagnostics.max-wrap', 'editor.inline-diagnostics.min-diagnostic-width', 'editor.inline-diagnostics.max-diagnostics', 'editor.motion-trail',
-    'editor.theme', 'editor.line-number', 'editor.gutters', 'editor.gutters.layout', 'editor.gutters.line-numbers', 'editor.gutters.line-numbers.min-width', 'editor.gutters.diagnostics', 'editor.gutters.diff', 'editor.gutters.spacer', 'editor.indent-guides', 'editor.indent-guides.render', 'editor.indent-guides.character', 'editor.indent-guides.skip-levels', 'editor.whitespace', 'editor.whitespace.render', 'editor.whitespace.render.default', 'editor.whitespace.render.space', 'editor.whitespace.render.nbsp', 'editor.whitespace.render.nnbsp', 'editor.whitespace.render.tab', 'editor.whitespace.render.newline', 'editor.whitespace.characters', 'editor.whitespace.characters.space', 'editor.whitespace.characters.nbsp', 'editor.whitespace.characters.nnbsp', 'editor.whitespace.characters.tab', 'editor.whitespace.characters.tabpad', 'editor.whitespace.characters.newline', 'editor.smart-tab', 'editor.smart-tab.enable', 'editor.smart-tab.supersede-menu', 'editor.word-completion', 'editor.word-completion.enable', 'editor.word-completion.trigger-length', 'editor.cursorline', 'editor.cursorcolumn', 'editor.rulers', 'editor.text-width', 'editor.scrolloff', 'editor.idle-timeout', 'editor.scroll-lines', 'editor.mouse', 'editor.wrap', 'editor.auto-completion', 'editor.completion-timeout', 'editor.completion-trigger-len', 'editor.preview-completion-insert', 'editor.auto-info', 'editor.completion-replace', 'editor.color-modes', 'editor.bufferline', 'editor.default-line-ending', 'editor.statusline', 'editor.statusline.left', 'editor.statusline.center', 'editor.statusline.right', 'editor.statusline.separator', 'editor.statusline.mode', 'editor.statusline.mode.normal', 'editor.statusline.mode.insert', 'editor.statusline.mode.select', 'editor.statusline.diagnostics', 'editor.statusline.workspace-diagnostics', 'editor.auto-format', 'editor.auto-save', 'editor.auto-save.focus-lost', 'editor.auto-save.after-delay', 'editor.auto-save.after-delay.enable', 'editor.auto-save.after-delay.timeout', 'editor.default-yank-register', 'editor.insert-final-newline', 'editor.trim-final-newlines', 'editor.trim-trailing-whitespace', 'editor.end-of-line-diagnostics', 'editor.search', 'editor.search.smart-case', 'editor.search.wrap-around', 'editor.soft-wrap', 'editor.soft-wrap.enable', 'editor.soft-wrap.wrap-at-text-width', 'editor.soft-wrap.wrap-indicator', 'editor.inline-diagnostics', 'editor.inline-diagnostics.cursor-line', 'editor.inline-diagnostics.other-lines', 'editor.inline-diagnostics.prefix-len', 'editor.inline-diagnostics.max-wrap', 'editor.inline-diagnostics.min-diagnostic-width', 'editor.inline-diagnostics.max-diagnostics', 'editor.motion-trail',
-    'editor.sidebar-visible', 'editor.sidebar-width', 'editor.sidebar-panel', 'editor.selection-limit', 'editor.selection-history-limit', 'editor.cursor-shape', 'editor.cursor-shape.normal', 'editor.gutters.code-action-hint',
+    'editor.theme', 'editor.editor-config', 'editor.line-number', 'editor.gutters', 'editor.gutters.layout', 'editor.gutters.line-numbers', 'editor.gutters.line-numbers.min-width',    'editor.cursorline', 'editor.cursorcolumn', 'editor.rulers', 'editor.text-width', 'editor.scrolloff', 'editor.idle-timeout', 'editor.scroll-lines', 'editor.mouse', 'editor.wrap', 'editor.auto-completion', 'editor.completion-timeout', 'editor.completion-trigger-len', 'editor.preview-completion-insert', 'editor.auto-info', 'editor.completion-replace', 'editor.color-modes', 'editor.bufferline', 'editor.default-line-ending', 'editor.statusline', 'editor.statusline.left', 'editor.statusline.center', 'editor.statusline.right', 'editor.statusline.separator', 'editor.statusline.mode', 'editor.statusline.mode.normal', 'editor.statusline.mode.insert', 'editor.statusline.mode.select', 'editor.statusline.diagnostics', 'editor.statusline.workspace-diagnostics', 'editor.auto-format', 'editor.auto-save', 'editor.auto-save.focus-lost', 'editor.auto-save.after-delay', 'editor.auto-save.after-delay.enable', 'editor.auto-save.after-delay.timeout', 'editor.default-yank-register', 'editor.insert-final-newline', 'editor.trim-final-newlines', 'editor.trim-trailing-whitespace', 'editor.end-of-line-diagnostics', 'editor.search', 'editor.search.smart-case', 'editor.search.wrap-around', 'editor.soft-wrap', 'editor.soft-wrap.enable', 'editor.soft-wrap.wrap-at-text-width', 'editor.soft-wrap.wrap-indicator', 'editor.inline-diagnostics', 'editor.inline-diagnostics.cursor-line', 'editor.inline-diagnostics.other-lines', 'editor.inline-diagnostics.prefix-len', 'editor.inline-diagnostics.max-wrap', 'editor.inline-diagnostics.min-diagnostic-width', 'editor.inline-diagnostics.max-diagnostics', 'editor.motion-trail',
+    'editor.theme', 'editor.line-number', 'editor.gutters', 'editor.gutters.layout', 'editor.gutters.line-numbers', 'editor.gutters.line-numbers.min-width', 'editor.indent-guides', 'editor.indent-guides.render', 'editor.indent-guides.character', 'editor.indent-guides.skip-levels', 'editor.whitespace', 'editor.whitespace.render', 'editor.whitespace.render.default', 'editor.whitespace.render.space', 'editor.whitespace.render.nbsp', 'editor.whitespace.render.nnbsp', 'editor.whitespace.render.tab', 'editor.whitespace.render.newline', 'editor.whitespace.characters', 'editor.whitespace.characters.space', 'editor.whitespace.characters.nbsp', 'editor.whitespace.characters.nnbsp', 'editor.whitespace.characters.tab', 'editor.whitespace.characters.tabpad', 'editor.whitespace.characters.newline', 'editor.smart-tab', 'editor.smart-tab.enable', 'editor.smart-tab.supersede-menu', 'editor.word-completion', 'editor.word-completion.enable', 'editor.word-completion.trigger-length', 'editor.cursorline', 'editor.cursorcolumn', 'editor.rulers', 'editor.text-width', 'editor.scrolloff', 'editor.idle-timeout', 'editor.scroll-lines', 'editor.mouse', 'editor.wrap', 'editor.auto-completion', 'editor.completion-timeout', 'editor.completion-trigger-len', 'editor.preview-completion-insert', 'editor.auto-info', 'editor.completion-replace', 'editor.color-modes', 'editor.bufferline', 'editor.default-line-ending', 'editor.statusline', 'editor.statusline.left', 'editor.statusline.center', 'editor.statusline.right', 'editor.statusline.separator', 'editor.statusline.mode', 'editor.statusline.mode.normal', 'editor.statusline.mode.insert', 'editor.statusline.mode.select', 'editor.statusline.diagnostics', 'editor.statusline.workspace-diagnostics', 'editor.auto-format', 'editor.auto-save', 'editor.auto-save.focus-lost', 'editor.auto-save.after-delay', 'editor.auto-save.after-delay.enable', 'editor.auto-save.after-delay.timeout', 'editor.default-yank-register', 'editor.insert-final-newline', 'editor.trim-final-newlines', 'editor.trim-trailing-whitespace', 'editor.end-of-line-diagnostics', 'editor.search', 'editor.search.smart-case', 'editor.search.wrap-around', 'editor.soft-wrap', 'editor.soft-wrap.enable', 'editor.soft-wrap.wrap-at-text-width', 'editor.soft-wrap.wrap-indicator', 'editor.inline-diagnostics', 'editor.inline-diagnostics.cursor-line', 'editor.inline-diagnostics.other-lines', 'editor.inline-diagnostics.prefix-len', 'editor.inline-diagnostics.max-wrap', 'editor.inline-diagnostics.min-diagnostic-width', 'editor.inline-diagnostics.max-diagnostics', 'editor.motion-trail',
+    'editor.sidebar-visible', 'editor.sidebar-width', 'editor.sidebar-panel', 'editor.selection-limit', 'editor.selection-history-limit', 'editor.cursor-shape', 'editor.cursor-shape.normal',
     'editor.cursor-shape.insert', 'editor.cursor-shape.select', 'editor.cursor-shape.visual', 'editor.lsp', 'editor.lsp.enable', 'editor.lsp.display-inlay-hints', 'editor.lsp.inlay-hints-length-limit', 'editor.lsp.inlay-hints', 'editor.lsp.display-color-swatches', 'editor.lsp.auto-document-highlight', 'editor.lsp.goto-reference-include-declaration', 'editor.lsp.snippets', 'editor.lsp.display-messages', 'editor.lsp.display-progress-messages', 'editor.lsp.auto-signature-help', 'editor.lsp.display-signature-help-docs',
     'editor.workspace-trust', 'editor.workspace-trust.level', 'editor.workspace-trust.prompt', 'editor.workspace-trust.trusted', 'editor.rainbow-brackets', 'editor.mouse.enabled', 'editor.mouse.modifier', 'editor.mouse.scroll-lines', 'editor.hints', 'editor.hints.delay-ms', 'editor.file-picker', 'editor.file-picker.hidden', 'editor.file-picker.follow-symlinks', 'editor.file-picker.deduplicate-links', 'editor.file-picker.parents', 'editor.file-picker.ignore', 'editor.file-picker.git-ignore', 'editor.file-picker.git-global', 'editor.file-picker.git-exclude', 'editor.file-picker.max-depth',
     'editor.file-explorer', 'editor.file-explorer.hidden', 'editor.file-explorer.follow-symlinks', 'editor.file-explorer.parents', 'editor.file-explorer.ignore', 'editor.file-explorer.git-ignore', 'editor.file-explorer.git-global', 'editor.file-explorer.git-exclude', 'editor.file-explorer.flatten-dirs', 'editor.buffer-picker', 'editor.buffer-picker.start-position',
@@ -2158,7 +2206,7 @@ function parseDottedPath(value: string): string[] | undefined {
     if (match === null) return undefined;
     const key = match[1] ?? match[2] ?? match[3];
     if (key === undefined || key.length === 0) return undefined;
-    result.push(unescapeString(key));
+    result.push(match[2] === undefined ? unescapeString(key) : key);
     rest = rest.slice(match[0].length).trim();
     if (rest.length === 0) break;
     if (!rest.startsWith('.')) return undefined;
@@ -2207,7 +2255,8 @@ function parseValue(value: string): Result<TomlValue, { readonly message: string
   const trimmed = value.trim();
   if (trimmed === 'true' || trimmed === 'false') return { ok: true, value: trimmed === 'true' };
   if (/^[+-]?(?:0|[1-9][0-9_]*)$/u.test(trimmed)) return { ok: true, value: Number(trimmed.replaceAll('_', '')) };
-  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) return { ok: true, value: unescapeString(trimmed.slice(1, -1)) };
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return { ok: true, value: trimmed.slice(1, -1) };
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) return { ok: true, value: unescapeString(trimmed.slice(1, -1)) };
   if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
     const parts = splitTopLevel(trimmed.slice(1, -1), ',');
     const values: TomlValue[] = [];

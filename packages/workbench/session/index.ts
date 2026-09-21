@@ -64,6 +64,7 @@ export interface WorkbenchTabSnapshot {
   readonly kind?: 'file' | 'comparison';
   readonly id: DocumentId;
   readonly label: string;
+  readonly path?: string;
   readonly dirty: boolean;
   readonly preview: boolean;
   readonly pinned: boolean;
@@ -361,6 +362,7 @@ export class WorkbenchSession implements VimSessionReader {
     const tabs = Object.freeze([...buffers.map((buffer) => Object.freeze({
       id: buffer.bufferId,
       label: buffer.path === undefined ? '[No Name]' : (buffer.path.split('/').pop() ?? buffer.path),
+      ...(buffer.path === undefined ? {} : { path: buffer.path }),
       dirty: buffer.document.isDirty,
       preview: buffer.preview,
       pinned: buffer.pinned,
@@ -972,10 +974,8 @@ function createInitialSelection(snapshot: DocumentSnapshot, viewId: ViewId): Res
 }
 
 function firstScalarEnd(snapshot: DocumentSnapshot): number {
-  const first = snapshot.slice(0 as never, 1 as never);
-  if (!first.ok || first.value.length === 0) return 1;
-  const unit = first.value.charCodeAt(0);
-  return unit >= 0xd800 && unit <= 0xdbff ? 2 : 1;
+  const first = snapshot.offsetAtUtf32(1 as never);
+  return first.ok ? Number(first.value) : 1;
 }
 
 function selectionInput(member: SelectionMember): SelectionMemberInput {

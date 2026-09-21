@@ -26,6 +26,17 @@ const parsed = parseToml(DEFAULT_CONFIG_TOML, 'config/default.toml');
 assert.equal(parsed.ok, true, 'T036-TOML-01 shipped example parses as TOML');
 if (!parsed.ok) throw new Error('default TOML did not parse');
 assert.ok(parsed.value.entries.some((entry) => entry.path.join('.') === 'keys.normal.space.f'), 'T036-TOML-02 dotted table entries retain their source path');
+const literal = parseToml("theme = 'a\\nb'\n'literal\\nkey' = 'c\\td'\n");
+assert.equal(literal.ok, true, 'TOML literal strings and keys parse');
+if (literal.ok) {
+  assert.equal(literal.value.value.theme, 'a\\nb', 'literal string backslashes remain literal');
+  assert.equal(literal.value.value['literal\\nkey'], 'c\\td', 'literal key and value backslashes remain literal');
+}
+for (const source of ['editor = 1', 'keys = 1', '[keys.normal]\nx = 1', '[editor.unknown-empty]']) {
+  const rejected = compileConfig([{ name: 'invalid-shape', kind: 'user', fileName: 'invalid-shape.toml', source }]);
+  assert.equal(rejected.ok, false, `invalid config shape is rejected: ${source}`);
+  if (!rejected.ok) assert.equal(rejected.error.diagnostics[0]?.fileName, 'invalid-shape.toml');
+}
 
 const initial = compileInitialConfig();
 assert.equal(initial.ok, true, 'T036-CONFIG-01 shipped example validates');
@@ -168,8 +179,8 @@ assert.equal(initial.value.editor.defaultLineEnding, 'native', 'T036-DEFAULT-LIN
 assert.equal(initial.value.editor.popupBorder, 'none', 'T036-POPUP-BORDER-01 Helix popup-border default is retained');
 assert.deepEqual(initial.value.editor.statusline.left, ['mode', 'spinner', 'file-name', 'read-only-indicator', 'file-modification-indicator'], 'T036-STATUSLINE-LAYOUT-01 Helix statusline left default is retained');
 assert.equal(initial.value.editor.statusline.left.includes('code-action-hint'), false, 'T036-CODE-ACTION-HINT-STATUSLINE-DEFAULT-01 code-action-hint is opt-in by default');
-assert.deepEqual(initial.value.editor.statusline.center, [], 'T036-STATUSLINE-LAYOUT-01 Helix statusline center default is retained');
-assert.deepEqual(initial.value.editor.statusline.right, ['diagnostics', 'selections', 'register', 'position', 'file-encoding'], 'T036-STATUSLINE-LAYOUT-01 Helix statusline right default is retained');
+assert.deepEqual(initial.value.editor.statusline.center, [], 'T036-STATUSLINE-LAYOUT-01-PART2 Helix statusline center default is retained');
+assert.deepEqual(initial.value.editor.statusline.right, ['diagnostics', 'selections', 'register', 'position', 'file-encoding'], 'T036-STATUSLINE-LAYOUT-01-PART3 Helix statusline right default is retained');
 assert.equal(initial.value.editor.lsp.displaySignatureHelpDocs, true, 'T036-LSP-SIGNATURE-DOCS-01 Helix signature-help documentation default is retained');
 assert.equal(initial.value.editor.mouse.enabled, true, 'T036-CONFIG-12 Helix editor.mouse default is retained');
 assert.equal(initial.value.editor.lineNumber, 'absolute', 'T036-CONFIG-13 Helix line-number default is retained');
@@ -210,7 +221,7 @@ assert.equal(initial.value.editor.softWrapMaxIndentRetain, 40, 'T036-SOFT-WRAP-I
 assert.equal(initial.value.editor.wrapIndicator, '↪ ', 'T036-WRAP-INDICATOR-01 Helix soft-wrap wrap-indicator default is retained');
 assert.equal(initial.value.editor.inlineDiagnosticsCursorLine, 'warning', 'T036-INLINE-DIAGNOSTICS-FILTER-01 Helix master cursor-line diagnostic filter default is warning');
 assert.equal(compileConfig([{ name: 'stable-inline-diagnostics-default', kind: 'user', fileName: 'stable-inline-diagnostics-default.toml', source: '[editor.inline-diagnostics]\ncursor-line = "disable"\n' }]).ok, true, 'T036-INLINE-DIAGNOSTICS-FILTER-MASTER-DEFAULT-01 explicit stable disable remains accepted');
-assert.equal(initial.value.editor.inlineDiagnosticsOtherLines, 'disable', 'T036-INLINE-DIAGNOSTICS-FILTER-01 Helix other-lines diagnostic filter default is retained');
+assert.equal(initial.value.editor.inlineDiagnosticsOtherLines, 'disable', 'T036-INLINE-DIAGNOSTICS-FILTER-01-PART2 Helix other-lines diagnostic filter default is retained');
 assert.equal(initial.value.editor.endOfLineDiagnostics, 'hint', 'T036-END-OF-LINE-DIAGNOSTICS-01 Helix master end-of-line-diagnostics default is hint');
 assert.equal(compileConfig([{ name: 'stable-end-of-line-default', kind: 'user', fileName: 'stable-end-of-line-default.toml', source: '[editor]\nend-of-line-diagnostics = "disable"\n' }]).ok, true, 'T036-END-OF-LINE-DIAGNOSTICS-MASTER-DEFAULT-01 explicit stable disable remains accepted');
 assert.equal(initial.value.editor.inlineDiagnosticsPrefixLen, 1, 'T036-INLINE-DIAGNOSTICS-PREFIX-LEN-01 Helix prefix-len default is retained');
@@ -245,7 +256,14 @@ assert.equal(invalidMiddleClickPaste.ok, false, 'T036-MIDDLE-CLICK-PASTE-INVALID
 const configuredShell = compileConfig([{ name: 'shell', kind: 'user', fileName: 'shell.toml', source: '[editor]\nshell = ["python3", "-c"]\n' }]);
 assert.equal(configuredShell.ok, true, 'T036-SHELL-SCHEMA-01 editor.shell accepts a two-element command array');
 if (configuredShell.ok) assert.deepEqual(configuredShell.value.editor.shell, ['python3', '-c'], 'T036-SHELL-UNIT-01 configured editor.shell reaches the compiled snapshot');
-assert.equal(compileConfig([{ name: 'invalid-shell', kind: 'user', fileName: 'invalid-shell.toml', source: '[editor]\nshell = ["sh"]\n' }]).ok, false, 'T036-SHELL-INVALID-01 editor.shell rejects arrays without exactly two non-empty strings');
+assert.equal(compileConfig([{ name: 'invalid-shell', kind: 'user', fileName: 'invalid-shell.toml', source: '[editor]\nshell = []\n' }]).ok, false, 'T036-SHELL-INVALID-01 editor.shell rejects an empty command array');
+const shellWithArgs = compileConfig([{ name: 'shell-with-args', kind: 'user', source: '[editor]\nshell = ["bash", "--noprofile", "-c"]\n' }]);
+assert.equal(shellWithArgs.ok, true, 'editor.shell accepts additional process arguments');
+if (shellWithArgs.ok) assert.deepEqual(shellWithArgs.value.editor.shell, ['bash', '--noprofile', '-c']);
+assert.equal(compileConfig([{ name: 'large-scrolloff', kind: 'user', source: '[editor]\nscrolloff = 1001\n' }]).ok, true, 'scrolloff accepts Helix usize values above 1000');
+assert.equal(compileConfig([{ name: 'zero-trigger', kind: 'user', source: '[editor]\ncompletion-trigger-len = 0\n' }]).ok, true, 'completion-trigger-len accepts zero like Helix u8');
+assert.equal(compileConfig([{ name: 'max-trigger', kind: 'user', source: '[editor]\ncompletion-trigger-len = 255\n' }]).ok, true, 'completion-trigger-len accepts 255');
+assert.equal(compileConfig([{ name: 'overflow-trigger', kind: 'user', source: '[editor]\ncompletion-trigger-len = 256\n' }]).ok, false, 'completion-trigger-len rejects 256');
 assert.equal(initial.value.editor.insertFinalNewline, true, 'T036-INSERT-FINAL-NEWLINE-01 Helix insert-final-newline default is retained');
 assert.equal(initial.value.editor.trimFinalNewlines, false, 'T036-TRIM-FINAL-NEWLINES-01 Helix trim-final-newlines default is retained');
 assert.equal(initial.value.editor.trimTrailingWhitespace, false, 'T036-TRIM-TRAILING-WHITESPACE-01 Helix trim-trailing-whitespace default is retained');
@@ -257,8 +275,8 @@ assert.equal(initial.value.editor.lsp.autoDocumentHighlight, false, 'T036-LSP-DO
 assert.equal(initial.value.editor.lsp.gotoReferenceIncludeDeclaration, true, 'T036-LSP-GOTO-REFERENCES-DEFAULT-01 goto-reference-include-declaration defaults to true');
 assert.equal(initial.value.editor.lsp.inlayHintsLengthLimit, undefined, 'T036-LSP-INLAY-HINTS-LIMIT-DEFAULT-01 unset inlay-hints-length-limit remains unset');
 assert.equal(initial.value.editor.cursorShape.normal, 'block', 'T036-CURSOR-SHAPE-01 normal cursor-shape default is retained');
-assert.equal(initial.value.editor.cursorShape.insert, 'block', 'T036-CURSOR-SHAPE-01 insert cursor-shape default is retained');
-assert.equal(initial.value.editor.cursorShape.select, 'block', 'T036-CURSOR-SHAPE-01 select cursor-shape default is retained');
+assert.equal(initial.value.editor.cursorShape.insert, 'block', 'T036-CURSOR-SHAPE-01-PART2 insert cursor-shape default is retained');
+assert.equal(initial.value.editor.cursorShape.select, 'block', 'T036-CURSOR-SHAPE-01-PART3 select cursor-shape default is retained');
 assert.equal(initial.value.editor.mouse.scrollLines, 3, 'T036-CONFIG-11 Helix scroll-lines default reaches the mouse-compatible runtime field');
 assert.equal(initial.value.editor.kittyKeyboardProtocol, 'auto', 'T036-KITTY-KEYBOARD-DEFAULT-01 Helix master kitty-keyboard-protocol defaults to auto');
 assert.equal(initial.value.provenance['editor.theme'], 'defaults', 'T036-CONFIG-08 effective values retain layer provenance');
@@ -486,10 +504,10 @@ const invalidCodeActionHintGutter = compileConfig([{ name: 'invalid-code-action-
 assert.equal(invalidCodeActionHintGutter.ok, false, 'T036-CODE-ACTION-HINT-GUTTER-INVALID-01 unsupported gutter values remain rejected');
 const invalidGutters = compileConfig([{ name: 'invalid-gutters', kind: 'user', fileName: 'invalid-gutters.toml', source: '[editor]\ngutters = ["line-numbers", "unknown"]\n' }]);
 assert.equal(invalidGutters.ok, false, 'T036-GUTTERS-04 unsupported gutter names are rejected');
-const emptyGutterSections = compileConfig([defaults, { name: 'empty-gutter-sections', kind: 'user', fileName: 'empty-gutter-sections.toml', source: '[editor.gutters.diagnostics]\n[editor.gutters.diff]\n[editor.gutters.spacer]\n[editor.gutters.code-action-hint]\n' }]);
-assert.equal(emptyGutterSections.ok, true, 'T036-GUTTERS-EMPTY-02 stable empty gutter sections compile');
-if (emptyGutterSections.ok) assert.equal(emptyGutterSections.value.editor.lineNumberMinWidth, 3, 'T036-GUTTERS-EMPTY-03 empty gutter sections preserve the default rendered gutter');
-if (emptyGutterSections.ok) assert.equal(emptyGutterSections.value.editor.gutters.includes('code-action-hint'), false, 'T036-CODE-ACTION-HINT-GUTTER-DEFAULT-01 empty code-action-hint section does not enable the gutter by default');
+for (const section of ['diagnostics', 'diff', 'spacer', 'code-action-hint']) {
+  const emptySection = compileConfig([{ name: 'empty-gutter-section', kind: 'user', fileName: 'empty-gutter-section.toml', source: `[editor.gutters.${section}]\n` }]);
+  assert.equal(emptySection.ok, false, `T036-GUTTERS-EMPTY-02 pinned Helix rejects the documented empty ${section} section`);
+}
 const invalidGutterSection = compileConfig([{ name: 'invalid-gutter-section', kind: 'user', fileName: 'invalid-gutter-section.toml', source: '[editor.gutters.diagnostics]\nmarker = true\n' }]);
 assert.equal(invalidGutterSection.ok, false, 'T036-GUTTERS-EMPTY-04 gutter section children remain rejected as unknown settings');
 const indentGuides = compileConfig([defaults, { name: 'indent-guides', kind: 'user', fileName: 'indent-guides.toml', source: '[editor.indent-guides]\nrender = true\ncharacter = "|"\nskip-levels = 1\n' }]);
@@ -523,8 +541,8 @@ assert.equal(statusline.ok, true, 'T036-STATUSLINE-02 configured statusline labe
 if (statusline.ok) {
   assert.equal(statusline.value.editor.statusline.separator, '~', 'T036-STATUSLINE-SEPARATOR-02 configured separator reaches the UI runtime');
   assert.deepEqual(statusline.value.editor.statusline.left, ['mode', 'file-base-name'], 'T036-STATUSLINE-LAYOUT-02 configured left elements reach the UI runtime');
-  assert.deepEqual(statusline.value.editor.statusline.center, ['position'], 'T036-STATUSLINE-LAYOUT-02 configured center elements reach the UI runtime');
-  assert.deepEqual(statusline.value.editor.statusline.right, ['file-line-ending'], 'T036-STATUSLINE-LAYOUT-02 configured right elements reach the UI runtime');
+  assert.deepEqual(statusline.value.editor.statusline.center, ['position'], 'T036-STATUSLINE-LAYOUT-02-PART2 configured center elements reach the UI runtime');
+  assert.deepEqual(statusline.value.editor.statusline.right, ['file-line-ending'], 'T036-STATUSLINE-LAYOUT-02-PART3 configured right elements reach the UI runtime');
   assert.deepEqual(statusline.value.editor.statusline.mode, { normal: 'NORMX', insert: 'INSX', select: 'SELX' }, 'T036-STATUSLINE-MODES-02 configured mode labels reach the UI runtime');
 }
 const statuslineCatalog = compileConfig([defaults, { name: 'statusline-catalog', kind: 'user', fileName: 'statusline-catalog.toml', source: '[editor.statusline]\nleft = ["mode", "spinner", "file-name", "file-absolute-path", "file-base-name", "file-modification-indicator", "read-only-indicator", "file-encoding", "file-line-ending", "file-indent-style", "file-type", "diagnostics", "workspace-diagnostics", "selections", "primary-selection-length", "position", "position-percentage", "separator", "spacer", "version-control", "register", "total-line-numbers", "code-action-hint"]\n' }]);
@@ -605,7 +623,7 @@ const inlineDiagnosticsFilters = compileConfig([defaults, { name: 'inline-diagno
 assert.equal(inlineDiagnosticsFilters.ok, true, 'T036-INLINE-DIAGNOSTICS-FILTER-02 configured diagnostic filters compile');
 if (inlineDiagnosticsFilters.ok) {
   assert.equal(inlineDiagnosticsFilters.value.editor.inlineDiagnosticsCursorLine, 'error', 'T036-INLINE-DIAGNOSTICS-FILTER-03 cursor-line filter reaches the UI runtime');
-  assert.equal(inlineDiagnosticsFilters.value.editor.inlineDiagnosticsOtherLines, 'warning', 'T036-INLINE-DIAGNOSTICS-FILTER-03 other-lines filter reaches the UI runtime');
+  assert.equal(inlineDiagnosticsFilters.value.editor.inlineDiagnosticsOtherLines, 'warning', 'T036-INLINE-DIAGNOSTICS-FILTER-03-PART2 other-lines filter reaches the UI runtime');
 }
 const invalidInlineDiagnosticsFilter = compileConfig([{ name: 'invalid-inline-diagnostics-filter', kind: 'user', fileName: 'invalid-inline-diagnostics-filter.toml', source: '[editor.inline-diagnostics]\ncursor-line = "fatal"\n' }]);
 assert.equal(invalidInlineDiagnosticsFilter.ok, false, 'T036-INLINE-DIAGNOSTICS-FILTER-04 unsupported diagnostic severity is rejected');
@@ -636,6 +654,8 @@ const invalidAutoFormat = compileConfig([{ name: 'invalid-auto-format', kind: 'u
 assert.equal(invalidAutoFormat.ok, false, 'T036-AUTO-FORMAT-04 non-boolean editor.auto-format is rejected');
 const autoCompletion = compileConfig([defaults, { name: 'auto-completion', kind: 'user', fileName: 'auto-completion.toml', source: '[editor]\nauto-completion = false\ncompletion-timeout = 5\ncompletion-trigger-len = 4\npreview-completion-insert = false\ncompletion-replace = true\n' }]);
 assert.equal(autoCompletion.ok, true, 'T036-AUTO-COMPLETION-02 configured automatic completion compiles');
+assert.equal(autoCompletion.ok, true, 'T036-COMPLETION-TRIGGER-LEN-02 completion-trigger-len accepts a positive integer');
+assert.equal(autoCompletion.ok, true, 'T036-COMPLETION-REPLACE-02 completion-replace accepts a boolean');
 assert.equal(autoCompletion.ok, true, 'T036-COMPLETION-TIMEOUT-02 configured completion-timeout compiles');
 if (autoCompletion.ok) {
   assert.equal(autoCompletion.value.editor.autoCompletion, false, 'T036-AUTO-COMPLETION-03 auto-completion reaches the input runtime');
@@ -648,14 +668,15 @@ if (autoCompletion.ok) {
 const disabledAutoInfo = compileConfig([defaults, { name: 'auto-info-disabled', kind: 'user', fileName: 'auto-info-disabled.toml', source: '[editor]\nauto-info = false\n' }]);
 assert.equal(disabledAutoInfo.ok, true, 'T036-AUTO-INFO-02 configured editor.auto-info compiles');
 if (disabledAutoInfo.ok) assert.equal(disabledAutoInfo.value.editor.autoInfo, false, 'T036-AUTO-INFO-03 editor.auto-info reaches the input runtime');
-const invalidAutoCompletion = compileConfig([{ name: 'invalid-auto-completion', kind: 'user', fileName: 'invalid-auto-completion.toml', source: '[editor]\nauto-completion = "false"\ncompletion-timeout = -1\ncompletion-trigger-len = 0\npreview-completion-insert = "true"\ncompletion-replace = "true"\n' }]);
+const invalidAutoCompletion = compileConfig([{ name: 'invalid-auto-completion', kind: 'user', fileName: 'invalid-auto-completion.toml', source: '[editor]\nauto-completion = "false"\ncompletion-timeout = -1\ncompletion-trigger-len = 256\npreview-completion-insert = "true"\ncompletion-replace = "true"\n' }]);
 assert.equal(invalidAutoCompletion.ok, false, 'T036-AUTO-COMPLETION-04 invalid automatic completion settings are rejected');
 if (!invalidAutoCompletion.ok) assert.ok(invalidAutoCompletion.error.diagnostics.some((diagnostic) => diagnostic.path === 'editor.completion-timeout'), 'T036-COMPLETION-TIMEOUT-04 negative completion-timeout is rejected');
 if (!invalidAutoCompletion.ok) assert.ok(invalidAutoCompletion.error.diagnostics.some((diagnostic) => diagnostic.path === 'editor.completion-replace'), 'T036-COMPLETION-REPLACE-04 non-boolean completion-replace is rejected');
+if (!invalidAutoCompletion.ok) assert.ok(invalidAutoCompletion.error.diagnostics.some((diagnostic) => diagnostic.path === 'editor.completion-trigger-len'), 'T036-COMPLETION-TRIGGER-LEN-04 completion-trigger-len above u8 is rejected');
 if (!invalidAutoCompletion.ok) assert.ok(invalidAutoCompletion.error.diagnostics.some((diagnostic) => diagnostic.path === 'editor.preview-completion-insert'), 'T036-PREVIEW-COMPLETION-INSERT-04 non-boolean preview-completion-insert is rejected');
 const invalidAutoInfo = compileConfig([{ name: 'invalid-auto-info', kind: 'user', fileName: 'invalid-auto-info.toml', source: '[editor]\nauto-info = "true"\n' }]);
 assert.equal(invalidAutoInfo.ok, false, 'T036-AUTO-INFO-04 non-boolean editor.auto-info is rejected');
-if (!invalidAutoInfo.ok) assert.ok(invalidAutoInfo.error.diagnostics.some((diagnostic) => diagnostic.path === 'editor.auto-info'), 'T036-AUTO-INFO-04 invalid editor.auto-info names its path');
+if (!invalidAutoInfo.ok) assert.ok(invalidAutoInfo.error.diagnostics.some((diagnostic) => diagnostic.path === 'editor.auto-info'), 'T036-AUTO-INFO-04-PART2 invalid editor.auto-info names its path');
 const defaultYankRegister = compileConfig([defaults, { name: 'default-yank-register', kind: 'user', fileName: 'default-yank-register.toml', source: '[editor]\ndefault-yank-register = "a"\n' }]);
 assert.equal(defaultYankRegister.ok, true, 'T036-DEFAULT-YANK-REGISTER-02 configured editor.default-yank-register compiles');
 if (defaultYankRegister.ok) assert.equal(defaultYankRegister.value.editor.defaultYankRegister, 'a', 'T036-DEFAULT-YANK-REGISTER-03 configured register reaches the Vim runtime');

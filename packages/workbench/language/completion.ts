@@ -1,5 +1,5 @@
-import { asIdentifier, asLineIndex, asUtf16Offset, CancellationSource, type CancellationToken, type Disposable, type DocumentId, type Result, type UndoGroupId, type ViewId } from '../../contracts/src/index';
-import { offsetToPosition, type DocumentEdit, type DocumentSnapshot } from '../../document/src/index';
+import { asIdentifier, asLineIndex, asUtf16Offset, CancellationSource, type CancellationToken, type Disposable, type DocumentId, type Result, type UndoGroupId, type Utf16Offset, type ViewId } from '../../contracts/src/index';
+import { offsetToPosition, type CommittedDocumentChange, type DocumentEdit, type DocumentSnapshot } from '../../document/src/index';
 import type { SelectionSetSnapshot } from '../../selections/src/index';
 import type { OwnedVimKeyEvent, OwnedVimSession } from '../vim-session';
 import type { BufferHost } from '../host';
@@ -19,6 +19,7 @@ export interface WorkbenchCompletionItem {
   readonly textEdit?: WorkbenchCompletionTextEdit;
   readonly textEditReplace?: WorkbenchCompletionTextEdit;
   readonly textEditIsFallback?: boolean;
+  readonly textEditIsWordSuffix?: boolean;
   readonly additionalTextEdits?: readonly WorkbenchCompletionTextEdit[];
   readonly commitCharacters?: readonly string[];
   readonly insertTextFormat?: 'plain' | 'snippet';
@@ -79,27 +80,33 @@ export function createWordCompletionProvider(readDocuments: WordCompletionDocume
     async complete(request, cancellation): Promise<Result<WorkbenchCompletionList, WorkbenchCompletionFailure>> {
       const cancelled = (): boolean => cancellation?.isCancelled ?? false;
       if (cancelled()) return { ok: false, error: { kind: 'stale', message: 'word completion was cancelled' } };
-      const current = readDocuments().find((snapshot) => String(snapshot.id) === request.documentId);
+      const documents = readDocuments();
+      const current = documents.find((snapshot) => String(snapshot.id) === request.documentId);
       if (current === undefined) return { ok: true, value: { isIncomplete: false, items: Object.freeze([]) } };
       const line = asLineIndex(request.position.line);
       if (!line.ok) return { ok: false, error: { kind: 'invalid-edit', message: 'word completion position is invalid' } };
       const lineStart = current.lineStartOffset(line.value);
       const cursor = asUtf16Offset((lineStart.ok ? Number(lineStart.value) : 0) + request.position.utf16);
       if (!lineStart.ok || !cursor.ok) return { ok: false, error: { kind: 'invalid-edit', message: 'word completion position is invalid' } };
-      const prefixRead = current.slice(lineStart.value, cursor.value);
+      let prefixStart = Math.max(Number(lineStart.value), Number(cursor.value) - 256);
+      if (!current.slice(prefixStart as Utf16Offset, prefixStart as Utf16Offset).ok) prefixStart -= 1;
+      const prefixRead = current.slice(prefixStart as Utf16Offset, cursor.value);
       if (!prefixRead.ok) return { ok: false, error: { kind: 'invalid-edit', message: 'word completion position is invalid' } };
       const prefix = /[\p{L}\p{N}_]+$/u.exec(prefixRead.value)?.[0] ?? '';
       if ([...prefix].length < triggerLength) return { ok: true, value: { isIncomplete: false, items: Object.freeze([]) } };
       const words = new Set<string>();
-      for (const snapshot of readDocuments()) {
+      let remaining = 128 * 1024;
+      for (const snapshot of documents) {
         if (cancelled()) return { ok: false, error: { kind: 'stale', message: 'word completion was cancelled' } };
-        // ponytail: cap each request at 128 KiB; upgrade to an incremental worker index before
-        // claiming large-workspace completion latency beyond this bounded lexical ceiling.
-        const end = asUtf16Offset(Math.min(snapshot.lengthUtf16 as number, 128 * 1024));
+        if (remaining === 0) break;
+        // ponytail: total scan cap is 128 KiB; use an incremental worker index for wider coverage.
+        const length = Math.min(snapshot.lengthUtf16 as number, remaining);
+        const end = asUtf16Offset(length);
         const start = asUtf16Offset(0);
         if (!end.ok || !start.ok) continue;
         const text = snapshot.slice(start.value, end.value);
         if (!text.ok) continue;
+        remaining -= length;
         for (const match of text.value.matchAll(/[\p{L}\p{N}_]{3,50}/gu)) {
           const word = match[0];
           if (word !== undefined && word.startsWith(prefix) && word.length > prefix.length) words.add(word);
@@ -112,6 +119,7 @@ export function createWordCompletionProvider(readDocuments: WordCompletionDocume
         label: word,
         textEdit: { start: request.position, end: request.position, newText: word.slice(prefix.length) },
         textEditIsFallback: true,
+        textEditIsWordSuffix: true,
         insertTextFormat: 'plain' as const,
       }));
       return { ok: true, value: { isIncomplete: false, items: Object.freeze(items) } };
@@ -175,6 +183,7 @@ interface CompletionPreview {
   readonly plan: CompletionEditPlan;
   readonly inverseEdits: readonly DocumentEdit[];
   readonly undoGroup: UndoGroupId;
+  readonly revisionId: DocumentSnapshot['revisionId'];
   version: number;
 }
 
@@ -245,6 +254,10 @@ export class CompletionSnippetController {
   #snippetUndoGroup: UndoGroupId | undefined;
   #snippetApplying = false;
   #completionPreview: CompletionPreview | undefined;
+  #previewApplyingDocumentId: string | undefined;
+  #previewRestoringDocumentId: string | undefined;
+  #previewRollback: Promise<void> | undefined;
+  readonly #unrevertedPreviews = new Map<string, { base: DocumentSnapshot['revisionId']; preview?: DocumentSnapshot['revisionId']; active: boolean }>();
   #previewOperation = 0;
   #completionRead: CompletionModelRead | undefined;
   #signatureRead: SignatureModelRead | undefined;
@@ -264,6 +277,7 @@ export class CompletionSnippetController {
   }
 
   get isCompletionOpen(): boolean { return this.#completionOpen || this.#completionDelayTimer !== undefined; }
+  isCompletionPreviewActiveFor(documentId: DocumentId): boolean { return this.#previewApplyingDocumentId === String(documentId) || this.#previewRestoringDocumentId === String(documentId) || this.#completionPreview?.request.documentId === String(documentId) || this.#unrevertedPreviews.get(String(documentId))?.active === true; }
   get isSignatureOpen(): boolean { return this.#signatureOpen; }
   /** An active snippet session intercepts every keypress until Tab exhausts its placeholders,
    * Escape cancels it, or an edit lands outside its active placeholder. */
@@ -316,10 +330,19 @@ export class CompletionSnippetController {
     return { completionSubscription, signatureSubscription };
   }
 
+  detachLanguage(): void {
+    this.closeCompletion();
+    this.closeSignature();
+    this.#completion = undefined;
+    this.#completionProvider = undefined;
+    this.#signature = undefined;
+    this.#session = undefined;
+  }
+
   isInsertMode(mode: string | undefined): boolean { return mode === 'insert' || mode === 'replace'; }
 
   isCompletionTrigger(event: { readonly name: string; readonly raw: string; readonly ctrl: boolean; readonly shift: boolean }, mode: string | undefined): boolean {
-    if (!event.ctrl || (event.raw !== ' ' && event.raw !== ' ' && event.name.toLowerCase() !== 'space')) return false;
+    if (!event.ctrl || (event.raw !== ' ' && event.raw !== '\0' && event.name.toLowerCase() !== 'space')) return false;
     return this.isInsertMode(mode);
   }
 
@@ -716,7 +739,15 @@ export class CompletionSnippetController {
   /** Called on every document change (`onDocumentChange`) not originated by this feature's own
    * applying flag, to cancel a snippet an outside edit invalidated -- mirrors the original
    * `if (snippetSession !== undefined && !snippetApplying) finishSnippet()`. */
-  cancelSnippetOnExternalChange(): void {
+  cancelSnippetOnExternalChange(change?: CommittedDocumentChange): void {
+    if (change !== undefined) {
+      const conflict = this.#unrevertedPreviews.get(String(change.snapshot.id));
+      if (conflict !== undefined) {
+        if (change.snapshot.revisionId === conflict.base) conflict.active = false;
+        else if (change.snapshot.revisionId === conflict.preview) conflict.active = true;
+        else if (!conflict.active) this.#unrevertedPreviews.delete(String(change.snapshot.id));
+      }
+    }
     if (this.#completionDelayTimer !== undefined) {
       clearTimeout(this.#completionDelayTimer);
       this.#completionDelayTimer = undefined;
@@ -724,7 +755,15 @@ export class CompletionSnippetController {
     if (this.#snippetSession !== undefined && !this.#snippetApplying) this.#finishSnippet();
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
+    if (this.#completionDelayTimer !== undefined) {
+      clearTimeout(this.#completionDelayTimer);
+      this.#completionDelayTimer = undefined;
+    }
+    this.#previewOperation += 1;
+    this.#completionCancellation?.cancel();
+    this.#signatureCancellation?.cancel();
+    await this.#discardCompletionPreview();
     this.#finishSnippet();
     this.#completion = undefined;
     this.#completionProvider = undefined;
@@ -791,31 +830,69 @@ export class CompletionSnippetController {
     const opened = this.#options.session.beginUndoGroup(activeViewId, group.value, 'lsp');
     if (!opened.ok) return;
     this.#snippetApplying = true;
-    const applied = await this.#options.session.applyTextEdits(activeViewId, plan.value.proposalEdits, group.value, 'lsp', true);
-    this.#snippetApplying = false;
-    if (!applied.ok || operation !== this.#previewOperation) {
+    this.#previewApplyingDocumentId = request.documentId;
+    let applied: Awaited<ReturnType<LanguageWorkbenchSessionPort['applyTextEdits']>>;
+    try { applied = await this.#options.session.applyTextEdits(activeViewId, plan.value.proposalEdits, group.value, 'lsp', true); }
+    finally { this.#snippetApplying = false; this.#previewApplyingDocumentId = undefined; }
+    if (!applied.ok) {
       void this.#options.session.endUndoGroup(activeViewId, group.value);
       return;
     }
-    this.#completionPreview = { viewId: activeViewId, request, baseView: view, item, plan: plan.value, inverseEdits: inverse.value, undoGroup: group.value, version: Number(applied.value.version) };
+    if (operation !== this.#previewOperation) {
+      const currentView = this.#options.session.readView(activeViewId);
+      if (currentView?.document.version === applied.value.version) {
+        const restored = await this.#options.session.applyTextEdits(activeViewId, inverse.value, group.value, 'lsp', true);
+        if (!restored.ok) {
+          this.#unrevertedPreviews.set(request.documentId, { base: view.document.revisionId, active: true });
+          this.#options.onError(`xi: completion preview could not be reverted: ${restored.error.kind}\n`);
+        }
+      } else {
+        this.#unrevertedPreviews.set(request.documentId, { base: view.document.revisionId, active: true });
+        this.#options.onError('xi: completion preview changed during cancellation; undo it before saving\n');
+      }
+      void this.#options.session.endUndoGroup(activeViewId, group.value);
+      return;
+    }
+    const previewRevision = this.#options.session.readView(activeViewId)?.document.revisionId;
+    if (previewRevision === undefined) return;
+    this.#completionPreview = { viewId: activeViewId, request, baseView: view, item, plan: plan.value, inverseEdits: inverse.value, undoGroup: group.value, revisionId: previewRevision, version: Number(applied.value.version) };
     this.#options.marker('XI_COMPLETION_PREVIEW', { version: applied.value.version, item: item.id, edits: plan.value.proposalEdits.length });
   }
 
   async #discardCompletionPreview(): Promise<void> {
+    if (this.#previewRollback !== undefined) return this.#previewRollback;
     const preview = this.#completionPreview;
     if (preview === undefined) return;
     this.#previewOperation += 1;
     this.#completionPreview = undefined;
+    const rollback = this.#restoreCompletionPreview(preview);
+    this.#previewRollback = rollback;
+    try { await rollback; }
+    finally { if (this.#previewRollback === rollback) this.#previewRollback = undefined; }
+  }
+
+  async #restoreCompletionPreview(preview: CompletionPreview): Promise<void> {
+    this.#previewRestoringDocumentId = preview.request.documentId;
     const view = this.#options.session.readView(preview.viewId);
     if (view === undefined || Number(view.document.version) !== preview.version) {
       void this.#options.session.endUndoGroup(preview.viewId, preview.undoGroup);
+      this.#unrevertedPreviews.set(preview.request.documentId, { base: preview.baseView.document.revisionId, preview: preview.revisionId, active: true });
+      this.#options.onError('xi: completion preview could not be reverted after another edit; undo it before saving\n');
+      this.#previewRestoringDocumentId = undefined;
       return;
     }
     this.#snippetApplying = true;
-    const restored = await this.#options.session.applyTextEdits(preview.viewId, preview.inverseEdits, preview.undoGroup, 'lsp', true);
-    this.#snippetApplying = false;
-    void this.#options.session.endUndoGroup(preview.viewId, preview.undoGroup);
-    if (!restored.ok) this.#options.onError(`xi: completion preview could not be reverted: ${restored.error.kind}\n`);
+    let restored: Awaited<ReturnType<LanguageWorkbenchSessionPort['applyTextEdits']>>;
+    try { restored = await this.#options.session.applyTextEdits(preview.viewId, preview.inverseEdits, preview.undoGroup, 'lsp', true); }
+    finally {
+      this.#snippetApplying = false;
+      this.#previewRestoringDocumentId = undefined;
+      void this.#options.session.endUndoGroup(preview.viewId, preview.undoGroup);
+    }
+    if (!restored.ok) {
+      this.#unrevertedPreviews.set(preview.request.documentId, { base: preview.baseView.document.revisionId, preview: preview.revisionId, active: true });
+      this.#options.onError(`xi: completion preview could not be reverted: ${restored.error.kind}\n`);
+    }
   }
 
   async #applyCompletion(request: WorkbenchCompletionRequest, item: WorkbenchCompletionItem, edits: readonly WorkbenchCompletionTextEdit[], primaryOnly: boolean): Promise<void> {
@@ -826,10 +903,10 @@ export class CompletionSnippetController {
       if (support === undefined) return;
     }
     const preview = this.#completionPreview;
-    if (preview !== undefined && !primaryOnly && preview.item.id === item.id && preview.request.documentId === request.documentId) {
+    const previewView = preview === undefined ? undefined : this.#options.session.readView(preview.viewId);
+    if (preview !== undefined && previewView !== undefined && Number(previewView.document.version) === preview.version && !primaryOnly && preview.item.id === item.id && preview.request.documentId === request.documentId) {
       this.#completionPreview = undefined;
       this.#previewOperation += 1;
-      void this.#options.session.endUndoGroup(preview.viewId, preview.undoGroup);
       this.#options.marker('XI_COMPLETION_APPLIED', { version: preview.version, edits: preview.plan.proposalEdits.length, members: preview.plan.memberEdits.size, selectionCount: preview.baseView.selections.members.length, primaryOnly: false, preview: true });
       await this.#openSnippetAfterCompletion(preview.viewId, preview.baseView, preview.plan, preview.plan.proposalEdits, false, support, preview.undoGroup);
       return;
@@ -992,7 +1069,7 @@ export function planCompletionEdits(
     let candidate = source === item.textEdit && selectedPrimary !== undefined ? selectedPrimary : source;
     if (replaceEntireWord && item.textEditIsFallback === true && source === item.textEdit) {
       const word = completionWordRange(snapshot, request, positionToOffset);
-      if (word !== undefined) candidate = { ...source, start: word.start, end: word.end };
+      if (word !== undefined) candidate = { ...source, start: word.start, end: word.end, newText: item.textEditIsWordSuffix === true ? item.label : source.newText };
     }
     if (item.insertTextFormat === 'snippet' && item.textEdit !== undefined && source === item.textEdit) {
       const expanded = expandSnippet(candidate.newText);

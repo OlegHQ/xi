@@ -12,6 +12,7 @@ import tempfile
 import termios
 import time
 from pathlib import Path
+from terminal_screen import Screen
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -56,9 +57,12 @@ def run_case(value: str, row: int) -> None:
             if b"XI_WORKBENCH_READY" not in captured:
                 raise SystemExit(f"Xi did not reach the workbench for bufferline={value}: {captured[-4000:]!r}")
             read_for(master, captured, 0.5)
-            marker = f"\x1b[{row};30H".encode()
-            if marker not in captured or b"  1 \x1b[0m" not in captured[captured.rfind(marker):captured.rfind(marker) + 200]:
-                raise SystemExit(f"bufferline={value} rendered the first line at an unexpected row: {captured[-4000:]!r}")
+            screen = Screen(14, 100)
+            screen.feed(captured)
+            if "1  one" not in screen.row_text(row):
+                raise SystemExit(f"bufferline={value} rendered the first line at an unexpected row: {screen.row_text(row)!r}")
+            if value == "always" and "bufferline.txt" not in screen.row_text(1):
+                raise SystemExit(f"bufferline=always did not render a tab strip: {screen.row_text(1)!r}")
             os.write(master, b"q")
             child.wait(timeout=5)
         finally:

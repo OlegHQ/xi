@@ -1,4 +1,4 @@
-import { CancellationSource, type DocumentId, type DocumentVersion, type LineIndex, type Utf16Offset } from '../../../../packages/primitives/src/entrypoints/launch';
+import type { DocumentId, DocumentVersion, LineIndex, Utf16Offset } from '../../../../packages/primitives/src/entrypoints/launch';
 import type { TextFileDocument } from '../../../../packages/document/src/entrypoints/launch';
 import type { NodeFilesystemPort, NodeProcessPort } from '../../../../packages/platform/src/entrypoints/launch';
 import type { LanguageConfig, LanguageServerConfig } from '../../../../packages/services/src/entrypoints/config';
@@ -91,8 +91,10 @@ export interface LanguageWiringConnection {
 export interface LanguageWiring {
   connect(connection: LanguageWiringConnection): void;
   resolveLanguageId(path: string | undefined): string | undefined;
+  hasServerForPath(path: string | undefined): boolean;
   admitBufferToLanguageSession(path: string | undefined, documentId: DocumentId, document: TextFileDocument): void;
   ensureLanguage(): Promise<void>;
+  reconcileTrust(): Promise<void>;
   /** Mirrors the composition root's onDocumentChange wiring for the launch WorkbenchSession. */
   changeDocument(change: CommittedDocumentChange): void;
   /** Mirrors BufferHost's onBufferClosed language-session teardown. */
@@ -156,16 +158,7 @@ interface InlayHintRuntime {
   readonly deps: LanguageWiringDeps;
   readonly session: () => LanguageServerSession | undefined;
   readonly presentation: () => LanguagePresentation | undefined;
-  readonly decode: () => LanguageServices['decodeInlayHints'] | undefined;
-  readonly decodeColors: () => LanguageServices['decodeDocumentColors'] | undefined;
-  readonly decodeDocumentHighlights: () => LanguageServices['decodeDocumentHighlights'] | undefined;
   readonly documents: Map<string, { readonly uri: string; readonly version: number; readonly lineCount: number }>;
-  readonly generations: Map<string, number>;
-  readonly cancellations: Map<string, CancellationSource>;
-  readonly colorGenerations: Map<string, number>;
-  readonly colorCancellations: Map<string, CancellationSource>;
-  readonly highlightGenerations: Map<string, number>;
-  readonly highlightCancellations: Map<string, CancellationSource>;
   readonly highlightPositions: Map<string, { readonly line: number; readonly utf16: number }>;
   readonly resolveLanguageId: (path: string | undefined) => string | undefined;
   readonly warnedDocumentIds: Set<DocumentId>;
@@ -176,9 +169,6 @@ function createInlayRuntime(
   state: {
     readonly session: () => LanguageServerSession | undefined;
     readonly presentation: () => LanguagePresentation | undefined;
-    readonly decode: () => LanguageServices['decodeInlayHints'] | undefined;
-    readonly decodeColors: () => LanguageServices['decodeDocumentColors'] | undefined;
-    readonly decodeDocumentHighlights: () => LanguageServices['decodeDocumentHighlights'] | undefined;
   },
   resolveLanguageId: (path: string | undefined) => string | undefined,
 ): InlayHintRuntime {
@@ -186,16 +176,7 @@ function createInlayRuntime(
     deps,
     session: state.session,
     presentation: state.presentation,
-    decode: state.decode,
-    decodeColors: state.decodeColors,
-    decodeDocumentHighlights: state.decodeDocumentHighlights,
     documents: new Map(),
-    generations: new Map(),
-    cancellations: new Map(),
-    colorGenerations: new Map(),
-    colorCancellations: new Map(),
-    highlightGenerations: new Map(),
-    highlightCancellations: new Map(),
     highlightPositions: new Map(),
     resolveLanguageId,
     warnedDocumentIds: new Set(),
@@ -203,107 +184,40 @@ function createInlayRuntime(
 }
 
 async function refreshDocumentHighlights(runtime: InlayHintRuntime, documentId: string, line: number, utf16: number): Promise<void> {
-  if (!Number.isSafeInteger(line) || line < 0 || !Number.isSafeInteger(utf16) || utf16 < 0) return;
-  if (!runtime.deps.autoDocumentHighlight) return;
+  if (!runtime.deps.autoDocumentHighlight || !Number.isSafeInteger(line) || line < 0 || !Number.isSafeInteger(utf16) || utf16 < 0) return;
   const previousPosition = runtime.highlightPositions.get(documentId);
   runtime.highlightPositions.set(documentId, { line, utf16 });
   const session = runtime.session();
   const presentation = runtime.presentation();
-  if (session === undefined || presentation === undefined) return;
   const document = runtime.documents.get(documentId);
-  if (document === undefined || !session.supportsRequest('textDocument/documentHighlight', document.uri)) return;
+  if (session === undefined || presentation === undefined || document === undefined) return;
   if (previousPosition?.line === line && previousPosition.utf16 === utf16 && presentation.documentHighlights(documentId)?.documentVersion === document.version) return;
-  const ready = await session.waitForReady(document.uri);
-  if (!ready.ok || !session.supportsRequest('textDocument/documentHighlight', document.uri)) return;
-  runtime.highlightCancellations.get(documentId)?.cancel();
-  const cancellation = new CancellationSource();
-  runtime.highlightCancellations.set(documentId, cancellation);
-  const generation = (runtime.highlightGenerations.get(documentId) ?? 0) + 1;
-  runtime.highlightGenerations.set(documentId, generation);
-  try {
-    const value = await session.request<unknown>('textDocument/documentHighlight', {
-      textDocument: { uri: document.uri },
-      position: { line, character: utf16 },
-    }, cancellation.token);
-    if (cancellation.token.isCancelled || runtime.documents.get(documentId)?.version !== document.version) return;
-    const decoded = runtime.decodeDocumentHighlights()?.(value, documentId, document.version, generation);
-    if (decoded === undefined || !decoded.ok) return;
-    const applied = presentation.applyDocumentHighlights(decoded.value);
-    if (applied.ok) {
-      runtime.deps.marker?.('XI_LSP_DOCUMENT_HIGHLIGHTS', { documentId, version: document.version, count: applied.value.ranges.length, ranges: applied.value.ranges });
-      runtime.deps.notifySurfaceChange();
-    }
-  } catch {
-    // A server may withdraw the optional provider or stop while the request is in flight.
-  } finally {
-    if (runtime.highlightCancellations.get(documentId) === cancellation) runtime.highlightCancellations.delete(documentId);
-    cancellation.dispose();
-  }
+  await presentation.refreshDocumentHighlights(session, { id: documentId, ...document }, line, utf16, () => runtime.documents.get(documentId)?.version, (result) => {
+    runtime.deps.marker?.('XI_LSP_DOCUMENT_HIGHLIGHTS', { documentId, version: document.version, count: result.ranges.length, ranges: result.ranges });
+    runtime.deps.notifySurfaceChange();
+  });
 }
 
 async function refreshInlayHints(runtime: InlayHintRuntime, documentId: string): Promise<void> {
   const session = runtime.session();
   const presentation = runtime.presentation();
-  if (!runtime.deps.displayInlayHints || session === undefined || presentation === undefined) return;
   const document = runtime.documents.get(documentId);
-  if (document === undefined || !session.supportsRequest('textDocument/inlayHint', document.uri)) return;
-  const ready = await session.waitForReady(document.uri);
-  if (!ready.ok || !session.supportsRequest('textDocument/inlayHint', document.uri)) return;
-  runtime.cancellations.get(documentId)?.cancel();
-  const cancellation = new CancellationSource();
-  runtime.cancellations.set(documentId, cancellation);
-  const generation = (runtime.generations.get(documentId) ?? 0) + 1;
-  runtime.generations.set(documentId, generation);
-  try {
-    const value = await session.request<unknown>('textDocument/inlayHint', {
-      textDocument: { uri: document.uri },
-      range: { start: { line: 0, character: 0 }, end: { line: Math.max(0, document.lineCount), character: 0 } },
-    }, cancellation.token);
-    if (cancellation.token.isCancelled || runtime.documents.get(documentId)?.version !== document.version) return;
-    const decoded = runtime.decode()?.(value, documentId, document.version, generation, runtime.deps.inlayHintsLengthLimit);
-    if (decoded === undefined || !decoded.ok) return;
-    const applied = presentation.applyHints(decoded.value);
-    if (applied.ok) {
-      runtime.deps.marker?.('XI_LSP_INLAY_HINTS', { documentId, version: document.version, count: applied.value.hints.length, labels: applied.value.hints.map((hint) => hint.label) });
-      runtime.deps.notifySurfaceChange();
-    }
-  } catch {
-    // A server may withdraw the optional provider or stop while the request is in flight.
-  } finally {
-    if (runtime.cancellations.get(documentId) === cancellation) runtime.cancellations.delete(documentId);
-    cancellation.dispose();
-  }
+  if (!runtime.deps.displayInlayHints || session === undefined || presentation === undefined || document === undefined) return;
+  await presentation.refreshInlayHints(session, { id: documentId, ...document }, runtime.deps.inlayHintsLengthLimit, () => runtime.documents.get(documentId)?.version, (result) => {
+    runtime.deps.marker?.('XI_LSP_INLAY_HINTS', { documentId, version: document.version, count: result.hints.length, labels: result.hints.map((hint) => hint.label) });
+    runtime.deps.notifySurfaceChange();
+  });
 }
 
 async function refreshDocumentColors(runtime: InlayHintRuntime, documentId: string): Promise<void> {
   const session = runtime.session();
   const presentation = runtime.presentation();
-  if (!runtime.deps.displayColorSwatches || session === undefined || presentation === undefined) return;
   const document = runtime.documents.get(documentId);
-  if (document === undefined || !session.supportsRequest('textDocument/documentColor', document.uri)) return;
-  const ready = await session.waitForReady(document.uri);
-  if (!ready.ok || !session.supportsRequest('textDocument/documentColor', document.uri)) return;
-  runtime.colorCancellations.get(documentId)?.cancel();
-  const cancellation = new CancellationSource();
-  runtime.colorCancellations.set(documentId, cancellation);
-  const generation = (runtime.colorGenerations.get(documentId) ?? 0) + 1;
-  runtime.colorGenerations.set(documentId, generation);
-  try {
-    const value = await session.request<unknown>('textDocument/documentColor', { textDocument: { uri: document.uri } }, cancellation.token);
-    if (cancellation.token.isCancelled || runtime.documents.get(documentId)?.version !== document.version) return;
-    const decoded = runtime.decodeColors()?.(value, documentId, document.version, generation);
-    if (decoded === undefined || !decoded.ok) return;
-    const applied = presentation.applyColors(decoded.value);
-    if (applied.ok) {
-      runtime.deps.marker?.('XI_LSP_COLOR_SWATCHES', { documentId, version: document.version, count: applied.value.colors.length, colors: applied.value.colors.map((color) => color.color) });
-      runtime.deps.notifySurfaceChange();
-    }
-  } catch {
-    // A server may withdraw the optional provider or stop while the request is in flight.
-  } finally {
-    if (runtime.colorCancellations.get(documentId) === cancellation) runtime.colorCancellations.delete(documentId);
-    cancellation.dispose();
-  }
+  if (!runtime.deps.displayColorSwatches || session === undefined || presentation === undefined || document === undefined) return;
+  await presentation.refreshDocumentColors(session, { id: documentId, ...document }, () => runtime.documents.get(documentId)?.version, (result) => {
+    runtime.deps.marker?.('XI_LSP_COLOR_SWATCHES', { documentId, version: document.version, count: result.colors.length, colors: result.colors.map((color) => color.color) });
+    runtime.deps.notifySurfaceChange();
+  });
 }
 
 async function refreshAllInlayHints(runtime: InlayHintRuntime): Promise<void> {
@@ -336,35 +250,106 @@ function releaseLanguageDocument(runtime: InlayHintRuntime, path: string | undef
   for (const [documentId, document] of runtime.documents) {
     if (document.uri !== uri) continue;
     runtime.documents.delete(documentId);
-    runtime.cancellations.get(documentId)?.cancel();
-    runtime.cancellations.delete(documentId);
-    runtime.generations.delete(documentId);
-    runtime.colorCancellations.get(documentId)?.cancel();
-    runtime.colorCancellations.delete(documentId);
-    runtime.colorGenerations.delete(documentId);
-    runtime.highlightCancellations.get(documentId)?.cancel();
-    runtime.highlightCancellations.delete(documentId);
-    runtime.highlightGenerations.delete(documentId);
     runtime.highlightPositions.delete(documentId);
     runtime.presentation()?.clear(documentId);
   }
   session.closeDocument(uri);
 }
 
-function readInlayHints(runtime: InlayHintRuntime, documentId: string, documentVersion: number): readonly { readonly id: string; readonly documentVersion: DocumentVersion; readonly lineIndex: LineIndex; readonly offset: Utf16Offset; readonly text: string }[] {
+function annotationOffset(document: TextFileDocument | undefined, documentVersion: number, line: number, column: number): Utf16Offset | undefined {
+  if (document === undefined || !Number.isSafeInteger(line) || !Number.isSafeInteger(column) || line < 0 || column < 0) return undefined;
+  const snapshot = document.snapshot();
+  if (Number(snapshot.version) !== documentVersion || line >= snapshot.lineCount) return undefined;
+  const start = snapshot.lineStartOffset(line as LineIndex);
+  if (!start.ok) return undefined;
+  const offset = Number(start.value) + column;
+  const next = line + 1 < snapshot.lineCount ? snapshot.lineStartOffset((line + 1) as LineIndex) : undefined;
+  const end = next?.ok ? Number(next.value) - 1 : snapshot.lengthUtf16;
+  if (offset > end) return undefined;
+  const boundary = snapshot.slice(offset as Utf16Offset, offset as Utf16Offset);
+  return boundary.ok ? offset as Utf16Offset : undefined;
+}
+
+function readInlayHints(runtime: InlayHintRuntime, documentId: string, documentVersion: number, document: TextFileDocument | undefined): readonly { readonly id: string; readonly documentVersion: DocumentVersion; readonly lineIndex: LineIndex; readonly offset: Utf16Offset; readonly text: string }[] {
   const result = runtime.presentation()?.hints(documentId);
   if (result === undefined || result.documentVersion !== documentVersion) return Object.freeze([]);
-  return Object.freeze(result.hints.map((hint) => Object.freeze({ id: hint.id, documentVersion: result.documentVersion as DocumentVersion, lineIndex: hint.line as LineIndex, offset: hint.utf16 as Utf16Offset, text: hint.label })));
+  return Object.freeze(result.hints.flatMap((hint) => {
+    const offset = annotationOffset(document, documentVersion, hint.line, hint.utf16);
+    return offset === undefined || hint.label.length < 1 || hint.label.length > 256 || /[\r\n\t]/u.test(hint.label) ? [] : [Object.freeze({ id: hint.id, documentVersion: result.documentVersion as DocumentVersion, lineIndex: hint.line as LineIndex, offset, text: hint.label })];
+  }));
 }
 
-function readColorSwatches(runtime: InlayHintRuntime, documentId: string, documentVersion: number): readonly { readonly id: string; readonly documentVersion: DocumentVersion; readonly lineIndex: LineIndex; readonly offset: Utf16Offset; readonly text: string; readonly background: string }[] {
+function readColorSwatches(runtime: InlayHintRuntime, documentId: string, documentVersion: number, document: TextFileDocument | undefined): readonly { readonly id: string; readonly documentVersion: DocumentVersion; readonly lineIndex: LineIndex; readonly offset: Utf16Offset; readonly text: string; readonly background: string }[] {
   const result = runtime.presentation()?.colors(documentId);
   if (result === undefined || result.documentVersion !== documentVersion) return Object.freeze([]);
-  return Object.freeze(result.colors.map((color) => Object.freeze({ id: color.id, documentVersion: result.documentVersion as DocumentVersion, lineIndex: color.line as LineIndex, offset: color.utf16 as Utf16Offset, text: ' ', background: color.color })));
+  return Object.freeze(result.colors.flatMap((color) => {
+    const offset = annotationOffset(document, documentVersion, color.line, color.utf16);
+    return offset === undefined ? [] : [Object.freeze({ id: color.id, documentVersion: result.documentVersion as DocumentVersion, lineIndex: color.line as LineIndex, offset, text: ' ', background: color.color })];
+  }));
 }
 
-function readVirtualAnnotations(runtime: InlayHintRuntime, documentId: string, documentVersion: number): readonly { readonly id: string; readonly documentVersion: DocumentVersion; readonly lineIndex: LineIndex; readonly offset: Utf16Offset; readonly text: string; readonly background?: string }[] {
-  return Object.freeze([...readInlayHints(runtime, documentId, documentVersion), ...readColorSwatches(runtime, documentId, documentVersion)]);
+function readVirtualAnnotations(runtime: InlayHintRuntime, documentId: string, documentVersion: number, document: TextFileDocument | undefined): readonly { readonly id: string; readonly documentVersion: DocumentVersion; readonly lineIndex: LineIndex; readonly offset: Utf16Offset; readonly text: string; readonly background?: string }[] {
+  return Object.freeze([...readInlayHints(runtime, documentId, documentVersion, document), ...readColorSwatches(runtime, documentId, documentVersion, document)]);
+}
+
+function resolveConfiguredLanguageId(deps: LanguageWiringDeps, path: string | undefined): string | undefined {
+  if (path !== undefined && deps.configuredLanguages !== undefined) {
+    const fileName = path.split(/[\\/]/u).at(-1)?.toLowerCase() ?? '';
+    const extension = fileName.slice(fileName.lastIndexOf('.') + 1);
+    const configured = deps.configuredLanguages.find((entry) => entry.fileTypes.some((type) => type.toLowerCase() === extension || type.toLowerCase() === fileName));
+    if (configured !== undefined) return configured.name;
+  }
+  return languageIdForPath(path);
+}
+
+function hasLanguageServerForPath(deps: LanguageWiringDeps, path: string | undefined): boolean {
+  const languageId = resolveConfiguredLanguageId(deps, path);
+  return languageId !== undefined && resolveLanguageServerConfig(deps, languageId) !== undefined;
+}
+
+function admitLanguageBuffer(deps: LanguageWiringDeps, runtime: InlayHintRuntime, session: LanguageServerSession | undefined, path: string | undefined, documentId: DocumentId, document: TextFileDocument): void {
+  if (session === undefined || path === undefined) return;
+  const languageId = resolveConfiguredLanguageId(deps, path);
+  if (languageId === undefined || resolveLanguageServerConfig(deps, languageId) === undefined) return;
+  const text = deps.readDocumentText(document);
+  if (text === undefined) return;
+  const uri = deps.fileUri(path);
+  runtime.documents.set(String(documentId), { uri, version: document.version, lineCount: text.split('\n').length });
+  const admitted = session.openDocument({ uri, documentId: String(documentId), languageId, version: document.version, text });
+  if (!admitted.ok) deps.statusMessages.publish(`xi: language document unavailable: ${admitted.error.message}`);
+  else deps.marker?.('XI_LANGUAGE_STARTED', { languageId, path });
+  if (admitted.ok) {
+    void refreshInlayHints(runtime, String(documentId));
+    void refreshDocumentColors(runtime, String(documentId));
+    const position = runtime.highlightPositions.get(String(documentId));
+    if (position !== undefined) void refreshDocumentHighlights(runtime, String(documentId), position.line, position.utf16);
+  }
+}
+
+function clearLanguageRuntime(runtime: InlayHintRuntime, presentation: LanguagePresentation | undefined, connection: LanguageWiringConnection | undefined, disposables: readonly (Disposable | undefined)[]): void {
+  presentation?.dispose();
+  runtime.documents.clear();
+  runtime.highlightPositions.clear();
+  connection?.completionFeature.detachLanguage();
+  connection?.overlayFeature.detachNavigation();
+  connection?.workspaceEditsFeature.dispose();
+  for (const disposable of disposables) disposable?.dispose();
+}
+
+function admitExistingLanguageBuffers(deps: LanguageWiringDeps, connection: LanguageWiringConnection, admit: (path: string | undefined, documentId: DocumentId, document: TextFileDocument) => void): void {
+  admit(deps.launchDocumentPath, deps.launchDocument.id, deps.launchDocument);
+  for (const buffer of deps.workbenchBuffers()) {
+    if (buffer.documentId === deps.launchDocument.id) continue;
+    const document = connection.getBufferDocument(buffer.documentId);
+    if (document !== undefined) admit(buffer.path, buffer.documentId, document);
+  }
+}
+
+function subscribeLanguagePresentation(session: LanguageServerSession, runtime: InlayHintRuntime): Disposable {
+  return session.onStateChange((change) => {
+    if (change.current === 'ready') void refreshAllInlayHints(runtime);
+    if (change.current === 'ready') for (const [documentId, position] of runtime.highlightPositions) void refreshDocumentHighlights(runtime, documentId, position.line, position.utf16);
+  });
 }
 
 export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
@@ -382,56 +367,22 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
   let signatureSubscription: Disposable | undefined;
   let inlaySubscription: Disposable | undefined;
   let languageInitialization: Promise<void> | undefined;
+  let lastEnabled = deps.lspEnabled();
   let connection: LanguageWiringConnection | undefined;
   let presentation: InstanceType<LanguageServices['LanguagePresentationFeatures']> | undefined;
-  let decodeInlayHints: LanguageServices['decodeInlayHints'] | undefined;
-  let decodeDocumentColors: LanguageServices['decodeDocumentColors'] | undefined;
-  let decodeDocumentHighlights: LanguageServices['decodeDocumentHighlights'] | undefined;
+  const resolveLanguageId = (path: string | undefined): string | undefined => resolveConfiguredLanguageId(deps, path);
   const inlayRuntime = createInlayRuntime(deps, {
     session: () => languageSession,
     presentation: () => presentation,
-    decode: () => decodeInlayHints,
-    decodeColors: () => decodeDocumentColors,
-    decodeDocumentHighlights: () => decodeDocumentHighlights,
   }, resolveLanguageId);
-  function resolveLanguageId(path: string | undefined): string | undefined {
-    if (path !== undefined && deps.configuredLanguages !== undefined) {
-      const fileName = path.split(/[\\/]/u).at(-1)?.toLowerCase() ?? '';
-      const extension = fileName.slice(fileName.lastIndexOf('.') + 1);
-      const configured = deps.configuredLanguages.find((entry) => entry.fileTypes.some((type) => type.toLowerCase() === extension || type.toLowerCase() === fileName));
-      if (configured !== undefined) return configured.name;
-    }
-    return languageIdForPath(path);
-  }
-
-  function admitBufferToLanguageSession(path: string | undefined, documentId: DocumentId, document: TextFileDocument): void {
-    if (languageSession === undefined || path === undefined) return;
-    const bufferLanguageId = resolveLanguageId(path);
-    // Languages Xi only highlights (json/toml/markdown) have no server: skip silently.
-    if (bufferLanguageId === undefined || resolveLanguageServerConfig(deps, bufferLanguageId) === undefined) return;
-    const text = deps.readDocumentText(document);
-    if (text === undefined) return;
-    const uri = deps.fileUri(path);
-    inlayRuntime.documents.set(String(documentId), { uri, version: document.version, lineCount: text.split('\n').length });
-    const admitted = languageSession.openDocument({ uri, documentId: String(documentId), languageId: bufferLanguageId, version: document.version, text });
-    if (!admitted.ok) deps.statusMessages.publish(`xi: language document unavailable: ${admitted.error.message}`);
-    else deps.marker?.('XI_LANGUAGE_STARTED', { languageId: bufferLanguageId, path });
-    if (admitted.ok) {
-      void refreshInlayHints(inlayRuntime, String(documentId));
-      void refreshDocumentColors(inlayRuntime, String(documentId));
-      const position = inlayRuntime.highlightPositions.get(String(documentId));
-      if (position !== undefined) void refreshDocumentHighlights(inlayRuntime, String(documentId), position.line, position.utf16);
-    }
-  }
+  const admitBufferToLanguageSession = (path: string | undefined, documentId: DocumentId, document: TextFileDocument): void => admitLanguageBuffer(deps, inlayRuntime, languageSession, path, documentId, document);
 
   async function initializeLanguage(): Promise<void> {
     if (connection === undefined) return;
     const activeConnection = connection;
     const language = await import('../../../../packages/services/src/entrypoints/language');
+    if (!deps.lspEnabled()) return;
     presentation = new language.LanguagePresentationFeatures();
-    decodeInlayHints = language.decodeInlayHints;
-    decodeDocumentColors = language.decodeDocumentColors;
-    decodeDocumentHighlights = language.decodeDocumentHighlights;
     const notificationHandlers = createLspNotificationHandlers(deps);
     languageSession = new language.LanguageServerRouter({
       resolveServer: (resolvedLanguageId) => resolveLanguageServerConfig(deps, resolvedLanguageId),
@@ -440,32 +391,22 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
         const root = workspaceLspRootForDocument(deps.filesystem, deps.workspaceRoot, deps.workspaceLspRoots, document?.uri ?? '');
         deps.marker?.('XI_LSP_SESSION_ROOT', { server: serverConfig.name, root });
         return new language.LanguageServerSession({
-        process: new deps.ProcessPort(),
-        clock: deps.createClock(),
-        config: serverConfig,
-        root,
-        workspaceId: 'xi-workspace',
-        workspaceFolders: [{ uri: deps.fileUri(root), name: root }],
-        environment: deps.processEnvironment(),
-        snippetSupport: deps.snippets,
-        diagnostics: deps.diagnostics,
-        ...notificationHandlers,
+          process: new deps.ProcessPort(),
+          clock: deps.createClock(),
+          config: serverConfig,
+          root,
+          workspaceId: 'xi-workspace',
+          workspaceFolders: [{ uri: deps.fileUri(root), name: root }],
+          environment: deps.processEnvironment(),
+          snippetSupport: deps.snippets,
+          diagnostics: deps.diagnostics,
+          ...notificationHandlers,
         });
       },
     });
-    inlaySubscription = languageSession.onStateChange((change) => {
-    if (change.current === 'ready') void refreshAllInlayHints(inlayRuntime);
-    if (change.current === 'ready') for (const [documentId, position] of inlayRuntime.highlightPositions) void refreshDocumentHighlights(inlayRuntime, documentId, position.line, position.utf16);
-    });
-    admitBufferToLanguageSession(deps.launchDocumentPath, deps.launchDocument.id, deps.launchDocument);
-    // Buffers opened before the session existed (e.g. via the explorer/picker before any
-    // LSP-triggering action) never received a didOpen otherwise, since language init is lazy.
-    for (const buffer of deps.workbenchBuffers()) {
-      if (buffer.documentId === deps.launchDocument.id) continue;
-      const bufferDocument = activeConnection.getBufferDocument(buffer.documentId);
-      if (bufferDocument === undefined) continue;
-      admitBufferToLanguageSession(buffer.path, buffer.documentId, bufferDocument);
-    }
+    inlaySubscription = subscribeLanguagePresentation(languageSession, inlayRuntime);
+    // Lazy initialization and re-grants must admit every already-open buffer.
+    admitExistingLanguageBuffers(deps, activeConnection, admitBufferToLanguageSession);
     navigationController = new language.LanguageNavigationController(new language.LanguageServerNavigationProvider(languageSession));
     completionController = new language.CompletionController();
     completionProvider = new language.LanguageServerCompletionProvider(languageSession);
@@ -498,12 +439,37 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
     languageInitialization ??= initializeLanguage();
     await languageInitialization;
   }
-
+  async function reconcileTrust(): Promise<void> {
+    if (languageInitialization !== undefined) await languageInitialization;
+    const enabled = deps.lspEnabled();
+    const wasEnabled = lastEnabled;
+    lastEnabled = enabled;
+    if (enabled) {
+      if (!wasEnabled && languageSession === undefined) {
+        languageInitialization = undefined;
+        await ensureLanguage();
+      }
+      return;
+    }
+    const session = languageSession;
+    if (session === undefined) return;
+    languageSession = undefined;
+    languageInitialization = undefined;
+    clearLanguageRuntime(inlayRuntime, presentation, connection, [completionSubscription, signatureSubscription, navigationSubscription, inlaySubscription, completionController, signatureController, navigationController, workspaceEditCoordinator]);
+    completionSubscription = undefined; signatureSubscription = undefined; navigationSubscription = undefined; inlaySubscription = undefined;
+    completionController = undefined; signatureController = undefined; navigationController = undefined; workspaceEditCoordinator = undefined;
+    completionProvider = undefined; signatureProvider = undefined;
+    workspaceEditProvider = undefined; workspaceEditExecutor = undefined; presentation = undefined;
+    await session.dispose();
+    deps.notifySurfaceChange();
+  }
   return {
     connect(next) { connection = next; },
     resolveLanguageId,
+    hasServerForPath: (path) => hasLanguageServerForPath(deps, path),
     admitBufferToLanguageSession,
     ensureLanguage,
+    reconcileTrust,
     changeDocument: (change) => changeLanguageDocument(inlayRuntime, change),
     releaseBufferFromLanguageSession: (path) => releaseLanguageDocument(inlayRuntime, path),
     refreshDocumentHighlights: (documentId: string, line: number, utf16: number) => { void refreshDocumentHighlights(inlayRuntime, documentId, line, utf16); },
@@ -512,8 +478,8 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
       if (result === undefined || result.documentVersion !== documentVersion) return Object.freeze([]);
       return result.ranges;
     },
-    inlayHints: (documentId, documentVersion) => readInlayHints(inlayRuntime, documentId, documentVersion),
-    virtualAnnotations: (documentId, documentVersion) => readVirtualAnnotations(inlayRuntime, documentId, documentVersion),
+    inlayHints: (documentId, documentVersion) => readInlayHints(inlayRuntime, documentId, documentVersion, connection?.getBufferDocument(documentId as DocumentId)),
+    virtualAnnotations: (documentId, documentVersion) => readVirtualAnnotations(inlayRuntime, documentId, documentVersion, connection?.getBufferDocument(documentId as DocumentId)),
     get session() { return languageSession; },
     get navigationController() { return navigationController; },
     get navigationSubscription() { return navigationSubscription; },

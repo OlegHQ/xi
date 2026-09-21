@@ -117,6 +117,10 @@ for (const testCase of cases) {
   const height = baselineResult.snapshot.geometry.windowHeight;
   const options = {
     wrap: testCase.options.wrap !== false,
+    // The Neovim oracle wraps at cell boundaries; Helix's word/indent carry
+    // belongs to configured rendering, not this Vim geometry differential.
+    maxWrap: 0,
+    maxIndentRetain: 0,
     horizontalScrollCells: leftColumn,
     ...(folds.length === 0 ? {} : { folds, foldGeneration: 1 }),
   };

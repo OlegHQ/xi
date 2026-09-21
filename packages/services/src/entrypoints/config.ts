@@ -31,3 +31,7 @@ export type {
 } from '../../config/index';
 
 export { EditorStatePersistence } from '../../config/state';
+export { readEditorConfig } from '../../config/editorconfig';
+export type { EditorConfigProperties } from '../../config/editorconfig';
+export { createWorkspaceTrustWiring, workspaceTrustStateDirectory } from '../../config/workspace-trust';
+export type { WorkspaceTrustWiring } from '../../config/workspace-trust';

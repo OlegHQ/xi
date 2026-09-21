@@ -1,6 +1,10 @@
-import type { ClipboardPort, CancellationToken, Disposable, PlatformFailure, Result } from '../../../../packages/contracts/src/entrypoints/launch';
-import type { ClipboardCommandConfig, ClipboardProviderConfig } from '../../../../packages/services/src/entrypoints/config';
-import type { NodeProcessPort } from '../../../../packages/platform/src/entrypoints/launch';
+import type { ClipboardPort, CancellationToken, Disposable, PlatformFailure, Result } from '../../contracts/src/index';
+import type { NodeProcessPort } from './process';
+
+interface ClipboardCommandConfig { readonly command: string; readonly args: readonly string[]; }
+type ClipboardProviderConfig =
+  | { readonly kind: 'builtin'; readonly name: string }
+  | { readonly kind: 'custom'; readonly yank: ClipboardCommandConfig; readonly paste: ClipboardCommandConfig; readonly primaryYank?: ClipboardCommandConfig; readonly primaryPaste?: ClipboardCommandConfig };
 
 const MAX_CLIPBOARD_BYTES = 16 * 1024 * 1024;
 

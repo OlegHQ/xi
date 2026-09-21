@@ -77,33 +77,39 @@ with tempfile.TemporaryDirectory(prefix="xi-config-inlay-hints-pty-") as tempora
     config.write_text("schema-version = 1\n[editor.lsp]\ndisplay-inlay-hints = true\ninlay-hints-length-limit = 4\n", encoding="utf-8")
     source = workspace / "main.ts"
     source.write_text("const value: number = 1;\n", encoding="utf-8")
+    diagnostics = workspace / "diagnostics.log"
     master, slave = pty.openpty()
     environment = os.environ.copy()
     environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1", "PATH": f"{fake_bin}:{environment.get('PATH', '')}"})
+    diagnostic_stream = diagnostics.open("wb")
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "--config", str(config), str(source)],
         cwd=ROOT,
         env=environment,
         stdin=slave,
         stdout=slave,
-        stderr=slave,
+        stderr=diagnostic_stream,
         close_fds=True,
     )
     os.close(slave)
     captured = bytearray()
     try:
         deadline = time.monotonic() + 15
-        while not HINTS.search(captured) and time.monotonic() < deadline:
+        while not HINTS.search(diagnostics.read_bytes()) and time.monotonic() < deadline:
             read_for(master, captured, 0.05)
-        matches = [json.loads(match.group(1)) for match in HINTS.finditer(captured)]
+        matches = [json.loads(match.group(1)) for match in HINTS.finditer(diagnostics.read_bytes())]
         if not matches or matches[-1].get("count") != 1 or matches[-1].get("labels") != [":num"]:
             raise SystemExit(f"production inlay hints were not requested/rendered with the length limit: {matches!r}; output={captured[-7000:]!r}")
+        read_for(master, captured, 0.2)
+        if b":num" not in captured:
+            raise SystemExit(f"LSP hint did not reach terminal cells: {captured[-7000:]!r}")
         os.write(master, b"q")
         child.wait(timeout=5)
     finally:
         if child.poll() is None:
             child.kill()
             child.wait()
+        diagnostic_stream.close()
         os.close(master)
     if child.returncode != 0:
         raise SystemExit(f"Xi exited {child.returncode}: {captured[-5000:]!r}")

@@ -117,7 +117,8 @@ export function pickCursorForeground(tokenForeground: RGBA, cursorBackground: RG
 export function resolvePaintColor(value: ThemeColor, mode: EditorColorMode): RGBA {
   const color = parseColor(themeColor(value));
   if (mode !== 'ansi256') return color;
-  return RGBA.fromIndex(ansi256Index(color.r, color.g, color.b));
+  const [red, green, blue] = color.toInts();
+  return RGBA.fromIndex(ansi256Index(red, green, blue));
 }
 
 function ansi256Index(red: number, green: number, blue: number): number {

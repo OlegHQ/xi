@@ -12,6 +12,7 @@ import tempfile
 import termios
 import time
 from pathlib import Path
+from terminal_screen import Screen
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -53,12 +54,11 @@ with tempfile.TemporaryDirectory(prefix="xi-cli-config-pty-") as temporary:
         if b"XI_WORKBENCH_READY" not in captured:
             raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
         read_for(master, captured, 0.5)
-        expected = {1: b"  1 ", 2: b"  1 ", 3: b"  2 ", 4: b"  3 "}
-        for row, label in expected.items():
-            marker = f"\x1b[{row};30H".encode()
-            start = captured.rfind(marker)
-            if start < 0 or label + b"\x1b[0m" not in captured[start:start + 200]:
-                raise SystemExit(f"CLI config did not render relative line numbers at row {row}: {captured[-4000:]!r}")
+        screen = Screen(14, 100)
+        screen.feed(captured)
+        for row, label, text in ((1, "1", "one"), (2, "1", "two"), (3, "2", "three"), (4, "3", "four")):
+            if f"{label}  {text}" not in screen.row_text(row):
+                raise SystemExit(f"CLI config did not render relative line numbers at row {row}: {screen.row_text(row)!r}")
         os.write(master, b"q")
         child.wait(timeout=5)
     finally:

@@ -65,7 +65,7 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
             return
 
 
-def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview: bool = True, cancel_preview: bool = False, supersede_menu: bool = False) -> list[dict[str, object]]:
+def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview: bool = True, cancel_preview: bool = False, supersede_menu: bool = False, focus_preview: bool = False) -> list[dict[str, object]]:
     with tempfile.TemporaryDirectory(prefix="xi-auto-completion-pty-") as temporary:
         workspace = Path(temporary)
         fake_bin = workspace / "bin"
@@ -75,7 +75,7 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
         server.chmod(stat.S_IRWXU)
         config = workspace / ".config" / "xi" / "config.toml"
         config.parent.mkdir(parents=True)
-        config.write_text(f"schema-version = 1\n[editor]\nauto-completion = {'true' if enabled else 'false'}\nauto-format = false\ncompletion-timeout = 250\ncompletion-trigger-len = 2\npreview-completion-insert = {'true' if preview else 'false'}\ncompletion-replace = {'true' if replace else 'false'}\n[editor.smart-tab]\nsupersede-menu = {'true' if supersede_menu else 'false'}\n", encoding="utf-8")
+        config.write_text(f"schema-version = 1\n[editor]\nauto-completion = {'true' if enabled else 'false'}\nauto-format = false\ncompletion-timeout = 250\ncompletion-trigger-len = 2\npreview-completion-insert = {'true' if preview else 'false'}\ncompletion-replace = {'true' if replace else 'false'}\n[editor.smart-tab]\nsupersede-menu = {'true' if supersede_menu else 'false'}\n" + ("[editor.auto-save]\nfocus-lost = true\n" if focus_preview else ""), encoding="utf-8")
         source = workspace / "main.ts"
         (workspace / "package.json").write_text("{}\n", encoding="utf-8")
         source.write_text("x\n" if accept else "a\n", encoding="utf-8")
@@ -108,6 +108,11 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
                 read_for(master, captured, 1)
                 if preview and not PREVIEW.search(captured):
                     raise SystemExit(f"completion preview did not apply on selection: {captured[-4000:]!r}")
+                if focus_preview:
+                    os.write(master, b"\x1b[O")
+                    read_for(master, captured, 0.5)
+                    if b'XI_AUTO_SAVE_FOCUS {"focused":false,"enabled":true}' not in captured or source.read_text(encoding="utf-8") != "a\n":
+                        raise SystemExit(f"focus-loss persisted tentative completion text: {source.read_text(encoding='utf-8')!r}; {captured[-4000:]!r}")
                 os.write(master, b"\x1b")
                 read_for(master, captured, 0.5)
                 os.write(master, b"\x1b")
@@ -156,7 +161,7 @@ disabled_matches = run_case(False)
 run_case(True, replace=False, accept=True)
 run_case(True, replace=True, accept=True)
 run_case(True, accept=True, supersede_menu=True)
-run_case(True, cancel_preview=True)
+run_case(True, cancel_preview=True, focus_preview=True)
 run_case(True, cancel_preview=True, preview=False)
 if not enabled_matches or disabled_matches:
     raise SystemExit("automatic completion gate cases did not diverge")

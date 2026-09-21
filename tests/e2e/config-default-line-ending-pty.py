@@ -26,7 +26,7 @@ def wait_ready(master: int, captured: bytearray) -> None:
         raise SystemExit(f"workbench did not start: {captured[-3000:]!r}")
 
 
-def finish(child: subprocess.Popen[bytes], master: int, captured: bytearray) -> None:
+def finish(child: subprocess.Popen[bytes], master: int, captured: bytearray, case: str) -> None:
     deadline = time.monotonic() + 8
     while child.poll() is None and time.monotonic() < deadline:
         if not select.select([master], [], [], 0.05)[0]:
@@ -34,9 +34,10 @@ def finish(child: subprocess.Popen[bytes], master: int, captured: bytearray) -> 
         try:
             captured.extend(os.read(master, 65536))
         except OSError:
-            break
+            # The PTY can close just before the child has fully exited.
+            time.sleep(0.05)
     if child.poll() is None:
-        raise SystemExit(f"Xi did not exit: {captured[-3000:]!r}")
+        raise SystemExit(f"Xi pid {child.pid} did not exit for {case}: {captured[-3000:]!r}")
 
 
 with tempfile.TemporaryDirectory(prefix="xi-default-line-ending-pty-") as temporary:
@@ -49,7 +50,7 @@ with tempfile.TemporaryDirectory(prefix="xi-default-line-ending-pty-") as tempor
     environment = os.environ.copy()
     environment.update({"HOME": temporary, "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
-        ["bun", "run", str(ROOT / "apps/xi/src/main.ts")],
+        ["bun", str(ROOT / "apps/xi/src/main.ts")],
         cwd=root,
         env=environment,
         stdin=slave,
@@ -73,7 +74,7 @@ with tempfile.TemporaryDirectory(prefix="xi-default-line-ending-pty-") as tempor
         if target.read_bytes() != b"hello\r\nworld\r\n":
             raise SystemExit(f"new buffer used wrong line ending: {target.read_bytes()!r}; output={captured[-3000:]!r}")
         os.write(master, b":q!\r")
-        finish(child, master, captured)
+        finish(child, master, captured, "scratch")
     finally:
         if child.poll() is None:
             child.kill()
@@ -86,7 +87,7 @@ with tempfile.TemporaryDirectory(prefix="xi-default-line-ending-pty-") as tempor
     existing.write_bytes(b"one\ntwo\n")
     master, slave = pty.openpty()
     child = subprocess.Popen(
-        ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), existing.name],
+        ["bun", str(ROOT / "apps/xi/src/main.ts"), existing.name],
         cwd=root,
         env=environment,
         stdin=slave,
@@ -115,7 +116,7 @@ with tempfile.TemporaryDirectory(prefix="xi-default-line-ending-pty-") as tempor
         if existing.read_bytes() != b"Xone\ntwo\n":
             raise SystemExit(f"existing EOL metadata was rewritten: {existing.read_bytes()!r}; output={captured[-3000:]!r}")
         os.write(master, b":q!\r")
-        finish(child, master, captured)
+        finish(child, master, captured, "existing")
     finally:
         if child.poll() is None:
             child.kill()
@@ -124,4 +125,42 @@ with tempfile.TemporaryDirectory(prefix="xi-default-line-ending-pty-") as tempor
     if child.returncode != 0:
         raise SystemExit(f"Xi exited for existing file: {captured[-3000:]!r}")
 
-print("Config default-line-ending PTY passed: new buffers use CRLF and existing LF metadata is preserved.")
+    for ending, separator in (("lf", b"\n"), ("crlf", b"\r\n"), ("ff", b"\f"), ("cr", b"\r"), ("nel", "\u0085".encode())):
+        config.write_text(f'[editor]\ndefault-line-ending = "{ending}"\n[editor.statusline]\nleft = ["file-line-ending"]\n', encoding="utf-8")
+        named = root / f"empty-{ending}.txt"
+        named.touch()
+        master, slave = pty.openpty()
+        child = subprocess.Popen(
+            ["bun", str(ROOT / "apps/xi/src/main.ts"), named.name],
+            cwd=root, env=environment, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+        )
+        os.close(slave)
+        captured = bytearray()
+        try:
+            wait_ready(master, captured)
+            label = f" {ending.upper()} ".encode()
+            deadline = time.monotonic() + 3
+            while label not in captured and time.monotonic() < deadline:
+                if select.select([master], [], [], 0.05)[0]:
+                    captured.extend(os.read(master, 65536))
+            if label not in captured:
+                raise SystemExit(f"statusline omitted {ending} ending: {captured[-3000:]!r}")
+            os.write(master, b"iA\rB\x1b:w\r")
+            deadline = time.monotonic() + 8
+            while named.stat().st_size == 0 and time.monotonic() < deadline:
+                if select.select([master], [], [], 0.05)[0]:
+                    captured.extend(os.read(master, 65536))
+            expected = b"A" + separator + b"B" + separator
+            if named.read_bytes() != expected:
+                raise SystemExit(f"empty named file used wrong {ending} ending: {named.read_bytes()!r}; output={captured[-3000:]!r}")
+            os.write(master, b":q!\r")
+            finish(child, master, captured, ending)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+            os.close(master)
+        if child.returncode != 0:
+            raise SystemExit(f"Xi exited for {ending}: {captured[-3000:]!r}")
+
+print("Config default-line-ending PTY passed: scratch and empty named files use configured endings, statusline names each ending, and existing LF metadata is preserved.")

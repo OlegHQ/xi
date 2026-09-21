@@ -21,6 +21,27 @@ try {
   assert.deepEqual(loaded.diagnostics, [], 'T036-LOADING-CLI-01 an explicit config file loads without diagnostics');
   assert.equal(loaded.config?.editor.lineNumber, 'relative', 'T036-LOADING-CLI-02 explicit config reaches the compiled editor settings');
   assert.equal(loaded.config?.provenance['editor.line-number'], 'cli', 'T036-LOADING-CLI-03 explicit config is recorded as the CLI layer');
+  files.set('/tmp/xi-cli-config.toml', new TextEncoder().encode('[editor.workspace-trust]\nlevel = "none"\n'));
+  let explicitTrustCalls = 0;
+  const restrictedCli = await loadStartupXiConfig(filesystem, '/tmp/xi-config', cancellation.token, [], undefined, '/tmp/xi-cli-config.toml', '/tmp/workspace/.helix/config.toml', {}, {
+    resolve: async (_root, settings) => {
+      explicitTrustCalls += 1;
+      assert.equal(settings.level, 'none');
+      return { workspaceConfigAllowed: false, serversAllowed: false, gitAllowed: false, stale: false };
+    },
+  });
+  assert.equal(restrictedCli.config?.editor.workspaceTrust.level, 'none', 'T036-LOADING-CLI-TRUST-01 explicit trust policy compiles');
+  assert.equal(explicitTrustCalls, 1, 'T036-LOADING-CLI-TRUST-02 explicit config resolves runtime trust');
+  files.set('/tmp/.xi.toml', new TextEncoder().encode('[editor.workspace-trust]\nlevel = "none"\n'));
+  let overrideTrustLevel: string | undefined;
+  await loadStartupXiConfig(filesystem, '/tmp/xi-config', cancellation.token, [], '/tmp/.xi.toml', undefined, '/tmp/workspace/.helix/config.toml', {}, {
+    resolve: async (_root, settings) => {
+      overrideTrustLevel = settings.level;
+      return { workspaceConfigAllowed: false, serversAllowed: false, gitAllowed: false, stale: false };
+    },
+  });
+  assert.equal(overrideTrustLevel, 'none', 'T036-LOADING-STATE-TRUST-01 state overrides participate in trust resolution before workspace config');
+  files.set('/tmp/xi-cli-config.toml', new TextEncoder().encode('[editor]\nline-number = "relative"\n'));
 
   const missing = await loadStartupXiConfig(filesystem, '/tmp/xi-config', cancellation.token, [], undefined, '/tmp/missing-cli-config.toml');
   assert.equal(missing.config, undefined, 'T036-LOADING-CLI-04 missing explicit config does not silently fall back');
@@ -33,12 +54,12 @@ try {
   files.set('/tmp/xi-config/config.toml', new TextEncoder().encode('[editor]\nline-number = "invalid"\n'));
   const invalidUser = await loadStartupXiConfig(filesystem, '/tmp/xi-config', cancellation.token);
   assert.equal(invalidUser.config, undefined, 'T036-LOADING-USER-04 invalid platform user config is rejected atomically');
-  assert.match(invalidUser.diagnostics[0] ?? '', /line-number/u, 'T036-LOADING-USER-04 invalid platform user config reports its field');
+  assert.match(invalidUser.diagnostics[0] ?? '', /line-number/u, 'T036-LOADING-USER-04-PART2 invalid platform user config reports its field');
 
   files.set('/tmp/xi-config/config.toml', new TextEncoder().encode('[editor]\nline-number = "relative"\n'));
   const untrustedWorkspace = await loadStartupXiConfig(filesystem, '/tmp/xi-config', cancellation.token, [], undefined, undefined, '/tmp/workspace/.helix/config.toml');
   assert.equal(untrustedWorkspace.config?.editor.lineNumber, 'relative', 'T036-LOADING-WORKSPACE-01 untrusted workspace config does not override the user layer');
-  assert.notEqual(untrustedWorkspace.config?.provenance['editor.line-number'], 'workspace', 'T036-LOADING-WORKSPACE-01 untrusted workspace provenance is absent');
+  assert.notEqual(untrustedWorkspace.config?.provenance['editor.line-number'], 'workspace', 'T036-LOADING-WORKSPACE-01-PART2 untrusted workspace provenance is absent');
   assert.match(untrustedWorkspace.diagnostics[0] ?? '', /untrusted/u, 'T036-LOADING-WORKSPACE-02 prompted workspace trust is observable');
   files.set('/tmp/xi-config/config.toml', new TextEncoder().encode('[editor.workspace-trust]\nlevel = "insecure"\n'));
   const workspace = await loadStartupXiConfig(filesystem, '/tmp/xi-config', cancellation.token, [], undefined, undefined, '/tmp/workspace/.helix/config.toml');
@@ -58,12 +79,12 @@ try {
   const invalidWorkspace = await loadStartupXiConfig(filesystem, '/tmp/xi-config', cancellation.token, [], undefined, undefined, '/tmp/workspace-invalid/.helix/config.toml');
   assert.equal(invalidWorkspace.config, undefined, 'T036-LOADING-WORKSPACE-10 invalid trusted workspace config is rejected atomically');
   assert.match(invalidWorkspace.diagnostics[0] ?? '', /line-number/u, 'T036-LOADING-WORKSPACE-10 invalid trusted workspace config reports its field');
-  files.set('/tmp/xi-config/config.toml', new TextEncoder().encode('[editor]\neditor-config = false\n'));
+  files.set('/tmp/xi-config/config.toml', new TextEncoder().encode('[editor]\neditor-config = false\n[editor.workspace-trust]\nlevel = "insecure"\n'));
   const disabledWorkspace = await loadStartupXiConfig(filesystem, '/tmp/xi-config', cancellation.token, [], undefined, undefined, '/tmp/workspace/.helix/config.toml');
   assert.deepEqual(disabledWorkspace.diagnostics, [], 'T036-LOADING-EDITOR-CONFIG-01 disabled editor-config loads without diagnostics');
   assert.equal(disabledWorkspace.config?.editor.editorConfig, false, 'T036-LOADING-EDITOR-CONFIG-02 editor-config reaches the startup snapshot');
-  assert.equal(disabledWorkspace.config?.editor.lineNumber, 'absolute', 'T036-LOADING-EDITOR-CONFIG-03 disabled editor-config skips the project layer');
-  assert.equal(disabledWorkspace.config?.provenance['editor.line-number'], 'defaults', 'T036-LOADING-EDITOR-CONFIG-04 skipped project settings retain the default provenance');
+  assert.equal(disabledWorkspace.config?.editor.lineNumber, 'relative', 'T036-LOADING-EDITOR-CONFIG-03 editor-config does not gate the trusted project layer');
+  assert.equal(disabledWorkspace.config?.provenance['editor.line-number'], 'workspace', 'T036-LOADING-EDITOR-CONFIG-04 trusted project settings retain workspace provenance');
   let disabledResolverCalls = 0;
   const disabledWithResolver = await loadStartupXiConfig(filesystem, '/tmp/xi-config', cancellation.token, [], undefined, undefined, '/tmp/workspace/.helix/config.toml', {}, {
     resolve: async () => {

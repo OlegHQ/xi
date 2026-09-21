@@ -22,7 +22,7 @@ assert.equal(gutterWidthFor(1, 3, ['diff', 'diagnostics', 'line-numbers']), 5, '
 assert.equal(statuslineThemeScope(false, 'insert'), 'ui.statusline', 'T036-COLOR-MODES-UNIT-01 disabled color-modes uses the base statusline scope');
 assert.equal(statuslineThemeScope(true, 'insert'), 'ui.statusline.insert', 'T036-COLOR-MODES-UNIT-02 enabled color-modes uses the insert scope');
 assert.equal(calculateWorkbenchLayout(80, 24, false, undefined, true, false).editorTop, 0, 'T036-BUFFERLINE-UNIT-01 hidden bufferline gives the editor the first row');
-assert.equal(calculateWorkbenchLayout(80, 24, false, undefined, true, true).editorTop, 1, 'T036-BUFFERLINE-UNIT-01 visible bufferline reserves the top row');
+assert.equal(calculateWorkbenchLayout(80, 24, false, undefined, true, true).editorTop, 1, 'T036-BUFFERLINE-UNIT-01-PART2 visible bufferline reserves the top row');
 assert.equal(popupBorderVisible('none', 'popup'), false, 'T036-POPUP-BORDER-UNIT-01 none hides popup borders');
 assert.equal(popupBorderVisible('popup', 'popup'), true, 'T036-POPUP-BORDER-UNIT-02 popup shows popup borders');
 assert.equal(popupBorderVisible('popup', 'menu'), false, 'T036-POPUP-BORDER-UNIT-03 popup leaves menu borders hidden');
@@ -31,7 +31,7 @@ assert.equal(popupBorderVisible('all', 'popup'), true, 'T036-POPUP-BORDER-UNIT-0
 assert.equal(popupBorderVisible('all', 'menu'), true, 'T036-POPUP-BORDER-UNIT-06 all shows menu borders');
 
 async function testStatuslineElementCatalog(): Promise<void> {
-  const { workbench } = makeWorkbench();
+  const { workbench } = makeWorkbench(undefined, true);
   const setup = await createTestRenderer({ width: 180, height: 40, bufferedOutput: 'memory', gatherStats: true });
   const statusline = {
     left: ['mode', 'spinner', 'file-name', 'file-absolute-path', 'file-base-name', 'file-modification-indicator', 'read-only-indicator', 'file-encoding', 'file-line-ending', 'file-indent-style', 'file-type', 'diagnostics'],
@@ -57,16 +57,17 @@ async function testStatuslineElementCatalog(): Promise<void> {
   await setup.renderOnce();
   const frame = setup.captureCharFrame();
   assert.match(frame, /NORM/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 mode element renders');
-  assert.match(frame, /editor\.ts/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 file elements render');
-  assert.match(frame, /⠋/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 spinner element renders while LSP is active');
-  assert.match(frame, /typescript/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 file-type element renders');
-  assert.match(frame, /1\/2 sels/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 selection element renders');
-  assert.match(frame, /1:1/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 position element renders');
-  assert.match(frame, /~/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 separator element renders');
+  assert.match(frame, /editor\.ts/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01-PART2 file elements render');
+  assert.match(frame, /⠋/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01-PART3 spinner element renders while LSP is active');
+  assert.match(frame, /typescript/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01-PART4 file-type element renders');
+  assert.match(frame, /2\/2 sels/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01-PART5 primary identity survives selection ordering');
+  assert.match(frame, /1 char/u, 'T036-STATUSLINE-UNICODE-01 an astral primary selection counts as one character');
+  assert.match(frame, /1:7/u, 'T036-STATUSLINE-UNICODE-02 position counts Unicode characters');
+  assert.match(frame, /~/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01-PART6 separator element renders');
   setup.renderer.destroy();
 }
 
-function makeWorkbench(text = 'alpha 😀 beta\nsecond line\nthird line'): { readonly workbench: WorkbenchReadPort; readonly snapshot: DocumentSnapshot } {
+function makeWorkbench(text = 'alpha 😀 beta\nsecond line\nthird line', primaryOnEmoji = false): { readonly workbench: WorkbenchReadPort; readonly snapshot: DocumentSnapshot } {
   const opened = openTextDocument(DOCUMENT_ID, new TextEncoder().encode(text));
   assert.equal(opened.kind, 'editable', 'T034-DOC-OWNER-01 fixture uses the document owner');
   if (opened.kind !== 'editable') throw new Error('T034-document-open');
@@ -82,8 +83,8 @@ function makeWorkbench(text = 'alpha 😀 beta\nsecond line\nthird line'): { rea
     primaryId: primary,
     selectionGeneration: 0,
     members: [
-      { id: primary, kind: 'normal-cursor', direction: 'forward', anchor: { kind: 'character', offset: first.value, after: firstAfter.value }, head: { kind: 'character', offset: first.value, after: firstAfter.value } },
-      { id: secondary, kind: 'normal-cursor', direction: 'forward', anchor: { kind: 'character', offset: second.value, after: secondAfter.value }, head: { kind: 'character', offset: second.value, after: secondAfter.value } },
+      { id: primary, kind: 'normal-cursor', direction: 'forward', anchor: { kind: 'character', offset: primaryOnEmoji ? second.value : first.value, after: primaryOnEmoji ? secondAfter.value : firstAfter.value }, head: { kind: 'character', offset: primaryOnEmoji ? second.value : first.value, after: primaryOnEmoji ? secondAfter.value : firstAfter.value } },
+      { id: secondary, kind: 'normal-cursor', direction: 'forward', anchor: { kind: 'character', offset: primaryOnEmoji ? first.value : second.value, after: primaryOnEmoji ? firstAfter.value : secondAfter.value }, head: { kind: 'character', offset: primaryOnEmoji ? first.value : second.value, after: primaryOnEmoji ? firstAfter.value : secondAfter.value } },
     ],
   });
   if (selections.ok === false) throw new Error(`T034-selection:${selections.error.kind}`);
@@ -184,7 +185,7 @@ async function testIndentGuides(): Promise<void> {
   });
   const lines = rendered.chars.split('\n');
   assert.ok(lines.some(line => line.indexOf('|') >= 0 && line.indexOf('child') > line.indexOf('|')), 'T036-INDENT-GUIDES-UNIT-01 configured guide paints before an indented visible line');
-  assert.ok(lines.some(line => line.indexOf('|') >= 0 && line.indexOf('grandchild') > line.indexOf('|')), 'T036-INDENT-GUIDES-UNIT-01 configured guide paints in deeper indentation');
+  assert.ok(lines.some(line => line.indexOf('|') >= 0 && line.indexOf('grandchild') > line.indexOf('|')), 'T036-INDENT-GUIDES-UNIT-01-PART2 configured guide paints in deeper indentation');
   rendered.setup.renderer.destroy();
   const skipped = await renderAt(100, 20, {
     text: 'root\n    child\n        grandchild\n',
@@ -206,8 +207,8 @@ async function testWhitespaceRendering(): Promise<void> {
     },
   });
   assert.match(rendered.chars, /a·b→/u, 'T036-WHITESPACE-UNIT-01 configured spaces and tabs render visible glyphs');
-  assert.match(rendered.chars, /nbsp⍽value/u, 'T036-WHITESPACE-UNIT-01 configured non-breaking spaces render visibly');
-  assert.match(rendered.chars, /⏎/u, 'T036-WHITESPACE-UNIT-01 configured line endings render visibly');
+  assert.match(rendered.chars, /nbsp⍽value/u, 'T036-WHITESPACE-UNIT-01-PART2 configured non-breaking spaces render visibly');
+  assert.match(rendered.chars, /⏎/u, 'T036-WHITESPACE-UNIT-01-PART3 configured line endings render visibly');
   rendered.setup.renderer.destroy();
 }
 

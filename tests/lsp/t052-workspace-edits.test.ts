@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { executeLanguageCodeAction, LanguageServerWorkspaceEditProvider, WorkspaceEditCoordinator, type WorkspaceEditPort } from '../../packages/services/language/workspace-edits';
 import type { WorkspaceEditFailure } from '../../packages/services/language/workspace-edits';
-import type { Result } from '../../packages/contracts/src/index';
+import { CancellationSource, type CancellationToken, type Result } from '../../packages/contracts/src/index';
 
 const applied: string[] = [];
 const port: WorkspaceEditPort = { async preflight() { return { ok: true, value: undefined }; }, async apply(edits, resources) { applied.push(`${edits.length}:${resources.length}`); return { ok: true, value: undefined }; } };
@@ -27,6 +27,16 @@ const provider = new LanguageServerWorkspaceEditProvider({
   offset: (uri, position) => uri === 'file:///a' && position.line === 0 && position.utf16 >= 0 && position.utf16 <= 20 ? { ok: true, value: position.utf16 } : { ok: false, error: { kind: 'invalid', message: 'position outside fixture' } },
 });
 const actions = await provider.codeActions({ documentId: 'doc', uri: 'file:///a', version: 3, position: { line: 0, utf16: 0 } });
+const cancellation = new CancellationSource();
+let forwarded: CancellationToken | undefined;
+const cancellableProvider = new LanguageServerWorkspaceEditProvider({
+  session: { async request<Response>(_method: string, _params?: unknown, token?: CancellationToken): Promise<Response> { forwarded = token; return [] as Response; } },
+  target: () => undefined,
+  offset: () => ({ ok: false, error: { kind: 'stale', message: 'closed' } }),
+});
+await cancellableProvider.codeActions({ documentId: 'doc', uri: 'file:///a', version: 3, position: { line: 0, utf16: 0 }, cancellation: cancellation.token });
+assert.equal(forwarded, cancellation.token, 'code-action cancellation reaches the LSP request');
+cancellation.dispose();
 assert.equal(actions.ok, true, 'T052-LSP-01 native code action edit decodes to absolute ranges');
 if (actions.ok) assert.equal(actions.value[0]?.edit?.edits[0]?.start, 0);
 const commandProvider = new LanguageServerWorkspaceEditProvider({
