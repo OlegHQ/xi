@@ -245,8 +245,8 @@ export async function runOpenTuiWorkbench(
   renderer.on('focus', () => options.onFocusChange?.(true));
   renderer.on('blur', () => options.onFocusChange?.(false));
   if (options.mouseEnabled === false) renderer.useMouse = false;
-  // Bound request throttling to 1 ms without starting a continuous render loop.
-  renderer.maxFps = 1000;
+  // Render each requested frame at the next turn without starting a continuous loop.
+  renderer.maxFps = Infinity;
   options.registerMouseToggle?.(() => {
     renderer.useMouse = !renderer.useMouse;
     return renderer.useMouse;
