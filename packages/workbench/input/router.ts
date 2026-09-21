@@ -605,7 +605,7 @@ export class WorkbenchInputRouter implements Disposable {
     const autoCompletion = !pathCompletion && completion.isAutoCompletionTrigger?.(event, activeMode) === true;
     const autoSignature = completion.isAutoSignatureTrigger(event, activeMode);
     const result = active.handleKey(event);
-    if (!autoSignature && !autoCompletion) return result;
+    if (!autoSignature && !autoCompletion && !pathCompletion) return result;
     return Promise.resolve(result).then((outcome) => {
       if (outcome !== false && outcome !== 'quit') {
         if (autoSignature) completion.openSignature(true);

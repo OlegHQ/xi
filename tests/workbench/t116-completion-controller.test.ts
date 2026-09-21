@@ -139,7 +139,9 @@ class FakeCompletionController implements CompletionControllerPort {
   #serial = 0;
   readonly publishedSerials: number[] = [];
   get model(): WorkbenchCompletionModel { return this.#model; }
-  subscribe(_listener: (model: WorkbenchCompletionModel) => void): Disposable { return Object.freeze({ dispose: () => {} }); }
+  #listener: ((model: WorkbenchCompletionModel) => void) | undefined;
+  subscribe(listener: (model: WorkbenchCompletionModel) => void): Disposable { this.#listener = listener; return { dispose: () => { this.#listener = undefined; } }; }
+  emit(): void { this.#listener?.(this.#model); }
   begin(request: WorkbenchCompletionRequest): number {
     this.#serial += 1;
     this.#model = { ...this.#model, state: 'loading', request };
@@ -178,8 +180,10 @@ class DeferredCompletionProvider implements CompletionProviderPort {
 
 class FakeSignatureController implements SignatureControllerPort {
   readonly model = Object.freeze({ state: 'ready' as const, request: undefined, signatures: Object.freeze([{ id: 'signature-1', label: 'map(fn)', documentation: 'signature docs', parameters: Object.freeze([]) }]), activeSignature: 0, activeParameter: 0, message: undefined });
-  subscribe(_listener: unknown): Disposable { return Object.freeze({ dispose: () => {} }); }
-  async request(): Promise<Result<never, { readonly kind: 'stale' | 'unavailable' | 'disposed'; readonly message: string }>> { throw new Error('not used by this fixture'); }
+  #listener: ((model: typeof this.model) => void) | undefined;
+  subscribe(listener: (model: typeof this.model) => void): Disposable { this.#listener = listener; return { dispose: () => { this.#listener = undefined; } }; }
+  emit(): void { this.#listener?.(this.model); }
+  async request(): Promise<Result<never, { readonly kind: 'stale' | 'unavailable' | 'disposed'; readonly message: string }>> { return { ok: false, error: { kind: 'unavailable', message: 'fixture' } }; }
   cancel(): void {}
 }
 
@@ -218,8 +222,9 @@ const controller = new CompletionSnippetController({
 host.registerPanel('completion', { isOpen: () => controller.isCompletionOpen, close: () => controller.closeCompletion(), alwaysClose: true });
 
 const fakeCompletion = new FakeCompletionController();
+const fakeSignature = new FakeSignatureController();
 const provider = new DeferredCompletionProvider();
-controller.attachLanguage(new ReadyLanguageSession(), fakeCompletion, provider, new FakeSignatureController());
+controller.attachLanguage(new ReadyLanguageSession(), fakeCompletion, provider, fakeSignature);
 assert.equal(controller.signatureRead.model.documentation, undefined, 'T116-LSP-SIGNATURE-DOCS-01 disabled documentation visibility is applied to the signature read model');
 assert.equal(controller.isAutoSignatureTrigger(key('x', 'x'), 'insert'), false, 'T116-AUTO-SIGNATURE-HELP-01 false disables automatic signature requests');
 const autoSignatureController = new CompletionSnippetController({
@@ -413,5 +418,32 @@ assert.ok(markers.some((entry) => entry.name === 'XI_COMPLETION_CLOSED'), 'T116-
 assert.equal(host.activeSession()?.readView(launchViewId)?.session.mode, 'normal', 'T116-COMPLETION-03e escape also leaves Insert mode after dismissing the popup');
 
 await controller.dispose();
+
+const surfaceController = new CompletionSnippetController({
+  host, session, marker: () => {}, onError: () => {}, fileUri: (path) => `file://${path}`,
+  positionToOffset, ensureLanguage: async () => {}, ensureOptionalServices: async () => {}, getSnippetSupport: () => undefined,
+});
+const surfaceCompletion = new FakeCompletionController();
+const surfaceSignature = new FakeSignatureController();
+surfaceController.attachLanguage(new ReadyLanguageSession(), surfaceCompletion, new DeferredCompletionProvider(), surfaceSignature);
+await new Promise<void>((resolve) => setImmediate(resolve));
+let surfaceWakes = 0;
+const wakeSubscription = host.onSurfaceChange(() => { surfaceWakes += 1; });
+surfaceCompletion.emit();
+surfaceSignature.emit();
+await new Promise<void>((resolve) => setImmediate(resolve));
+assert.equal(surfaceWakes, 0, 'T116-CLOSED-OVERLAYS-01 closed completion and signature updates do not wake the surface');
+surfaceController.openCompletion();
+surfaceCompletion.emit();
+await new Promise<void>((resolve) => setImmediate(resolve));
+assert.equal(surfaceWakes, 1, 'T116-CLOSED-OVERLAYS-02 an open completion still wakes the surface');
+surfaceController.closeCompletion();
+surfaceController.openSignature();
+surfaceSignature.emit();
+await new Promise<void>((resolve) => setImmediate(resolve));
+assert.equal(surfaceWakes, 2, 'T116-CLOSED-OVERLAYS-03 an open signature still wakes the surface');
+surfaceController.closeSignature();
+wakeSubscription.dispose();
+await surfaceController.dispose();
 
 console.log('T116 CompletionSnippetController passed plan-overlap-rejection, stale-response-drop and escape-close fixtures');

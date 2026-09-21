@@ -35,7 +35,7 @@ def run_case(enabled: bool) -> bytes:
         (workspace / "src" / "beta.txt").write_text("beta\n", encoding="utf-8")
         config = workspace / ".config" / "xi" / "config.toml"
         config.parent.mkdir(parents=True)
-        config.write_text(f"schema-version = 1\n[editor]\npath-completion = {'true' if enabled else 'false'}\nauto-format = false\ncompletion-timeout = 0\n", encoding="utf-8")
+        config.write_text(f"schema-version = 1\n[editor]\npath-completion = {'true' if enabled else 'false'}\nauto-format = false\ncompletion-timeout = 0\n[editor.lsp]\nauto-signature-help = false\n", encoding="utf-8")
         source = workspace / "main.txt"
         source.write_text("x\n", encoding="utf-8")
         master, slave = pty.openpty()

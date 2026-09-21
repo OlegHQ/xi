@@ -320,12 +320,16 @@ export class CompletionSnippetController {
     this.#completionProvider = completionProvider;
     this.#signature = signature;
     const completionSubscription = completion.subscribe((model) => {
-      this.#options.host.notifySurfaceChange();
-      if (this.#completionOpen) this.#options.marker('XI_COMPLETION_STATE', { state: model.state, items: model.items.length, selectedId: model.selectedId, documentation: model.documentation !== undefined, message: model.message });
+      if (this.#completionOpen) {
+        this.#options.host.notifySurfaceChange();
+        this.#options.marker('XI_COMPLETION_STATE', { state: model.state, items: model.items.length, selectedId: model.selectedId, documentation: model.documentation !== undefined, message: model.message });
+      }
     });
     const signatureSubscription = signature.subscribe((model) => {
-      this.#options.host.notifySurfaceChange();
-      if (this.#signatureOpen) this.#options.marker('XI_SIGNATURE_STATE', { state: model.state, signatures: model.signatures.length, documentation: this.signatureRead.model.documentation !== undefined, message: model.message });
+      if (this.#signatureOpen) {
+        this.#options.host.notifySurfaceChange();
+        this.#options.marker('XI_SIGNATURE_STATE', { state: model.state, signatures: model.signatures.length, documentation: this.signatureRead.model.documentation !== undefined, message: model.message });
+      }
     });
     return { completionSubscription, signatureSubscription };
   }
