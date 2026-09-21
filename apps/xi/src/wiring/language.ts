@@ -347,6 +347,7 @@ function admitExistingLanguageBuffers(deps: LanguageWiringDeps, connection: Lang
 
 function subscribeLanguagePresentation(session: LanguageServerSession, runtime: InlayHintRuntime): Disposable {
   return session.onStateChange((change) => {
+    if (change.current === 'ready') runtime.deps.marker?.('XI_LSP_READY', { server: change.health.identity.configName });
     if (change.current === 'ready') void refreshAllInlayHints(runtime);
     if (change.current === 'ready') for (const [documentId, position] of runtime.highlightPositions) void refreshDocumentHighlights(runtime, documentId, position.line, position.utf16);
   });

@@ -67,6 +67,7 @@ export function buildNavigationRequest(session: LanguageWorkbenchSessionPort, fi
 export interface LanguageServerSessionPort {
   waitForReady(): Promise<Result<unknown, { readonly message: string }>>;
   supportsRequest(method: string, uri?: string): boolean;
+  signatureTriggerCharacters?(uri: string): readonly string[];
 }
 
 /** Mirrors `packages/services/language`'s recursive `LanguageSymbol`. */

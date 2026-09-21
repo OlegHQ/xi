@@ -72,6 +72,10 @@ export class LanguageServerRouter implements Disposable {
     return session?.supportsRequest(method, uri) ?? false;
   }
 
+  signatureTriggerCharacters(uri: string): readonly string[] {
+    return this.#sessionByUri.get(uri)?.signatureTriggerCharacters(uri) ?? [];
+  }
+
   request<Response>(method: string, params?: unknown, cancellation?: CancellationToken): Promise<Response> {
     const session = this.#route(params);
     if (session === undefined) return Promise.reject(new Error('no language server for this document'));

@@ -53,6 +53,12 @@ def run_case(root: Path, enabled: bool) -> None:
         if b"XI_WORKBENCH_READY" not in captured:
             raise SystemExit(f"workbench did not start ({enabled=})\n{captured[-3000:]!r}")
 
+        deadline = time.monotonic() + 10
+        while b"XI_LSP_READY" not in captured and time.monotonic() < deadline:
+            read_for(master, captured, 0.05)
+        if b"XI_LSP_READY" not in captured:
+            raise SystemExit(f"language server did not become ready ({enabled=})\n{captured[-3000:]!r}")
+
         # A at the end enters Insert mode and `(` changes the document inside a call.
         os.write(master, b"A(")
         read_for(master, captured, 8 if enabled else 1)

@@ -418,6 +418,17 @@ export class LanguageServerSession implements Disposable {
     return false;
   }
 
+  signatureTriggerCharacters(uri: string): readonly string[] {
+    if (!this.supportsRequest('textDocument/signatureHelp', uri)) return [];
+    const triggers = new Set(signatureTriggers(this.#capabilities?.signatureHelpProvider));
+    for (const capability of this.#dynamicCapabilities.values()) {
+      if (!dynamicMethodMatches('textDocument/signatureHelp', capability.method, capability.registerOptions)) continue;
+      if (!(this.#dynamicSelectors.get(capability.id)?.(uri, this.#documents.get(uri)?.languageId) ?? true)) continue;
+      for (const trigger of signatureTriggers(capability.registerOptions)) triggers.add(trigger);
+    }
+    return [...triggers];
+  }
+
   /** Pull one document's diagnostics through the active server and publish them into the shared Problems owner. */
   async refreshPullDiagnostics(uri: string, cancellation?: CancellationToken): Promise<Result<PullDiagnosticSnapshot<PullDiagnosticItem>, PullDiagnosticFailure>> {
     const result = await this.#pullDiagnostics.refresh(uri, cancellation);
@@ -1387,6 +1398,12 @@ function staticRequestSupport(method: string, capabilities: InitializeResult['ca
     return isCapabilityValue(asRecord(asRecord(capRecord.workspace)?.fileOperations)?.[operation]);
   }
   return false;
+}
+
+function signatureTriggers(options: unknown): readonly string[] {
+  if (typeof options !== 'object' || options === null || !('triggerCharacters' in options)) return [];
+  const triggers = options.triggerCharacters;
+  return Array.isArray(triggers) ? triggers.filter((value): value is string => typeof value === 'string' && value.length > 0 && value.length <= 16) : [];
 }
 
 function dynamicMethodMatches(requestMethod: string, registrationMethod: string, options: unknown): boolean {

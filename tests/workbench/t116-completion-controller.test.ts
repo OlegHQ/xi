@@ -190,6 +190,7 @@ class FakeSignatureController implements SignatureControllerPort {
 class ReadyLanguageSession implements LanguageServerSessionPort {
   async waitForReady(): Promise<Result<unknown, { readonly message: string }>> { return { ok: true, value: undefined }; }
   supportsRequest(): boolean { return true; }
+  signatureTriggerCharacters(): readonly string[] { return ['(']; }
 }
 
 const launchDocumentId = id<DocumentId>('T116-completion-launch-document');
@@ -239,7 +240,9 @@ const autoSignatureController = new CompletionSnippetController({
   getSnippetSupport: () => undefined,
   autoSignatureHelp: true,
 });
-assert.equal(autoSignatureController.isAutoSignatureTrigger(key('x', 'x'), 'insert'), true, 'T116-AUTO-SIGNATURE-HELP-02 true enables automatic signature requests in insert mode');
+autoSignatureController.attachLanguage(new ReadyLanguageSession(), new FakeCompletionController(), provider, new FakeSignatureController());
+assert.equal(autoSignatureController.isAutoSignatureTrigger(key('(', '('), 'insert'), true, 'T116-AUTO-SIGNATURE-HELP-02 a negotiated trigger enables automatic signature requests');
+assert.equal(autoSignatureController.isAutoSignatureTrigger(key('x', 'x'), 'insert'), false, 'T116-AUTO-SIGNATURE-HELP-04 ordinary text does not request signature help');
 assert.equal(autoSignatureController.isAutoSignatureTrigger(key('x', 'x'), 'normal'), false, 'T116-AUTO-SIGNATURE-HELP-03 normal-mode keys do not trigger automatic signature requests');
 
 const previewController = new CompletionSnippetController({

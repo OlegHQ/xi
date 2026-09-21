@@ -392,12 +392,22 @@ export class CompletionSnippetController {
     return this.isInsertMode(mode);
   }
 
-  /** Helix re-requests automatic signature help after insert-mode document changes. */
+  /** Auto-open only for negotiated server triggers; re-request while a signature popup is open. */
   isAutoSignatureTrigger(event: OwnedVimKeyEvent, mode: string | undefined): boolean {
-    return this.#options.autoSignatureHelp !== false
-      && this.isInsertMode(mode)
-      && !event.ctrl && !event.meta && !event.option
-      && event.raw.length === 1 && event.raw !== '\x1b';
+    if (this.#options.autoSignatureHelp === false || !this.isInsertMode(mode)
+      || event.ctrl || event.meta || event.option || event.raw.length !== 1 || event.raw === '\x1b') return false;
+    if (this.#signatureOpen) return true;
+    const request = this.#currentSignatureRequest();
+    const triggers = request?.uri === undefined ? [] : this.#session?.signatureTriggerCharacters?.(request.uri) ?? [];
+    if (triggers.includes(event.raw)) return true;
+    if (!triggers.some((trigger) => trigger.length > 1)) return false;
+    const viewId = this.#options.session.activeViewId;
+    const view = viewId === undefined ? undefined : this.#options.session.readView(viewId);
+    const head = view?.selections.members.find((member) => member.id === view.selections.primaryId)?.head;
+    if (view === undefined || head === undefined) return false;
+    const start = Math.max(0, Number(head.at.offset) - 15);
+    const prefix = view.document.slice(start as typeof head.at.offset, head.at.offset);
+    return prefix.ok && triggers.some((trigger) => trigger.length > 1 && `${prefix.value}${event.raw}`.endsWith(trigger));
   }
 
   openCompletion(trigger: 'invoked' | 'retrigger' | 'character' = 'invoked'): boolean {
