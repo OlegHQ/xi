@@ -13,7 +13,8 @@ const MASTER_COMMIT = '079a789e8cb08ead67f19e1971a1b7438b37354b';
 
 export function validateConfigLedger(value: unknown, root = process.cwd()): string[] {
   const errors: string[] = [];
-  const tracked = new Set(execFileSync('git', ['ls-files', '--cached', '--', 'tests'], { cwd: root, encoding: 'utf8' }).split('\n'));
+  const tracked = new Set(execFileSync('git', ['ls-tree', '-r', '--name-only', 'HEAD', '--', 'tests'], { cwd: root, encoding: 'utf8' }).split('\n'));
+  const committedTests = new Map<string, string>();
   if (!record(value)) return ['ledger must be an object'];
   if (value.schemaVersion !== 1) errors.push('schemaVersion must be 1');
   const references = object(value, 'references', errors);
@@ -71,7 +72,7 @@ export function validateConfigLedger(value: unknown, root = process.cwd()): stri
         errors.push(`${at}.validation.${dimension} must name at least one test`);
         continue;
       }
-      for (const namedTest of evidence) validateTestPath(namedTest, root, tracked, dimension, `${at}.validation.${dimension}`, errors);
+      for (const namedTest of evidence) validateTestPath(namedTest, root, tracked, committedTests, dimension, `${at}.validation.${dimension}`, errors);
     }
     if (status === 'missing' && dimensions.length > 0) errors.push(`${at} cannot be missing with passing validation`);
     if (status === 'parsed-only' && (validation.runtime !== undefined || validation.pty !== undefined)) {
@@ -113,7 +114,7 @@ function covers(item: Record<string, unknown>, candidate: string): boolean {
     && candidate.startsWith(`${item.path}.`);
 }
 
-function validateTestPath(value: string, root: string, tracked: ReadonlySet<string>, dimension: string, label: string, errors: string[]): void {
+function validateTestPath(value: string, root: string, tracked: ReadonlySet<string>, committedTests: Map<string, string>, dimension: string, label: string, errors: string[]): void {
   const [path = '', anchor] = value.split('#', 2);
   const absolute = resolve(root, path);
   if (!path.startsWith('tests/') || (!path.endsWith('.ts') && !path.endsWith('.py'))) {
@@ -127,8 +128,9 @@ function validateTestPath(value: string, root: string, tracked: ReadonlySet<stri
         errors.push(`${label} needs an assertion anchor: ${value}`);
       }
     } else {
-      const labels = anchor ? readFileSync(absolute, 'utf8').match(new RegExp(`[\\'"\x60]${anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'g')) : null;
-      if (labels === null) errors.push(`${label} test anchor does not exist as an assertion label: ${value}`);
+      if (!committedTests.has(path) && tracked.has(path)) committedTests.set(path, execFileSync('git', ['show', `HEAD:${path}`], { cwd: root, encoding: 'utf8' }));
+      const labels = anchor ? committedTests.get(path)?.match(new RegExp(`[\\'"\x60]${anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'g')) : null;
+      if (labels == null) errors.push(`${label} test anchor does not exist as an assertion label: ${value}`);
       else if (labels.length !== 1) errors.push(`${label} test anchor is not unique: ${value}`);
     }
   }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { validateConfigLedger } from '../../tools/check-config-ledger';
 
 type MutableLedger = {
@@ -30,6 +31,16 @@ assert.ok(validateConfigLedger(missingTest).some((error) => error.includes('test
 const missingAnchor = structuredClone(source) as MutableLedger;
 missingAnchor.items[0]!.validation.schema = ['tests/config/t036-config.test.ts#DOES-NOT-EXIST'];
 assert.ok(validateConfigLedger(missingAnchor).some((error) => error.includes('test anchor does not exist')));
+
+const uncommittedPath = `tests/config/ledger-${randomUUID()}.test.ts`;
+writeFileSync(uncommittedPath, "assert.ok(true, 'LEDGER-UNCOMMITTED-01');\n");
+try {
+  const uncommittedEvidence = structuredClone(source) as MutableLedger;
+  uncommittedEvidence.items[0]!.validation.schema = [`${uncommittedPath}#LEDGER-UNCOMMITTED-01`];
+  assert.ok(validateConfigLedger(uncommittedEvidence).some((error) => error.includes('test is not committed')));
+} finally {
+  unlinkSync(uncommittedPath);
+}
 
 const commentOnlyAnchor = structuredClone(source) as MutableLedger;
 commentOnlyAnchor.items[0]!.validation.schema = ['tests/workbench/t116-pointer-router.test.ts#T116-POINTER-05'];
