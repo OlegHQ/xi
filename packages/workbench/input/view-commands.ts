@@ -35,6 +35,8 @@ export interface ViewCommandContext {
   readonly viewportHeight: number | undefined;
   /** Lines per `view.scroll-up`/`view.scroll-down` step; from `editor.mouse.scrollLines`. */
   readonly scrollLines: number;
+  /** Cursor margin used while a view-scroll command moves the viewport. */
+  readonly scrolloff?: number;
 }
 
 /** Executes one of `VIEW_COMMAND_IDS`; returns whether it applied (the view exists). */
@@ -49,7 +51,7 @@ export function executeViewCommand(commandId: ViewCommandId, context: ViewComman
     : Math.max(1, Math.floor(page / 2)); // view.half-page-down
   // Half-page movement is based on the original cursor, before wheel-style clamping.
   if (commandId === 'view.half-page-up' || commandId === 'view.half-page-down') moveCursorBy(workbench, getSession, viewId, delta);
-  const scrolled = scrollViewBy(workbench, getSession, viewId, delta, viewportHeight);
+  const scrolled = scrollViewBy(workbench, getSession, viewId, delta, viewportHeight, context.scrolloff);
   if (scrolled === undefined) return false;
   return true;
 }

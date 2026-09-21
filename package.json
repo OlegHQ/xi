@@ -7,10 +7,11 @@
     "bun": ">=1.3.13 <2"
   },
   "scripts": {
-    "check": "bun run check:toolchain && bun run check:types && bun run check:public-boundary && bun run check:lint",
+    "check": "bun run check:toolchain && bun run check:types && bun run check:public-boundary && bun run check:config-ledger && bun run check:lint",
     "check:toolchain": "bun run ./tools/toolchain-check.ts",
     "check:types": "bun x tsc --noEmit",
     "check:public-boundary": "bun run ./tools/check-public-boundary.ts packages tools tests",
+    "check:config-ledger": "bun run ./tools/check-config-ledger.ts",
     "test:unit": "bun run ./tools/verify-suite.ts unit \"$@\"",
     "test:vim": "bun run ./tests/oracle/validate.ts \"$@\"",
     "oracle:fetch": "bun run ./tests/oracle/fetch-neovim.ts",

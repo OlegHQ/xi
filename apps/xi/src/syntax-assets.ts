@@ -43,6 +43,14 @@ interface GrammarAssetLoaders {
  * strings. Re-stating it last restores the distinct key color. */
 const JSON_KEY_HIGHLIGHTS = '\n(pair key: (_) @string.special.key)\n';
 
+/** The pinned Python/JSON queries omit delimiter captures; the other bundled grammars already
+ * provide punctuation.bracket captures. These additions are enabled only when rainbow brackets
+ * are configured, so the default syntax result is unchanged. */
+const RAINBOW_BRACKET_HIGHLIGHTS: Readonly<Record<string, string>> = Object.freeze({
+  python: '\n["(" ")" "[" "]" "{" "}"] @punctuation.bracket\n',
+  json: '\n["[" "]" "{" "}"] @punctuation.bracket\n',
+});
+
 const GRAMMAR_ASSET_LOADERS: Readonly<Record<string, GrammarAssetLoaders>> = {
   typescript: {
     wasm: () => import('../../../node_modules/@opentui/core/assets/typescript/tree-sitter-typescript.wasm' as string, { with: { type: 'file' } }),
@@ -97,7 +105,7 @@ export async function resolveTreeSitterRuntimeOptions(): Promise<TreeSitterRunti
 const textDecoder = new TextDecoder('utf-8');
 
 /** Lazily resolves and caches a bundled grammar per languageId; never loaded on the input path. */
-export function createBundledGrammarProvider(reader: AssetFileReader, cancellation: CancellationToken): SyntaxGrammarProvider {
+export function createBundledGrammarProvider(reader: AssetFileReader, cancellation: CancellationToken, rainbowBrackets = false): SyntaxGrammarProvider {
   const grammarCache = new Map<string, Promise<Result<SyntaxGrammarSource, SyntaxGrammarFailure>>>();
 
   async function loadGrammar(languageId: string): Promise<Result<SyntaxGrammarSource, SyntaxGrammarFailure>> {
@@ -113,7 +121,8 @@ export function createBundledGrammarProvider(reader: AssetFileReader, cancellati
       ]);
       if (!wasmRead.ok) return { ok: false, error: { kind: 'grammar-missing', message: `failed to read grammar wasm for "${languageId}": ${wasmRead.error.message}` } };
       if (!highlightsRead.ok) return { ok: false, error: { kind: 'grammar-missing', message: `failed to read highlights query for "${languageId}": ${highlightsRead.error.message}` } };
-      return { ok: true, value: { wasm: wasmRead.value, highlights: `${textDecoder.decode(highlightsRead.value)}${loaders.extraHighlights ?? ''}` } };
+      const rainbow = rainbowBrackets ? RAINBOW_BRACKET_HIGHLIGHTS[languageId] ?? '' : '';
+      return { ok: true, value: { wasm: wasmRead.value, highlights: `${textDecoder.decode(highlightsRead.value)}${loaders.extraHighlights ?? ''}${rainbow}` } };
     } catch (error) {
       return {
         ok: false,

@@ -44,6 +44,7 @@ import {
   cellColumn,
   fillerRow,
   groupAnnotationsByLine,
+  gutterLayoutWidth,
   indexRebasedRows,
   layoutFailure,
   lineCacheKey,
@@ -58,6 +59,7 @@ import {
   validateDiffFillerRows,
   validateFolds,
 } from './shaping';
+import { DEFAULT_GUTTER_LAYOUT, type GutterType } from './types';
 
 /**
  * `#lineLayouts` entry. The map key is a cheap hash of the visible line text plus
@@ -235,18 +237,35 @@ export class ViewportLayout {
 
     const options = input.options ?? {};
     const wrap = options.wrap ?? true;
+    const wrapWidth = options.wrapWidth;
+    const wrapIndicator = options.wrapIndicator ?? '';
+    const maxWrap = options.maxWrap ?? 20;
+    const maxIndentRetain = options.maxIndentRetain ?? 40;
     const tabSize = options.tabSize ?? 8;
     const horizontalScrollCells = options.horizontalScrollCells ?? 0;
     const widthPolicy = options.widthPolicy ?? DEFAULT_WIDTH_POLICY;
     const folds = options.folds ?? [];
     const foldGeneration = options.foldGeneration ?? 0;
     const gutterWidthCells = options.gutterWidthCells ?? 0;
+    const gutterLayout: readonly GutterType[] = options.gutterLayout ?? (options.gutterLineNumberWidth === undefined ? (gutterWidthCells === 0 ? Object.freeze([] as GutterType[]) : Object.freeze(['line-numbers', 'spacer'] as GutterType[])) : DEFAULT_GUTTER_LAYOUT);
+    const gutterLineNumberWidth = options.gutterLineNumberWidth ?? (gutterLayout.includes('line-numbers') ? Math.max(0, gutterWidthCells - 1) : 0);
+    const lineNumberMode = options.lineNumberMode ?? 'absolute';
+    const relativeLineNumberCursor = options.relativeLineNumberCursor;
     if (!Number.isSafeInteger(tabSize) || tabSize < 1 || tabSize > 32
+      || (wrapWidth !== undefined && (!Number.isSafeInteger(wrapWidth) || wrapWidth < 1 || wrapWidth > input.widthCells))
+      || !Number.isSafeInteger(maxWrap) || maxWrap < 0 || maxWrap > 65_535
+      || !Number.isSafeInteger(maxIndentRetain) || maxIndentRetain < 0 || maxIndentRetain > 65_535
+      || typeof wrapIndicator !== 'string' || wrapIndicator.length > 64 || /[\r\n\t]/u.test(wrapIndicator)
       || !Number.isSafeInteger(horizontalScrollCells) || horizontalScrollCells < 0
       || !Number.isSafeInteger(gutterWidthCells) || gutterWidthCells < 0 || gutterWidthCells >= input.widthCells
+      || !Number.isSafeInteger(gutterLineNumberWidth) || gutterLineNumberWidth < 0 || gutterLineNumberWidth > input.widthCells
+      || gutterLayout.length > 32 || gutterLayout.some((gutter) => gutter !== 'diagnostics' && gutter !== 'spacer' && gutter !== 'line-numbers' && gutter !== 'diff' && gutter !== 'code-action-hint')
+      || gutterLayoutWidth(gutterLineNumberWidth, gutterLayout) !== gutterWidthCells
       || !Number.isSafeInteger(widthPolicy.generation) || widthPolicy.generation < 0
       || typeof widthPolicy.id !== 'string' || widthPolicy.id.length === 0 || widthPolicy.id.length > MAX_LAYOUT_ID_UTF16
       || typeof widthPolicy.widthOfCluster !== 'function'
+      || (lineNumberMode !== 'absolute' && lineNumberMode !== 'relative')
+      || (relativeLineNumberCursor !== undefined && (!Number.isSafeInteger(relativeLineNumberCursor) || relativeLineNumberCursor < 0 || relativeLineNumberCursor >= snapshot.lineCount))
       || !Number.isSafeInteger(foldGeneration) || foldGeneration < 0) {
       return layoutFailure('invalid-viewport');
     }
@@ -256,7 +275,8 @@ export class ViewportLayout {
     if (!annotationsResult.ok) return annotationsResult;
     const diffFillersResult = validateDiffFillerRows(options.diffFillerRows ?? [], snapshot);
     if (!diffFillersResult.ok) return diffFillersResult;
-    const contentWidth = input.widthCells - gutterWidthCells;
+    const viewportContentWidth = input.widthCells - gutterWidthCells;
+    const contentWidth = wrap && wrapWidth !== undefined ? Math.min(viewportContentWidth, wrapWidth) : viewportContentWidth;
     const annotationsByLine = groupAnnotationsByLine(annotationsResult.value);
 
     const anchorResult = input.anchor === undefined
@@ -305,6 +325,9 @@ export class ViewportLayout {
       effectiveAnchor.offset,
       effectiveAnchor.displayCellColumn,
       wrap,
+      wrapWidth,
+      maxWrap,
+      maxIndentRetain,
       tabSize,
       horizontalScrollCells,
       widthPolicy.id,
@@ -312,6 +335,10 @@ export class ViewportLayout {
       foldGeneration,
       cheapListFingerprint(folds, (fold) => [fold.id, fold.startLine, fold.endLineExclusive, fold.placeholder]),
       gutterWidthCells,
+      gutterLineNumberWidth,
+      gutterLayout.join(','),
+      lineNumberMode,
+      relativeLineNumberCursor,
       cheapListFingerprint(annotationsResult.value, (annotation) => [annotation.id, annotation.lineIndex, annotation.offset, annotation.text]),
       cheapListFingerprint(diffFillersResult.value, (filler) => [filler.id, filler.beforeLine]),
     ].join('|');
@@ -433,7 +460,7 @@ export class ViewportLayout {
       if (fold !== undefined) {
         const foldRow = buildFoldRow(snapshot, fold, contentWidth);
         if (!foldRow.ok) return foldRow;
-        rows.push(this.withGutter(foldRow.value, gutterWidthCells));
+        rows.push(this.withGutter(foldRow.value, gutterWidthCells, gutterLineNumberWidth, gutterLayout, lineNumberMode, relativeLineNumberCursor));
         positions.setOffset(foldRow.value.startOffset as number, rows.length - 1, gutterWidthCells);
         logicalLine = fold.endLineExclusive as number;
         sourceAnchor = undefined;
@@ -491,7 +518,7 @@ export class ViewportLayout {
         const relativeOffset = absoluteOffset - (effBaseOffset as number);
         const withinRead = relativeOffset < prefix.length || (relativeOffset === prefix.length && read.value.complete);
         return relativeOffset >= 0 && withinRead
-          ? [{ id: annotation.id, offset: relativeOffset, text: annotation.text } satisfies RelativeAnnotation]
+          ? [{ id: annotation.id, offset: relativeOffset, text: annotation.text, ...(annotation.background === undefined ? {} : { background: annotation.background }) } satisfies RelativeAnnotation]
           : [];
       });
       const startsAtLineOrigin = effBaseOffset === line.value.start && effDisplayStart === 0;
@@ -502,7 +529,7 @@ export class ViewportLayout {
       // it into the key when unwrapped only fragments the cache across scroll
       // positions without changing the cached shape.
       const cacheKey = lineCacheKey(prefix, contentWidth, wrap ? input.heightCells - rows.length : 1, wrap, tabSize,
-        effDisplayStart, horizontalScrollCells, widthPolicy);
+        effDisplayStart, horizontalScrollCells, widthPolicy, wrapIndicator, maxWrap, maxIndentRetain);
       const cacheableLine = canCache && lineAnnotations.length === 0;
       const cachedLineEntry = cacheableLine ? this.#lineLayouts.get(cacheKey) : undefined;
       const cacheHit = cachedLineEntry !== undefined && cachedLineEntry.text === prefix ? cachedLineEntry : undefined;
@@ -515,14 +542,14 @@ export class ViewportLayout {
       } else {
         this.#lineCacheMisses += 1;
         const shaped = shapeLine(prefix, contentWidth, input.heightCells - rows.length, wrap, tabSize,
-          effDisplayStart, horizontalScrollCells, widthPolicy, !read.value.complete, lineAnnotations);
+          effDisplayStart, horizontalScrollCells, widthPolicy, !read.value.complete, lineAnnotations, wrapIndicator, maxWrap, maxIndentRetain);
         if (!shaped.ok) return shaped;
         relative = shaped.value;
         this.#rowsBuilt += relative.rows.length;
         if (cacheableLine) this.#cacheLine(cacheKey, prefix, relative);
       }
       if (!read.value.complete || !relative.complete) truncatedLongLine = true;
-      const annotationsKey = lineAnnotations.length === 0 ? '' : JSON.stringify(lineAnnotations.map((annotation) => [annotation.id, annotation.offset, annotation.text]));
+      const annotationsKey = lineAnnotations.length === 0 ? '' : JSON.stringify(lineAnnotations.map((annotation) => [annotation.id, annotation.offset, annotation.text, annotation.background ?? '']));
       // Content-only key: independent of `logicalLine`/`baseOffset`/`line.value.end`.
       // Editing an earlier line shifts every later line's absolute offsets without
       // changing its rendered glyphs, so the *template* below (built once per
@@ -561,7 +588,7 @@ export class ViewportLayout {
       for (let rowIndex = 0; rowIndex < materializedRows.length; rowIndex += 1) {
         const row = materializedRows[rowIndex];
         if (row === undefined || rows.length >= input.heightCells) break;
-        rows.push(this.withGutter(row, gutterWidthCells));
+        rows.push(this.withGutter(row, gutterWidthCells, gutterLineNumberWidth, gutterLayout, lineNumberMode, relativeLineNumberCursor));
       }
       if (rows.length >= input.heightCells || (wrap && !relative.complete)) break;
       logicalLine += 1;
@@ -623,12 +650,12 @@ export class ViewportLayout {
    * frame whenever an earlier edit shifts absolute offsets, even though the label
    * itself is unchanged), so this caches by that value key instead of row identity.
    */
-  private withGutter(row: ScreenRow, gutterWidth: number): ScreenRow {
+  private withGutter(row: ScreenRow, gutterWidth: number, lineNumberWidth: number, gutterLayout: readonly GutterType[], lineNumberMode: 'absolute' | 'relative', relativeLineNumberCursor?: number): ScreenRow {
     if (gutterWidth === 0 || row.lineIndex === null) return row;
-    const key = `${row.lineIndex}:${row.wrapIndex}:${gutterWidth}`;
+    const key = `${row.lineIndex}:${row.wrapIndex}:${gutterWidth}:${lineNumberWidth}:${gutterLayout.join(',')}:${lineNumberMode}:${relativeLineNumberCursor ?? ''}`;
     let gutterCells = this.#gutterCells.get(key);
     if (gutterCells === undefined) {
-      gutterCells = buildGutterCells(row.lineIndex, row.wrapIndex, gutterWidth);
+      gutterCells = buildGutterCells(row.lineIndex, row.wrapIndex, gutterWidth, lineNumberWidth, gutterLayout, lineNumberMode, relativeLineNumberCursor);
       this.#gutterCells.set(key, gutterCells);
       while (this.#gutterCells.size > MAX_GUTTER_CACHE_ENTRIES) {
         const oldest = this.#gutterCells.keys().next().value as string | undefined;
@@ -636,7 +663,7 @@ export class ViewportLayout {
         this.#gutterCells.delete(oldest);
       }
     }
-    return prependGutter(row, gutterWidth, gutterCells);
+    return prependGutter(row, gutterWidth, gutterCells, gutterLayout.join(','));
   }
 
   /** Hit-test only the current published frame; an old frame is explicitly stale. */
@@ -812,14 +839,15 @@ function defaultAnchor(snapshot: DocumentSnapshot): { readonly ok: true; readonl
  * Cursor-following scroll anchor (docs/architecture.md "Input, effects and
  * rendering"): clamps a stored `scrollTop` line to the document, then keeps the
  * primary selection's head line inside `[top, top + heightCells)` the way Vim does --
- * scroll up to the cursor line when it is above the viewport, or to
- * `cursor - heightCells + 1` when it is below. No scrolloff margin exists in this
- * codebase yet, so none is applied. Callers must report the returned `scrollTop`
+ * scroll up to the cursor line plus the configured top margin when it is too close
+ * to the viewport edge, or to the corresponding bottom-margin position. The
+ * asymmetric margins match Helix: `scrolloff` is capped independently at half the
+ * viewport, leaving at least one line between the margins. Callers must report the returned `scrollTop`
  * back to the read model so scroll position and the rendered anchor never drift.
  *
  * `scrollLeft` follows the same rule horizontally over the primary head's display
- * column, since production always projects with `wrap: false`: no wrapped row ever
- * exists to fall back on, so an off-screen column would otherwise render clipped.
+ * column when wrapping is disabled. Wrapped rows reset horizontal scrolling because
+ * their screen columns are derived from the wrapped row start.
  * Callers must feed the returned `scrollLeft` back as `options.horizontalScrollCells`
  * on the following `project()` call and report it back to the read model exactly
  * like `scrollTop`.
@@ -831,30 +859,38 @@ export function resolveScrollAnchor(
   heightCells: number,
   widthCells: number,
   scrollLeft: number,
-  options?: { readonly tabSize?: number; readonly widthPolicy?: CellWidthPolicy },
+  options?: { readonly tabSize?: number; readonly widthPolicy?: CellWidthPolicy; readonly scrolloff?: number; readonly wrap?: boolean },
 ): { readonly ok: true; readonly value: { readonly anchor: ViewportAnchor; readonly scrollTop: number; readonly scrollLeft: number } } | { readonly ok: false; readonly error: LayoutFailure } {
   const lastLine = Math.max(0, snapshot.lineCount - 1);
-  let top = Math.min(Math.max(0, Math.trunc(scrollTop)), lastLine);
-  let left = Math.max(0, Math.trunc(scrollLeft));
+  const visibleRows = Math.max(1, heightCells);
+  const visibleColumns = Math.max(1, widthCells);
+  const configuredScrolloff = options?.scrolloff ?? 0;
+  const scrolloff = Number.isSafeInteger(configuredScrolloff) && configuredScrolloff >= 0 ? configuredScrolloff : 0;
+  const scrolloffTop = Math.min(scrolloff, Math.floor(Math.max(0, visibleRows - 1) / 2));
+  const scrolloffBottom = Math.min(scrolloff, Math.floor(visibleRows / 2));
+  const scrolloffLeft = Math.min(scrolloff, Math.floor(Math.max(0, visibleColumns - 1) / 2));
+  const scrolloffRight = Math.min(scrolloff, Math.floor(visibleColumns / 2));
+  const maxTop = Math.max(0, lastLine - visibleRows + 1);
+  let top = Math.min(Math.max(0, Math.trunc(scrollTop)), maxTop);
+  let left = options?.wrap === true ? 0 : Math.max(0, Math.trunc(scrollLeft));
   const primary = selection.members.find((member) => member.id === selection.primaryId);
   if (primary !== undefined) {
     const cursorLineResult = snapshot.lineIndexAt(primary.head.at.offset);
     if (cursorLineResult.ok) {
       const cursorLine = cursorLineResult.value as number;
-      const visibleRows = Math.max(1, heightCells);
-      if (cursorLine < top) top = cursorLine;
-      else if (cursorLine > top + visibleRows - 1) top = Math.max(0, cursorLine - visibleRows + 1);
+      if (cursorLine < top + scrolloffTop) top = Math.max(0, cursorLine - scrolloffTop);
+      else if (cursorLine + scrolloffBottom >= top + visibleRows) top = Math.min(maxTop, Math.max(0, cursorLine - visibleRows + scrolloffBottom + 1));
 
       const lineStart = snapshot.lineStartOffset(lineIndex(cursorLine));
-      if (lineStart.ok) {
+      if (lineStart.ok && options?.wrap !== true) {
         const headColumn = measureDisplayColumn(
           snapshot, lineStart.value, primary.head.at.offset,
           options?.tabSize ?? 8, options?.widthPolicy ?? DEFAULT_WIDTH_POLICY,
         );
         if (headColumn !== undefined) {
-          const visibleCells = Math.max(1, widthCells);
-          if (headColumn < left) left = headColumn;
-          else if (headColumn > left + visibleCells - 1) left = Math.max(0, headColumn - visibleCells + 1);
+          const lastVisibleColumn = left + visibleColumns - 1;
+          if (headColumn < left + scrolloffLeft) left = Math.max(0, headColumn - scrolloffLeft);
+          else if (headColumn > lastVisibleColumn - scrolloffRight) left += headColumn - (lastVisibleColumn - scrolloffRight);
         }
       }
     }

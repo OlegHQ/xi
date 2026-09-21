@@ -1,5 +1,5 @@
 /** Small public UI surface used by the standalone launcher. */
-export { createOpenTuiRenderer, runOpenTuiWorkbench } from '../terminal';
+export { createOpenTuiClipboardPort, createOpenTuiRenderer, createOpenTuiTermcodeClipboardPort, runOpenTuiWorkbench } from '../terminal';
 export type { OpenTuiWorkbenchOptions } from '../terminal';
 export { BUILTIN_WORKBENCH_THEMES } from '../workbench';
 export type { WorkbenchPointerEvent, WorkbenchTheme } from '../workbench';

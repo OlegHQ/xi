@@ -376,6 +376,21 @@ async function testNegotiatedCapabilitiesAndDynamicChanges(): Promise<void> {
   await invalidEncoding.dispose();
 }
 
+async function testSnippetCapabilityCanBeDisabled(): Promise<void> {
+  const process = new FakeLanguageProcessPort('ready');
+  const session = new LanguageServerSession({ process, clock: new FakeClock(), config, root: '/workspace/root-a', workspaceId: 'workspace-snippets-disabled', snippetSupport: false });
+  session.activate();
+  assert((await session.waitForReady()).ok, 'snippet-disabled session reaches ready');
+  const active = process.processes[0];
+  assert(active !== undefined, 'snippet-disabled process exists');
+  const initialize = active.writes.find((message) => (message as JsonRecord).method === 'initialize') as JsonRecord | undefined;
+  const capabilities = ((initialize?.params as JsonRecord | undefined)?.capabilities as JsonRecord | undefined);
+  const completion = (capabilities?.textDocument as JsonRecord | undefined)?.completion as JsonRecord | undefined;
+  const item = completion?.completionItem as JsonRecord | undefined;
+  equal(item?.snippetSupport, false, 'T047-SNIPPETS-01 disabled configuration removes snippet capability advertisement');
+  await session.dispose();
+}
+
 async function testOversizedDocumentAdmission(): Promise<void> {
   const process = new FakeLanguageProcessPort('ready');
   const session = new LanguageServerSession({
@@ -402,5 +417,6 @@ await testRootResolution();
 await testAsyncLifecycleAndReplay();
 await testIsolationAndFailures();
 await testNegotiatedCapabilitiesAndDynamicChanges();
+await testSnippetCapabilityCanBeDisabled();
 await testOversizedDocumentAdmission();
 console.log('T047 lifecycle passed root resolution, asynchronous startup, initialize/configuration/progress, crash replay, identity isolation and failure health fixtures');

@@ -176,7 +176,8 @@ export class ExplorerController {
       this.#options.host.notifySurfaceChange();
       if (this.#open && model.generation > this.#openGeneration) {
         const selected = model.selectedId === undefined ? undefined : tree.readNode(model.selectedId);
-        this.#options.marker('XI_EXPLORER_REFRESH', { generation: model.generation, selectedId: model.selectedId, selectedPath: selected?.relativePath, state: model.state, filter: model.filter, visibleRowCount: model.visibleRows.length });
+        const explorerModel = model as ExplorerTreeModel & { readonly includeHidden?: boolean; readonly followSymlinks?: boolean; readonly flattenDirs?: boolean };
+        this.#options.marker('XI_EXPLORER_REFRESH', { generation: model.generation, selectedId: model.selectedId, selectedPath: selected?.relativePath, state: model.state, filter: model.filter, visibleRowCount: model.visibleRows.length, visibleLabels: model.visibleRows.map((rawRow) => { const row = rawRow as { readonly nodeId: string; readonly label?: string }; const node = tree.readNode(row.nodeId); return row.label ?? node?.name; }).filter((label): label is string => label !== undefined), ...(explorerModel.includeHidden === undefined ? {} : { includeHidden: explorerModel.includeHidden }), ...(explorerModel.followSymlinks === undefined ? {} : { followSymlinks: explorerModel.followSymlinks }), ...(explorerModel.flattenDirs === undefined ? {} : { flattenDirs: explorerModel.flattenDirs }) });
       }
     });
   }

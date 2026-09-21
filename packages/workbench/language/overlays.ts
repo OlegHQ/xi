@@ -94,6 +94,7 @@ export interface NavigationControllerPort {
   readonly model: WorkbenchNavigationModel;
   subscribe(listener: (model: WorkbenchNavigationModel) => void): Disposable;
   loadOutline(request: WorkbenchNavigationRequest): Promise<unknown>;
+  references(request: WorkbenchNavigationRequest, includeDeclaration: boolean): Promise<unknown>;
   requestHover(request: WorkbenchNavigationRequest): Promise<unknown>;
   returnToOrigin(): unknown;
 }

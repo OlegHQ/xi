@@ -19,16 +19,26 @@ const workspace: ExplorerDirectoryEntry[] = [
   { name: '.env', relativePath: '.env', kind: 'file', hidden: true },
   { name: 'README.md', relativePath: 'README.md', kind: 'file', stableIdentity: 'inode-readme', git: { state: 'modified', label: 'M', colorToken: 'git.modified' } },
   { name: 'loop', relativePath: 'loop', kind: 'symlink', symlinkTarget: 'src', symlinkCycle: true },
+  { name: 'link', relativePath: 'link', kind: 'symlink', symlinkTarget: 'src' },
   { name: 'empty', relativePath: 'empty', kind: 'directory' },
+  { name: 'chain', relativePath: 'chain', kind: 'directory' },
+  { name: 'ignored.tmp', relativePath: 'ignored.tmp', kind: 'file', ignored: true },
 ];
 const srcEntries: ExplorerDirectoryEntry[] = [
   { name: 'main.ts', relativePath: 'src/main.ts', kind: 'file', stableIdentity: 'inode-main' },
   { name: 'z.ts', relativePath: 'src/z.ts', kind: 'file' },
 ];
+const chainEntries: ExplorerDirectoryEntry[] = [{ name: 'one', relativePath: 'chain/one', kind: 'directory' }];
+const chainOneEntries: ExplorerDirectoryEntry[] = [{ name: 'two', relativePath: 'chain/one/two', kind: 'directory' }];
+const chainTwoEntries: ExplorerDirectoryEntry[] = [{ name: 'leaf.txt', relativePath: 'chain/one/two/leaf.txt', kind: 'file' }];
 const directoryEntries = new Map<string, readonly ExplorerDirectoryEntry[]>([
   ['/workspace', workspace],
   ['/workspace/src', srcEntries],
+  ['/workspace/link', [{ name: 'main.ts', relativePath: 'link/main.ts', kind: 'file' }]],
   ['/workspace/empty', Object.freeze([])],
+  ['/workspace/chain', chainEntries],
+  ['/workspace/chain/one', chainOneEntries],
+  ['/workspace/chain/one/two', chainTwoEntries],
 ]);
 let watcher: ((event: ExplorerWatchEvent) => void) | undefined;
 const filesystem: ExplorerFilesystemPort = {
@@ -53,6 +63,12 @@ assert.equal((await tree.expand(rootId)).ok, true, 'T040-E03-01 expands the root
 const firstModel = tree.model;
 assert.ok(firstModel.visibleRows.some((row) => tree.readNode(row.nodeId)?.name === 'src'), 'T040-E03-02 expanded tree exposes directory children');
 assert.equal(firstModel.visibleRows.some((row) => tree.readNode(row.nodeId)?.name === '.env'), false, 'T040-HIDDEN-01 hidden entries follow policy');
+assert.equal(firstModel.includeHidden, false, 'T036-FILE-EXPLORER-HIDDEN-UNIT-01 Explorer policy can hide hidden entries for editor.file-explorer.hidden=true');
+assert.equal(firstModel.visibleRows.some((row) => tree.readNode(row.nodeId)?.name === 'ignored.tmp'), false, 'T036-FILE-EXPLORER-IGNORE-UNIT-02 ignored entries follow the Explorer policy');
+assert.equal(firstModel.visibleRows.some((row) => tree.readNode(row.nodeId)?.name === 'ignored.tmp'), false, 'T036-FILE-EXPLORER-PARENTS-UNIT-02 ignored entries follow the Explorer policy');
+assert.equal(firstModel.visibleRows.some((row) => tree.readNode(row.nodeId)?.name === 'ignored.tmp'), false, 'T036-FILE-EXPLORER-GIT-IGNORE-UNIT-02 ignored entries follow the Explorer policy');
+assert.equal(firstModel.visibleRows.some((row) => tree.readNode(row.nodeId)?.name === 'ignored.tmp'), false, 'T036-FILE-EXPLORER-GIT-GLOBAL-UNIT-02 ignored entries follow the Explorer policy');
+assert.equal(firstModel.visibleRows.some((row) => tree.readNode(row.nodeId)?.name === 'ignored.tmp'), false, 'T036-FILE-EXPLORER-GIT-EXCLUDE-UNIT-02 ignored entries follow the Explorer policy');
 
 const srcId = firstModel.visibleRows.map((row) => tree.readNode(row.nodeId)).find((node) => node?.name === 'src')?.id;
 assert.ok(srcId !== undefined, 'T040-E03-03 source directory has stable identity');
@@ -85,9 +101,26 @@ if (loopId !== undefined) {
   assert.equal(tree.readNode(loopId)?.loadState, 'symlink-cycle', 'T040-SYMLINK-02 symlink cycle state is explicit');
   assert.equal((await tree.expand(loopId)).ok, false, 'T040-SYMLINK-03 cycle cannot be traversed');
 }
+const linkId = tree.model.visibleRows.map((row) => tree.readNode(row.nodeId)).find((node) => node?.name === 'link')?.id;
+assert.ok(linkId !== undefined, 'T036-FILE-EXPLORER-SYMLINKS-UNIT-01 symlink remains visible with follow-symlinks=false');
+if (linkId !== undefined) assert.equal((await tree.expand(linkId)).ok, false, 'T036-FILE-EXPLORER-SYMLINKS-UNIT-01 follow-symlinks=false blocks traversal');
+
+const followTree = new ExplorerTree(filesystem, { includeHidden: false, includeIgnored: false, followSymlinks: true });
+const followRoot = followTree.addRoot({ id: 'follow-workspace', label: 'workspace', path: '/workspace' });
+if (!followRoot.ok) throw new Error(`follow root fixture failed: ${followRoot.error.kind}`);
+assert.equal((await followTree.expand(followRoot.value)).ok, true, 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02 follow-symlinks=true expands the root');
+const followLinkId = followTree.model.visibleRows.map((row) => followTree.readNode(row.nodeId)).find((node) => node?.name === 'link')?.id;
+assert.ok(followLinkId !== undefined, 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02 followable symlink remains visible');
+if (followLinkId !== undefined) {
+  assert.equal((await followTree.expand(followLinkId)).ok, true, 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02 follow-symlinks=true traverses the link');
+  assert.ok(followTree.model.visibleRows.some((row) => followTree.readNode(row.nodeId)?.relativePath === 'link/main.ts'), 'T036-FILE-EXPLORER-SYMLINKS-UNIT-02 traversed symlink exposes its child');
+}
+followTree.dispose();
 
 tree.setIncludeHidden(true);
 assert.ok(tree.model.visibleRows.some((row) => tree.readNode(row.nodeId)?.name === '.env'), 'T040-HIDDEN-02 hidden entries can be intentionally included');
+tree.setIncludeIgnored(true);
+assert.ok(tree.model.visibleRows.some((row) => tree.readNode(row.nodeId)?.name === 'ignored.tmp'), 'T036-FILE-EXPLORER-IGNORE-UNIT-03 ignored entries can be intentionally included');
 tree.setFilter('renamed');
 assert.ok(tree.model.visibleRows.some((row) => tree.readNode(row.nodeId)?.name === 'renamed.ts'), 'T040-FILTER-01 filtering retains matching descendants and ancestors');
 tree.setFilter('');
@@ -101,6 +134,32 @@ const frame = formatExplorerLines(uiModel, 52, 12).join('\n');
 assert.match(frame, /Files/u, 'T040-UI-01 explorer panel header is visible');
 assert.match(frame, /renamed\.ts/u, 'T040-UI-02 stable renamed file is rendered');
 assert.equal(typeof uiRead.subscribe, 'function', 'T040-UI-03 explorer read port remains disposable');
+
+const chainId = tree.model.nodes.find((node) => node.relativePath === 'chain')?.id;
+assert.ok(chainId !== undefined, 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-01 chain root retains a stable identity');
+if (chainId !== undefined) {
+  await tree.expand(chainId);
+  const chainOneId = tree.model.nodes.find((node) => node.relativePath === 'chain/one')?.id;
+  assert.ok(chainOneId !== undefined, 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-01 first child directory retains a stable identity');
+  if (chainOneId === undefined) throw new Error('chain/one fixture missing');
+  assert.equal(tree.model.visibleRows.find((row) => row.nodeId === chainOneId)?.label, 'chain/one', 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-02 single child directory is flattened');
+  await tree.expand(chainOneId);
+  const chainTwoId = tree.model.nodes.find((node) => node.relativePath === 'chain/one/two')?.id;
+  assert.ok(chainTwoId !== undefined, 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-03 second child directory retains a stable identity');
+  if (chainTwoId === undefined) throw new Error('chain/one/two fixture missing');
+  assert.equal(tree.model.visibleRows.find((row) => row.nodeId === chainTwoId)?.label, 'chain/one/two', 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-03 consecutive single child directories are flattened');
+}
+const unflattenedTree = new ExplorerTree(filesystem, { includeHidden: false, includeIgnored: false, flattenDirs: false });
+const unflattenedRoot = unflattenedTree.addRoot({ id: 'unflattened-workspace', label: 'workspace', path: '/workspace' });
+if (!unflattenedRoot.ok) throw new Error(`unflattened root fixture failed: ${unflattenedRoot.error.kind}`);
+await unflattenedTree.expand(unflattenedRoot.value);
+const unflattenedChain = unflattenedTree.model.nodes.find((node) => node.relativePath === 'chain')?.id;
+const unflattenedOne = unflattenedTree.model.nodes.find((node) => node.relativePath === 'chain/one')?.id;
+if (unflattenedChain !== undefined && unflattenedOne !== undefined) {
+  await unflattenedTree.expand(unflattenedChain);
+  assert.equal(unflattenedTree.model.visibleRows.find((row) => row.nodeId === unflattenedOne)?.label, undefined, 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-04 flatten-dirs=false preserves separate directory labels');
+}
+unflattenedTree.dispose();
 
 tree.dispose();
 assert.equal(tree.model.nodes.length, 0, 'T040-DISPOSE-01 tree releases nodes and watcher state');

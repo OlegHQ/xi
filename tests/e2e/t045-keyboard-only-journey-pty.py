@@ -115,6 +115,10 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-keyboard-only-") as temporary:
         # 5. Theme switching (T132): commit Xi Dark via the keyboard-driven picker.
         os.write(master, b" t")
         read_for(master, captured, 0.4)
+        # The picker keeps the currently applied theme selected when it opens; move to Xi
+        # Dark before committing it.
+        os.write(master, b"\x10")  # Ctrl-P previews the previous (Xi Dark) entry.
+        read_for(master, captured, 0.3)
         before_theme = len(captured)
         os.write(master, b"\r")
         wait_for(master, captured, b"XI_THEME_APPLIED", 5)

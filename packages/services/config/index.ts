@@ -57,12 +57,12 @@ export interface ConfigCommandCatalog {
 export const DEFAULT_COMMAND_CATALOG: ConfigCommandCatalog = Object.freeze({
   commandIds: Object.freeze([
     'files.pick', 'buffers.pick', 'diagnostics.pick', 'command.pick', 'search.workspace', 'search.replace', 'files.edit-directory', 'files.edit-buffer-directory', 'theme.pick',
-    'lsp.hover', 'lsp.code-action', 'lsp.rename', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'panel.problems.focus', 'panel.preview', 'panel.open', 'panel.close', 'git.diff', 'editor.mouse.toggle', 'sidebar.toggle', 'macro.record',
+    'lsp.hover', 'lsp.code-action', 'lsp.references', 'lsp.rename', 'editor.goto-word', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'panel.problems.focus', 'panel.preview', 'panel.open', 'panel.close', 'git.diff', 'editor.mouse.toggle', 'sidebar.toggle', 'macro.record',
     'selection.add-above', 'selection.add-below', 'selection.add-next-match', 'selection.skip-next-match',
     'selection.select-all-matches', 'selection.split-lines', 'selection.select-regex', 'selection.keep-matching',
     'selection.remove-primary', 'selection.keep-primary', 'selection.rotate-primary-next', 'selection.rotate-primary-previous',
     'selection.collapse', 'selection.flip', 'selection.merge', 'selection.undo', 'buffer.next', 'buffer.previous',
-    'config.open', 'config.reload', 'write.quit', 'quit.all', 'write.all',
+    'config.open', 'config.reload', 'write.quit', 'quit.all', 'write.all', 'noop',
   ]),
   nativeExNames: Object.freeze(['quit', 'write', 'wq', 'x', 'qa', 'wa', 'Xi']),
 });
@@ -93,21 +93,155 @@ export interface MouseConfig {
   readonly scrollLines: number;
 }
 
+export type StatuslineElement = 'mode' | 'spinner' | 'file-name' | 'file-absolute-path' | 'file-base-name' | 'file-modification-indicator' | 'file-encoding' | 'file-line-ending' | 'file-indent-style' | 'read-only-indicator' | 'total-line-numbers' | 'file-type' | 'diagnostics' | 'workspace-diagnostics' | 'selections' | 'primary-selection-length' | 'position' | 'position-percentage' | 'separator' | 'spacer' | 'version-control' | 'register' | 'current-working-directory' | 'code-action-hint';
+export type StatuslineDiagnosticSeverity = 'hint' | 'info' | 'warning' | 'error';
+export type EditorGutter = 'diagnostics' | 'spacer' | 'line-numbers' | 'diff' | 'code-action-hint';
+export interface IndentGuidesConfig {
+  readonly render: boolean;
+  readonly character: string;
+  readonly skipLevels: number;
+}
+export interface WhitespaceConfig {
+  readonly render: { readonly default: boolean; readonly space: boolean; readonly nbsp: boolean; readonly nnbsp: boolean; readonly tab: boolean; readonly newline: boolean };
+  readonly characters: { readonly space: string; readonly nbsp: string; readonly nnbsp: string; readonly tab: string; readonly tabpad: string; readonly newline: string };
+}
+export interface SmartTabConfig {
+  readonly enable: boolean;
+  readonly supersedeMenu: boolean;
+}
+export interface WordCompletionConfig {
+  readonly enable: boolean;
+  readonly triggerLength: number;
+}
+export interface WorkspaceTrustConfig {
+  readonly level: 'none' | 'servers' | 'insecure';
+  readonly prompt: boolean;
+  readonly trusted: readonly string[];
+}
+
+export interface WorkspaceTrustDecision {
+  readonly workspaceConfigAllowed: boolean;
+  readonly serversAllowed: boolean;
+  readonly gitAllowed: boolean;
+  readonly stale: boolean;
+}
+
+export interface WorkspaceTrustResolver {
+  resolve(workspaceRoot: string, config: WorkspaceTrustConfig, cancellation: CancellationToken): Promise<WorkspaceTrustDecision>;
+}
+
+/** Returns whether a workspace may load its project configuration under the compiled trust policy. */
+export function workspaceTrustAllows(workspaceRoot: string, config: WorkspaceTrustConfig, environment: Readonly<Record<string, string | undefined>> = {}): boolean {
+  if (config.level === 'insecure') return true;
+  const normalizedRoot = normalizeTrustPath(workspaceRoot);
+  return config.trusted.some((pattern) => globMatches(normalizedRoot, expandTrustPattern(pattern, environment)));
+}
+export type InlineDiagnosticsFilter = 'disable' | StatuslineDiagnosticSeverity;
+export type DefaultLineEnding = 'native' | 'lf' | 'crlf' | 'ff' | 'cr' | 'nel';
+export type PopupBorder = 'none' | 'popup' | 'menu' | 'all';
+export type AutoPairsConfig = false | Readonly<Record<string, string>>;
+
+export interface StatuslineConfig {
+  readonly left: readonly StatuslineElement[];
+  readonly center: readonly StatuslineElement[];
+  readonly right: readonly StatuslineElement[];
+  readonly separator: string;
+  readonly mode: { readonly normal: string; readonly insert: string; readonly select: string };
+  readonly diagnostics: readonly StatuslineDiagnosticSeverity[];
+  readonly workspaceDiagnostics: readonly StatuslineDiagnosticSeverity[];
+}
+
 export interface EditorConfig {
   readonly sidebarVisible: boolean;
   readonly sidebarWidth: number;
   readonly sidebarPanel: 'files' | 'search' | 'git';
   readonly theme: string;
-  readonly lineNumber: 'absolute' | 'relative' | 'none';
+  readonly themeVariants: { readonly dark?: string; readonly light?: string; readonly fallback?: string };
+  readonly lineNumber: 'absolute' | 'relative';
+  readonly lineNumberMinWidth: number;
+  readonly gutters: readonly EditorGutter[];
+  readonly indentGuides: IndentGuidesConfig;
+  readonly whitespace: WhitespaceConfig;
+  readonly smartTab: SmartTabConfig;
+  readonly wordCompletion: WordCompletionConfig;
+  readonly workspaceTrust: WorkspaceTrustConfig;
+  readonly autoPairs: AutoPairsConfig;
+  readonly editorConfig: boolean;
+  readonly continueComments: boolean;
+  readonly cursorline: boolean;
+  readonly cursorcolumn: boolean;
+  readonly rainbowBrackets: boolean;
+  readonly rulers: readonly number[];
+  readonly textWidth: number;
+  readonly workspaceLspRoots: readonly string[];
+  readonly wrapAtTextWidth: boolean;
   readonly scrolloff: number;
+  readonly idleTimeout: number;
   readonly mouse: MouseConfig;
+  readonly shell: readonly [string, string];
+  readonly kittyKeyboardProtocol: 'auto' | 'enabled' | 'disabled';
+  readonly mouseYankRegister: string;
+  readonly clipboardProvider: ClipboardProviderConfig;
+  readonly middleClickPaste: boolean;
   readonly wrap: boolean;
+  readonly softWrapMaxWrap: number;
+  readonly softWrapMaxIndentRetain: number;
+  readonly wrapIndicator: string;
+  readonly pathCompletion: boolean;
+  readonly inlineDiagnosticsCursorLine: InlineDiagnosticsFilter;
+  readonly inlineDiagnosticsOtherLines: InlineDiagnosticsFilter;
+  readonly endOfLineDiagnostics: InlineDiagnosticsFilter;
+  readonly inlineDiagnosticsPrefixLen: number;
+  readonly inlineDiagnosticsMaxWrap: number;
+  readonly inlineDiagnosticsMinDiagnosticWidth: number;
+  readonly inlineDiagnosticsMaxDiagnostics: number;
+  readonly autoCompletion: boolean;
+  readonly completionTimeout: number;
+  readonly completionTriggerLen: number;
+  readonly previewCompletionInsert: boolean;
+  readonly autoInfo: boolean;
+  readonly completionReplace: boolean;
+  readonly colorModes: boolean;
+  readonly trueColor: boolean;
+  readonly undercurl: boolean;
+  readonly bufferline: 'always' | 'never' | 'multiple';
+  readonly defaultLineEnding: DefaultLineEnding;
+  readonly atomicSave?: boolean;
+  readonly indentHeuristic: 'simple' | 'tree-sitter' | 'hybrid';
+  readonly jumpLabelAlphabet: readonly string[];
+  readonly popupBorder: PopupBorder;
+  readonly statusline: StatuslineConfig;
+  readonly autoFormat: boolean;
+  readonly autoSave: { readonly focusLost: boolean; readonly afterDelay: { readonly enable: boolean; readonly timeout: number } };
+  readonly defaultYankRegister: string;
+  readonly insertFinalNewline: boolean;
+  readonly trimFinalNewlines: boolean;
+  readonly trimTrailingWhitespace: boolean;
+  readonly search: { readonly smartCase: boolean; readonly wrapAround: boolean };
   readonly motionTrail: 'off' | 'last-motion';
   readonly selection: SelectionConfig;
   readonly hintsDelayMs: number;
-  readonly cursorShape: { readonly normal: 'block' | 'bar' | 'underline'; readonly insert: 'block' | 'bar' | 'underline'; readonly visual: 'block' | 'bar' | 'underline' };
-  readonly lsp: { readonly enable: boolean; readonly inlayHints: boolean };
+  readonly cursorShape: { readonly normal: 'block' | 'bar' | 'underline' | 'hidden'; readonly insert: 'block' | 'bar' | 'underline' | 'hidden'; readonly select: 'block' | 'bar' | 'underline' | 'hidden' };
+  readonly filePicker: { readonly hidden: boolean; readonly followSymlinks: boolean; readonly deduplicateLinks: boolean; readonly parents: boolean; readonly ignore: boolean; readonly gitIgnore: boolean; readonly gitGlobal: boolean; readonly gitExclude: boolean; readonly maxDepth: number | undefined };
+  readonly fileExplorer: { readonly hidden: boolean; readonly followSymlinks: boolean; readonly parents: boolean; readonly ignore: boolean; readonly gitIgnore: boolean; readonly gitGlobal: boolean; readonly gitExclude: boolean; readonly flattenDirs: boolean };
+  readonly bufferPicker: { readonly startPosition: 'current' | 'previous' };
+  readonly lsp: { readonly enable: boolean; readonly displayInlayHints: boolean; readonly inlayHintsLengthLimit: number | undefined; readonly inlayHints: boolean; readonly displayColorSwatches: boolean; readonly autoDocumentHighlight: boolean; readonly gotoReferenceIncludeDeclaration: boolean; readonly snippets: boolean; readonly displayMessages: boolean; readonly displayProgressMessages: boolean; readonly autoSignatureHelp: boolean; readonly displaySignatureHelpDocs: boolean };
 }
+
+export interface ClipboardCommandConfig {
+  readonly command: string;
+  readonly args: readonly string[];
+}
+
+export type ClipboardProviderConfig =
+  | { readonly kind: 'builtin'; readonly name: string }
+  | {
+    readonly kind: 'custom';
+    readonly yank: ClipboardCommandConfig;
+    readonly paste: ClipboardCommandConfig;
+    readonly primaryYank?: ClipboardCommandConfig;
+    readonly primaryPaste?: ClipboardCommandConfig;
+  };
 
 export interface SearchConfig {
   readonly debounceMs: number;
@@ -216,12 +350,24 @@ function disposedDiagnostic(): ConfigDiagnostic {
 }
 
 const defaultEditor: EditorConfig = Object.freeze({
-  sidebarVisible: true, sidebarWidth: 28, sidebarPanel: 'files',
-  theme: 'xi-light', lineNumber: 'absolute', scrolloff: 5,
-  mouse: Object.freeze({ enabled: true, modifier: 'none', scrollLines: 3 }), wrap: false,
-  motionTrail: 'last-motion', selection: Object.freeze({ limit: 10_000, historyLimit: 100 }), hintsDelayMs: 250,
-  cursorShape: Object.freeze({ normal: 'block', insert: 'block', visual: 'block' }),
-  lsp: Object.freeze({ enable: true, inlayHints: false }),
+  popupBorder: 'none', sidebarVisible: true, sidebarWidth: 28, sidebarPanel: 'files',
+  theme: 'xi-light', themeVariants: Object.freeze({}), lineNumber: 'absolute', lineNumberMinWidth: 3, gutters: Object.freeze(['diagnostics', 'spacer', 'line-numbers', 'spacer', 'diff'] as EditorGutter[]), indentGuides: Object.freeze({ render: false, character: '│', skipLevels: 0 }), whitespace: Object.freeze({ render: Object.freeze({ default: false, space: false, nbsp: false, nnbsp: false, tab: false, newline: false }), characters: Object.freeze({ space: '·', nbsp: '⍽', nnbsp: '␣', tab: '→', tabpad: ' ', newline: '⏎' }) }), smartTab: Object.freeze({ enable: true, supersedeMenu: false }), wordCompletion: Object.freeze({ enable: true, triggerLength: 7 }), workspaceTrust: Object.freeze({ level: 'servers', prompt: true, trusted: Object.freeze([]) }), autoPairs: Object.freeze({ '(': ')', '{': '}', '[': ']', '"': '"', "'": "'", '`': '`' }), editorConfig: true, continueComments: true, cursorline: false, cursorcolumn: false, rainbowBrackets: false, rulers: Object.freeze([]), textWidth: 80, wrapAtTextWidth: false, scrolloff: 5,
+  mouse: Object.freeze({ enabled: true, modifier: 'none', scrollLines: 3 }), shell: Object.freeze(['sh', '-c'] as [string, string]), wrap: false, softWrapMaxWrap: 20, softWrapMaxIndentRetain: 40, pathCompletion: true, autoCompletion: true, completionTimeout: 250, completionTriggerLen: 2, previewCompletionInsert: true, autoInfo: true, completionReplace: false, colorModes: false, trueColor: false, undercurl: false, bufferline: 'never', defaultLineEnding: 'native', statusline: Object.freeze({ left: Object.freeze(['mode', 'spinner', 'file-name', 'read-only-indicator', 'file-modification-indicator'] as StatuslineElement[]), center: Object.freeze([] as StatuslineElement[]), right: Object.freeze(['diagnostics', 'selections', 'register', 'position', 'file-encoding'] as StatuslineElement[]), separator: '│', mode: Object.freeze({ normal: 'NOR', insert: 'INS', select: 'SEL' }), diagnostics: Object.freeze(['warning', 'error'] as StatuslineDiagnosticSeverity[]), workspaceDiagnostics: Object.freeze(['warning', 'error'] as StatuslineDiagnosticSeverity[]), }), autoFormat: true, autoSave: Object.freeze({ focusLost: false, afterDelay: Object.freeze({ enable: false, timeout: 3000 }) }), defaultYankRegister: '"', insertFinalNewline: true, trimFinalNewlines: false, trimTrailingWhitespace: false,
+  kittyKeyboardProtocol: 'auto',
+  mouseYankRegister: '*',
+  clipboardProvider: Object.freeze({ kind: 'builtin', name: 'platform' }),
+  middleClickPaste: true,
+  search: Object.freeze({ smartCase: true, wrapAround: true }), wrapIndicator: '↪ ', inlineDiagnosticsCursorLine: 'warning', inlineDiagnosticsOtherLines: 'disable', endOfLineDiagnostics: 'hint', inlineDiagnosticsPrefixLen: 1, inlineDiagnosticsMaxWrap: 20, inlineDiagnosticsMinDiagnosticWidth: 40, inlineDiagnosticsMaxDiagnostics: 10,
+  idleTimeout: 250, motionTrail: 'last-motion', selection: Object.freeze({ limit: 10_000, historyLimit: 100 }), hintsDelayMs: 250,
+  atomicSave: true,
+  indentHeuristic: 'hybrid',
+  jumpLabelAlphabet: Object.freeze([...('abcdefghijklmnopqrstuvwxyz')]),
+  workspaceLspRoots: Object.freeze([]),
+  cursorShape: Object.freeze({ normal: 'block', insert: 'block', select: 'block' }),
+  filePicker: Object.freeze({ hidden: true, followSymlinks: true, deduplicateLinks: true, parents: true, ignore: true, gitIgnore: true, gitGlobal: true, gitExclude: true, maxDepth: undefined }),
+  fileExplorer: Object.freeze({ hidden: false, followSymlinks: false, parents: false, ignore: false, gitIgnore: false, gitGlobal: false, gitExclude: false, flattenDirs: true }),
+  bufferPicker: Object.freeze({ startPosition: 'current' }),
+  lsp: Object.freeze({ enable: true, displayInlayHints: false, inlayHintsLengthLimit: undefined, inlayHints: false, displayColorSwatches: true, autoDocumentHighlight: false, gotoReferenceIncludeDeclaration: true, snippets: true, displayMessages: true, displayProgressMessages: false, autoSignatureHelp: true, displaySignatureHelpDocs: true }),
 });
 const defaultSearch: SearchConfig = Object.freeze({ debounceMs: 40, maxVisibleResults: 10_000, hidden: true, followSymlinks: false });
 
@@ -323,7 +469,7 @@ export function compileConfig(layers: readonly ConfigLayer[], options: ConfigCom
   if (diagnostics.length > 0) return { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
 
   const profile = options.profile ?? inferProfile(parsed);
-  const active = parsed.filter(({ layer, document }) => layer.kind !== 'profile' || profile === 'personal' || document.value.profile !== 'personal');
+  const active = parsed.filter(({ layer, document }) => layer.kind !== 'profile' || profile === 'personal' || configProfileValue(document.value) !== 'personal');
   const merged: Record<string, TomlValue> = Object.create(null) as Record<string, TomlValue>;
   const provenance: Record<string, string> = Object.create(null) as Record<string, string>;
   const locations = new Map<string, SourceLocation>();
@@ -346,10 +492,15 @@ export function compileConfig(layers: readonly ConfigLayer[], options: ConfigCom
 
 function inferProfile(parsed: readonly { readonly layer: ConfigLayer; readonly document: ParsedToml }[]): ConfigProfile {
   for (let index = parsed.length - 1; index >= 0; index -= 1) {
-    const value = parsed[index]?.document.value.profile;
+    const value = configProfileValue(parsed[index]?.document.value ?? Object.create(null));
     if (value === 'strict' || value === 'xi' || value === 'personal') return value;
   }
   return 'xi';
+}
+
+function configProfileValue(root: { readonly [key: string]: TomlValue }): TomlValue | undefined {
+  const xi = asRecord(root.xi);
+  return xi?.profile ?? root.profile;
 }
 
 export function compileInitialConfig(options: ConfigCompilerOptions = {}): ConfigCompileResult {
@@ -894,8 +1045,8 @@ export function resolveFormatterSelection(
 
 /** XI_FORMAT_ON_SAVE stays a hard override for tests that set it
  * (tests/e2e/t055-formatting-pty.py) rather than a second, conflicting source. */
-export function resolveFormatOnSave(env: Readonly<Record<string, string | undefined>>, configuredAutoFormat: boolean): boolean {
-  return env.XI_FORMAT_ON_SAVE === '1' || configuredAutoFormat;
+export function resolveFormatOnSave(env: Readonly<Record<string, string | undefined>>, configuredAutoFormat: boolean, globalAutoFormat = true): boolean {
+  return env.XI_FORMAT_ON_SAVE === '1' || (globalAutoFormat && configuredAutoFormat);
 }
 
 /** Filesystem slice `loadStartupXiConfig` needs to read `config.toml`/`languages.toml`. */
@@ -921,6 +1072,10 @@ export async function loadStartupXiConfig(
   cancellation: CancellationToken,
   extraCommandIds: readonly string[] = [],
   overridesPath?: string,
+  configPath?: string,
+  workspaceConfigPath?: string,
+  environment: Readonly<Record<string, string | undefined>> = {},
+  workspaceTrustResolver?: WorkspaceTrustResolver,
 ): Promise<LoadedStartupConfig> {
   const layers: ConfigLayer[] = [
     { name: 'defaults', kind: 'defaults', source: DEFAULT_CONFIG_TOML, fileName: 'config/default.toml' },
@@ -930,8 +1085,32 @@ export async function loadStartupXiConfig(
     // merge); `[language-server.<name>]` tables merge by name.
     { name: 'default-languages', kind: 'language', source: DEFAULT_LANGUAGES_TOML, fileName: 'config/languages.toml' },
   ];
-  const configToml = await filesystem.readFile(`${configDirectory}/config.toml`, cancellation);
-  if (configToml.ok) layers.push({ name: 'user', kind: 'user', source: new TextDecoder('utf-8').decode(configToml.value), fileName: 'config.toml' });
+  const configToml = await filesystem.readFile(configPath ?? `${configDirectory}/config.toml`, cancellation);
+  if (configToml.ok) layers.push({ name: configPath === undefined ? 'user' : 'cli', kind: configPath === undefined ? 'user' : 'cli', source: new TextDecoder('utf-8').decode(configToml.value), fileName: configPath ?? 'config.toml' });
+  else if (configPath !== undefined) return { config: undefined, diagnostics: [`${configPath}: ${configToml.error.message}`] };
+  const commandCatalog = { ...DEFAULT_COMMAND_CATALOG, commandIds: [...DEFAULT_COMMAND_CATALOG.commandIds, ...extraCommandIds] };
+  const workspaceDiagnostics: string[] = [];
+  if (workspaceConfigPath !== undefined) {
+    const userConfig = compileConfig(layers, { commandCatalog });
+    const editorConfigEnabled = !userConfig.ok || userConfig.value.editor.editorConfig;
+    const trust = userConfig.ok ? userConfig.value.editor.workspaceTrust : defaultEditor.workspaceTrust;
+    const workspaceRoot = workspaceRootFromConfigPath(workspaceConfigPath);
+    const implicit = workspaceTrustAllows(workspaceRoot, trust, environment);
+    const decision = workspaceTrustResolver === undefined
+      ? { workspaceConfigAllowed: implicit, serversAllowed: trust.level !== 'none' || implicit, gitAllowed: trust.level === 'insecure' || implicit, stale: false }
+      : await workspaceTrustResolver.resolve(workspaceRoot, trust, cancellation);
+    if (configPath === undefined && editorConfigEnabled) {
+      const workspaceToml = await filesystem.readFile(workspaceConfigPath, cancellation);
+      const workspaceLanguagesPath = workspaceConfigPath.replace(/config\.toml$/u, 'languages.toml');
+      const workspaceLanguagesToml = await filesystem.readFile(workspaceLanguagesPath, cancellation);
+      if (workspaceToml.ok || workspaceLanguagesToml.ok) {
+        if (decision.workspaceConfigAllowed) {
+          if (workspaceToml.ok) layers.push({ name: 'workspace', kind: 'workspace', trusted: true, source: new TextDecoder('utf-8').decode(workspaceToml.value), fileName: workspaceConfigPath });
+          if (workspaceLanguagesToml.ok) layers.push({ name: 'workspace-languages', kind: 'workspace', trusted: true, source: new TextDecoder('utf-8').decode(workspaceLanguagesToml.value), fileName: workspaceLanguagesPath });
+        } else if (trust.prompt) workspaceDiagnostics.push(`${workspaceConfigPath}: workspace configuration is untrusted${decision.stale ? ' or stale' : ''} and was not loaded`);
+      }
+    }
+  }
   const languagesToml = await filesystem.readFile(`${configDirectory}/languages.toml`, cancellation);
   if (languagesToml.ok) layers.push({ name: 'languages', kind: 'language', source: new TextDecoder('utf-8').decode(languagesToml.value), fileName: 'languages.toml' });
   if (overridesPath !== undefined) {
@@ -944,47 +1123,208 @@ export async function loadStartupXiConfig(
       }
     }
   }
-  const commandCatalog = { ...DEFAULT_COMMAND_CATALOG, commandIds: [...DEFAULT_COMMAND_CATALOG.commandIds, ...extraCommandIds] };
   const compiled = compileConfig(layers, { commandCatalog });
   if (!compiled.ok) return { config: undefined, diagnostics: compiled.error.diagnostics.map((diagnostic) => diagnostic.message) };
-  return { config: compiled.value, diagnostics: [] };
+  return { config: compiled.value, diagnostics: Object.freeze(workspaceDiagnostics) };
 }
 
-export const DEFAULT_CONFIG_TOML = `schema-version = 1
+function workspaceRootFromConfigPath(path: string): string {
+  return path.replace(/[\\/]\.helix[\\/]config\.toml$/u, '') || path;
+}
+
+function normalizeTrustPath(path: string): string {
+  const normalized = path.replaceAll('\\', '/').replaceAll(/\/+/gu, '/');
+  return normalized.length > 1 ? normalized.replace(/\/$/u, '') : normalized;
+}
+
+function expandTrustPattern(pattern: string, environment: Readonly<Record<string, string | undefined>>): string {
+  const home = environment.HOME;
+  return normalizeTrustPath(pattern.replace(/^~(?=$|[\\/])/u, home ?? '~').replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/gu, (_match, braced: string | undefined, bare: string | undefined) => environment[braced ?? bare ?? ''] ?? '\u0000'));
+}
+
+function globMatches(value: string, pattern: string): boolean {
+  let source = '^';
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index] as string;
+    if (character === '*' && pattern[index + 1] === '*') { source += '.*'; index += 1; }
+    else if (character === '*') source += '[^/]*';
+    else if (character === '?') source += '[^/]';
+    else source += /[\\^$+{}.[\]|()]/u.test(character) ? `\\${character}` : character;
+  }
+  return new RegExp(`${source}$`, 'u').test(value);
+}
+
+export const DEFAULT_CONFIG_TOML = `[xi]
+schema-version = 1
 profile = "xi"
 
+[xi.sidebar]
+visible = true
+width = 28
+panel = "files"
+
+[xi.mouse]
+modifier = "none"
+
+[xi.selection]
+limit = 10000
+history-limit = 100
+
+[xi.hints]
+delay-ms = 250
+
+[xi.search]
+debounce-ms = 40
+max-visible-results = 10000
+
 [editor]
-sidebar-visible = true
-sidebar-width = 28
-sidebar-panel = "files"
+editor-config = true
 theme = "xi-light"
+mouse = true
+shell = ["sh", "-c"]
 line-number = "absolute"
+cursorline = false
+continue-comments = true
+cursorcolumn = false
+rainbow-brackets = false
+rulers = []
+text-width = 80
+workspace-lsp-roots = []
 scrolloff = 5
+idle-timeout = 250
+scroll-lines = 3
+auto-completion = true
+path-completion = true
+completion-timeout = 250
+completion-trigger-len = 2
+preview-completion-insert = true
+auto-info = true
+completion-replace = false
+
+color-modes = false
+true-color = false
+undercurl = false
+bufferline = "never"
+default-line-ending = "native"
+atomic-save = true
+indent-heuristic = "hybrid"
+popup-border = "none"
+jump-label-alphabet = "abcdefghijklmnopqrstuvwxyz"
 wrap = false
-motion-trail = "last-motion"
-selection-limit = 10000
-selection-history-limit = 100
+auto-format = true
+default-yank-register = '"'
+insert-final-newline = true
+trim-final-newlines = false
+trim-trailing-whitespace = false
+end-of-line-diagnostics = "hint"
+
+[editor.word-completion]
+enable = true
+trigger-length = 7
+
+[editor.workspace-trust]
+level = "servers"
+prompt = true
+trusted = []
+
+[editor.auto-save]
+focus-lost = false
+after-delay.enable = false
+after-delay.timeout = 3000
+
+[editor.statusline]
+left = ["mode", "spinner", "file-name", "read-only-indicator", "file-modification-indicator"]
+center = []
+right = ["diagnostics", "selections", "register", "position", "file-encoding"]
+separator = "│"
+mode.normal = "NOR"
+mode.insert = "INS"
+mode.select = "SEL"
+diagnostics = ["warning", "error"]
+workspace-diagnostics = ["warning", "error"]
+
+[editor.gutters]
+layout = ["diagnostics", "spacer", "line-numbers", "spacer", "diff"]
+
+[editor.gutters.line-numbers]
+min-width = 3
+
+[editor.indent-guides]
+render = false
+character = "│"
+skip-levels = 0
+
+[editor.whitespace]
+render = "none"
+
+[editor.whitespace.characters]
+space = "·"
+nbsp = "⍽"
+nnbsp = "␣"
+tab = "→"
+tabpad = " "
+newline = "⏎"
+
+[editor.smart-tab]
+enable = true
+supersede-menu = false
 
 [editor.cursor-shape]
 normal = "block"
 insert = "block"
-visual = "block"
+select = "block"
+
+[editor.soft-wrap]
+max-wrap = 20
+max-indent-retain = 40
+wrap-indicator = "↪ "
+
+[editor.inline-diagnostics]
+cursor-line = "warning"
+other-lines = "disable"
+prefix-len = 1
+max-wrap = 20
+min-diagnostic-width = 40
+max-diagnostics = 10
+
+[editor.search]
+smart-case = true
+wrap-around = true
+
+[editor.file-picker]
+hidden = true
+follow-symlinks = true
+deduplicate-links = true
+parents = true
+ignore = true
+git-ignore = true
+git-global = true
+git-exclude = true
+
+[editor.file-explorer]
+hidden = false
+follow-symlinks = false
+parents = false
+ignore = false
+git-ignore = false
+git-global = false
+git-exclude = false
+
+[editor.buffer-picker]
+start-position = "current"
 
 [editor.lsp]
 enable = true
-inlay-hints = false
-
-[editor.mouse]
-enabled = true
-modifier = "none"
-scroll-lines = 3
-
-[editor.hints]
-delay-ms = 250
+display-inlay-hints = false
+display-color-swatches = true
+auto-document-highlight = false
+snippets = true
+display-messages = true
+display-progress-messages = false
+auto-signature-help = true
+display-signature-help-docs = true
 
 [search]
-debounce-ms = 40
-max-visible-results = 10000
 hidden = true
 follow-symlinks = false
 
@@ -1014,31 +1354,31 @@ g = "panel.git.focus"
 o = "panel.outline.focus"
 d = "git.diff"
 
-[keys.files-panel.space]
+[xi.keys.files-panel.space]
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
-[keys.search-panel.space]
+[xi.keys.search-panel.space]
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
-[keys.git-panel.space]
+[xi.keys.git-panel.space]
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
-[keys.diff-panel.space]
+[xi.keys.diff-panel.space]
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
-[aliases]
+[xi.aliases]
 files = "files.pick"
 buffers = "buffers.pick"
 commands = "command.pick"
@@ -1052,7 +1392,8 @@ quit-all = "quit.all"
 write-all = "write.all"
 `;
 
-export const PERSONAL_MIGRATION_TOML = `schema-version = 1
+export const PERSONAL_MIGRATION_TOML = `[xi]
+schema-version = 1
 profile = "personal"
 
 [editor]
@@ -1160,50 +1501,305 @@ function validateMerged(
 ): ConfigCompileResult {
   const diagnostics: ConfigDiagnostic[] = [];
   const editor = asRecord(root.editor) ?? Object.create(null) as Record<string, TomlValue>;
+  const xi = asRecord(root.xi);
+  const xiSidebar = asRecord(xi?.sidebar);
+  const xiMouse = asRecord(xi?.mouse);
+  const xiSelection = asRecord(xi?.selection);
+  const xiHints = asRecord(xi?.hints);
+  const xiSearch = asRecord(xi?.search);
   const search = asRecord(root.search) ?? Object.create(null) as Record<string, TomlValue>;
+  const editorSearch = asRecord(editor.search);
   const editorMouse = asRecord(editor.mouse);
+  const statusline = asRecord(editor.statusline);
+  const statuslineMode = asRecord(statusline?.mode);
+  const gutters = asRecord(editor.gutters);
+  const indentGuides = asRecord(editor['indent-guides']);
+  const whitespace = asRecord(editor.whitespace);
+  const whitespaceRender = asRecord(whitespace?.render);
+  const whitespaceCharacters = asRecord(whitespace?.characters);
+  const smartTab = asRecord(editor['smart-tab']);
+  const wordCompletion = asRecord(editor['word-completion']);
+  const workspaceTrust = asRecord(editor['workspace-trust']);
+  const autoPairs = asRecord(editor['auto-pairs']);
+  const lineNumbers = asRecord(gutters?.['line-numbers']);
   const cursorShape = asRecord(editor['cursor-shape']);
+  const softWrap = asRecord(editor['soft-wrap']);
+  const inlineDiagnostics = asRecord(editor['inline-diagnostics']);
+  const filePicker = asRecord(editor['file-picker']);
+  const fileExplorer = asRecord(editor['file-explorer']);
+  const bufferPicker = asRecord(editor['buffer-picker']);
+  const autoSaveTable = asRecord(editor['auto-save']);
+  const autoSaveAfterDelay = asRecord(autoSaveTable?.['after-delay']);
   const lsp = asRecord(editor.lsp);
   const hints = asRecord(editor.hints);
-  const schemaVersion = root['schema-version'];
-  if (schemaVersion !== undefined && schemaVersion !== 1) diagnostics.push(issue('schema-version', 'unsupported-schema', 'schema-version must be 1', locations));
-  const theme = textField(editor, 'theme') ?? 'xi-light';
+  const shell = parseShell(editor.shell);
+  const clipboardProvider = parseClipboardProvider(editor['clipboard-provider'], locations, diagnostics);
+  const themeTable = asRecord(root.theme);
+  const configuredSchemaVersion = xi?.['schema-version'] ?? root['schema-version'];
+  const schemaPath = xi?.['schema-version'] === undefined ? 'schema-version' : 'xi.schema-version';
+  if (configuredSchemaVersion !== undefined && configuredSchemaVersion !== 1) diagnostics.push(issue(schemaPath, 'unsupported-schema', 'schema-version must be 1', locations));
+  const configuredProfile = xi?.profile ?? root.profile;
+  const profilePath = xi?.profile === undefined ? 'profile' : 'xi.profile';
+  if (configuredProfile !== undefined && (typeof configuredProfile !== 'string' || !['strict', 'xi', 'personal'].includes(configuredProfile))) diagnostics.push(issue(profilePath, 'invalid-value', 'profile must be strict, xi or personal', locations));
+  if (root.theme !== undefined && typeof root.theme !== 'string' && themeTable === undefined) diagnostics.push(issue('theme', 'invalid-type', 'theme must be a string or a table', locations));
+  for (const key of ['dark', 'light', 'fallback'] as const) if (themeTable?.[key] !== undefined && typeof themeTable[key] !== 'string') diagnostics.push(issue(`theme.${key}`, 'invalid-type', `theme.${key} must be a string`, locations));
+  const theme = typeof root.theme === 'string' ? root.theme : textField(editor, 'theme') ?? 'xi-light';
+  const themeVariants = Object.freeze({
+    ...(typeof themeTable?.dark === 'string' ? { dark: themeTable.dark } : {}),
+    ...(typeof themeTable?.light === 'string' ? { light: themeTable.light } : {}),
+    ...(typeof themeTable?.fallback === 'string' ? { fallback: themeTable.fallback } : {}),
+  });
+  if (typeof root.theme === 'string') provenance['editor.theme'] = provenance.theme ?? provenance['editor.theme'] ?? 'merged';
+  if (editor.cursorline !== undefined && typeof editor.cursorline !== 'boolean') diagnostics.push(issue('editor.cursorline', 'invalid-type', 'editor.cursorline must be a boolean', locations));
+  if (editor.cursorcolumn !== undefined && typeof editor.cursorcolumn !== 'boolean') diagnostics.push(issue('editor.cursorcolumn', 'invalid-type', 'editor.cursorcolumn must be a boolean', locations));
+  if (editor['editor-config'] !== undefined && typeof editor['editor-config'] !== 'boolean') diagnostics.push(issue('editor.editor-config', 'invalid-type', 'editor.editor-config must be a boolean', locations));
+  if (editor['atomic-save'] !== undefined && typeof editor['atomic-save'] !== 'boolean') diagnostics.push(issue('editor.atomic-save', 'invalid-type', 'editor.atomic-save must be a boolean', locations));
+  if (editor.shell !== undefined && (!Array.isArray(editor.shell) || editor.shell.length !== 2 || editor.shell.some((value) => typeof value !== 'string' || value.length === 0))) diagnostics.push(issue('editor.shell', 'invalid-value', 'editor.shell must be a two-element non-empty string array', locations));
+  if (editor.rulers !== undefined && integerArrayField(editor, 'rulers') === undefined) diagnostics.push(issue('editor.rulers', 'invalid-type', 'editor.rulers must be an array of positive integers', locations));
+  if (editor['workspace-lsp-roots'] !== undefined && stringArrayField(editor, 'workspace-lsp-roots') === undefined) diagnostics.push(issue('editor.workspace-lsp-roots', 'invalid-type', 'editor.workspace-lsp-roots must be an array of relative directory strings', locations));
+  if (stringArrayField(editor, 'workspace-lsp-roots')?.some((root) => root.length === 0 || root.startsWith('/') || root.includes('\\') || root.split('/').some((part) => part === '' || part === '.' || part === '..'))) diagnostics.push(issue('editor.workspace-lsp-roots', 'invalid-value', 'editor.workspace-lsp-roots must contain non-empty relative directory paths', locations));
+  if (editor.gutters !== undefined && !Array.isArray(editor.gutters) && gutters === undefined) diagnostics.push(issue('editor.gutters', 'invalid-type', 'editor.gutters must be an array or table', locations));
+  const gutterValues = Array.isArray(editor.gutters) ? editor.gutters : gutters?.layout;
+  if (gutterValues !== undefined && (!Array.isArray(gutterValues) || !gutterValues.every((item): item is string => typeof item === 'string' && ['diagnostics', 'spacer', 'line-numbers', 'diff', 'code-action-hint'].includes(item)))) {
+    diagnostics.push(issue(Array.isArray(editor.gutters) ? 'editor.gutters' : 'editor.gutters.layout', 'invalid-value', 'gutter layout must be an array of diagnostics, spacer, line-numbers, diff or code-action-hint', locations));
+  }
+  if (gutters?.layout !== undefined && !Array.isArray(gutters.layout)) diagnostics.push(issue('editor.gutters.layout', 'invalid-type', 'editor.gutters.layout must be an array', locations));
+  if (gutters?.['line-numbers'] !== undefined && lineNumbers === undefined) diagnostics.push(issue('editor.gutters.line-numbers', 'invalid-type', 'editor.gutters.line-numbers must be a table', locations));
+  for (const gutter of ['diagnostics', 'diff', 'spacer'] as const) {
+    if (gutters?.[gutter] !== undefined && asRecord(gutters[gutter]) === undefined) diagnostics.push(issue(`editor.gutters.${gutter}`, 'invalid-type', `editor.gutters.${gutter} must be an empty table`, locations));
+  }
+  if (editor['indent-guides'] !== undefined && indentGuides === undefined) diagnostics.push(issue('editor.indent-guides', 'invalid-type', 'editor.indent-guides must be a table', locations));
+  if (indentGuides?.render !== undefined && typeof indentGuides.render !== 'boolean') diagnostics.push(issue('editor.indent-guides.render', 'invalid-type', 'editor.indent-guides.render must be a boolean', locations));
+  if (indentGuides?.character !== undefined && (typeof indentGuides.character !== 'string' || [...indentGuides.character].length !== 1 || /[\r\n\t]/u.test(indentGuides.character))) diagnostics.push(issue('editor.indent-guides.character', 'invalid-value', 'editor.indent-guides.character must be one non-whitespace code point', locations));
+  if (indentGuides?.['skip-levels'] !== undefined && (typeof indentGuides['skip-levels'] !== 'number' || !Number.isSafeInteger(indentGuides['skip-levels']) || indentGuides['skip-levels'] < 0 || indentGuides['skip-levels'] > 1000)) diagnostics.push(issue('editor.indent-guides.skip-levels', 'invalid-value', 'editor.indent-guides.skip-levels must be an integer from 0 to 1000', locations));
+  if (editor.whitespace !== undefined && whitespace === undefined) diagnostics.push(issue('editor.whitespace', 'invalid-type', 'editor.whitespace must be a table', locations));
+  if (whitespace?.render !== undefined && typeof whitespace.render !== 'string' && whitespaceRender === undefined) diagnostics.push(issue('editor.whitespace.render', 'invalid-type', 'editor.whitespace.render must be "all", "none" or a table', locations));
+  if (typeof whitespace?.render === 'string' && whitespace.render !== 'all' && whitespace.render !== 'none') diagnostics.push(issue('editor.whitespace.render', 'invalid-value', 'editor.whitespace.render must be "all" or "none"', locations));
+  for (const kind of ['default', 'space', 'nbsp', 'nnbsp', 'tab', 'newline'] as const) if (whitespaceRender?.[kind] !== undefined && whitespaceRender[kind] !== 'all' && whitespaceRender[kind] !== 'none') diagnostics.push(issue(`editor.whitespace.render.${kind}`, 'invalid-value', 'whitespace render values must be "all" or "none"', locations));
+  if (whitespace?.characters !== undefined && whitespaceCharacters === undefined) diagnostics.push(issue('editor.whitespace.characters', 'invalid-type', 'editor.whitespace.characters must be a table', locations));
+  for (const kind of ['space', 'nbsp', 'nnbsp', 'tab', 'tabpad', 'newline'] as const) if (whitespaceCharacters?.[kind] !== undefined && (typeof whitespaceCharacters[kind] !== 'string' || [...whitespaceCharacters[kind] as string].length !== 1 || /[\r\n\t]/u.test(whitespaceCharacters[kind] as string))) diagnostics.push(issue(`editor.whitespace.characters.${kind}`, 'invalid-value', 'whitespace characters must be one code point without tabs or newlines', locations));
+  if (editor['smart-tab'] !== undefined && smartTab === undefined) diagnostics.push(issue('editor.smart-tab', 'invalid-type', 'editor.smart-tab must be a table', locations));
+  if (smartTab?.enable !== undefined && typeof smartTab.enable !== 'boolean') diagnostics.push(issue('editor.smart-tab.enable', 'invalid-type', 'editor.smart-tab.enable must be a boolean', locations));
+  if (smartTab?.['supersede-menu'] !== undefined && typeof smartTab['supersede-menu'] !== 'boolean') diagnostics.push(issue('editor.smart-tab.supersede-menu', 'invalid-type', 'editor.smart-tab.supersede-menu must be a boolean', locations));
+  if (editor['word-completion'] !== undefined && wordCompletion === undefined) diagnostics.push(issue('editor.word-completion', 'invalid-type', 'editor.word-completion must be a table', locations));
+  if (wordCompletion?.enable !== undefined && typeof wordCompletion.enable !== 'boolean') diagnostics.push(issue('editor.word-completion.enable', 'invalid-type', 'editor.word-completion.enable must be a boolean', locations));
+  if (editor['workspace-trust'] !== undefined && workspaceTrust === undefined) diagnostics.push(issue('editor.workspace-trust', 'invalid-type', 'editor.workspace-trust must be a table', locations));
+  if (workspaceTrust?.prompt !== undefined && typeof workspaceTrust.prompt !== 'boolean') diagnostics.push(issue('editor.workspace-trust.prompt', 'invalid-type', 'editor.workspace-trust.prompt must be a boolean', locations));
+  if (workspaceTrust?.trusted !== undefined && (stringArrayField(workspaceTrust, 'trusted') === undefined || (stringArrayField(workspaceTrust, 'trusted') ?? []).some((pattern) => pattern.length === 0))) diagnostics.push(issue('editor.workspace-trust.trusted', 'invalid-value', 'editor.workspace-trust.trusted must be a non-empty string array', locations));
+  if (editor['auto-pairs'] !== undefined && typeof editor['auto-pairs'] !== 'boolean' && autoPairs === undefined) diagnostics.push(issue('editor.auto-pairs', 'invalid-type', 'editor.auto-pairs must be a boolean or table', locations));
+  if (autoPairs !== undefined && Object.entries(autoPairs).some(([opening, closing]) => [...opening].length !== 1 || typeof closing !== 'string' || [...closing].length !== 1 || /[\r\n]/u.test(opening + closing))) diagnostics.push(issue('editor.auto-pairs', 'invalid-value', 'editor.auto-pairs table keys and values must be one character without newlines', locations));
+  if (editor.statusline !== undefined && statusline === undefined) diagnostics.push(issue('editor.statusline', 'invalid-type', 'editor.statusline must be a table', locations));
+  if (statusline?.mode !== undefined && statuslineMode === undefined) diagnostics.push(issue('editor.statusline.mode', 'invalid-type', 'editor.statusline.mode must be a table', locations));
+  if (statusline?.separator !== undefined && typeof statusline.separator !== 'string') diagnostics.push(issue('editor.statusline.separator', 'invalid-type', 'editor.statusline.separator must be a string', locations));
+  for (const mode of ['normal', 'insert', 'select'] as const) if (statuslineMode?.[mode] !== undefined && typeof statuslineMode[mode] !== 'string') diagnostics.push(issue(`editor.statusline.mode.${mode}`, 'invalid-type', `editor.statusline.mode.${mode} must be a string`, locations));
+  if (editor['file-picker'] !== undefined && filePicker === undefined) diagnostics.push(issue('editor.file-picker', 'invalid-type', 'editor.file-picker must be a table', locations));
+  if (filePicker?.hidden !== undefined && typeof filePicker.hidden !== 'boolean') diagnostics.push(issue('editor.file-picker.hidden', 'invalid-type', 'editor.file-picker.hidden must be a boolean', locations));
+  if (filePicker?.['follow-symlinks'] !== undefined && typeof filePicker['follow-symlinks'] !== 'boolean') diagnostics.push(issue('editor.file-picker.follow-symlinks', 'invalid-type', 'editor.file-picker.follow-symlinks must be a boolean', locations));
+  if (filePicker?.['deduplicate-links'] !== undefined && typeof filePicker['deduplicate-links'] !== 'boolean') diagnostics.push(issue('editor.file-picker.deduplicate-links', 'invalid-type', 'editor.file-picker.deduplicate-links must be a boolean', locations));
+  for (const key of ['parents', 'ignore', 'git-ignore', 'git-global', 'git-exclude'] as const) if (filePicker?.[key] !== undefined && typeof filePicker[key] !== 'boolean') diagnostics.push(issue(`editor.file-picker.${key}`, 'invalid-type', `editor.file-picker.${key} must be a boolean`, locations));
   if (editor['sidebar-visible'] !== undefined && typeof editor['sidebar-visible'] !== 'boolean') {
     diagnostics.push(issue('editor.sidebar-visible', 'invalid-type', 'editor.sidebar-visible must be a boolean', locations));
   }
-  const sidebarWidth = boundedInteger(editor, 'sidebar-width', 22, 40, 28, diagnostics, locations, 'editor.sidebar-width');
-  const sidebarPanel = enumField(editor, 'sidebar-panel', ['files', 'search', 'git'] as const, 'files', diagnostics, locations, 'editor.sidebar-panel');
-  const lineNumber = enumField(editor, 'line-number', ['absolute', 'relative', 'none'] as const, 'absolute', diagnostics, locations, 'editor.line-number');
+  if (xi?.sidebar !== undefined && xiSidebar === undefined) diagnostics.push(issue('xi.sidebar', 'invalid-type', 'xi.sidebar must be a table', locations));
+  if (xiSidebar?.visible !== undefined && typeof xiSidebar.visible !== 'boolean') diagnostics.push(issue('xi.sidebar.visible', 'invalid-type', 'xi.sidebar.visible must be a boolean', locations));
+  if (xi?.mouse !== undefined && xiMouse === undefined) diagnostics.push(issue('xi.mouse', 'invalid-type', 'xi.mouse must be a table', locations));
+  if (xi?.selection !== undefined && xiSelection === undefined) diagnostics.push(issue('xi.selection', 'invalid-type', 'xi.selection must be a table', locations));
+  if (xi?.hints !== undefined && xiHints === undefined) diagnostics.push(issue('xi.hints', 'invalid-type', 'xi.hints must be a table', locations));
+  if (xi?.search !== undefined && xiSearch === undefined) diagnostics.push(issue('xi.search', 'invalid-type', 'xi.search must be a table', locations));
+  if (xi?.aliases !== undefined && asRecord(xi.aliases) === undefined) diagnostics.push(issue('xi.aliases', 'invalid-type', 'xi.aliases must be a table', locations));
+  if (editor['buffer-picker'] !== undefined && bufferPicker === undefined) diagnostics.push(issue('editor.buffer-picker', 'invalid-type', 'editor.buffer-picker must be a table', locations));
+  if (editor['file-explorer'] !== undefined && fileExplorer === undefined) diagnostics.push(issue('editor.file-explorer', 'invalid-type', 'editor.file-explorer must be a table', locations));
+  if (fileExplorer?.hidden !== undefined && typeof fileExplorer.hidden !== 'boolean') diagnostics.push(issue('editor.file-explorer.hidden', 'invalid-type', 'editor.file-explorer.hidden must be a boolean', locations));
+  if (fileExplorer?.['follow-symlinks'] !== undefined && typeof fileExplorer['follow-symlinks'] !== 'boolean') diagnostics.push(issue('editor.file-explorer.follow-symlinks', 'invalid-type', 'editor.file-explorer.follow-symlinks must be a boolean', locations));
+  if (fileExplorer?.['flatten-dirs'] !== undefined && typeof fileExplorer['flatten-dirs'] !== 'boolean') diagnostics.push(issue('editor.file-explorer.flatten-dirs', 'invalid-type', 'editor.file-explorer.flatten-dirs must be a boolean', locations));
+  for (const key of ['parents', 'ignore', 'git-ignore', 'git-global', 'git-exclude'] as const) if (fileExplorer?.[key] !== undefined && typeof fileExplorer[key] !== 'boolean') diagnostics.push(issue(`editor.file-explorer.${key}`, 'invalid-type', `editor.file-explorer.${key} must be a boolean`, locations));
+  if (editor['auto-save'] !== undefined && typeof editor['auto-save'] !== 'boolean' && autoSaveTable === undefined) diagnostics.push(issue('editor.auto-save', 'invalid-type', 'editor.auto-save must be a boolean or table', locations));
+  if (autoSaveTable?.['focus-lost'] !== undefined && typeof autoSaveTable['focus-lost'] !== 'boolean') diagnostics.push(issue('editor.auto-save.focus-lost', 'invalid-type', 'editor.auto-save.focus-lost must be a boolean', locations));
+  if (autoSaveTable?.['after-delay'] !== undefined && autoSaveAfterDelay === undefined) diagnostics.push(issue('editor.auto-save.after-delay', 'invalid-type', 'editor.auto-save.after-delay must be a table', locations));
+  if (autoSaveAfterDelay?.enable !== undefined && typeof autoSaveAfterDelay.enable !== 'boolean') diagnostics.push(issue('editor.auto-save.after-delay.enable', 'invalid-type', 'editor.auto-save.after-delay.enable must be a boolean', locations));
+  if (editor['auto-completion'] !== undefined && typeof editor['auto-completion'] !== 'boolean') diagnostics.push(issue('editor.auto-completion', 'invalid-type', 'editor.auto-completion must be a boolean', locations));
+  if (editor['path-completion'] !== undefined && typeof editor['path-completion'] !== 'boolean') diagnostics.push(issue('editor.path-completion', 'invalid-type', 'editor.path-completion must be a boolean', locations));
+  if (editor['completion-replace'] !== undefined && typeof editor['completion-replace'] !== 'boolean') diagnostics.push(issue('editor.completion-replace', 'invalid-type', 'editor.completion-replace must be a boolean', locations));
+  if (editor['preview-completion-insert'] !== undefined && typeof editor['preview-completion-insert'] !== 'boolean') diagnostics.push(issue('editor.preview-completion-insert', 'invalid-type', 'editor.preview-completion-insert must be a boolean', locations));
+  if (editor['auto-info'] !== undefined && typeof editor['auto-info'] !== 'boolean') diagnostics.push(issue('editor.auto-info', 'invalid-type', 'editor.auto-info must be a boolean', locations));
+  if (editor['color-modes'] !== undefined && typeof editor['color-modes'] !== 'boolean') diagnostics.push(issue('editor.color-modes', 'invalid-type', 'editor.color-modes must be a boolean', locations));
+  if (editor['rainbow-brackets'] !== undefined && typeof editor['rainbow-brackets'] !== 'boolean') diagnostics.push(issue('editor.rainbow-brackets', 'invalid-type', 'editor.rainbow-brackets must be a boolean', locations));
+  if (editor['true-color'] !== undefined && typeof editor['true-color'] !== 'boolean') diagnostics.push(issue('editor.true-color', 'invalid-type', 'editor.true-color must be a boolean', locations));
+  if (editor.undercurl !== undefined && typeof editor.undercurl !== 'boolean') diagnostics.push(issue('editor.undercurl', 'invalid-type', 'editor.undercurl must be a boolean', locations));
+  if (editor.bufferline !== undefined && typeof editor.bufferline !== 'string') diagnostics.push(issue('editor.bufferline', 'invalid-type', 'editor.bufferline must be a string', locations));
+  if (editor.search !== undefined && editorSearch === undefined) diagnostics.push(issue('editor.search', 'invalid-type', 'editor.search must be a table', locations));
+  if (editorSearch?.['smart-case'] !== undefined && typeof editorSearch['smart-case'] !== 'boolean') diagnostics.push(issue('editor.search.smart-case', 'invalid-type', 'editor.search.smart-case must be a boolean', locations));
+  if (editorSearch?.['wrap-around'] !== undefined && typeof editorSearch['wrap-around'] !== 'boolean') diagnostics.push(issue('editor.search.wrap-around', 'invalid-type', 'editor.search.wrap-around must be a boolean', locations));
+  const sidebarWidth = xiSidebar?.width === undefined
+    ? boundedInteger(editor, 'sidebar-width', 22, 40, 28, diagnostics, locations, 'editor.sidebar-width')
+    : boundedInteger({ width: xiSidebar.width }, 'width', 22, 40, 28, diagnostics, locations, 'xi.sidebar.width');
+  const sidebarPanel = xiSidebar?.panel === undefined
+    ? enumField(editor, 'sidebar-panel', ['files', 'search', 'git'] as const, 'files', diagnostics, locations, 'editor.sidebar-panel')
+    : enumField({ panel: xiSidebar.panel }, 'panel', ['files', 'search', 'git'] as const, 'files', diagnostics, locations, 'xi.sidebar.panel');
+  const sidebarVisible = xiSidebar?.visible === undefined ? booleanField(editor, 'sidebar-visible') ?? true : xiSidebar.visible === true;
+  const lineNumber = enumField(editor, 'line-number', ['absolute', 'relative'] as const, 'absolute', diagnostics, locations, 'editor.line-number');
+  const bufferline = enumField(editor, 'bufferline', ['always', 'never', 'multiple'] as const, 'never', diagnostics, locations, 'editor.bufferline');
+  const defaultLineEnding = enumField(editor, 'default-line-ending', ['native', 'lf', 'crlf', 'ff', 'cr', 'nel'] as const, 'native', diagnostics, locations, 'editor.default-line-ending');
+  const atomicSave = booleanField(editor, 'atomic-save') ?? true;
+  const indentHeuristic = enumField(editor, 'indent-heuristic', ['simple', 'tree-sitter', 'hybrid'] as const, 'hybrid', diagnostics, locations, 'editor.indent-heuristic');
+  const popupBorder = enumField(editor, 'popup-border', ['none', 'popup', 'menu', 'all'] as const, 'none', diagnostics, locations, 'editor.popup-border');
+  const lineNumberMinWidth = boundedInteger(lineNumbers ?? Object.create(null), 'min-width', 1, 100, 3, diagnostics, locations, 'editor.gutters.line-numbers.min-width');
+  const guttersConfig: readonly EditorGutter[] = Object.freeze((gutterValues === undefined || !Array.isArray(gutterValues) || !gutterValues.every((item): item is EditorGutter => typeof item === 'string' && ['diagnostics', 'spacer', 'line-numbers', 'diff', 'code-action-hint'].includes(item)))
+    ? ['diagnostics', 'spacer', 'line-numbers', 'spacer', 'diff']
+    : [...gutterValues]);
+  const indentGuidesConfig: IndentGuidesConfig = Object.freeze({
+    render: booleanField(indentGuides ?? Object.create(null), 'render') ?? false,
+    character: typeof indentGuides?.character === 'string' && [...indentGuides.character].length === 1 && !/[\r\n\t]/u.test(indentGuides.character) ? indentGuides.character : '│',
+    skipLevels: boundedInteger(indentGuides ?? Object.create(null), 'skip-levels', 0, 1000, 0, diagnostics, locations, 'editor.indent-guides.skip-levels'),
+  });
+  const whitespaceRenderValue = typeof whitespace?.render === 'string' ? whitespace.render : undefined;
+  const whitespaceRenderDefault = whitespaceRenderValue === 'all' || whitespaceRender?.default === 'all';
+  const whitespaceRenderConfig: WhitespaceConfig['render'] = Object.freeze({
+    default: whitespaceRenderDefault,
+    space: whitespaceRenderValue === undefined ? (whitespaceRender?.space === undefined ? whitespaceRenderDefault : whitespaceRender.space === 'all') : whitespaceRenderDefault,
+    nbsp: whitespaceRenderValue === undefined ? (whitespaceRender?.nbsp === undefined ? whitespaceRenderDefault : whitespaceRender.nbsp === 'all') : whitespaceRenderDefault,
+    nnbsp: whitespaceRenderValue === undefined ? (whitespaceRender?.nnbsp === undefined ? whitespaceRenderDefault : whitespaceRender.nnbsp === 'all') : whitespaceRenderDefault,
+    tab: whitespaceRenderValue === undefined ? (whitespaceRender?.tab === undefined ? whitespaceRenderDefault : whitespaceRender.tab === 'all') : whitespaceRenderDefault,
+    newline: whitespaceRenderValue === undefined ? (whitespaceRender?.newline === undefined ? whitespaceRenderDefault : whitespaceRender.newline === 'all') : whitespaceRenderDefault,
+  });
+  const whitespaceCharactersConfig: WhitespaceConfig['characters'] = Object.freeze({
+    space: typeof whitespaceCharacters?.space === 'string' && [...whitespaceCharacters.space].length === 1 && !/[\r\n\t]/u.test(whitespaceCharacters.space) ? whitespaceCharacters.space : '·',
+    nbsp: typeof whitespaceCharacters?.nbsp === 'string' && [...whitespaceCharacters.nbsp].length === 1 && !/[\r\n\t]/u.test(whitespaceCharacters.nbsp) ? whitespaceCharacters.nbsp : '⍽',
+    nnbsp: typeof whitespaceCharacters?.nnbsp === 'string' && [...whitespaceCharacters.nnbsp].length === 1 && !/[\r\n\t]/u.test(whitespaceCharacters.nnbsp) ? whitespaceCharacters.nnbsp : '␣',
+    tab: typeof whitespaceCharacters?.tab === 'string' && [...whitespaceCharacters.tab].length === 1 && !/[\r\n\t]/u.test(whitespaceCharacters.tab) ? whitespaceCharacters.tab : '→',
+    tabpad: typeof whitespaceCharacters?.tabpad === 'string' && [...whitespaceCharacters.tabpad].length === 1 && !/[\r\n\t]/u.test(whitespaceCharacters.tabpad) ? whitespaceCharacters.tabpad : ' ',
+    newline: typeof whitespaceCharacters?.newline === 'string' && [...whitespaceCharacters.newline].length === 1 && !/[\r\n\t]/u.test(whitespaceCharacters.newline) ? whitespaceCharacters.newline : '⏎',
+  });
+  const smartTabConfig: SmartTabConfig = Object.freeze({ enable: booleanField(smartTab ?? Object.create(null), 'enable') ?? true, supersedeMenu: booleanField(smartTab ?? Object.create(null), 'supersede-menu') ?? false });
+  const wordCompletionConfig: WordCompletionConfig = Object.freeze({ enable: booleanField(wordCompletion ?? Object.create(null), 'enable') ?? true, triggerLength: boundedInteger(wordCompletion ?? Object.create(null), 'trigger-length', 1, 255, 7, diagnostics, locations, 'editor.word-completion.trigger-length') });
+  const workspaceTrustConfig: WorkspaceTrustConfig = Object.freeze({ level: enumField(workspaceTrust ?? Object.create(null), 'level', ['none', 'servers', 'insecure'] as const, 'servers', diagnostics, locations, 'editor.workspace-trust.level'), prompt: booleanField(workspaceTrust ?? Object.create(null), 'prompt') ?? true, trusted: Object.freeze([...(stringArrayField(workspaceTrust ?? Object.create(null), 'trusted') ?? [])]) });
+  const statuslineConfig: StatuslineConfig = Object.freeze({ left: statuslineElementsField(statusline ?? Object.create(null), 'left', ['mode', 'spinner', 'file-name', 'read-only-indicator', 'file-modification-indicator'], diagnostics, locations, 'editor.statusline.left'), center: statuslineElementsField(statusline ?? Object.create(null), 'center', [], diagnostics, locations, 'editor.statusline.center'), right: statuslineElementsField(statusline ?? Object.create(null), 'right', ['diagnostics', 'selections', 'register', 'position', 'file-encoding'], diagnostics, locations, 'editor.statusline.right'), separator: textField(statusline ?? Object.create(null), 'separator') ?? '│', mode: Object.freeze({ normal: textField(statuslineMode ?? Object.create(null), 'normal') ?? 'NOR', insert: textField(statuslineMode ?? Object.create(null), 'insert') ?? 'INS', select: textField(statuslineMode ?? Object.create(null), 'select') ?? 'SEL' }), diagnostics: statuslineSeverityField(statusline ?? Object.create(null), 'diagnostics', ['warning', 'error'], diagnostics, locations, 'editor.statusline.diagnostics'), workspaceDiagnostics: statuslineSeverityField(statusline ?? Object.create(null), 'workspace-diagnostics', ['warning', 'error'], diagnostics, locations, 'editor.statusline.workspace-diagnostics') });
   const scrolloff = boundedInteger(editor, 'scrolloff', 0, 1000, 5, diagnostics, locations, 'editor.scrolloff');
+  const idleTimeout = boundedInteger(editor, 'idle-timeout', 0, 2_147_483_647, 250, diagnostics, locations, 'editor.idle-timeout');
+  const completionTimeout = boundedInteger(editor, 'completion-timeout', 0, 2_147_483_647, 250, diagnostics, locations, 'editor.completion-timeout');
+  const completionTriggerLen = boundedInteger(editor, 'completion-trigger-len', 1, 1000, 2, diagnostics, locations, 'editor.completion-trigger-len');
+  const textWidth = boundedInteger(editor, 'text-width', 1, 10_000, 80, diagnostics, locations, 'editor.text-width');
+  if (editor['soft-wrap'] !== undefined && softWrap === undefined) {
+    diagnostics.push(issue('editor.soft-wrap', 'invalid-type', 'editor.soft-wrap must be a table', locations));
+  }
+  if (editor['inline-diagnostics'] !== undefined && inlineDiagnostics === undefined) diagnostics.push(issue('editor.inline-diagnostics', 'invalid-type', 'editor.inline-diagnostics must be a table', locations));
+  if (softWrap?.enable !== undefined && typeof softWrap.enable !== 'boolean') {
+    diagnostics.push(issue('editor.soft-wrap.enable', 'invalid-type', 'editor.soft-wrap.enable must be a boolean', locations));
+  }
+  if (softWrap?.['wrap-at-text-width'] !== undefined && typeof softWrap['wrap-at-text-width'] !== 'boolean') diagnostics.push(issue('editor.soft-wrap.wrap-at-text-width', 'invalid-type', 'editor.soft-wrap.wrap-at-text-width must be a boolean', locations));
+  if (softWrap?.['max-wrap'] !== undefined && (typeof softWrap['max-wrap'] !== 'number' || !Number.isSafeInteger(softWrap['max-wrap']) || softWrap['max-wrap'] < 0 || softWrap['max-wrap'] > 65_535)) diagnostics.push(issue('editor.soft-wrap.max-wrap', 'invalid-value', 'editor.soft-wrap.max-wrap must be an integer from 0 to 65535', locations));
+  if (softWrap?.['max-indent-retain'] !== undefined && (typeof softWrap['max-indent-retain'] !== 'number' || !Number.isSafeInteger(softWrap['max-indent-retain']) || softWrap['max-indent-retain'] < 0 || softWrap['max-indent-retain'] > 65_535)) diagnostics.push(issue('editor.soft-wrap.max-indent-retain', 'invalid-value', 'editor.soft-wrap.max-indent-retain must be an integer from 0 to 65535', locations));
+  if (softWrap?.['wrap-indicator'] !== undefined && (typeof softWrap['wrap-indicator'] !== 'string' || softWrap['wrap-indicator'].length > 64 || /[\r\n\t]/u.test(String(softWrap['wrap-indicator'])))) diagnostics.push(issue('editor.soft-wrap.wrap-indicator', 'invalid-value', 'editor.soft-wrap.wrap-indicator must be a string of at most 64 characters without tabs or newlines', locations));
+  if (editor.mouse !== undefined && typeof editor.mouse !== 'boolean' && editorMouse === undefined) {
+    diagnostics.push(issue('editor.mouse', 'invalid-type', 'editor.mouse must be a boolean', locations));
+  }
   const mouseEnabled = booleanField(editor, 'mouse') ?? booleanField(editorMouse ?? Object.create(null), 'enabled') ?? true;
-  const mouseModifier = enumField(editorMouse ?? Object.create(null), 'modifier', ['none', 'shift', 'alt', 'ctrl', 'meta'] as const, 'none', diagnostics, locations, 'editor.mouse.modifier');
-  const scrollLines = boundedInteger(editorMouse ?? Object.create(null), 'scroll-lines', 1, 1000, 3, diagnostics, locations, 'editor.mouse.scroll-lines');
-  const wrap = booleanField(editor, 'wrap') ?? false;
-  const configuredMotionTrail = enumField(editor, 'motion-trail', ['off', 'last-motion'] as const, profile === 'strict' ? 'off' : 'last-motion', diagnostics, locations, 'editor.motion-trail');
+  if (editor['middle-click-paste'] !== undefined && typeof editor['middle-click-paste'] !== 'boolean') diagnostics.push(issue('editor.middle-click-paste', 'invalid-type', 'editor.middle-click-paste must be a boolean', locations));
+  const middleClickPaste = booleanField(editor, 'middle-click-paste') ?? true;
+  const mouseModifier = xiMouse?.modifier === undefined
+    ? enumField(editorMouse ?? Object.create(null), 'modifier', ['none', 'shift', 'alt', 'ctrl', 'meta'] as const, 'none', diagnostics, locations, 'editor.mouse.modifier')
+    : enumField({ modifier: xiMouse.modifier }, 'modifier', ['none', 'shift', 'alt', 'ctrl', 'meta'] as const, 'none', diagnostics, locations, 'xi.mouse.modifier');
+  const scrollLines = editor['scroll-lines'] === undefined
+    ? boundedInteger(editorMouse ?? Object.create(null), 'scroll-lines', 1, 1000, 3, diagnostics, locations, 'editor.mouse.scroll-lines')
+    : boundedInteger(editor, 'scroll-lines', 1, 1000, 3, diagnostics, locations, 'editor.scroll-lines');
+  const wrap = booleanField(softWrap ?? Object.create(null), 'enable') ?? booleanField(editor, 'wrap') ?? false;
+  const softWrapMaxWrap = boundedInteger(softWrap ?? Object.create(null), 'max-wrap', 0, 65_535, 20, diagnostics, locations, 'editor.soft-wrap.max-wrap');
+  const softWrapMaxIndentRetain = boundedInteger(softWrap ?? Object.create(null), 'max-indent-retain', 0, 65_535, 40, diagnostics, locations, 'editor.soft-wrap.max-indent-retain');
+  const wrapIndicatorValue = softWrap?.['wrap-indicator'];
+  const wrapIndicator = typeof wrapIndicatorValue === 'string' && wrapIndicatorValue.length <= 64 && !/[\r\n\t]/u.test(wrapIndicatorValue) ? wrapIndicatorValue : '↪ ';
+  const autoSave = Object.freeze({
+    focusLost: typeof editor['auto-save'] === 'boolean' ? editor['auto-save'] : booleanField(autoSaveTable ?? Object.create(null), 'focus-lost') ?? false,
+    afterDelay: Object.freeze({
+      enable: booleanField(autoSaveAfterDelay ?? Object.create(null), 'enable') ?? false,
+      timeout: boundedInteger(autoSaveAfterDelay ?? Object.create(null), 'timeout', 0, 2_147_483_647, 3000, diagnostics, locations, 'editor.auto-save.after-delay.timeout'),
+    }),
+  });
+  const inlineDiagnosticsCursorLine = enumField(inlineDiagnostics ?? Object.create(null), 'cursor-line', ['disable', 'hint', 'info', 'warning', 'error'] as const, 'warning', diagnostics, locations, 'editor.inline-diagnostics.cursor-line');
+  const inlineDiagnosticsOtherLines = enumField(inlineDiagnostics ?? Object.create(null), 'other-lines', ['disable', 'hint', 'info', 'warning', 'error'] as const, 'disable', diagnostics, locations, 'editor.inline-diagnostics.other-lines');
+  const endOfLineDiagnostics = enumField(editor, 'end-of-line-diagnostics', ['disable', 'hint', 'info', 'warning', 'error'] as const, 'hint', diagnostics, locations, 'editor.end-of-line-diagnostics');
+  const inlineDiagnosticsPrefixLen = boundedInteger(inlineDiagnostics ?? Object.create(null), 'prefix-len', 0, 1_000, 1, diagnostics, locations, 'editor.inline-diagnostics.prefix-len');
+  const inlineDiagnosticsMaxWrap = boundedInteger(inlineDiagnostics ?? Object.create(null), 'max-wrap', 0, 1_000, 20, diagnostics, locations, 'editor.inline-diagnostics.max-wrap');
+  const inlineDiagnosticsMinDiagnosticWidth = boundedInteger(inlineDiagnostics ?? Object.create(null), 'min-diagnostic-width', 0, 1_000, 40, diagnostics, locations, 'editor.inline-diagnostics.min-diagnostic-width');
+  const inlineDiagnosticsMaxDiagnostics = boundedInteger(inlineDiagnostics ?? Object.create(null), 'max-diagnostics', 1, 1_000, 10, diagnostics, locations, 'editor.inline-diagnostics.max-diagnostics');
+  if (editor['auto-format'] !== undefined && typeof editor['auto-format'] !== 'boolean') diagnostics.push(issue('editor.auto-format', 'invalid-type', 'editor.auto-format must be a boolean', locations));
+  if (editor['continue-comments'] !== undefined && typeof editor['continue-comments'] !== 'boolean') diagnostics.push(issue('editor.continue-comments', 'invalid-type', 'editor.continue-comments must be a boolean', locations));
+  if (editor['default-yank-register'] !== undefined && !validYankRegister(editor['default-yank-register'])) diagnostics.push(issue('editor.default-yank-register', 'invalid-value', 'editor.default-yank-register must be one register character', locations));
+  if (editor['mouse-yank-register'] !== undefined && !validYankRegister(editor['mouse-yank-register'])) diagnostics.push(issue('editor.mouse-yank-register', 'invalid-value', 'editor.mouse-yank-register must be one register character', locations));
+  if (editor['insert-final-newline'] !== undefined && typeof editor['insert-final-newline'] !== 'boolean') diagnostics.push(issue('editor.insert-final-newline', 'invalid-type', 'editor.insert-final-newline must be a boolean', locations));
+  if (editor['trim-final-newlines'] !== undefined && typeof editor['trim-final-newlines'] !== 'boolean') diagnostics.push(issue('editor.trim-final-newlines', 'invalid-type', 'editor.trim-final-newlines must be a boolean', locations));
+  if (editor['trim-trailing-whitespace'] !== undefined && typeof editor['trim-trailing-whitespace'] !== 'boolean') diagnostics.push(issue('editor.trim-trailing-whitespace', 'invalid-type', 'editor.trim-trailing-whitespace must be a boolean', locations));
+  if (editor['jump-label-alphabet'] !== undefined && (typeof editor['jump-label-alphabet'] !== 'string' || [...editor['jump-label-alphabet']].some((character, index, characters) => characters.indexOf(character) !== index))) diagnostics.push(issue('editor.jump-label-alphabet', 'invalid-value', 'editor.jump-label-alphabet must be a string of unique characters', locations));
+  const configuredMotionTrail = xi?.['motion-trail'] === undefined
+    ? enumField(editor, 'motion-trail', ['off', 'last-motion'] as const, profile === 'strict' ? 'off' : 'last-motion', diagnostics, locations, 'editor.motion-trail')
+    : enumField({ 'motion-trail': xi['motion-trail'] }, 'motion-trail', ['off', 'last-motion'] as const, profile === 'strict' ? 'off' : 'last-motion', diagnostics, locations, 'xi.motion-trail');
   const motionTrail = profile === 'strict' ? 'off' : configuredMotionTrail;
-  const selectionLimit = boundedInteger(editor, 'selection-limit', 1, 10_000_000, 10_000, diagnostics, locations, 'editor.selection-limit');
-  const selectionHistoryLimit = boundedInteger(editor, 'selection-history-limit', 1, 10_000, 100, diagnostics, locations, 'editor.selection-history-limit');
-  const hintsDelayMs = boundedInteger(hints ?? Object.create(null), 'delay-ms', 0, 60_000, 250, diagnostics, locations, 'editor.hints.delay-ms');
+  const selectionLimit = xiSelection?.limit === undefined
+    ? boundedInteger(editor, 'selection-limit', 1, 10_000_000, 10_000, diagnostics, locations, 'editor.selection-limit')
+    : boundedInteger({ limit: xiSelection.limit }, 'limit', 1, 10_000_000, 10_000, diagnostics, locations, 'xi.selection.limit');
+  const selectionHistoryLimit = xiSelection?.['history-limit'] === undefined
+    ? boundedInteger(editor, 'selection-history-limit', 1, 10_000, 100, diagnostics, locations, 'editor.selection-history-limit')
+    : boundedInteger({ 'history-limit': xiSelection['history-limit'] }, 'history-limit', 1, 10_000, 100, diagnostics, locations, 'xi.selection.history-limit');
+  const hintsDelayMs = xiHints?.['delay-ms'] === undefined
+    ? boundedInteger(hints ?? Object.create(null), 'delay-ms', 0, 60_000, 250, diagnostics, locations, 'editor.hints.delay-ms')
+    : boundedInteger({ 'delay-ms': xiHints['delay-ms'] }, 'delay-ms', 0, 60_000, 250, diagnostics, locations, 'xi.hints.delay-ms');
+  const cursorShapeValues = ['block', 'bar', 'underline', 'hidden'] as const;
   const shapes = {
-    normal: enumField(cursorShape ?? Object.create(null), 'normal', ['block', 'bar', 'underline'] as const, 'block', diagnostics, locations, 'editor.cursor-shape.normal'),
-    insert: enumField(cursorShape ?? Object.create(null), 'insert', ['block', 'bar', 'underline'] as const, 'block', diagnostics, locations, 'editor.cursor-shape.insert'),
-    visual: enumField(cursorShape ?? Object.create(null), 'visual', ['block', 'bar', 'underline'] as const, 'block', diagnostics, locations, 'editor.cursor-shape.visual'),
+    normal: enumField(cursorShape ?? Object.create(null), 'normal', cursorShapeValues, 'block', diagnostics, locations, 'editor.cursor-shape.normal'),
+    insert: enumField(cursorShape ?? Object.create(null), 'insert', cursorShapeValues, 'block', diagnostics, locations, 'editor.cursor-shape.insert'),
+    select: Object.hasOwn(cursorShape ?? Object.create(null), 'select')
+      ? enumField(cursorShape ?? Object.create(null), 'select', cursorShapeValues, 'block', diagnostics, locations, 'editor.cursor-shape.select')
+      : enumField(cursorShape ?? Object.create(null), 'visual', cursorShapeValues, 'block', diagnostics, locations, 'editor.cursor-shape.visual'),
   };
-  const lspConfig = { enable: booleanField(lsp ?? Object.create(null), 'enable') ?? true, inlayHints: booleanField(lsp ?? Object.create(null), 'inlay-hints') ?? false };
+  if (lsp?.enable !== undefined && typeof lsp.enable !== 'boolean') diagnostics.push(issue('editor.lsp.enable', 'invalid-type', 'editor.lsp.enable must be a boolean', locations));
+  if (lsp?.['display-inlay-hints'] !== undefined && typeof lsp['display-inlay-hints'] !== 'boolean') diagnostics.push(issue('editor.lsp.display-inlay-hints', 'invalid-type', 'editor.lsp.display-inlay-hints must be a boolean', locations));
+  if (lsp?.['display-color-swatches'] !== undefined && typeof lsp['display-color-swatches'] !== 'boolean') diagnostics.push(issue('editor.lsp.display-color-swatches', 'invalid-type', 'editor.lsp.display-color-swatches must be a boolean', locations));
+  if (lsp?.['auto-document-highlight'] !== undefined && typeof lsp['auto-document-highlight'] !== 'boolean') diagnostics.push(issue('editor.lsp.auto-document-highlight', 'invalid-type', 'editor.lsp.auto-document-highlight must be a boolean', locations));
+  if (lsp?.['goto-reference-include-declaration'] !== undefined && typeof lsp['goto-reference-include-declaration'] !== 'boolean') diagnostics.push(issue('editor.lsp.goto-reference-include-declaration', 'invalid-type', 'editor.lsp.goto-reference-include-declaration must be a boolean', locations));
+  if (lsp?.['inlay-hints'] !== undefined && typeof lsp['inlay-hints'] !== 'boolean') diagnostics.push(issue('editor.lsp.inlay-hints', 'invalid-type', 'editor.lsp.inlay-hints must be a boolean', locations));
+  if (lsp?.snippets !== undefined && typeof lsp.snippets !== 'boolean') diagnostics.push(issue('editor.lsp.snippets', 'invalid-type', 'editor.lsp.snippets must be a boolean', locations));
+  if (lsp?.['display-messages'] !== undefined && typeof lsp['display-messages'] !== 'boolean') diagnostics.push(issue('editor.lsp.display-messages', 'invalid-type', 'editor.lsp.display-messages must be a boolean', locations));
+  if (lsp?.['display-progress-messages'] !== undefined && typeof lsp['display-progress-messages'] !== 'boolean') diagnostics.push(issue('editor.lsp.display-progress-messages', 'invalid-type', 'editor.lsp.display-progress-messages must be a boolean', locations));
+  if (lsp?.['auto-signature-help'] !== undefined && typeof lsp['auto-signature-help'] !== 'boolean') diagnostics.push(issue('editor.lsp.auto-signature-help', 'invalid-type', 'editor.lsp.auto-signature-help must be a boolean', locations));
+  if (lsp?.['display-signature-help-docs'] !== undefined && typeof lsp['display-signature-help-docs'] !== 'boolean') diagnostics.push(issue('editor.lsp.display-signature-help-docs', 'invalid-type', 'editor.lsp.display-signature-help-docs must be a boolean', locations));
+  const legacyInlayHints = booleanField(lsp ?? Object.create(null), 'inlay-hints');
+  const configuredDisplayInlayHints = booleanField(lsp ?? Object.create(null), 'display-inlay-hints');
+  const legacyInlayHintsOverride = configuredDisplayInlayHints !== undefined
+    && provenance['editor.lsp.display-inlay-hints'] === 'defaults'
+    && legacyInlayHints !== undefined
+    && provenance['editor.lsp.inlay-hints'] !== 'defaults';
+  const displayInlayHints = legacyInlayHintsOverride ? legacyInlayHints : configuredDisplayInlayHints ?? legacyInlayHints ?? false;
+  const inlayHintsLengthLimit = optionalBoundedInteger(lsp ?? Object.create(null), 'inlay-hints-length-limit', 1, 16 * 1024, diagnostics, locations, 'editor.lsp.inlay-hints-length-limit');
+  const lspConfig = { enable: booleanField(lsp ?? Object.create(null), 'enable') ?? true, displayInlayHints, inlayHintsLengthLimit, inlayHints: displayInlayHints, displayColorSwatches: booleanField(lsp ?? Object.create(null), 'display-color-swatches') ?? true, autoDocumentHighlight: booleanField(lsp ?? Object.create(null), 'auto-document-highlight') ?? false, gotoReferenceIncludeDeclaration: booleanField(lsp ?? Object.create(null), 'goto-reference-include-declaration') ?? true, snippets: booleanField(lsp ?? Object.create(null), 'snippets') ?? true, displayMessages: booleanField(lsp ?? Object.create(null), 'display-messages') ?? true, displayProgressMessages: booleanField(lsp ?? Object.create(null), 'display-progress-messages') ?? false, autoSignatureHelp: booleanField(lsp ?? Object.create(null), 'auto-signature-help') ?? true, displaySignatureHelpDocs: booleanField(lsp ?? Object.create(null), 'display-signature-help-docs') ?? true };
   const searchConfig: SearchConfig = Object.freeze({
-    debounceMs: boundedInteger(search, 'debounce-ms', 0, 60_000, 40, diagnostics, locations, 'search.debounce-ms'),
-    maxVisibleResults: boundedInteger(search, 'max-visible-results', 1, 1_000_000, 10_000, diagnostics, locations, 'search.max-visible-results'),
+    debounceMs: xiSearch?.['debounce-ms'] === undefined
+      ? boundedInteger(search, 'debounce-ms', 0, 60_000, 40, diagnostics, locations, 'search.debounce-ms')
+      : boundedInteger({ 'debounce-ms': xiSearch['debounce-ms'] }, 'debounce-ms', 0, 60_000, 40, diagnostics, locations, 'xi.search.debounce-ms'),
+    maxVisibleResults: xiSearch?.['max-visible-results'] === undefined
+      ? boundedInteger(search, 'max-visible-results', 1, 1_000_000, 10_000, diagnostics, locations, 'search.max-visible-results')
+      : boundedInteger({ 'max-visible-results': xiSearch['max-visible-results'] }, 'max-visible-results', 1, 1_000_000, 10_000, diagnostics, locations, 'xi.search.max-visible-results'),
     hidden: booleanField(search, 'hidden') ?? true,
     followSymlinks: booleanField(search, 'follow-symlinks') ?? false,
   });
   const catalogIds = new Set(catalog.commandIds);
-  const bindings = compileBindings(root.keys, profile, catalogIds, provenance, locations, diagnostics);
-  const aliases = compileAliases(root.aliases, profile, catalogIds, catalog.nativeExNames ?? DEFAULT_COMMAND_CATALOG.nativeExNames ?? [], provenance, locations, diagnostics);
+  const bindings = compileBindings(mergeKeyTables(root.keys, xi?.keys), profile, catalogIds, provenance, locations, diagnostics);
+  const aliases = compileAliases(xi?.aliases === undefined ? root.aliases : mergeAliasTables(root.aliases, xi.aliases), profile, catalogIds, catalog.nativeExNames ?? DEFAULT_COMMAND_CATALOG.nativeExNames ?? [], provenance, locations, diagnostics);
   const languageServers = compileServers(root['language-server'], locations, diagnostics);
   const languages = compileLanguages(root.language, languageServers, locations, diagnostics);
+  const filePickerMaxDepth = optionalBoundedInteger(filePicker ?? Object.create(null), 'max-depth', 0, 1_000_000, diagnostics, locations, 'editor.file-picker.max-depth');
+  const configuredAutoPairs = Object.fromEntries(Object.entries(autoPairs ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  const autoPairsConfig: AutoPairsConfig = editor['auto-pairs'] === false
+    ? false
+    : Object.freeze({ ...autoPairs === undefined ? { '(': ')', '{': '}', '[': ']', '"': '"', "'": "'", '`': '`' } : configuredAutoPairs });
+  const filePickerConfig = { hidden: booleanField(filePicker ?? Object.create(null), 'hidden') ?? true, followSymlinks: booleanField(filePicker ?? Object.create(null), 'follow-symlinks') ?? true, deduplicateLinks: booleanField(filePicker ?? Object.create(null), 'deduplicate-links') ?? true, parents: booleanField(filePicker ?? Object.create(null), 'parents') ?? true, ignore: booleanField(filePicker ?? Object.create(null), 'ignore') ?? true, gitIgnore: booleanField(filePicker ?? Object.create(null), 'git-ignore') ?? true, gitGlobal: booleanField(filePicker ?? Object.create(null), 'git-global') ?? true, gitExclude: booleanField(filePicker ?? Object.create(null), 'git-exclude') ?? true, maxDepth: filePickerMaxDepth };
+  const fileExplorerConfig = { hidden: booleanField(fileExplorer ?? Object.create(null), 'hidden') ?? false, followSymlinks: booleanField(fileExplorer ?? Object.create(null), 'follow-symlinks') ?? false, parents: booleanField(fileExplorer ?? Object.create(null), 'parents') ?? false, ignore: booleanField(fileExplorer ?? Object.create(null), 'ignore') ?? false, gitIgnore: booleanField(fileExplorer ?? Object.create(null), 'git-ignore') ?? false, gitGlobal: booleanField(fileExplorer ?? Object.create(null), 'git-global') ?? false, gitExclude: booleanField(fileExplorer ?? Object.create(null), 'git-exclude') ?? false, flattenDirs: booleanField(fileExplorer ?? Object.create(null), 'flatten-dirs') ?? true };
+  const bufferPickerConfig = { startPosition: enumField(bufferPicker ?? Object.create(null), 'start-position', ['current', 'previous'] as const, 'current', diagnostics, locations, 'editor.buffer-picker.start-position') };
+  const kittyKeyboardProtocol = enumField(editor, 'kitty-keyboard-protocol', ['auto', 'enabled', 'disabled'] as const, 'auto', diagnostics, locations, 'editor.kitty-keyboard-protocol');
+  const jumpLabelAlphabet = typeof editor['jump-label-alphabet'] === 'string' && [...editor['jump-label-alphabet']].every((character, index, characters) => characters.indexOf(character) === index)
+    ? Object.freeze([...editor['jump-label-alphabet']])
+    : defaultEditor.jumpLabelAlphabet;
   if (diagnostics.length > 0) return { ok: false, error: { diagnostics: Object.freeze(diagnostics) } };
-  const editorConfig: EditorConfig = Object.freeze({ sidebarWidth, sidebarPanel, sidebarVisible: booleanField(editor, 'sidebar-visible') ?? true, theme, lineNumber, scrolloff, mouse: Object.freeze({ enabled: mouseEnabled, modifier: mouseModifier, scrollLines }), wrap, motionTrail, selection: Object.freeze({ limit: selectionLimit, historyLimit: selectionHistoryLimit }), hintsDelayMs, cursorShape: Object.freeze(shapes), lsp: Object.freeze(lspConfig) });
-  return { ok: true, value: Object.freeze({ schemaVersion: 1, generation: 0, profile, editor: editorConfig, search: searchConfig, bindings: Object.freeze(bindings), aliases: Object.freeze(aliases), languageServers: Object.freeze(languageServers), languages: Object.freeze(languages), provenance: Object.freeze({ ...provenance }) }) };
+  const editorConfig: EditorConfig = Object.freeze({ popupBorder, sidebarWidth, sidebarPanel, sidebarVisible, theme, themeVariants, lineNumber, lineNumberMinWidth, gutters: guttersConfig, indentGuides: indentGuidesConfig, whitespace: Object.freeze({ render: whitespaceRenderConfig, characters: whitespaceCharactersConfig }), smartTab: smartTabConfig, wordCompletion: wordCompletionConfig, workspaceTrust: workspaceTrustConfig, autoPairs: autoPairsConfig, editorConfig: booleanField(editor, 'editor-config') ?? true, continueComments: booleanField(editor, 'continue-comments') ?? true, cursorline: booleanField(editor, 'cursorline') ?? false, cursorcolumn: booleanField(editor, 'cursorcolumn') ?? false, rainbowBrackets: booleanField(editor, 'rainbow-brackets') ?? false, rulers: integerArrayField(editor, 'rulers') ?? [], textWidth, workspaceLspRoots: Object.freeze([...(stringArrayField(editor, 'workspace-lsp-roots') ?? [])]), wrapAtTextWidth: booleanField(softWrap ?? Object.create(null), 'wrap-at-text-width') ?? false, scrolloff, idleTimeout, mouse: Object.freeze({ enabled: mouseEnabled, modifier: mouseModifier, scrollLines }), shell, mouseYankRegister: validYankRegister(editor['mouse-yank-register']) ? editor['mouse-yank-register'] : '*', clipboardProvider, middleClickPaste, kittyKeyboardProtocol, wrap, softWrapMaxWrap, softWrapMaxIndentRetain, wrapIndicator, pathCompletion: booleanField(editor, 'path-completion') ?? true, inlineDiagnosticsCursorLine, inlineDiagnosticsOtherLines, endOfLineDiagnostics, inlineDiagnosticsPrefixLen, inlineDiagnosticsMaxWrap, inlineDiagnosticsMinDiagnosticWidth, inlineDiagnosticsMaxDiagnostics, autoCompletion: booleanField(editor, 'auto-completion') ?? true, completionTimeout, completionTriggerLen, previewCompletionInsert: booleanField(editor, 'preview-completion-insert') ?? true, autoInfo: booleanField(editor, 'auto-info') ?? true, completionReplace: booleanField(editor, 'completion-replace') ?? false, colorModes: booleanField(editor, 'color-modes') ?? false, trueColor: booleanField(editor, 'true-color') ?? false, undercurl: booleanField(editor, 'undercurl') ?? false, bufferline, defaultLineEnding, atomicSave, indentHeuristic, jumpLabelAlphabet, statusline: statuslineConfig, autoFormat: booleanField(editor, 'auto-format') ?? true, autoSave, defaultYankRegister: validYankRegister(editor['default-yank-register']) ? editor['default-yank-register'] : '"', insertFinalNewline: booleanField(editor, 'insert-final-newline') ?? true, trimFinalNewlines: booleanField(editor, 'trim-final-newlines') ?? false, trimTrailingWhitespace: booleanField(editor, 'trim-trailing-whitespace') ?? false, search: Object.freeze({ smartCase: booleanField(editorSearch ?? Object.create(null), 'smart-case') ?? true, wrapAround: booleanField(editorSearch ?? Object.create(null), 'wrap-around') ?? true }), motionTrail, selection: Object.freeze({ limit: selectionLimit, historyLimit: selectionHistoryLimit }), hintsDelayMs, cursorShape: Object.freeze(shapes), filePicker: Object.freeze(filePickerConfig), fileExplorer: Object.freeze(fileExplorerConfig), bufferPicker: Object.freeze(bufferPickerConfig), lsp: Object.freeze(lspConfig) });
+  return { ok: true, value: Object.freeze({ schemaVersion: 1, generation: 0, profile, editor: Object.freeze({ ...editorConfig, atomicSave }), search: searchConfig, bindings: Object.freeze(bindings), aliases: Object.freeze(aliases), languageServers: Object.freeze(languageServers), languages: Object.freeze(languages), provenance: Object.freeze({ ...provenance }) }) };
 }
 
 function compileBindings(value: TomlValue | undefined, profile: ConfigProfile, commandIds: Set<string>, provenance: Record<string, string>, locations: Map<string, SourceLocation>, diagnostics: ConfigDiagnostic[]): BindingConfig[] {
@@ -1213,12 +1809,13 @@ function compileBindings(value: TomlValue | undefined, profile: ConfigProfile, c
   const seen = new Map<string, BindingConfig>();
   const walk = (node: Record<string, TomlValue>, path: string[], keys: string[]): void => {
     for (const [key, child] of Object.entries(node)) {
-      if (typeof child === 'string') {
+      if (typeof child === 'string' || Array.isArray(child)) {
         const commandPath = [...path, key].join('.');
-        if (!commandIds.has(child)) { diagnostics.push(issue(commandPath, 'unknown-command', `unknown command ${child}`, locations)); continue; }
+        const commandId = resolveBindingCommand(child, commandIds);
+        if (commandId === undefined) { diagnostics.push(issue(commandPath, 'unknown-command', `unknown command ${child}`, locations)); continue; }
         const mode = path[0] ?? 'normal';
         if (profile === 'strict' && mode !== 'normal' && mode !== 'visual' && mode !== 'insert' && mode !== 'replace' && mode !== 'operator-pending' && mode !== 'command-line'
-          && mode !== 'files-panel' && mode !== 'search-panel' && mode !== 'git-panel' && mode !== 'diff-panel') {
+          && mode !== 'select' && mode !== 'files-panel' && mode !== 'search-panel' && mode !== 'git-panel' && mode !== 'diff-panel') {
           diagnostics.push(issue(commandPath, 'invalid-value', `unknown mapping mode ${mode}`, locations));
         }
         const token = normalizeKeyToken(key);
@@ -1232,7 +1829,7 @@ function compileBindings(value: TomlValue | undefined, profile: ConfigProfile, c
           const prefix = isPrefix(priorBinding.keys, nextKeys) || isPrefix(nextKeys, priorBinding.keys);
           if (prefix) diagnostics.push(issue(commandPath, 'binding-prefix-conflict', `binding ${nextKeys.join(' ')} conflicts with ${priorBinding.keys.join(' ')}`, locations));
         }
-        const binding = Object.freeze({ mode, keys: Object.freeze(nextKeys), commandId: child as CommandId, source: provenance[`keys.${commandPath}`] ?? provenance[commandPath] ?? 'merged' });
+        const binding = Object.freeze({ mode, keys: Object.freeze(nextKeys), commandId: commandId as CommandId, source: provenance[`keys.${commandPath}`] ?? provenance[commandPath] ?? 'merged' });
         seen.set(`${mode}\u0000${normalized}`, binding);
         output.push(binding);
       } else if (asRecord(child) !== undefined) walk(asRecord(child) as Record<string, TomlValue>, [...path, key], [...keys, normalizeKeyToken(key) ?? key]);
@@ -1243,6 +1840,70 @@ function compileBindings(value: TomlValue | undefined, profile: ConfigProfile, c
     if (record !== undefined) walk(record, [mode], []);
   }
   return output;
+}
+
+function resolveBindingCommand(value: TomlValue, commandIds: Set<string>): string | undefined {
+  if (Array.isArray(value)) {
+    if (!value.every((item): item is string => typeof item === 'string')) return undefined;
+    const commands = value.map((item) => resolveBindingCommand(item, commandIds));
+    if (commands.some((item) => item === undefined || item.startsWith('macro:') || item.startsWith('sequence:'))) return undefined;
+    return `sequence:${JSON.stringify(commands)}`;
+  }
+  if (typeof value !== 'string') return undefined;
+  if (value.startsWith('@')) {
+    const keys = parseHelixMacro(value.slice(1));
+    return keys === undefined ? undefined : `macro:${JSON.stringify(keys)}`;
+  }
+  if (commandIds.has(value)) return value;
+  if (value.startsWith(':') && value.length > 1) return `ex:${value.slice(1)}`;
+  if (value === 'no_op') return 'noop';
+  return undefined;
+}
+
+function parseHelixMacro(source: string): readonly string[] | undefined {
+  const keys: string[] = [];
+  for (let index = 0; index < source.length;) {
+    if (source[index] === '<') {
+      const end = source.indexOf('>', index + 1);
+      if (end < 0) return undefined;
+      const token = normalizeKeyToken(source.slice(index, end + 1));
+      if (token === undefined) return undefined;
+      keys.push(token);
+      index = end + 1;
+      continue;
+    }
+    const character = source[index];
+    if (character === undefined) return undefined;
+    const token = character === ' ' ? '<Space>' : normalizeKeyToken(character);
+    if (token === undefined) return undefined;
+    keys.push(token);
+    index += character.length;
+  }
+  return Object.freeze(keys);
+}
+
+function mergeKeyTables(legacy: TomlValue | undefined, canonical: TomlValue | undefined): TomlValue | undefined {
+  const left = asRecord(legacy);
+  const right = asRecord(canonical);
+  if (left === undefined) return canonical;
+  if (right === undefined) return legacy;
+  const merged: Record<string, TomlValue> = Object.create(null) as Record<string, TomlValue>;
+  for (const [mode, value] of Object.entries(left)) merged[mode] = value;
+  for (const [mode, value] of Object.entries(right)) {
+    const existing = asRecord(merged[mode]);
+    const replacement = asRecord(value);
+    if (existing === undefined || replacement === undefined) { merged[mode] = value; continue; }
+    merged[mode] = mergeKeyTables(existing, replacement) as TomlValue;
+  }
+  return merged;
+}
+
+function mergeAliasTables(legacy: TomlValue | undefined, canonical: TomlValue): TomlValue {
+  const merged: Record<string, TomlValue> = Object.create(null) as Record<string, TomlValue>;
+  for (const source of [asRecord(legacy), asRecord(canonical)]) {
+    if (source !== undefined) for (const [name, target] of Object.entries(source)) merged[name] = target;
+  }
+  return merged;
 }
 
 function compileAliases(value: TomlValue | undefined, profile: ConfigProfile, commandIds: Set<string>, nativeExNames: readonly string[], provenance: Record<string, string>, locations: Map<string, SourceLocation>, diagnostics: ConfigDiagnostic[]): AliasConfig[] {
@@ -1311,17 +1972,93 @@ function formatterValue(value: TomlValue | undefined, fileName: string, path: st
   return Object.freeze({ command, args: stringArrayField(record, 'args') ?? [] });
 }
 
+const BUILTIN_CLIPBOARD_PROVIDERS = ['pasteboard', 'wayland', 'x-clip', 'x-sel', 'tmux', 'termux', 'win32-yank', 'windows', 'termcode', 'none'] as const;
+
+function parseShell(value: TomlValue | undefined): readonly [string, string] {
+  return Array.isArray(value) && value.length === 2 && value.every((item) => typeof item === 'string' && item.length > 0)
+    ? [value[0] as string, value[1] as string]
+    : ['sh', '-c'];
+}
+
+function clipboardCommandValue(value: TomlValue | undefined, path: string, locations: Map<string, SourceLocation>, diagnostics: ConfigDiagnostic[], required: boolean): ClipboardCommandConfig | undefined {
+  if (value === undefined) {
+    if (required) diagnostics.push(issue(path, 'missing-field', `${path} requires a command` , locations));
+    return undefined;
+  }
+  const record = asRecord(value);
+  if (record === undefined) {
+    diagnostics.push(issue(path, 'invalid-type', `${path} must be an inline table`, locations));
+    return undefined;
+  }
+  const command = textField(record, 'command');
+  if (command === undefined || command.length === 0) diagnostics.push(issue(`${path}.command`, 'missing-field', `${path}.command must be a non-empty string`, locations));
+  if (record.args !== undefined && stringArrayField(record, 'args') === undefined) diagnostics.push(issue(`${path}.args`, 'invalid-type', `${path}.args must be an array of strings`, locations));
+  return command === undefined || command.length === 0 ? undefined : Object.freeze({ command, args: Object.freeze([...(stringArrayField(record, 'args') ?? [])]) });
+}
+
+function parseClipboardProvider(value: TomlValue | undefined, locations: Map<string, SourceLocation>, diagnostics: ConfigDiagnostic[]): ClipboardProviderConfig {
+  if (value === undefined) return Object.freeze({ kind: 'builtin', name: 'platform' });
+  if (typeof value === 'string') {
+    if (!(BUILTIN_CLIPBOARD_PROVIDERS as readonly string[]).includes(value)) diagnostics.push(issue('editor.clipboard-provider', 'invalid-value', `unknown clipboard provider ${value}`, locations));
+    return Object.freeze({ kind: 'builtin', name: value });
+  }
+  const provider = asRecord(value);
+  const custom = asRecord(provider?.custom);
+  if (custom === undefined) {
+    diagnostics.push(issue('editor.clipboard-provider', 'invalid-type', 'editor.clipboard-provider must be a builtin string or custom table', locations));
+    return Object.freeze({ kind: 'builtin', name: 'platform' });
+  }
+  const yank = clipboardCommandValue(custom.yank, 'editor.clipboard-provider.custom.yank', locations, diagnostics, true);
+  const paste = clipboardCommandValue(custom.paste, 'editor.clipboard-provider.custom.paste', locations, diagnostics, true);
+  const primaryYank = clipboardCommandValue(custom['primary-yank'], 'editor.clipboard-provider.custom.primary-yank', locations, diagnostics, false);
+  const primaryPaste = clipboardCommandValue(custom['primary-paste'], 'editor.clipboard-provider.custom.primary-paste', locations, diagnostics, false);
+  if (yank === undefined || paste === undefined) return Object.freeze({ kind: 'builtin', name: 'platform' });
+  return Object.freeze({ kind: 'custom', yank, paste, ...(primaryYank === undefined ? {} : { primaryYank }), ...(primaryPaste === undefined ? {} : { primaryPaste }) });
+}
+
 function isKnownPath(path: readonly string[]): boolean {
   const joined = path.join('.');
-  if (joined === 'schema-version' || joined === 'profile') return true;
+  if (joined === 'schema-version' || joined === 'profile' || joined === 'theme' || joined === 'theme.dark' || joined === 'theme.light' || joined === 'theme.fallback' || joined === 'xi' || joined === 'xi.schema-version' || joined === 'xi.profile' || joined === 'xi.sidebar' || joined === 'xi.sidebar.visible' || joined === 'xi.sidebar.width' || joined === 'xi.sidebar.panel' || joined === 'xi.mouse' || joined === 'xi.mouse.modifier' || joined === 'xi.motion-trail' || joined === 'xi.selection' || joined === 'xi.selection.limit' || joined === 'xi.selection.history-limit' || joined === 'xi.hints' || joined === 'xi.hints.delay-ms' || joined === 'xi.search' || joined === 'xi.search.debounce-ms' || joined === 'xi.search.max-visible-results' || joined === 'xi.aliases' || joined === 'xi.keys') return true;
+  if (joined.startsWith('xi.aliases.')) return true;
+  if (joined.startsWith('xi.keys.')) return true;
   if (joined === 'editor' || joined === 'search' || joined === 'aliases' || joined === 'keys' || joined === 'language-server' || joined === 'language') return true;
   if (joined.startsWith('aliases.') || joined.startsWith('keys.')) return true;
+  if (joined === 'editor.auto-pairs' || joined.startsWith('editor.auto-pairs.')) return true;
   const editorPaths = new Set([
-    'editor.theme', 'editor.line-number', 'editor.scrolloff', 'editor.mouse', 'editor.wrap', 'editor.motion-trail',
-    'editor.sidebar-visible', 'editor.sidebar-width', 'editor.sidebar-panel', 'editor.selection-limit', 'editor.selection-history-limit', 'editor.cursor-shape', 'editor.cursor-shape.normal',
-    'editor.cursor-shape.insert', 'editor.cursor-shape.visual', 'editor.lsp', 'editor.lsp.enable', 'editor.lsp.inlay-hints',
-    'editor.mouse.enabled', 'editor.mouse.modifier', 'editor.mouse.scroll-lines', 'editor.hints', 'editor.hints.delay-ms',
+    'editor.true-color', 'editor.undercurl', 'editor.path-completion',
+    'editor.theme', 'editor.editor-config', 'editor.line-number', 'editor.gutters', 'editor.gutters.layout', 'editor.gutters.line-numbers', 'editor.gutters.line-numbers.min-width', 'editor.gutters.diagnostics', 'editor.gutters.diff', 'editor.gutters.spacer', 'editor.cursorline', 'editor.cursorcolumn', 'editor.rulers', 'editor.text-width', 'editor.scrolloff', 'editor.idle-timeout', 'editor.scroll-lines', 'editor.mouse', 'editor.wrap', 'editor.auto-completion', 'editor.completion-timeout', 'editor.completion-trigger-len', 'editor.preview-completion-insert', 'editor.auto-info', 'editor.completion-replace', 'editor.color-modes', 'editor.bufferline', 'editor.default-line-ending', 'editor.statusline', 'editor.statusline.left', 'editor.statusline.center', 'editor.statusline.right', 'editor.statusline.separator', 'editor.statusline.mode', 'editor.statusline.mode.normal', 'editor.statusline.mode.insert', 'editor.statusline.mode.select', 'editor.statusline.diagnostics', 'editor.statusline.workspace-diagnostics', 'editor.auto-format', 'editor.auto-save', 'editor.auto-save.focus-lost', 'editor.auto-save.after-delay', 'editor.auto-save.after-delay.enable', 'editor.auto-save.after-delay.timeout', 'editor.default-yank-register', 'editor.insert-final-newline', 'editor.trim-final-newlines', 'editor.trim-trailing-whitespace', 'editor.end-of-line-diagnostics', 'editor.search', 'editor.search.smart-case', 'editor.search.wrap-around', 'editor.soft-wrap', 'editor.soft-wrap.enable', 'editor.soft-wrap.wrap-at-text-width', 'editor.soft-wrap.wrap-indicator', 'editor.inline-diagnostics', 'editor.inline-diagnostics.cursor-line', 'editor.inline-diagnostics.other-lines', 'editor.inline-diagnostics.prefix-len', 'editor.inline-diagnostics.max-wrap', 'editor.inline-diagnostics.min-diagnostic-width', 'editor.inline-diagnostics.max-diagnostics', 'editor.motion-trail',
+    'editor.theme', 'editor.line-number', 'editor.gutters', 'editor.gutters.layout', 'editor.gutters.line-numbers', 'editor.gutters.line-numbers.min-width', 'editor.gutters.diagnostics', 'editor.gutters.diff', 'editor.gutters.spacer', 'editor.indent-guides', 'editor.indent-guides.render', 'editor.indent-guides.character', 'editor.indent-guides.skip-levels', 'editor.whitespace', 'editor.whitespace.render', 'editor.whitespace.render.default', 'editor.whitespace.render.space', 'editor.whitespace.render.nbsp', 'editor.whitespace.render.nnbsp', 'editor.whitespace.render.tab', 'editor.whitespace.render.newline', 'editor.whitespace.characters', 'editor.whitespace.characters.space', 'editor.whitespace.characters.nbsp', 'editor.whitespace.characters.nnbsp', 'editor.whitespace.characters.tab', 'editor.whitespace.characters.tabpad', 'editor.whitespace.characters.newline', 'editor.smart-tab', 'editor.smart-tab.enable', 'editor.smart-tab.supersede-menu', 'editor.word-completion', 'editor.word-completion.enable', 'editor.word-completion.trigger-length', 'editor.cursorline', 'editor.cursorcolumn', 'editor.rulers', 'editor.text-width', 'editor.scrolloff', 'editor.idle-timeout', 'editor.scroll-lines', 'editor.mouse', 'editor.wrap', 'editor.auto-completion', 'editor.completion-timeout', 'editor.completion-trigger-len', 'editor.preview-completion-insert', 'editor.auto-info', 'editor.completion-replace', 'editor.color-modes', 'editor.bufferline', 'editor.default-line-ending', 'editor.statusline', 'editor.statusline.left', 'editor.statusline.center', 'editor.statusline.right', 'editor.statusline.separator', 'editor.statusline.mode', 'editor.statusline.mode.normal', 'editor.statusline.mode.insert', 'editor.statusline.mode.select', 'editor.statusline.diagnostics', 'editor.statusline.workspace-diagnostics', 'editor.auto-format', 'editor.auto-save', 'editor.auto-save.focus-lost', 'editor.auto-save.after-delay', 'editor.auto-save.after-delay.enable', 'editor.auto-save.after-delay.timeout', 'editor.default-yank-register', 'editor.insert-final-newline', 'editor.trim-final-newlines', 'editor.trim-trailing-whitespace', 'editor.end-of-line-diagnostics', 'editor.search', 'editor.search.smart-case', 'editor.search.wrap-around', 'editor.soft-wrap', 'editor.soft-wrap.enable', 'editor.soft-wrap.wrap-at-text-width', 'editor.soft-wrap.wrap-indicator', 'editor.inline-diagnostics', 'editor.inline-diagnostics.cursor-line', 'editor.inline-diagnostics.other-lines', 'editor.inline-diagnostics.prefix-len', 'editor.inline-diagnostics.max-wrap', 'editor.inline-diagnostics.min-diagnostic-width', 'editor.inline-diagnostics.max-diagnostics', 'editor.motion-trail',
+    'editor.sidebar-visible', 'editor.sidebar-width', 'editor.sidebar-panel', 'editor.selection-limit', 'editor.selection-history-limit', 'editor.cursor-shape', 'editor.cursor-shape.normal', 'editor.gutters.code-action-hint',
+    'editor.cursor-shape.insert', 'editor.cursor-shape.select', 'editor.cursor-shape.visual', 'editor.lsp', 'editor.lsp.enable', 'editor.lsp.display-inlay-hints', 'editor.lsp.inlay-hints-length-limit', 'editor.lsp.inlay-hints', 'editor.lsp.display-color-swatches', 'editor.lsp.auto-document-highlight', 'editor.lsp.goto-reference-include-declaration', 'editor.lsp.snippets', 'editor.lsp.display-messages', 'editor.lsp.display-progress-messages', 'editor.lsp.auto-signature-help', 'editor.lsp.display-signature-help-docs',
+    'editor.workspace-trust', 'editor.workspace-trust.level', 'editor.workspace-trust.prompt', 'editor.workspace-trust.trusted', 'editor.rainbow-brackets', 'editor.mouse.enabled', 'editor.mouse.modifier', 'editor.mouse.scroll-lines', 'editor.hints', 'editor.hints.delay-ms', 'editor.file-picker', 'editor.file-picker.hidden', 'editor.file-picker.follow-symlinks', 'editor.file-picker.deduplicate-links', 'editor.file-picker.parents', 'editor.file-picker.ignore', 'editor.file-picker.git-ignore', 'editor.file-picker.git-global', 'editor.file-picker.git-exclude', 'editor.file-picker.max-depth',
+    'editor.file-explorer', 'editor.file-explorer.hidden', 'editor.file-explorer.follow-symlinks', 'editor.file-explorer.parents', 'editor.file-explorer.ignore', 'editor.file-explorer.git-ignore', 'editor.file-explorer.git-global', 'editor.file-explorer.git-exclude', 'editor.file-explorer.flatten-dirs', 'editor.buffer-picker', 'editor.buffer-picker.start-position',
   ]);
+  editorPaths.add('editor.soft-wrap.max-wrap');
+  editorPaths.add('editor.soft-wrap.max-indent-retain');
+  editorPaths.add('editor.popup-border');
+  editorPaths.add('editor.workspace-lsp-roots');
+  editorPaths.add('editor.shell');
+  editorPaths.add('editor.atomic-save');
+  editorPaths.add('editor.indent-heuristic');
+  editorPaths.add('editor.jump-label-alphabet');
+  editorPaths.add('editor.continue-comments');
+  editorPaths.add('editor.mouse-yank-register');
+  editorPaths.add('editor.middle-click-paste');
+  editorPaths.add('editor.kitty-keyboard-protocol');
+  editorPaths.add('editor.clipboard-provider');
+  editorPaths.add('editor.clipboard-provider.custom');
+  editorPaths.add('editor.clipboard-provider.custom.yank');
+  editorPaths.add('editor.clipboard-provider.custom.yank.command');
+  editorPaths.add('editor.clipboard-provider.custom.yank.args');
+  editorPaths.add('editor.clipboard-provider.custom.paste');
+  editorPaths.add('editor.clipboard-provider.custom.paste.command');
+  editorPaths.add('editor.clipboard-provider.custom.paste.args');
+  editorPaths.add('editor.clipboard-provider.custom.primary-yank');
+  editorPaths.add('editor.clipboard-provider.custom.primary-yank.command');
+  editorPaths.add('editor.clipboard-provider.custom.primary-yank.args');
+  editorPaths.add('editor.clipboard-provider.custom.primary-paste');
+  editorPaths.add('editor.clipboard-provider.custom.primary-paste.command');
+  editorPaths.add('editor.clipboard-provider.custom.primary-paste.args');
   if (editorPaths.has(joined)) return true;
   const searchPaths = new Set(['search.debounce-ms', 'search.max-visible-results', 'search.hidden', 'search.follow-symlinks']);
   if (searchPaths.has(joined)) return true;
@@ -1335,7 +2072,7 @@ function isKnownPath(path: readonly string[]): boolean {
 }
 
 function isExecutablePath(path: readonly string[]): boolean {
-  return path.includes('command') || path.includes('args') || path.includes('formatter') || path.includes('formatters') || path.includes('task');
+  return path.includes('command') || path.includes('args') || path.includes('formatter') || path.includes('formatters') || path.includes('task') || path.includes('shell');
 }
 
 function containsExecutableSetting(value: TomlValue): boolean {
@@ -1370,6 +2107,7 @@ function markLeafProvenance(value: TomlValue, path: string, sourceName: string, 
 }
 
 function isTable(value: TomlValue | undefined): value is { readonly [key: string]: TomlValue } { return asRecord(value) !== undefined; }
+function validYankRegister(value: TomlValue | undefined): value is string { return typeof value === 'string' && /^["0-9A-Za-z+*_\-]$/u.test(value); }
 function cloneValue(value: TomlValue): TomlValue { if (Array.isArray(value)) return value.map(cloneValue); if (isTable(value)) { const record: Record<string, TomlValue> = Object.create(null) as Record<string, TomlValue>; for (const [key, child] of Object.entries(value)) record[key] = cloneValue(child); return record; } return value; }
 function freezeValue(value: TomlValue): TomlValue { if (Array.isArray(value)) return Object.freeze(value.map(freezeValue)); if (isTable(value)) { const record: Record<string, TomlValue> = Object.create(null) as Record<string, TomlValue>; for (const [key, child] of Object.entries(value)) record[key] = freezeValue(child); return Object.freeze(record); } return value; }
 
@@ -1515,14 +2253,51 @@ function unescapeString(value: string): string { return value.replaceAll(/\\([\\
 function normalizeAlias(value: string): string | undefined { return /^[a-z][a-z0-9_-]*$/iu.test(value) ? value.toLowerCase() : undefined; }
 function normalizeCanonicalKey(value: string): string { return value.startsWith('<') ? value.toLowerCase() : value; }
 function isPrefix(left: readonly string[], right: readonly string[]): boolean { return left.length < right.length && left.every((value, index) => normalizeCanonicalKey(value) === normalizeCanonicalKey(right[index] as string)); }
-function normalizeKeyToken(value: string): string | undefined { const named = new Map([['space', '<Space>'], ['esc', '<Esc>'], ['escape', '<Esc>'], ['enter', '<Enter>'], ['return', '<Enter>'], ['tab', '<Tab>'], ['backspace', '<BS>'], ['up', '<Up>'], ['down', '<Down>'], ['left', '<Left>'], ['right', '<Right>']]); const lower = value.toLowerCase(); if (named.has(lower)) return named.get(lower); if (/^<(?:(?:c|ctrl|a|alt|m|meta|s|shift)-)?[a-z0-9]+>$/iu.test(value)) return value; if (value.length === 1 && value !== '\u0000' && !/\s/u.test(value)) return value; return undefined; }
+function normalizeKeyToken(value: string): string | undefined {
+  if (value.length === 1 && value !== '\u0000') return value;
+  const named = new Map([
+    ['space', '<Space>'], ['esc', '<Esc>'], ['escape', '<Esc>'], ['enter', '<Enter>'], ['return', '<Enter>'], ['ret', '<Enter>'],
+    ['tab', '<Tab>'], ['backspace', '<BS>'], ['bs', '<BS>'], ['up', '<Up>'], ['down', '<Down>'], ['left', '<Left>'], ['right', '<Right>'],
+    ['home', '<Home>'], ['end', '<End>'], ['pageup', '<PageUp>'], ['pagedown', '<PageDown>'], ['del', '<Del>'], ['delete', '<Del>'],
+    ['ins', '<Insert>'], ['insert', '<Insert>'],
+  ]);
+  const direct = named.get(value.toLowerCase());
+  if (direct !== undefined) return direct;
+  const bracket = /^<(.+)>$/u.exec(value);
+  const source = bracket?.[1] ?? value;
+  const parts = source.split('-');
+  const key = parts.pop();
+  if (key === undefined || key.length === 0) return undefined;
+  const modifiers = parts.map((part) => part.toLowerCase());
+  const validModifiers = new Set(['c', 'ctrl', 's', 'shift', 'a', 'alt', 'm', 'meta', 'cmd', 'win']);
+  if (modifiers.length > 0 && modifiers.some((part) => !validModifiers.has(part))) return undefined;
+  if (modifiers.length > 0) {
+    const normalizedKey = named.get(key.toLowerCase())?.slice(1, -1) ?? key;
+    const canonicalModifiers = modifiers.map((part) => {
+      if (part === 'ctrl') return 'C';
+      if (part === 'shift') return 'S';
+      // OpenTUI exposes Alt and Meta through the same config lookup token; retain
+      // Helix's accepted spellings while canonicalizing both to the workbench token.
+      if (part === 'a' || part === 'alt') return 'M';
+      if (part === 'meta' || part === 'cmd' || part === 'win') return 'M';
+      return part.toUpperCase();
+    });
+    return `<${canonicalModifiers.join('-')}-${normalizedKey}>`;
+  }
+  if (bracket !== undefined) return named.get(key.toLowerCase()) ?? (/^(?:f(?:[1-9]|1[0-9]|2[0-4])|[a-z0-9]+)$/iu.test(key) ? `<${key}>` : undefined);
+  return undefined;
+}
 function asRecord(value: TomlValue | undefined): Record<string, TomlValue> | undefined { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, TomlValue> : undefined; }
 function textField(record: Record<string, TomlValue>, key: string): string | undefined { const value = record[key]; return typeof value === 'string' ? value : undefined; }
 function stringArrayField(record: Record<string, TomlValue>, key: string): readonly string[] | undefined { const value = record[key]; return Array.isArray(value) && value.every((item) => typeof item === 'string') ? Object.freeze(value as string[]) : undefined; }
+function integerArrayField(record: Record<string, TomlValue>, key: string): readonly number[] | undefined { const value = record[key]; return Array.isArray(value) && value.every((item) => typeof item === 'number' && Number.isSafeInteger(item) && item > 0) ? Object.freeze(value as number[]) : undefined; }
+function statuslineSeverityField(record: Record<string, TomlValue>, key: string, fallback: readonly StatuslineDiagnosticSeverity[], diagnostics: ConfigDiagnostic[], locations: Map<string, SourceLocation>, path: string): readonly StatuslineDiagnosticSeverity[] { const value = record[key]; const allowed: readonly StatuslineDiagnosticSeverity[] = ['hint', 'info', 'warning', 'error']; if (value === undefined) return Object.freeze([...fallback]); if (!Array.isArray(value) || !value.every((item): item is StatuslineDiagnosticSeverity => typeof item === 'string' && allowed.includes(item as StatuslineDiagnosticSeverity))) { diagnostics.push(issue(path, 'invalid-value', `${path} must be an array of hint, info, warning or error`, locations)); return Object.freeze([...fallback]); } return Object.freeze([...value]); }
 function integerField(record: Record<string, TomlValue>, key: string): number | undefined { const value = record[key]; return typeof value === 'number' && Number.isSafeInteger(value) ? value : undefined; }
 function booleanField(record: Record<string, TomlValue>, key: string): boolean | undefined { const value = record[key]; return typeof value === 'boolean' ? value : undefined; }
 function boundedInteger(record: Record<string, TomlValue>, key: string, min: number, max: number, fallback: number, diagnostics: ConfigDiagnostic[], locations: Map<string, SourceLocation>, path: string): number { const value = record[key]; if (value === undefined) return fallback; if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) { diagnostics.push(issue(path, 'invalid-value', `${path} must be an integer from ${min} to ${max}`, locations)); return fallback; } return value; }
+function optionalBoundedInteger(record: Record<string, TomlValue>, key: string, min: number, max: number, diagnostics: ConfigDiagnostic[], locations: Map<string, SourceLocation>, path: string): number | undefined { const value = record[key]; if (value === undefined) return undefined; if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) { diagnostics.push(issue(path, 'invalid-value', `${path} must be an integer from ${min} to ${max}`, locations)); return undefined; } return value; }
 function enumField<T extends string>(record: Record<string, TomlValue>, key: string, values: readonly T[], fallback: T, diagnostics: ConfigDiagnostic[], locations: Map<string, SourceLocation>, path: string): T { const value = record[key]; if (value === undefined) return fallback; if (typeof value !== 'string' || !values.includes(value as T)) { diagnostics.push(issue(path, 'invalid-value', `${path} must be one of ${values.join(', ')}`, locations)); return fallback; } return value as T; }
+function statuslineElementsField(record: Record<string, TomlValue>, key: string, fallback: readonly StatuslineElement[], diagnostics: ConfigDiagnostic[], locations: Map<string, SourceLocation>, path: string): readonly StatuslineElement[] { const value = record[key]; const allowed: readonly StatuslineElement[] = ['mode', 'spinner', 'file-name', 'file-absolute-path', 'file-base-name', 'file-modification-indicator', 'file-encoding', 'file-line-ending', 'file-indent-style', 'read-only-indicator', 'total-line-numbers', 'file-type', 'diagnostics', 'workspace-diagnostics', 'selections', 'primary-selection-length', 'position', 'position-percentage', 'separator', 'spacer', 'version-control', 'register', 'current-working-directory', 'code-action-hint']; if (value === undefined) return Object.freeze([...fallback]); if (!Array.isArray(value) || !value.every((item): item is StatuslineElement => typeof item === 'string' && allowed.includes(item as StatuslineElement))) { diagnostics.push(issue(path, 'invalid-value', `${path} must be an array of supported statusline elements`, locations)); return Object.freeze([...fallback]); } return Object.freeze([...value]); }
 function issue(path: string, code: ConfigDiagnostic['code'], message: string, locations: Map<string, SourceLocation>): ConfigDiagnostic { const location = locations.get(path) ?? { fileName: 'config.toml', line: 1, column: 1 }; return { ...location, path, code, message }; }
 function diag(fileName: string, line: number, column: number, path: string, code: ConfigDiagnostic['code'], message: string): ConfigDiagnostic { return { fileName, line, column, path, code, message }; }
 

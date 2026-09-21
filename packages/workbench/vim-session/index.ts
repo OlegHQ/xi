@@ -1,4 +1,4 @@
-import { asCellColumn, asLineIndex, asUtf16Offset, type InputModifiers, type UndoGroupId, type ViewId, type Utf16Offset } from '../../contracts/src/index';
+import { asCellColumn, asLineIndex, asUtf16Offset, CancellationSource, type InputModifiers, type UndoGroupId, type ViewId, type Utf16Offset } from '../../contracts/src/index';
 import type { CanonicalInputEvent } from '../../contracts/src/index';
 import type { DocumentEdit, DocumentReadPort, DocumentSnapshot, TextFileDocument } from '../../document/src/index';
 import { createDocumentAnchor, DocumentChangeMap } from '../../document/src/index';
@@ -44,7 +44,7 @@ import {
   type VimSelectionCommand,
 } from '../../vim/src/entrypoints/launch';
 import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../src/read-model';
-import type { VimHostCommand } from '../../vim/src/index';
+import type { VimHostCommand, VimInsertOptions } from '../../vim/src/index';
 import { searchVimBufferInteractive } from '../../vim/src/index';
 import {
   createVimMotionCursor,
@@ -88,7 +88,7 @@ import { parseXiSelectionCommand, selectionModeFor, SELECTION_COMMANDS, PATTERN_
 import { addPointerCaret, pointerVisualCursor, pointerWordRange } from './pointer';
 import { commitPlan, makeInsertSelections, mapExternalInsertSession, INSERT_GROUP } from './insert-plan';
 import {
-  applyRegisterEffect,
+  applyRegisterEffect as applyRegisterEffectToBank,
   buildParser,
   coreOperator,
   id,
@@ -196,6 +196,8 @@ function registerValueText(value: VimRegisterValue): string {
 export function createOwnedVimSession(document: TextFileDocument, options: OwnedVimSessionOptions): OwnedVimSession {
   const documentId = document.id;
   const viewId = options.viewId;
+  const defaultYankRegister = options.defaultYankRegister ?? '"';
+  const mouseYankRegister = options.mouseYankRegister ?? '*';
   const clock: { readonly monotonicMilliseconds: () => number } = options.clock ?? MONOTONIC_CLOCK;
   // H/M/L need the host's visible-line range; snapshot.lineCount is read fresh each call
   // since the fallback (whole document) must track edits.
@@ -220,6 +222,33 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   let motionCursor = makeMotionCursor(document.snapshot(), selections);
   let undoOpen = false;
   let registers: VimRegisterBank = createVimRegisterBank();
+  function applyRegisterEffect(bank: VimRegisterBank, effect: { readonly operation: string; readonly destination: string; readonly lines: readonly string[]; readonly type: string }): VimRegisterBank {
+    const next = applyRegisterEffectToBank(bank, effect);
+    const clipboard = options.clipboard;
+    if (next !== bank && clipboard !== undefined && (effect.destination === '+' || effect.destination === '*')) {
+      const read = next.read(effect.destination as VimRegisterName);
+      if (read.ok) {
+        const cancellation = new CancellationSource();
+        const text = registerValueText(read.value);
+        const write = effect.destination === '*' ? clipboard.writePrimaryText?.(text, cancellation.token) : clipboard.writeText(text, cancellation.token);
+        if (write !== undefined) void write.finally(() => cancellation.dispose());
+        else cancellation.dispose();
+      }
+    }
+    return next;
+  }
+  function yankPointerSelection(): void {
+    const prepared = prepareVimMultiOperator({
+      snapshot: document.snapshot(),
+      selections,
+      operator: 'yank',
+      defaultYankRegister: mouseYankRegister,
+      state: { mode: 'normal', repeatTarget: null },
+      failurePolicy: 'retain-failed',
+    });
+    if (!prepared.ok) return;
+    for (const effect of prepared.value.registerEffects) registers = applyRegisterEffect(registers, effect);
+  }
   let lastFind: VimLastFind | null = null;
   let searchState: VimSearchState = EMPTY_VIM_SEARCH_STATE;
   // Every interactive search (n/N/*/#/g*/g#/`/`/`?`) runs through this generation
@@ -632,6 +661,50 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     return registerValueText(read.value);
   }
 
+  function executePut(command: 'p' | 'P', registerName: VimRegisterName, count = 1): boolean {
+    const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
+    if (primary === undefined || primary.kind !== 'normal-cursor') return false;
+    const planned = prepareVimPutFromBank({ snapshot: document.snapshot(), cursor: primary.anchor.at.offset, command, bank: registers, registerName, count });
+    if (!planned.ok) return false;
+    const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
+    if (!opened.ok) return false;
+    const current = document.snapshot();
+    const committed = document.commit({ documentId: current.id, expectedVersion: current.version, edits: planned.value.edits, origin: 'vim', undoGroup: OPERATOR_GROUP });
+    if (!committed.ok || !document.endUndoGroup(OPERATOR_GROUP).ok) return false;
+    notifyCommitted(committed, options.onDocumentChange);
+    selections = makeNormalSelection(document.snapshot(), planned.value.cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
+    motionCursor = makeMotionCursor(document.snapshot(), selections);
+    parser = makeParser(mode, selections);
+    return true;
+  }
+
+  async function readClipboardText(selection: 'clipboard' | 'primary'): Promise<string | undefined> {
+    const clipboard = options.clipboard;
+    if (clipboard === undefined) { message('xi: clipboard is unavailable\n'); return undefined; }
+    const cancellation = new CancellationSource();
+    try {
+      const read = selection === 'primary' ? clipboard.readPrimaryText?.(cancellation.token) : clipboard.readText(cancellation.token);
+      if (read === undefined) { message('xi: primary selection is unavailable\n'); return undefined; }
+      const result = await read;
+      if (!result.ok) { message(`xi: clipboard read failed: ${result.error.message}\n`); return undefined; }
+      return result.value;
+    } finally { cancellation.dispose(); }
+  }
+
+  function storeClipboardTextAndPut(text: string, registerName: VimRegisterName, command: 'p' | 'P', count = 1): boolean {
+    const linewise = text.endsWith('\n');
+    const stored = registers.write({ name: registerName, value: { lines: (linewise ? text.slice(0, -1) : text).split('\n'), type: linewise ? 'linewise' : 'characterwise' } });
+    if (!stored.ok) { message(`xi: clipboard paste failed: ${stored.error.kind}\n`); return true; }
+    registers = stored.value;
+    executePut(command, registerName, count);
+    return true;
+  }
+
+  async function importClipboardAndPut(selection: 'clipboard' | 'primary', command: 'p' | 'P', count: number): Promise<boolean> {
+    const text = await readClipboardText(selection);
+    return text === undefined ? true : storeClipboardTextAndPut(text, selection === 'primary' ? '*' : '+', command, count);
+  }
+
   function recordOperatorRepeat(operator: 'delete' | 'change', motionKey: string, count: number, forcedKind?: 'linewise'): void {
     const created = createVimOperatorRepeatTarget({ operator, motionKey, count, ...(forcedKind === undefined ? {} : { forcedKind }) });
     if (!created.ok) return;
@@ -848,6 +921,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       motionCursor = undefined;
       parser = makeParser(mode, selections);
       options.onStateChange?.({ selections, mode });
+      if (intent.completed === true) yankPointerSelection();
       return true;
     },
     setCommandLineSource(source, cursorOffset = source.length): boolean {
@@ -895,6 +969,14 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       }
       parser = makeParser(mode, selections);
       return true;
+    },
+    async handleClipboardPaste(selection = 'clipboard'): Promise<boolean> {
+      if (disposed) return true;
+      const text = await readClipboardText(selection);
+      if (text === undefined) return true;
+      if (isInsertMode(mode)) return session.handlePaste(new TextEncoder().encode(text));
+      if (mode !== 'normal') { message('xi: clipboard paste requires Normal or Insert mode\n'); return true; }
+      return storeClipboardTextAndPut(text, selection === 'primary' ? '*' : '+', 'p');
     },
     dispose(): void {
       if (disposed) return;
@@ -1047,6 +1129,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       operatorCount: 1,
       motionCount: 1,
       ...(pendingOperator.register === undefined ? {} : { register: pendingOperator.register }),
+      defaultYankRegister,
       state: { mode: 'normal', repeatTarget: null },
     });
     if (!prepared.ok || prepared.value.kind === 'failed') { message('xi: search motion failed\n'); return; }
@@ -1123,7 +1206,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         selections: before,
         command: command.command,
         ...(command.pattern === undefined ? {} : { pattern: command.pattern }),
-        ...(command.limit === undefined ? {} : { limit: command.limit }),
+        ...(command.limit === undefined && options.selectionLimit === undefined ? {} : { limit: command.limit ?? options.selectionLimit }),
         ...(command.ignoreCase === undefined ? {} : { ignoreCase: command.ignoreCase }),
         ...(command.command === 'selection.undo' ? { history: selectionHistory } : {}),
       });
@@ -1139,7 +1222,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (command.command === 'selection.undo') {
         selectionHistory = selectionHistory.slice(1);
       } else {
-        selectionHistory = [before, ...selectionHistory].slice(0, SELECTION_HISTORY_LIMIT);
+        selectionHistory = [before, ...selectionHistory].slice(0, options.selectionHistoryLimit ?? SELECTION_HISTORY_LIMIT);
       }
       selections = result.value.selection;
       mode = selectionModeFor(selections.members[0]?.kind);
@@ -1195,7 +1278,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         const key = command.key;
         if (!isInsertEntryKey(key)) return;
         const members = selections.members.map((member) => ({ id: member.id, cursorOffset: member.anchor.at.offset }));
-        const entered = beginVimMultiInsert(document.snapshot(), members, key, {}, command.count.value);
+        const entered = beginVimMultiInsert(document.snapshot(), members, key, options.insertOptions ?? {}, command.count.value);
         if (!entered.ok) throw new Error(`xi-enter-insert:${entered.error.kind}`);
         commitPlan(document, entered.value.plan, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
         mode = entered.value.session.mode;
@@ -1407,27 +1490,9 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         return;
       }
       if (command.kind === 'single-key' && mode === 'normal' && (command.key === 'p' || command.key === 'P')) {
-        const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
-        if (primary === undefined || primary.kind !== 'normal-cursor') return;
-        const registerName = (command.register ?? '"') as VimRegisterName;
-        const planned = prepareVimPutFromBank({
-          snapshot: document.snapshot(),
-          cursor: primary.anchor.at.offset,
-          command: command.key as 'p' | 'P',
-          bank: registers,
-          registerName,
-          count: command.count.value,
-        });
-        if (!planned.ok) return;
-        const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
-        if (!opened.ok) return;
-        const current = document.snapshot();
-        const committed = document.commit({ documentId: current.id, expectedVersion: current.version, edits: planned.value.edits, origin: 'vim', undoGroup: OPERATOR_GROUP });
-        if (!committed.ok || !document.endUndoGroup(OPERATOR_GROUP).ok) return;
-        notifyCommitted(committed, options.onDocumentChange);
-        selections = makeNormalSelection(document.snapshot(), planned.value.cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
-        motionCursor = makeMotionCursor(document.snapshot(), selections);
-        parser = makeParser(mode, selections);
+        const registerName = (command.register ?? defaultYankRegister) as VimRegisterName;
+        if (registerName === '+' || registerName === '*') return importClipboardAndPut(registerName === '*' ? 'primary' : 'clipboard', command.key as 'p' | 'P', command.count.value).then(() => undefined);
+        executePut(command.key as 'p' | 'P', registerName, command.count.value);
         return;
       }
       if (command.kind === 'single-key' && mode === 'normal' && isMotionLike(command.key)) {
@@ -1517,7 +1582,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
           if (prepared.value.registerEffect !== null) registers = applyRegisterEffect(registers, prepared.value.registerEffect);
         }
         if (prepared.value.mode === 'insert') {
-          const entered = beginVimMultiInsert(document.snapshot(), [{ id: primary.id, cursorOffset: prepared.value.cursorOffset }], 'i');
+          const entered = beginVimMultiInsert(document.snapshot(), [{ id: primary.id, cursorOffset: prepared.value.cursorOffset }], 'i', options.insertOptions ?? {});
           if (!entered.ok) return;
           commitPlan(document, entered.value.plan, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
           mode = entered.value.session.mode;
@@ -1558,6 +1623,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
           motionCount: command.count.value,
           doubled: true,
           ...(command.register === undefined ? {} : { register: command.register }),
+          defaultYankRegister,
           state: { mode: 'normal', repeatTarget: null },
         });
         if (!single.ok || single.value.kind === 'failed') return;
@@ -1591,6 +1657,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         ...(motionCommand.register === undefined ? {} : { register: motionCommand.register }),
         ...(motionOptions === undefined ? {} : { motionOptions }),
         ...(force === undefined ? {} : { force }),
+        defaultYankRegister,
         state: { mode: 'normal', repeatTarget: null },
         failurePolicy: 'reject-command',
       });
@@ -1623,7 +1690,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       const primary = prepared.value.cursorOffsets.find((member) => member.id === selections.primaryId) ?? prepared.value.cursorOffsets[0];
       const cursor = primary?.offset ?? selectionOffset(selections.members[0]);
       if (entersInsert) {
-        const entered = beginVimMultiInsert(document.snapshot(), [{ id: selections.primaryId, cursorOffset: cursor }], 'i');
+        const entered = beginVimMultiInsert(document.snapshot(), [{ id: selections.primaryId, cursorOffset: cursor }], 'i', options.insertOptions ?? {});
         if (!entered.ok) return;
         commitPlan(document, entered.value.plan, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
         insert = entered.value.session;
@@ -1674,7 +1741,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     }
 
     function replayInsertText(entryKey: VimInsertEntryKey, text: string, atOffset: Utf16Offset): Utf16Offset {
-      const entered = beginVimMultiInsert(document.snapshot(), [{ id: selections.primaryId, cursorOffset: atOffset }], entryKey);
+      const entered = beginVimMultiInsert(document.snapshot(), [{ id: selections.primaryId, cursorOffset: atOffset }], entryKey, options.insertOptions ?? {});
       if (!entered.ok) return atOffset;
       commitPlan(document, entered.value.plan, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
       let session: VimMultiInsertSession | null = entered.value.session;
@@ -1722,6 +1789,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         operatorCount: 1,
         motionCount: count,
         doubled: true,
+        defaultYankRegister,
         state: { mode: 'normal', repeatTarget: null },
       });
       if (!prepared.ok || prepared.value.kind === 'failed') return undefined;
@@ -1756,7 +1824,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
               if (motion === null) return undefined;
               const prepared = prepareVimMultiOperator({
                 snapshot: document.snapshot(), selections, operator: 'change', motion,
-                operatorCount: 1, motionCount: explicitCount, state: { mode: 'normal', repeatTarget: null },
+                operatorCount: 1, motionCount: explicitCount, defaultYankRegister, state: { mode: 'normal', repeatTarget: null },
                 failurePolicy: 'reject-command',
               });
               if (!prepared.ok) return undefined;
@@ -1817,6 +1885,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
             motion,
             operatorCount: 1,
             motionCount: context.count,
+            defaultYankRegister,
             state: { mode: 'normal', repeatTarget: null },
             failurePolicy: 'reject-command',
           });
@@ -1913,6 +1982,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         snapshot: document.snapshot(),
         selections,
         operator: key === 'd' ? 'delete' : key === 'c' ? 'change' : 'yank',
+        defaultYankRegister,
         state: { mode: 'normal', repeatTarget: null },
         failurePolicy: 'reject-command',
       });
@@ -1955,7 +2025,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       const cursor = plan.mode === 'insert' ? plan.cursorOffset : mapOffsetThroughCommit(beforeSnapshot, plan.transaction?.edits ?? [], plan.cursorOffset);
       if (plan.mode === 'insert') {
         const primaryId = selections.primaryId;
-        const entered = beginVimMultiInsert(document.snapshot(), [{ id: primaryId, cursorOffset: cursor }], 'i');
+        const entered = beginVimMultiInsert(document.snapshot(), [{ id: primaryId, cursorOffset: cursor }], 'i', options.insertOptions ?? {});
         if (!entered.ok) return;
         commitPlan(document, entered.value.plan, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
         insert = entered.value.session;
@@ -2086,7 +2156,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (mode === 'normal' && command.prefix === 'g' && (command.key === 'R' || command.key === 'I')) {
         const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
         if (primary === undefined) return;
-        const entered = beginVimMultiInsert(document.snapshot(), [{ id: primary.id, cursorOffset: primary.anchor.at.offset }], `g${command.key}` as VimInsertEntryKey, {}, command.count.value);
+        const entered = beginVimMultiInsert(document.snapshot(), [{ id: primary.id, cursorOffset: primary.anchor.at.offset }], `g${command.key}` as VimInsertEntryKey, options.insertOptions ?? {}, command.count.value);
         if (!entered.ok) return;
         commitPlan(document, entered.value.plan, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
         insert = entered.value.session;

@@ -42,6 +42,7 @@ export interface PointerWorkbenchEvent {
     readonly cellPart: 'glyph' | 'wide-continuation' | 'tab-fill' | 'clipped-glyph' | 'padding';
   };
   readonly button: number | null;
+  readonly modifiers?: { readonly shift: boolean; readonly alt: boolean; readonly ctrl: boolean; readonly meta: boolean };
   readonly control?: PointerControlEvent;
   /** Single/double/triple click, derived by `WorkbenchPointerRouter` on `phase: 'down'` from
    * same-cell clicks within ~400ms (docs/architecture.md); `undefined` for other
@@ -138,6 +139,8 @@ export interface WorkbenchPointerRouterOptions {
   readonly onLayoutChange?: () => void;
   /** Drives click-count derivation (`clickCount`, tab single/double-click). */
   readonly clock: ClockPort;
+  /** Modifier required before Xi handles a pointer event; `none` accepts ordinary clicks. */
+  readonly mouseModifier?: 'none' | 'shift' | 'alt' | 'ctrl' | 'meta';
   /** A `tab.<bufferId>` control (see `PointerControlEvent.kind: 'tab'`) was clicked once. */
   readonly onTabActivate?: (bufferId: string, viewId?: string) => void;
   /** The same control was double-clicked -- pins the tab (promotes it out of preview). */
@@ -147,6 +150,8 @@ export interface WorkbenchPointerRouterOptions {
   /** A button went down on editor text/gutter: keyboard focus returns to the editor, so any
    * focused panel (Files tree, Search) must release it. */
   readonly onEditorPointerDown?: () => void;
+  /** Middle-button editor paste is resolved by the composition root's clipboard owner. */
+  readonly onMiddleClick?: (event: PointerWorkbenchEvent) => boolean;
   /** Drives the sidebar's own resize splitter (`splitter:sidebar`), separate from the editor
    * pane splitters which resize through `session.resizeSplit`. */
   readonly sidebar?: PointerSidebarPort;
@@ -194,7 +199,13 @@ export class WorkbenchPointerRouter implements Disposable {
   /** Top-level `onPointer` decision: control events go to `handleControl`, everything else
    * is a text/gutter gesture forwarded to the Vim-side pointer capture engine. */
   handlePointer(event: PointerWorkbenchEvent): boolean {
+    const requiredModifier = this.#options.mouseModifier ?? 'none';
+    if (requiredModifier !== 'none' && event.modifiers?.[requiredModifier] !== true) return false;
     if (event.control !== undefined) return this.handleControl(event);
+    if (event.phase === 'down' && event.button === 1) {
+      this.#options.marker('XI_MIDDLE_CLICK', { viewId: event.viewId, row: event.cell.row, column: event.cell.column });
+      if (this.#options.onMiddleClick?.(event) === true) return true;
+    }
     if (event.phase === 'down') this.#options.onEditorPointerDown?.();
     const clickCount = event.phase === 'down' ? this.#clickCount('text', event.cell.row, event.cell.column) : undefined;
     return this.#options.pointerCapture.dispatch({

@@ -34,6 +34,12 @@ values and unsafe workspace executable settings need negative tests. Reference H
 binaries and source checkouts live under ignored `.artifacts/reference/helix/`; no external
 editor is a Xi runtime dependency.
 
+Every config change updates [`configuration-ledger.json`](configuration-ledger.json).
+`bun run check:config-ledger` rejects duplicate or unsealed inventory entries, fixture
+paths missing from the ledger, invalid status transitions, nonexistent evidence and an
+`effective` claim without schema, default, runtime, invalid-input, unit, PTY and Helix
+tests. Xi-only extensions require the same dimensions except Helix comparison.
+
 Performance checks follow [performance.md](performance.md). A clean component benchmark
 cannot certify the production CLI, and a noisy or missing measurement is unproven rather
 than passed.

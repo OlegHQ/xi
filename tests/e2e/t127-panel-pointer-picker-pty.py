@@ -74,12 +74,12 @@ def run_picker() -> None:
             os.write(master, b"zztarget")
             read_until(master, captured, b"XI_PICKER_PREVIEW", 5)
             read_for(master, captured, 0.3)
-            # Picker panel (Helix layout): left=6, top=5 at 120x40; header row occupies mouse y=6,
-            # the first entry row mouse y=7. (Previously: left=10, top=13; header row mouse y=14),
-            # first (and only, filtered) entry occupies mouse y=15.
+            # Picker panel: the 60-cell bounded panel is centered at left=30, top=5 at
+            # 120x40; its bordered content begins at x=7, header row y=7, and the
+            # first (filtered) entry occupies y=8.
             before = len(captured)
-            os.write(master, mouse(0, 13, 7))
-            os.write(master, mouse(0, 13, 7, True))
+            os.write(master, mouse(0, 13, 8))
+            os.write(master, mouse(0, 13, 8, True))
             read_for(master, captured, 0.6)
             events = [json.loads(match.group(1)) for match in PANEL_POINTER.finditer(captured[before:])]
             hit = next((event for event in events if event.get("panel") == "picker" and event.get("action") == "activate"), None)

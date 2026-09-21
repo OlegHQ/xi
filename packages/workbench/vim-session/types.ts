@@ -1,9 +1,9 @@
-import type { ClockPort, ViewId } from '../../contracts/src/index';
+import type { ClipboardPort, ClockPort, ViewId } from '../../contracts/src/index';
 import type { CommittedDocumentChange } from '../../document/src/index';
 import type { SelectionSetSnapshot } from '../../selections/src/index';
 import type { VimMode } from '../../vim/src/entrypoints/launch';
 import type { WorkbenchReadPort } from '../src/read-model';
-import type { VimHostCommand } from '../../vim/src/index';
+import type { VimHostCommand, VimInsertOptions } from '../../vim/src/index';
 import type { PointerSelectionIntent } from '../../vim/src/entrypoints/launch';
 import type { PrefixHelpParserContinuation } from '../commands/prefix-help';
 
@@ -20,6 +20,17 @@ export interface OwnedVimSessionOptions {
   readonly viewId: ViewId;
   /** Xi profile: preserve the last motion for explicit Visual adoption. */
   readonly motionGhost?: boolean;
+  /** Xi selection safety bound for multi-selection commands. */
+  readonly selectionLimit?: number;
+  /** Xi bounded history depth for selection-only undo. */
+  readonly selectionHistoryLimit?: number;
+  /** Helix-compatible destination for an implicit yank; explicit register prefixes win. */
+  readonly defaultYankRegister?: string;
+  /** Helix master: completed mouse selections are yanked into this Vim register. */
+  readonly mouseYankRegister?: string;
+  readonly clipboard?: ClipboardPort;
+  /** Helix editor.smart-tab.enable mapped to Vim's existing bounded insert option. */
+  readonly insertOptions?: VimInsertOptions;
   /** Monotonic time source for repeat-timing/dot-repeat bookkeeping. Defaults to a
    * performance.now()-backed clock when omitted. */
   readonly clock?: Pick<ClockPort, 'monotonicMilliseconds'>;
@@ -110,6 +121,7 @@ export interface OwnedVimSession extends WorkbenchReadPort {
   /** Insert bracketed-paste bytes as one atomic insertion. Only supported while in
    * Insert/Replace/Virtual-replace mode; a Normal-mode paste is a safe no-op for now. */
   handlePaste(bytes: Uint8Array): boolean;
+  handleClipboardPaste(selection?: 'clipboard' | 'primary'): Promise<boolean>;
   /** Release pending session state (command line, prefix keys, macro recording, insert
    * session) and stop publishing further state through the option callbacks. Idempotent. */
   dispose(): void;

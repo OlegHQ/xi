@@ -339,7 +339,7 @@ function inspectExPosition(source: string, cursorOffset: number): ExCommandPosit
   const rangeEnd = index;
   while (index < segmentEnd && isSpace(source[index])) index += 1;
   const commandNameStart = index;
-  while (index < segmentEnd && /[A-Za-z&~]/u.test(source[index] ?? '')) index += 1;
+  while (index < segmentEnd && /[A-Za-z&~_-]/u.test(source[index] ?? '')) index += 1;
   const commandNameEnd = index;
   const typedName = source.slice(commandNameStart, commandNameEnd);
   const typedBang = source[index] === '!';

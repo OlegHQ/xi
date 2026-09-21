@@ -54,6 +54,10 @@ export interface WorkbenchAppProps {
   readonly requestFrame: () => void;
 }
 
+export function popupBorderVisible(policy: 'none' | 'popup' | 'menu' | 'all' | undefined, kind: 'popup' | 'menu'): boolean {
+  return policy === 'all' || policy === kind;
+}
+
 const EMPTY_EXPLORER_MODEL: ExplorerReadPort['model'] = Object.freeze({
   contractVersion: 1,
   generation: 0,
@@ -64,6 +68,8 @@ const EMPTY_EXPLORER_MODEL: ExplorerReadPort['model'] = Object.freeze({
   filter: '',
   includeHidden: false,
   includeIgnored: false,
+  followSymlinks: false,
+  flattenDirs: true,
   focused: false,
   state: 'empty',
   message: undefined,
@@ -441,7 +447,7 @@ function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, 
       segments: clipSegments([
         { text: `${'  '.repeat(visible.depth)}${disclosure} `, foreground: theme.muted },
         { text: `${icon.glyph} `, foreground: iconColor(theme, icon.color) },
-        { text: node.name, foreground: selected ? theme.foreground : (node.kind === 'directory' || node.kind === 'root' ? helixThemeColor(theme, 'ui.text.directory', 'fg', theme.foreground) : theme.foreground), bold: selected, ...(directoryStyle === undefined ? {} : { style: directoryStyle }) },
+        { text: visible.label ?? node.name, foreground: selected ? theme.foreground : (node.kind === 'directory' || node.kind === 'root' ? helixThemeColor(theme, 'ui.text.directory', 'fg', theme.foreground) : theme.foreground), bold: selected, ...(directoryStyle === undefined ? {} : { style: directoryStyle }) },
         ...(node.git === undefined ? [] : [{ text: ` ${node.git.label}`, foreground: gitColor, ...(gitStyle === undefined ? {} : { style: gitStyle }) }]),
         ...(suffix.length === 0 ? [] : [{ text: suffix, foreground: node.loadState === 'permission-denied' ? theme.error : theme.muted }]),
       ], width),
@@ -650,6 +656,16 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         fileLabel={props.fileLabel}
         tabStrips={(width, height) => props.viewport.getTabStrips(width, height)}
         {...(options.gitBranch === undefined ? {} : { gitBranch: options.gitBranch })}
+        {...(options.statusline === undefined ? {} : { statusline: options.statusline })}
+        {...(options.workspaceRoot === undefined ? {} : { workspaceRoot: options.workspaceRoot })}
+        {...(options.statuslineFileType === undefined ? {} : { statuslineFileType: options.statuslineFileType })}
+        {...(options.statuslineLspActivity === undefined ? {} : { statuslineLspActivity: options.statuslineLspActivity })}
+        {...(options.statuslineRegister === undefined ? {} : { statuslineRegister: options.statuslineRegister })}
+        {...(options.statuslineCodeActionHints === undefined ? {} : { statuslineCodeActionHints: options.statuslineCodeActionHints })}
+        {...(options.colorModes === undefined ? {} : { colorModes: options.colorModes })}
+        {...(options.bufferline === undefined ? {} : { bufferline: options.bufferline })}
+        {...(options.editorDiagnostics === undefined ? {} : { editorDiagnostics: options.editorDiagnostics })}
+        {...(options.workspaceDiagnostics === undefined ? {} : { workspaceDiagnostics: options.workspaceDiagnostics })}
         {...(options.sidebar === undefined ? {} : { sidebar: options.sidebar })}
         {...(options.tabs === undefined ? {} : { tabs: options.tabs })}
         showBottomPanel={false}
@@ -703,7 +719,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         selectedId: model => model.selectedId,
         selectedIndex: model => model.entries.findIndex(entry => entry.id === model.selectedId),
         zIndex: 100,
-        border: true,
+        border: popupBorderVisible(options.popupBorder, 'menu'),
         previewOnHover: model => model.mode === 'theme',
       }, scopeColors('ui.menu', 'ui.picker.header'))}
       {options.picker !== undefined && rows({
@@ -725,7 +741,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: (width, height) => pickerPaneBounds(width, height, true, options.picker?.read.model.mode),
         zIndex: 100,
-        border: true,
+        border: popupBorderVisible(options.popupBorder, 'menu'),
       }, scopeColors('ui.menu', 'ui.picker.header'))}
       {rows<SearchReadPort['model']>({
         read: searchSurface.read,
@@ -799,6 +815,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         onPointer: event => forwardPanelPointer(options.problems?.onPointer, event, props.requestFrame),
         headerRows: 1,
         zIndex: 80,
+        border: popupBorderVisible(options.popupBorder, 'popup'),
         totalRows: model => model.all.length,
         ...(options.problems.selectedId === undefined ? {} : {
           selectedId: () => options.problems?.selectedId?.(),
@@ -814,6 +831,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: (width, height) => getSidebarOutlineBounds(width, height, options.sidebar?.()),
         zIndex: 70,
+        border: popupBorderVisible(options.popupBorder, 'popup'),
       }, scopeColors('ui.popup'))}
       {options.hierarchy !== undefined && rows({
         read: options.hierarchy.read,
@@ -824,6 +842,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: getOutlineBounds,
         zIndex: 75,
+        border: popupBorderVisible(options.popupBorder, 'popup'),
       }, scopeColors('ui.popup'))}
       {options.hover !== undefined && rows({
         read: options.hover.read,
@@ -835,6 +854,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, measureHover(options.hover!.read.model, Math.max(1, width - 2), 12), 'below', options.sidebar?.().width, options.sidebar?.().visible !== false),
         zIndex: 110,
+        border: popupBorderVisible(options.popupBorder, 'popup'),
       }, scopeColors('ui.popup'))}
       {options.directoryReview !== undefined && rows({
         read: options.directoryReview.read,
@@ -845,6 +865,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: getDirectoryReviewBounds,
         zIndex: 105,
+        border: popupBorderVisible(options.popupBorder, 'popup'),
       }, scopeColors('ui.popup'))}
       {options.completion !== undefined && rows({
         read: options.completion.read,
@@ -860,6 +881,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         selectedId: model => model.selectedId,
         selectedIndex: model => model.items.findIndex(item => item.id === model.selectedId),
         zIndex: 120,
+        border: popupBorderVisible(options.popupBorder, 'menu'),
       }, scopeColors('ui.menu'))}
       {options.signature !== undefined && rows({
         read: options.signature.read,
@@ -870,6 +892,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(100, width - 2)), height: 8 }, 'above', options.sidebar?.().width, options.sidebar?.().visible !== false),
         zIndex: 115,
+        border: popupBorderVisible(options.popupBorder, 'popup'),
       }, scopeColors('ui.popup'))}
       {options.commandLine !== undefined && commandLineRead !== undefined && rows({
         read: commandLineRead,
@@ -881,6 +904,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: (width, height) => getCommandLineBounds(width, height, options.commandLine!.read.model),
         zIndex: 130,
+        border: popupBorderVisible(options.popupBorder, 'popup'),
       }, scopeColors('ui.popup'))}
       {options.prefixHelp !== undefined && rows({
         read: options.prefixHelp,
@@ -892,6 +916,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: (width, height) => getPrefixHelpBounds(width, height, options.prefixHelp?.model?.hints.length ?? 0),
         zIndex: 125,
+        border: popupBorderVisible(options.popupBorder, 'popup'),
       }, scopeColors('ui.popup.info'))}
       {options.contextMenu !== undefined && <ContextMenuBackdrop store={options.contextMenu} />}
       {options.contextMenu !== undefined && contextMenuRead !== undefined && rows({
@@ -912,6 +937,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
           return state === undefined ? { width: 1, height: 1, left: 0, top: 0 } : contextMenuBounds(state.items, state.left, state.top, width, height);
         },
         zIndex: 200,
+        border: popupBorderVisible(options.popupBorder, 'menu'),
         rowIds: state => state?.items.map(item => item.id) ?? [],
         selectedId: state => state?.items[state.selectedIndex]?.id,
         onMouse: (event, row) => {
@@ -931,6 +957,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: getProblemsBounds,
         zIndex: 80,
+        border: popupBorderVisible(options.popupBorder, 'popup'),
       }, scopeColors('ui.popup'))}
     </box>
   );

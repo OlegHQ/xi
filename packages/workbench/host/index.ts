@@ -1,7 +1,7 @@
-import { asIdentifier, type ClockPort, type DocumentId, type Disposable, type Result, type ViewId } from '../../contracts/src/index';
+import { asIdentifier, type ClipboardPort, type ClockPort, type DocumentId, type Disposable, type Result, type ViewId } from '../../contracts/src/index';
 import type { SelectionSetSnapshot } from '../../selections/src/index';
 import type { TextFileDocument } from '../../document/src/entrypoints/launch';
-import type { VimHostCommand } from '../../vim/src/index';
+import type { VimHostCommand, VimInsertOptions } from '../../vim/src/index';
 import { createOwnedVimSession } from '../vim-session';
 import type { OwnedVimKeyEvent, OwnedVimSession, VimCommandLineState, VimPrefixHelpState } from '../vim-session';
 import type { WorkbenchBufferSnapshot, WorkbenchSession, WorkbenchSessionFailure } from '../session';
@@ -33,12 +33,19 @@ export interface BufferHostOptions {
   readonly launchViewId: ViewId;
   readonly launchInitialLine?: number;
   readonly motionGhost?: boolean;
+  readonly selectionLimit?: number;
+  readonly selectionHistoryLimit?: number;
+  readonly defaultYankRegister?: string;
+  readonly mouseYankRegister?: string;
+  readonly clipboard?: ClipboardPort;
+  readonly insertOptions?: VimInsertOptions;
   readonly onMessage?: (message: string) => void;
   readonly onSave?: (document: TextFileDocument, viewId: ViewId, target: string | undefined) => Promise<boolean>;
   readonly onExCommand?: (source: string, viewId: ViewId) => Promise<'handled' | 'unhandled' | 'quit'> | 'handled' | 'unhandled' | 'quit';
   readonly onHostCommand?: HostCommandPort;
   readonly onPrefixStateChange?: (viewId: ViewId, state: VimPrefixHelpState) => void;
   readonly onCommandLineChange?: (state: VimCommandLineState | undefined) => void;
+  readonly onStateChange?: (document: TextFileDocument, state: { readonly selections: SelectionSetSnapshot; readonly mode: string }) => void;
   /** Invoked whenever a buffer beyond the launch document is opened/closed, so the
    * composition root can register/unregister it with the language server -- the launch
    * document is registered separately by the composition root itself. */
@@ -115,6 +122,18 @@ export class BufferHost {
     return this.#session.activeViewId === undefined ? undefined : this.sessions.get(this.#session.activeViewId);
   }
 
+  /** Picker identity for Helix's current/previous buffer start position. */
+  bufferPickerSelection(position: 'current' | 'previous'): string | undefined {
+    if (position === 'current') {
+      const activeViewId = this.#session.activeViewId;
+      return activeViewId === undefined
+        ? undefined
+        : this.#session.views().find((view) => view.viewId === activeViewId)?.bufferId.toString();
+    }
+    const previousPath = this.#session.alternateBufferPath();
+    return previousPath === undefined ? undefined : this.#session.buffers().find((buffer) => buffer.path === previousPath)?.bufferId.toString();
+  }
+
   /** Promotes a buffer out of preview -- needed on commit even when the buffer was opened
    * non-preview, since `openBufferAtPath`'s "already open" branch reuses an existing buffer
    * regardless of its current preview flag. Also clears `previewViewId` if it still pointed
@@ -133,6 +152,12 @@ export class BufferHost {
     const session = createOwnedVimSession(document, {
       viewId,
       motionGhost: options.motionGhost ?? false,
+      ...(options.selectionLimit === undefined ? {} : { selectionLimit: options.selectionLimit }),
+      ...(options.selectionHistoryLimit === undefined ? {} : { selectionHistoryLimit: options.selectionHistoryLimit }),
+      ...(options.defaultYankRegister === undefined ? {} : { defaultYankRegister: options.defaultYankRegister }),
+      ...(options.mouseYankRegister === undefined ? {} : { mouseYankRegister: options.mouseYankRegister }),
+      ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard }),
+      ...(options.insertOptions === undefined ? {} : { insertOptions: options.insertOptions }),
       ...(options.clock === undefined ? {} : { clock: options.clock }),
       files: {
         currentPath: () => workbenchSession.buffer(document.id)?.path,
@@ -161,6 +186,7 @@ export class BufferHost {
       ...(options.onCommandLineChange === undefined ? {} : { onCommandLineChange: options.onCommandLineChange }),
       onStateChange: (state) => {
         this.#session.syncViewSession(viewId, state.selections, state.mode);
+        this.#options.onStateChange?.(document, state);
         if (publishedMode !== state.mode) { publishedMode = state.mode; this.notifySurfaceChange(); }
       },
       // Preview-buffer promotion only needs to run when an edit actually lands, not on

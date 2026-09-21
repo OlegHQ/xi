@@ -6,6 +6,7 @@ export type {
   DiffFillerRow,
   FoldHitTarget,
   FoldRegion,
+  GutterType,
   FrameIdentity,
   GutterHitTarget,
   LayoutCacheStats,
@@ -28,6 +29,7 @@ export type {
   VirtualAnnotationHitTarget,
   VisibleFrame,
 } from './types';
+export { DEFAULT_GUTTER_LAYOUT } from './types';
 export { defaultCellWidthPolicy } from './graphemes';
 export { ViewportLayout, resolveScrollAnchor } from './viewport';
 export { projectComparisonSide, type ComparisonRow } from './comparison';

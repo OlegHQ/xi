@@ -7,6 +7,10 @@ Read [Vim behavior](../../../docs/vim.md), the affected engine code and neighbor
 Use the pinned oracle manifest and compatibility inventory. Never load personal
 `~/.config/nvim` or introduce a production Neovim dependency.
 
+Neovim remains the oracle for Vim commands and state. Do not replace it with Helix's modal
+editing model. Use Helix separately for 1:1 multi-selection creation, primary identity,
+direction, merge/deduplication, change mapping and simultaneous-edit behavior.
+
 Identify the exact help tag, modes, options, coordinates and operator/select composition.
 Add a minimal oracle fixture first, including incomplete commands where relevant. Compare
 text, semantic cursor/desired column, mode, selection kind, registers, marks, repeat/search

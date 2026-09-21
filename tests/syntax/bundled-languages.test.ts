@@ -30,13 +30,17 @@ const GRAMMARS: Readonly<Record<string, readonly [string, string]>> = {
 
 // Mirrors the per-language query overrides in apps/xi/src/syntax-assets.ts.
 const EXTRA_HIGHLIGHTS: Readonly<Record<string, string>> = { json: '\n(pair key: (_) @string.special.key)\n' };
+const RAINBOW_HIGHLIGHTS: Readonly<Record<string, string>> = {
+  python: '\n["(" ")" "[" "]" "{" "}"] @punctuation.bracket\n',
+  json: '\n["[" "]" "{" "}"] @punctuation.bracket\n',
+};
 
 const grammarProvider: SyntaxGrammarProvider = {
   async resolve(languageId) {
     const entry = GRAMMARS[languageId];
     if (entry === undefined) return { ok: false, error: { kind: 'grammar-missing', message: `no bundled grammar for ${languageId}` } };
     const [wasm, highlights] = await Promise.all([readFile(`${REPO_ROOT}${entry[0]}`), readFile(`${REPO_ROOT}${entry[1]}`, 'utf-8')]);
-    return { ok: true, value: { wasm, highlights: `${highlights}${EXTRA_HIGHLIGHTS[languageId] ?? ''}` } };
+    return { ok: true, value: { wasm, highlights: `${highlights}${EXTRA_HIGHLIGHTS[languageId] ?? ''}${RAINBOW_HIGHLIGHTS[languageId] ?? ''}` } };
   },
 };
 async function runtimeOptions(): Promise<{ readonly wasmBinary: Uint8Array }> { return { wasmBinary: await readFile(RUNTIME_WASM_PATH) }; }
@@ -58,7 +62,7 @@ async function main(): Promise<void> {
     assert.equal(opened.kind, 'editable', `BUNDLED-OPEN-${languageId} fixture opens`);
     if (opened.kind !== 'editable') continue;
     const tasks: Array<() => void> = [];
-    const service = new IncrementalSyntaxHighlighter({ grammars: grammarProvider, runtime: runtimeOptions, schedule: (task) => { tasks.push(task); } });
+    const service = new IncrementalSyntaxHighlighter({ grammars: grammarProvider, runtime: runtimeOptions, rainbowBrackets: true, schedule: (task) => { tasks.push(task); } });
     service.submit({
       documentId,
       documentVersion: 1 as DocumentVersion,

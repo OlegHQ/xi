@@ -7,10 +7,64 @@ import { openTextDocument, type DocumentReadPort, type DocumentSnapshot } from '
 import { createSelectionSet } from '../../packages/selections/src/index';
 import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../../packages/workbench/src/index';
 import { ASCII_WORKBENCH_THEME, OpenTuiTerminalAdapter, WorkbenchRenderable, calculateWorkbenchLayout, type WorkbenchTheme } from '../../packages/ui/src/index';
+import { gutterWidthFor } from '../../packages/ui/src/workbench';
 import { createChromeSurfaceNode, createThemeBridge, mountSolidRoot } from '../../packages/ui/src/solid/composition';
+import { statuslineThemeScope } from '../../packages/ui/src/solid/chrome';
+import { popupBorderVisible } from '../../packages/ui/src/solid/workbench';
 
 const VIEW_ID = id<ViewId>('T034-view');
 const DOCUMENT_ID = id<DocumentId>('T034-document');
+
+assert.equal(gutterWidthFor(1, 5), 9, 'T036-GUTTER-MIN-WIDTH-UNIT-01 configured minimum width composes five number cells with the default Helix gutter layout');
+assert.equal(gutterWidthFor(12345, 3), 9, 'T036-GUTTER-MIN-WIDTH-UNIT-02 large line counts still widen the default Helix gutter layout when needed');
+assert.equal(gutterWidthFor(1, 3, ['line-numbers']), 3, 'T036-GUTTERS-UNIT-01 scalar gutter layout reserves only line numbers');
+assert.equal(gutterWidthFor(1, 3, ['diff', 'diagnostics', 'line-numbers']), 5, 'T036-GUTTERS-LAYOUT-UNIT-01 table gutter layout preserves configured order and widths');
+assert.equal(statuslineThemeScope(false, 'insert'), 'ui.statusline', 'T036-COLOR-MODES-UNIT-01 disabled color-modes uses the base statusline scope');
+assert.equal(statuslineThemeScope(true, 'insert'), 'ui.statusline.insert', 'T036-COLOR-MODES-UNIT-02 enabled color-modes uses the insert scope');
+assert.equal(calculateWorkbenchLayout(80, 24, false, undefined, true, false).editorTop, 0, 'T036-BUFFERLINE-UNIT-01 hidden bufferline gives the editor the first row');
+assert.equal(calculateWorkbenchLayout(80, 24, false, undefined, true, true).editorTop, 1, 'T036-BUFFERLINE-UNIT-01 visible bufferline reserves the top row');
+assert.equal(popupBorderVisible('none', 'popup'), false, 'T036-POPUP-BORDER-UNIT-01 none hides popup borders');
+assert.equal(popupBorderVisible('popup', 'popup'), true, 'T036-POPUP-BORDER-UNIT-02 popup shows popup borders');
+assert.equal(popupBorderVisible('popup', 'menu'), false, 'T036-POPUP-BORDER-UNIT-03 popup leaves menu borders hidden');
+assert.equal(popupBorderVisible('menu', 'menu'), true, 'T036-POPUP-BORDER-UNIT-04 menu shows menu borders');
+assert.equal(popupBorderVisible('all', 'popup'), true, 'T036-POPUP-BORDER-UNIT-05 all shows popup borders');
+assert.equal(popupBorderVisible('all', 'menu'), true, 'T036-POPUP-BORDER-UNIT-06 all shows menu borders');
+
+async function testStatuslineElementCatalog(): Promise<void> {
+  const { workbench } = makeWorkbench();
+  const setup = await createTestRenderer({ width: 180, height: 40, bufferedOutput: 'memory', gatherStats: true });
+  const statusline = {
+    left: ['mode', 'spinner', 'file-name', 'file-absolute-path', 'file-base-name', 'file-modification-indicator', 'read-only-indicator', 'file-encoding', 'file-line-ending', 'file-indent-style', 'file-type', 'diagnostics'],
+    center: ['workspace-diagnostics', 'selections', 'primary-selection-length', 'position', 'separator', 'position-percentage', 'total-line-numbers'],
+    right: ['spacer', 'version-control', 'register'],
+    separator: '~',
+    mode: { normal: 'NORM', insert: 'INS', select: 'SEL' },
+    diagnostics: ['warning', 'error'] as const,
+    workspaceDiagnostics: ['warning', 'error'] as const,
+  };
+  const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench, fileLabel: 'editor.ts' });
+  setup.renderer.root.add(viewport);
+  await mountSolidRoot(setup.renderer, [createChromeSurfaceNode({
+    workbench,
+    theme: viewport.theme,
+    fileLabel: 'editor.ts',
+    statusline,
+    statuslineFileType: () => 'typescript',
+    statuslineLspActivity: () => true,
+    statuslineRegister: () => '"',
+    showBottomPanel: false,
+  }, createThemeBridge(viewport.theme))]);
+  await setup.renderOnce();
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /NORM/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 mode element renders');
+  assert.match(frame, /editor\.ts/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 file elements render');
+  assert.match(frame, /⠋/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 spinner element renders while LSP is active');
+  assert.match(frame, /typescript/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 file-type element renders');
+  assert.match(frame, /1\/2 sels/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 selection element renders');
+  assert.match(frame, /1:1/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 position element renders');
+  assert.match(frame, /~/u, 'T036-STATUSLINE-ELEMENTS-UNIT-01 separator element renders');
+  setup.renderer.destroy();
+}
 
 function makeWorkbench(text = 'alpha 😀 beta\nsecond line\nthird line'): { readonly workbench: WorkbenchReadPort; readonly snapshot: DocumentSnapshot } {
   const opened = openTextDocument(DOCUMENT_ID, new TextEncoder().encode(text));
@@ -99,14 +153,16 @@ function makeCursorView(snapshot: DocumentSnapshot, primary: SelectionId, offset
   };
 }
 
-async function renderAt(width: number, height: number, options: { readonly ascii?: boolean; readonly bottom?: boolean } = {}): Promise<{ readonly frame: WorkbenchRenderable['lastFrame']; readonly chars: string; readonly viewport: WorkbenchRenderable; readonly setup: Awaited<ReturnType<typeof createTestRenderer>> }> {
-  const { workbench } = makeWorkbench();
+async function renderAt(width: number, height: number, options: { readonly ascii?: boolean; readonly bottom?: boolean; readonly text?: string; readonly indentGuides?: { readonly render: boolean; readonly character: string; readonly skipLevels: number }; readonly whitespace?: { readonly render: { readonly default: boolean; readonly space: boolean; readonly nbsp: boolean; readonly nnbsp: boolean; readonly tab: boolean; readonly newline: boolean }; readonly characters: { readonly space: string; readonly nbsp: string; readonly nnbsp: string; readonly tab: string; readonly tabpad: string; readonly newline: string } } } = {}): Promise<{ readonly frame: WorkbenchRenderable['lastFrame']; readonly chars: string; readonly viewport: WorkbenchRenderable; readonly setup: Awaited<ReturnType<typeof createTestRenderer>> }> {
+  const { workbench } = makeWorkbench(options.text);
   const setup = await createTestRenderer({ width, height, bufferedOutput: 'memory', gatherStats: true });
   const renderOptions = {
     workbench,
     fileLabel: 'editor.ts',
     ...(options.ascii === undefined ? {} : { ascii: options.ascii }),
     ...(options.bottom === undefined ? {} : { showBottomPanel: options.bottom }),
+    ...(options.indentGuides === undefined ? {} : { indentGuides: options.indentGuides }),
+    ...(options.whitespace === undefined ? {} : { whitespace: options.whitespace }),
   };
   const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, renderOptions);
   setup.renderer.root.add(viewport);
@@ -119,6 +175,40 @@ async function renderAt(width: number, height: number, options: { readonly ascii
   }, createThemeBridge(viewport.theme))]);
   await setup.renderOnce();
   return { frame: viewport.lastFrame, chars: setup.captureCharFrame(), viewport, setup };
+}
+
+async function testIndentGuides(): Promise<void> {
+  const rendered = await renderAt(100, 20, {
+    text: 'root\n    child\n        grandchild\n',
+    indentGuides: { render: true, character: '|', skipLevels: 0 },
+  });
+  const lines = rendered.chars.split('\n');
+  assert.ok(lines.some(line => line.indexOf('|') >= 0 && line.indexOf('child') > line.indexOf('|')), 'T036-INDENT-GUIDES-UNIT-01 configured guide paints before an indented visible line');
+  assert.ok(lines.some(line => line.indexOf('|') >= 0 && line.indexOf('grandchild') > line.indexOf('|')), 'T036-INDENT-GUIDES-UNIT-01 configured guide paints in deeper indentation');
+  rendered.setup.renderer.destroy();
+  const skipped = await renderAt(100, 20, {
+    text: 'root\n    child\n        grandchild\n',
+    indentGuides: { render: true, character: '|', skipLevels: 1 },
+  });
+  const childLine = skipped.chars.split('\n').find(line => line.includes('child'));
+  const grandchildLine = skipped.chars.split('\n').find(line => line.includes('grandchild'));
+  assert.equal(childLine?.includes('|'), false, 'T036-INDENT-GUIDES-UNIT-02 skip-levels hides the first indentation guide');
+  assert.equal(grandchildLine?.includes('|'), true, 'T036-INDENT-GUIDES-UNIT-02 skip-levels retains deeper guides');
+  skipped.setup.renderer.destroy();
+}
+
+async function testWhitespaceRendering(): Promise<void> {
+  const rendered = await renderAt(100, 20, {
+    text: 'a b\t cdefgh\nnbsp\u00a0value\nlast\n',
+    whitespace: {
+      render: { default: true, space: true, nbsp: true, nnbsp: true, tab: true, newline: true },
+      characters: { space: '·', nbsp: '⍽', nnbsp: '␣', tab: '→', tabpad: '·', newline: '⏎' },
+    },
+  });
+  assert.match(rendered.chars, /a·b→/u, 'T036-WHITESPACE-UNIT-01 configured spaces and tabs render visible glyphs');
+  assert.match(rendered.chars, /nbsp⍽value/u, 'T036-WHITESPACE-UNIT-01 configured non-breaking spaces render visibly');
+  assert.match(rendered.chars, /⏎/u, 'T036-WHITESPACE-UNIT-01 configured line endings render visibly');
+  rendered.setup.renderer.destroy();
 }
 
 function testLayoutPolicy(): void {
@@ -274,6 +364,9 @@ await testAsciiAndSmallTerminal();
 await testDamageLimitedCursorRepaint();
 await testLowColorAndTerminalFailure();
 await testGitBranchStatus();
+await testStatuslineElementCatalog();
+await testIndentGuides();
+await testWhitespaceRendering();
 await captureFrameMatrix();
 console.log('T034 workbench frames passed responsive shell, layout projection, primary/secondary cursors, ASCII fallback, small-terminal, git branch status and cleanup fixtures');
 

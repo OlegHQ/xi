@@ -1209,7 +1209,7 @@ function isEditOrigin(value: unknown): value is EditOrigin {
 }
 
 function isLineEnding(value: unknown): value is LineEnding {
-  return value === 'lf' || value === 'crlf' || value === 'cr';
+  return value === 'lf' || value === 'crlf' || value === 'cr' || value === 'ff' || value === 'nel';
 }
 
 function countLineFeeds(value: string): number {

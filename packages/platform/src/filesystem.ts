@@ -1,4 +1,4 @@
-import { promises as fs, watch as watchFile } from 'node:fs';
+import { constants, promises as fs, watch as watchFile } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import type {
   CancellationToken,
@@ -20,6 +20,26 @@ export interface WorkspaceFileEntry {
 export interface WorkspaceFileEnumerationOptions {
   readonly maxEntries?: number;
   readonly ignoredDirectoryNames?: readonly string[];
+  readonly followSymlinks?: boolean;
+  readonly deduplicateLinks?: boolean;
+  readonly maxDepth?: number;
+  /** Helix-compatible ignore sources used by the file picker. */
+  readonly ignore?: WorkspaceIgnoreOptions;
+}
+
+export interface WorkspaceDirectoryEnumerationOptions {
+  readonly ignoredDirectoryNames?: readonly string[];
+  readonly maxEntries?: number;
+  readonly ignore?: WorkspaceIgnoreOptions;
+}
+
+export interface WorkspaceIgnoreOptions {
+  readonly parents?: boolean;
+  readonly ignore?: boolean;
+  readonly gitIgnore?: boolean;
+  readonly gitGlobal?: boolean;
+  readonly gitExclude?: boolean;
+  readonly homeDirectory?: string;
 }
 
 /** One directory child returned by the native Explorer adapter. */
@@ -38,6 +58,148 @@ export interface WorkspaceDirectoryEntry {
 export interface WorkspaceDirectoryWatchEvent {
   readonly kind: 'changed' | 'overflow';
   readonly path: string;
+}
+
+interface IgnoreRule {
+  readonly base: string;
+  readonly expression: RegExp;
+  readonly negated: boolean;
+}
+
+/** Small, bounded gitignore-compatible matcher for the file-picker index. */
+class WorkspaceIgnoreMatcher {
+  readonly #root: string;
+  readonly #options: Required<Pick<WorkspaceIgnoreOptions, 'parents' | 'ignore' | 'gitIgnore' | 'gitGlobal' | 'gitExclude'>>;
+  readonly #rules: IgnoreRule[] = [];
+  readonly #loaded = new Set<string>();
+  readonly #repository: boolean;
+
+  private constructor(root: string, options: WorkspaceIgnoreOptions, repository: boolean) {
+    this.#root = root;
+    this.#options = {
+      parents: options.parents === true,
+      ignore: options.ignore === true,
+      gitIgnore: options.gitIgnore === true,
+      gitGlobal: options.gitGlobal === true,
+      gitExclude: options.gitExclude === true,
+    };
+    this.#repository = repository;
+  }
+
+  static async create(root: string, options: WorkspaceIgnoreOptions | undefined, cancellation: CancellationToken): Promise<Result<WorkspaceIgnoreMatcher, PlatformFailure>> {
+    const selected = options ?? {};
+    const gitDirectory = await safeLstat(join(root, '.git'));
+    const matcher = new WorkspaceIgnoreMatcher(root, selected, gitDirectory?.isDirectory() === true || gitDirectory?.isFile() === true);
+    if (selected.homeDirectory !== undefined && matcher.#options.ignore) {
+      const loaded = await matcher.readFile(join(selected.homeDirectory, '.config/helix/ignore'), root);
+      if (!loaded.ok) return loaded;
+    }
+    if (selected.homeDirectory !== undefined && matcher.#options.gitGlobal) {
+      const home = selected.homeDirectory;
+      for (const path of [join(home, '.config/git/ignore'), join(home, '.gitignore')]) {
+        const loaded = await matcher.readFile(path, root);
+        if (!loaded.ok) return loaded;
+      }
+      for (const configPath of [join(home, '.config/git/config'), join(home, '.gitconfig')]) {
+        let source: string;
+        try { source = await fs.readFile(configPath, 'utf8'); } catch (error: unknown) {
+          if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') continue;
+          return { ok: false, error: platformFailure(error, 'read-git-config') };
+        }
+        const configured = /^\s*excludesfile\s*=\s*(.+?)\s*$/imu.exec(source)?.[1]?.trim();
+        if (configured !== undefined) {
+          const expanded = configured.startsWith('~/') ? join(home, configured.slice(2)) : configured.startsWith('/') ? configured : join(home, configured);
+          const loaded = await matcher.readFile(expanded, root);
+          if (!loaded.ok) return loaded;
+        }
+      }
+    }
+    if (matcher.#repository && matcher.#options.gitExclude) {
+      const loaded = await matcher.readFile(join(root, '.git/info/exclude'), root);
+      if (!loaded.ok) return loaded;
+    }
+    if (matcher.#options.parents) {
+      const parents: string[] = [];
+      let parent = dirname(root);
+      for (let depth = 0; depth < 32 && parent !== dirname(parent); depth += 1) {
+        parents.push(parent);
+        parent = dirname(parent);
+      }
+      for (const directory of parents.reverse()) {
+        if (matcher.#options.ignore) { const loaded = await matcher.readFile(join(directory, '.ignore'), directory); if (!loaded.ok) return loaded; }
+        if (matcher.#repository && matcher.#options.gitIgnore) { const loaded = await matcher.readFile(join(directory, '.gitignore'), directory); if (!loaded.ok) return loaded; }
+      }
+    }
+    return { ok: true, value: matcher };
+  }
+
+  async loadDirectory(directory: string): Promise<Result<void, PlatformFailure>> {
+    if (this.#loaded.has(directory)) return { ok: true, value: undefined };
+    this.#loaded.add(directory);
+    if (this.#options.ignore) { const loaded = await this.readFile(join(directory, '.ignore'), directory); if (!loaded.ok) return loaded; }
+    if (this.#repository && this.#options.gitIgnore) { const loaded = await this.readFile(join(directory, '.gitignore'), directory); if (!loaded.ok) return loaded; }
+    return { ok: true, value: undefined };
+  }
+
+  ignored(relativePath: string, isDirectory: boolean, absolutePath = resolve(this.#root, relativePath)): boolean {
+    let ignored = false;
+    for (const rule of this.#rules) {
+      const candidate = relative(rule.base, absolutePath).replaceAll('\\', '/');
+      if (candidate === '..' || candidate.startsWith('../') || !rule.expression.test(candidate)) continue;
+      ignored = !rule.negated;
+    }
+    void isDirectory;
+    return ignored;
+  }
+
+  private async readFile(path: string, base: string): Promise<Result<void, PlatformFailure>> {
+    if (this.#loaded.has(`file:${path}`)) return { ok: true, value: undefined };
+    this.#loaded.add(`file:${path}`);
+    let source: string;
+    try {
+      source = await fs.readFile(path, 'utf8');
+    } catch (error: unknown) {
+      if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') return { ok: true, value: undefined };
+      return { ok: false, error: platformFailure(error, 'read-ignore') };
+    }
+    const lines = source.split(/\r?\n/u).slice(0, 16_384);
+    for (const line of lines) {
+      const rule = parseIgnoreRule(line, base);
+      if (rule !== undefined) this.#rules.push(rule);
+    }
+    return { ok: true, value: undefined };
+  }
+}
+
+function parseIgnoreRule(raw: string, base: string): IgnoreRule | undefined {
+  let pattern = raw.trim();
+  if (pattern.length === 0 || pattern.startsWith('#')) return undefined;
+  const negated = pattern.startsWith('!');
+  if (negated) pattern = pattern.slice(1);
+  if (pattern.length === 0) return undefined;
+  const directoryOnly = pattern.endsWith('/');
+  if (directoryOnly) pattern = pattern.slice(0, -1);
+  const anchored = pattern.startsWith('/');
+  if (anchored) pattern = pattern.slice(1);
+  if (pattern.length === 0) return undefined;
+  const hasSlash = pattern.includes('/');
+  const source = globToRegex(pattern);
+  const expression = hasSlash
+    ? new RegExp(`^${anchored ? '' : '(?:.*/)?'}${source}${directoryOnly ? '(?:/.*)?' : ''}$`, 'u')
+    : new RegExp(`(?:^|/)${source}${directoryOnly ? '(?:/.*)?' : ''}$`, 'u');
+  return { base, expression, negated };
+}
+
+function globToRegex(pattern: string): string {
+  let result = '';
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index] as string;
+    if (character === '*' && pattern[index + 1] === '*') { result += '.*'; index += 1; continue; }
+    if (character === '*') { result += '[^/]*'; continue; }
+    if (character === '?') { result += '[^/]'; continue; }
+    result += /[\\^$+{}.[\]|()]/u.test(character) ? `\\${character}` : character;
+  }
+  return result;
 }
 
 /** Coalescing window for `watchDirectory`'s 'changed' events; bounded below the 8ms/25ms latency budgets. */
@@ -155,10 +317,26 @@ export class NodeFilesystemPort implements FilesystemPort {
     path: string,
     root: string,
     cancellation: CancellationToken,
-    options: { readonly ignoredDirectoryNames?: readonly string[]; readonly maxEntries?: number } = {},
+    options: WorkspaceDirectoryEnumerationOptions = {},
   ): Promise<Result<readonly WorkspaceDirectoryEntry[], PlatformFailure>> {
     if (cancellation.isCancelled) return cancelled();
     const ignoredNames = new Set(options.ignoredDirectoryNames ?? ['.git', 'node_modules', '.artifacts', '.cache', 'dist', '.xi-trash']);
+    const ignoreMatcher = await WorkspaceIgnoreMatcher.create(root, options.ignore, cancellation);
+    if (!ignoreMatcher.ok) return ignoreMatcher;
+    const loadedDirectories: string[] = [];
+    let current = resolve(path);
+    const resolvedRoot = resolve(root);
+    while (true) {
+      loadedDirectories.push(current);
+      if (current === resolvedRoot) break;
+      const parent = dirname(current);
+      if (parent === current || relative(resolvedRoot, current).startsWith('..')) break;
+      current = parent;
+    }
+    for (const directory of loadedDirectories.reverse()) {
+      const loaded = await ignoreMatcher.value.loadDirectory(directory);
+      if (!loaded.ok) return loaded;
+    }
     // Capped consistent with enumerateFiles's 120k background-index limit, and
     // batched with bounded concurrency instead of one sequential lstat per child.
     const maxEntries = options.maxEntries ?? 120_000;
@@ -170,7 +348,7 @@ export class NodeFilesystemPort implements FilesystemPort {
       for (let start = 0; start < capped.length; start += concurrency) {
         if (cancellation.isCancelled) return cancelled();
         const slice = capped.slice(start, start + concurrency);
-        const rows = await Promise.all(slice.map((entry) => this.statDirectoryEntry(path, root, entry, ignoredNames)));
+        const rows = await Promise.all(slice.map((entry) => this.statDirectoryEntry(path, root, entry, ignoredNames, ignoreMatcher.value)));
         for (const row of rows) result.push(row);
       }
       return cancellation.isCancelled ? cancelled() : { ok: true, value: Object.freeze(result) };
@@ -184,10 +362,11 @@ export class NodeFilesystemPort implements FilesystemPort {
     root: string,
     entry: import('node:fs').Dirent,
     ignoredNames: ReadonlySet<string>,
+    ignoreMatcher: WorkspaceIgnoreMatcher,
   ): Promise<WorkspaceDirectoryEntry> {
     const absolutePath = join(path, entry.name);
     const relativePath = relative(root, absolutePath).split('\\').join('/');
-    const ignored = ignoredNames.has(entry.name);
+    const ignored = ignoredNames.has(entry.name) || ignoreMatcher.ignored(relativePath, entry.isDirectory(), absolutePath);
     let kind: WorkspaceDirectoryEntry['kind'] = entry.isDirectory()
       ? 'directory'
       : entry.isFile() ? 'file' : entry.isSymbolicLink() ? 'symlink' : 'other';
@@ -308,14 +487,32 @@ export class NodeFilesystemPort implements FilesystemPort {
     const maxEntries = options.maxEntries ?? 120_000;
     if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) return { ok: false, error: { code: 'invalid-limit', message: 'file enumeration limit must be positive', retryable: false } };
     const ignored = new Set(options.ignoredDirectoryNames ?? ['.git', 'node_modules', '.artifacts', '.cache', 'dist', '.xi-trash']);
-    const queue: Array<{ readonly absolute: string; readonly relative: string }> = [{ absolute: root, relative: '' }];
+    const followSymlinks = options.followSymlinks === true;
+    const deduplicateLinks = options.deduplicateLinks !== false;
+    const maxDepth = options.maxDepth;
+    if (maxDepth !== undefined && (!Number.isSafeInteger(maxDepth) || maxDepth < 0)) return { ok: false, error: { code: 'invalid-limit', message: 'file enumeration max depth must be a non-negative integer', retryable: false } };
+    const ignoreMatcher = await WorkspaceIgnoreMatcher.create(root, options.ignore, cancellation);
+    if (!ignoreMatcher.ok) return { ok: false, error: ignoreMatcher.error };
+    const queue: Array<{ readonly absolute: string; readonly relative: string; readonly ancestors: readonly string[]; readonly depth: number }> = [{ absolute: root, relative: '', ancestors: [], depth: 0 }];
+    const visitedDirectories = new Set<string>();
     const batch: WorkspaceFileEntry[] = [];
     let total = 0;
     try {
       while (queue.length > 0 && total < maxEntries) {
         if (cancellation.isCancelled) return cancelled();
-        const directory = queue.shift();
+        let directory = queue.shift();
         if (directory === undefined) break;
+        const loadedRules = await ignoreMatcher.value.loadDirectory(directory.absolute);
+        if (!loadedRules.ok) return loadedRules;
+        // Keep walking an ignored directory so a later negative rule can unignore a child;
+        // the maxEntries bound keeps this recovery path finite.
+        if (followSymlinks) {
+          const realDirectory = await fs.realpath(directory.absolute);
+          if (directory.ancestors.includes(realDirectory)) continue;
+          if (deduplicateLinks && visitedDirectories.has(realDirectory)) continue;
+          if (deduplicateLinks) visitedDirectories.add(realDirectory);
+          directory = { ...directory, ancestors: [...directory.ancestors, realDirectory] };
+        }
         let entries: import('node:fs').Dirent[];
         try {
           entries = await fs.readdir(directory.absolute, { withFileTypes: true });
@@ -327,11 +524,20 @@ export class NodeFilesystemPort implements FilesystemPort {
           if (cancellation.isCancelled) return cancelled();
           const relativePath = directory.relative.length === 0 ? entry.name : `${directory.relative}/${entry.name}`;
           const absolutePath = join(directory.absolute, entry.name);
+          if (ignoreMatcher.value.ignored(relativePath, entry.isDirectory(), absolutePath) && !entry.isDirectory()) continue;
           if (entry.isDirectory()) {
-            if (!ignored.has(entry.name) && !entry.isSymbolicLink()) queue.push({ absolute: absolutePath, relative: relativePath });
+            if (!ignored.has(entry.name) && (maxDepth === undefined || directory.depth < maxDepth)) queue.push({ absolute: absolutePath, relative: relativePath, ancestors: directory.ancestors, depth: directory.depth + 1 });
             continue;
           }
-          if (!entry.isFile() || entry.isSymbolicLink()) continue;
+          if (entry.isSymbolicLink() && followSymlinks) {
+            let target: import('node:fs').Stats;
+            try { target = await fs.stat(absolutePath); } catch { continue; }
+            if (target.isDirectory()) {
+              if (!ignored.has(entry.name) && (maxDepth === undefined || directory.depth < maxDepth)) queue.push({ absolute: absolutePath, relative: relativePath, ancestors: directory.ancestors, depth: directory.depth + 1 });
+              continue;
+            }
+            if (!target.isFile()) continue;
+          } else if (!entry.isFile() || entry.isSymbolicLink()) continue;
           batch.push(Object.freeze({ relativePath, absolutePath, hidden: entry.name.startsWith('.') }));
           total += 1;
           if (batch.length >= 512) {
@@ -350,6 +556,31 @@ export class NodeFilesystemPort implements FilesystemPort {
 
   async writeFileAtomic(path: string, contents: Uint8Array, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
     return this.writeFileAtomicChunks(path, oneChunk(contents), cancellation);
+  }
+
+  async writeFile(path: string, contents: Uint8Array, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
+    if (cancellation.isCancelled) return cancelled();
+    let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+    try {
+      const existing = await safeLstat(path);
+      if (existing?.isSymbolicLink()) return { ok: false, error: { code: 'symlink-save', message: 'refusing to write through a symbolic link', retryable: false } };
+      const mode = existing === undefined ? 0o666 : existing.mode & 0o7777;
+      handle = await fs.open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, mode);
+      if (cancellation.isCancelled) return cancelled();
+      let written = 0;
+      while (written < contents.byteLength) {
+        const result = await handle.write(contents, written, contents.byteLength - written);
+        if (result.bytesWritten <= 0) throw new Error('write-file made no progress');
+        written += result.bytesWritten;
+      }
+      await handle.close();
+      handle = undefined;
+      return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
+    } catch (error: unknown) {
+      return { ok: false, error: platformFailure(error, 'write-file') };
+    } finally {
+      await handle?.close().catch(() => {});
+    }
   }
 
   async writeFileAtomicChunks(path: string, contents: AsyncIterable<Uint8Array>, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {

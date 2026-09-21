@@ -1,8 +1,9 @@
 import './entrypoints/preload';
 import { createCliRenderer, type CliRenderer, type CliRendererConfig, type KeyEvent } from '@opentui/core/renderer';
+import { createHostClipboard } from '@opentui/core';
 import { splitCoalescedEscape } from '../input/coalesced-escape';
 import type { PasteEvent } from '@opentui/core';
-import type { Disposable, DisposableScope, PlatformFailure, Result, SyntaxReadPort } from '../../contracts/src/index.ts';
+import type { CancellationToken, ClipboardPort, Disposable, DisposableScope, PlatformFailure, Result, SyntaxReadPort } from '../../contracts/src/index.ts';
 import type { UiComposition, UiMountContext, TerminalAdapter, TerminalAdapterFactory } from './contracts';
 import { WorkbenchRenderable, themeColor, type WorkbenchPointerEvent, type WorkbenchRenderableOptions, type WorkbenchTheme } from './workbench';
 import type { EditorPresentationReadPort } from '../editor/motion-paint';
@@ -113,6 +114,60 @@ export function createOpenTuiRenderer(): Promise<CliRenderer> {
   return createConfiguredRenderer();
 }
 
+/** Adapts OpenTUI's native host/primary selections to Xi's platform effect boundary. */
+export function createOpenTuiClipboardPort(): ClipboardPort & Disposable {
+  const host = createHostClipboard();
+  const read = (selection: 'clipboard' | 'primary', cancellation: CancellationToken): Promise<Result<string, PlatformFailure>> => withAbortSignal(cancellation, async signal => {
+    const result = await host.read({ preferredTypes: ['text/plain'], selection, signal });
+    if (result.status !== 'read') return clipboardFailure(`host clipboard ${result.status}`);
+    try {
+      return { ok: true, value: new TextDecoder('utf-8', { fatal: true }).decode(result.representation.bytes) };
+    } catch { return clipboardFailure('host clipboard returned invalid UTF-8'); }
+  });
+  const write = (text: string, selection: 'clipboard' | 'primary', cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> => withAbortSignal(cancellation, async signal => {
+    const result = await host.writeText(text, { selection, signal });
+    return result.status === 'written' ? { ok: true, value: undefined } : clipboardFailure(`host clipboard ${result.status}`);
+  });
+  return {
+    readText: cancellation => read('clipboard', cancellation),
+    writeText: (text, cancellation) => write(text, 'clipboard', cancellation),
+    readPrimaryText: cancellation => read('primary', cancellation),
+    writePrimaryText: (text, cancellation) => write(text, 'primary', cancellation),
+    dispose: () => { void host.dispose(); },
+  };
+}
+
+/** Emits Helix's OSC52 clipboard writes; terminal reads are intentionally unsupported. */
+export function createOpenTuiTermcodeClipboardPort(): ClipboardPort & Disposable {
+  const write = async (text: string, selection: 'clipboard' | 'primary', cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> => {
+    if (cancellation.isCancelled) return { ok: false, error: { code: 'cancelled', message: 'clipboard write was cancelled', retryable: false } };
+    try {
+      process.stdout.write(`\u001b]52;${selection === 'primary' ? 'p' : 'c'};${Buffer.from(text, 'utf8').toString('base64')}\u001b\\`);
+      return { ok: true, value: undefined };
+    } catch (error: unknown) {
+      return clipboardFailure(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const unavailable = async (): Promise<Result<string, PlatformFailure>> => clipboardFailure('OSC52 clipboard reads are unsupported');
+  return {
+    readText: unavailable,
+    writeText: (text, cancellation) => write(text, 'clipboard', cancellation),
+    readPrimaryText: unavailable,
+    writePrimaryText: (text, cancellation) => write(text, 'primary', cancellation),
+    dispose: () => {},
+  };
+}
+
+async function withAbortSignal<T>(cancellation: CancellationToken, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const subscription = cancellation.onCancel(() => controller.abort());
+  try { return await operation(controller.signal); } finally { subscription.dispose(); }
+}
+
+function clipboardFailure(message: string): Result<never, PlatformFailure> {
+  return { ok: false, error: { code: 'clipboard-unavailable', message, retryable: true } };
+}
+
 /** Composition adapter used by the application root after services/workbench exist. */
 export function createOpenTuiUiComposition(options: OpenTuiUiCompositionOptions = {}): UiComposition {
   const terminalFactory: TerminalAdapterFactory = {
@@ -142,8 +197,11 @@ export function createOpenTuiUiComposition(options: OpenTuiUiCompositionOptions 
         ...(options.renderable?.ascii === undefined ? {} : { ascii: options.renderable.ascii }),
         showBottomPanel: options.renderable?.showBottomPanel ?? false,
         ...(options.renderable?.gitBranch === undefined ? {} : { gitBranch: options.renderable.gitBranch }),
+        ...(options.renderable?.workspaceRoot === undefined ? {} : { workspaceRoot: options.renderable.workspaceRoot }),
         ...(options.renderable?.sidebar === undefined ? {} : { sidebar: options.renderable.sidebar }),
         ...(options.renderable?.tabs === undefined ? {} : { tabs: options.renderable.tabs }),
+        ...(options.renderable?.bufferline === undefined ? {} : { bufferline: options.renderable.bufferline }),
+        ...(options.renderable?.colorMode === undefined ? {} : { colorMode: options.renderable.colorMode }),
       }, theme)];
       if (options.prefixHelp !== undefined) {
         nodes.push(createRowsSurfaceNode({
@@ -173,7 +231,20 @@ export async function runOpenTuiWorkbench(
   let finish!: () => void;
   const done = new Promise<void>((resolveDone) => { finish = resolveDone; });
   const renderer = await (options.renderer ?? createConfiguredRenderer({ onDestroy: finish }));
+  if (options.kittyKeyboardProtocol === 'disabled') renderer.disableKittyKeyboard();
+  else if (options.kittyKeyboardProtocol === 'enabled') renderer.enableKittyKeyboard();
+  const themeVariants = options.themeVariants;
+  const selectThemeVariant = (mode: 'dark' | 'light' | null): { readonly id: string; readonly theme: WorkbenchTheme } | undefined => {
+    const selected = mode === 'light' ? themeVariants?.light : mode === 'dark' ? themeVariants?.dark : undefined;
+    return selected ?? themeVariants?.fallback ?? themeVariants?.dark ?? themeVariants?.light;
+  };
+  const initialVariant = themeVariants === undefined ? undefined : selectThemeVariant(await renderer.waitForThemeMode());
+  const initialTheme = initialVariant?.theme ?? options.theme;
+  if (initialVariant !== undefined) options.onThemeMode?.(renderer.themeMode ?? 'fallback', initialVariant.id);
   renderer.on('destroy', finish);
+  renderer.on('focus', () => options.onFocusChange?.(true));
+  renderer.on('blur', () => options.onFocusChange?.(false));
+  if (options.mouseEnabled === false) renderer.useMouse = false;
   // Bound request throttling to 1 ms without starting a continuous render loop.
   renderer.maxFps = 1000;
   options.registerMouseToggle?.(() => {
@@ -202,14 +273,40 @@ export async function runOpenTuiWorkbench(
   const viewport = new WorkbenchRenderable(renderer.root.ctx, {
     workbench,
     ...(options.editorDiagnostics === undefined ? {} : { editorDiagnostics: options.editorDiagnostics }),
+    ...(options.scrolloff === undefined ? {} : { scrolloff: options.scrolloff }),
+    ...(options.lineNumber === undefined ? {} : { lineNumber: options.lineNumber }),
+    ...(options.lineNumberMinWidth === undefined ? {} : { lineNumberMinWidth: options.lineNumberMinWidth }),
+    ...(options.gutters === undefined ? {} : { gutters: options.gutters }),
+    ...(options.indentGuides === undefined ? {} : { indentGuides: options.indentGuides }),
+    ...(options.whitespace === undefined ? {} : { whitespace: options.whitespace }),
+    ...(options.wrap === undefined ? {} : { wrap: options.wrap }),
+    ...(options.cursorShape === undefined ? {} : { cursorShape: options.cursorShape }),
+    ...(options.cursorLine === undefined ? {} : { cursorLine: options.cursorLine }),
+    ...(options.cursorColumn === undefined ? {} : { cursorColumn: options.cursorColumn }),
+    ...(options.colorMode === undefined ? {} : { colorMode: options.colorMode }),
+    ...(options.undercurl === undefined ? {} : { undercurl: options.undercurl }),
+    ...(options.bufferline === undefined ? {} : { bufferline: options.bufferline }),
+    ...(options.rulers === undefined ? {} : { rulers: options.rulers }),
+    ...(options.wrapWidth === undefined ? {} : { wrapWidth: options.wrapWidth }),
+    ...(options.maxWrap === undefined ? {} : { maxWrap: options.maxWrap }),
+    ...(options.maxIndentRetain === undefined ? {} : { maxIndentRetain: options.maxIndentRetain }),
+    ...(options.wrapIndicator === undefined ? {} : { wrapIndicator: options.wrapIndicator }),
+    ...(options.inlineDiagnosticsMaxDiagnostics === undefined ? {} : { inlineDiagnosticsMaxDiagnostics: options.inlineDiagnosticsMaxDiagnostics }),
+    ...(options.inlineDiagnosticsPrefixLen === undefined ? {} : { inlineDiagnosticsPrefixLen: options.inlineDiagnosticsPrefixLen }),
+    ...(options.inlineDiagnosticsMaxWrap === undefined ? {} : { inlineDiagnosticsMaxWrap: options.inlineDiagnosticsMaxWrap }),
+    ...(options.inlineDiagnosticsMinDiagnosticWidth === undefined ? {} : { inlineDiagnosticsMinDiagnosticWidth: options.inlineDiagnosticsMinDiagnosticWidth }),
+    ...(options.inlineDiagnosticsCursorLine === undefined ? {} : { inlineDiagnosticsCursorLine: options.inlineDiagnosticsCursorLine }),
+    ...(options.inlineDiagnosticsOtherLines === undefined ? {} : { inlineDiagnosticsOtherLines: options.inlineDiagnosticsOtherLines }),
+    ...(options.endOfLineDiagnostics === undefined ? {} : { endOfLineDiagnostics: options.endOfLineDiagnostics }),
     ...(options.comparison === undefined ? {} : { comparison: options.comparison }),
     fileLabel,
-    ...(options.theme === undefined ? {} : { theme: options.theme }),
+    ...(initialTheme === undefined ? {} : { theme: initialTheme }),
     ...(options.syntax === undefined ? {} : { syntax: options.syntax }),
     ...(options.presentation === undefined ? {} : { presentation: options.presentation }),
     ...(options.gitBranch === undefined ? {} : { gitBranch: options.gitBranch }),
     ...(options.sidebar === undefined ? {} : { sidebar: options.sidebar }),
-    ...(options.tabs === undefined ? {} : { tabs: options.tabs }),
+        ...(options.tabs === undefined ? {} : { tabs: options.tabs }),
+        ...(options.colorMode === undefined ? {} : { colorMode: options.colorMode }),
     ...(options.onPointer === undefined ? {} : { onPointer: (event: WorkbenchPointerEvent): boolean => {
       const handled = options.onPointer?.(event) ?? false;
       // A handled click can change any panel's read model; request the resulting frame.
@@ -222,6 +319,15 @@ export async function runOpenTuiWorkbench(
   });
   renderer.root.add(viewport);
   const solidTheme = createThemeBridge(viewport.theme);
+  const applyThemeVariant = (mode: 'dark' | 'light'): void => {
+    const variant = selectThemeVariant(mode);
+    if (variant === undefined) return;
+    options.onThemeMode?.(mode, variant.id);
+    viewport.setTheme(variant.theme);
+    solidTheme.set(variant.theme);
+    requestFrame(true);
+  };
+  renderer.on('theme_mode', applyThemeVariant);
   options.registerThemeSwitch?.((theme) => {
     viewport.setTheme(theme);
     solidTheme.set(theme);

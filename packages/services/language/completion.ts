@@ -3,7 +3,7 @@ import { requestIsSupported, type LanguageProviderSession } from './provider-ses
 
 export interface CompletionPosition { readonly line: number; readonly utf16: number; }
 export interface CompletionTextEdit { readonly start: CompletionPosition; readonly end: CompletionPosition; readonly newText: string; }
-export interface CompletionItem { readonly id: string; readonly label: string; readonly detail?: string; readonly documentation?: string; readonly textEdit?: CompletionTextEdit; readonly additionalTextEdits?: readonly CompletionTextEdit[]; readonly commitCharacters?: readonly string[]; readonly insertTextFormat?: 'plain' | 'snippet'; readonly resolveData?: unknown; }
+export interface CompletionItem { readonly id: string; readonly label: string; readonly detail?: string; readonly documentation?: string; readonly textEdit?: CompletionTextEdit; readonly textEditReplace?: CompletionTextEdit; readonly textEditIsFallback?: boolean; readonly additionalTextEdits?: readonly CompletionTextEdit[]; readonly commitCharacters?: readonly string[]; readonly insertTextFormat?: 'plain' | 'snippet'; readonly resolveData?: unknown; }
 export interface CompletionRequest { readonly documentId: string; readonly documentVersion: number; readonly selectionGeneration: number; readonly position: CompletionPosition; readonly trigger: 'invoked' | 'character' | 'retrigger'; readonly uri?: string; }
 export interface CompletionList { readonly isIncomplete: boolean; readonly items: readonly CompletionItem[]; }
 export type CompletionFailure = { readonly kind: 'stale' | 'invalid-edit' | 'overlap' | 'disposed' | 'unavailable'; readonly message: string };
@@ -52,7 +52,7 @@ export class LanguageServerCompletionProvider implements CompletionProvider {
     try {
       const resolved = await this.#session.request<unknown>('completionItem/resolve', { label: item.label, ...(item.detail === undefined ? {} : { detail: item.detail }), ...(item.resolveData === undefined ? {} : { data: item.resolveData }) });
       const parsed = parseCompletionItem(resolved, item.id);
-      const completed = parsed === undefined ? undefined : Object.freeze({ ...item, ...parsed, ...(parsed.textEdit === undefined && item.textEdit !== undefined ? { textEdit: item.textEdit } : {}), ...(parsed.additionalTextEdits === undefined && item.additionalTextEdits !== undefined ? { additionalTextEdits: item.additionalTextEdits } : {}) });
+      const completed = parsed === undefined ? undefined : Object.freeze({ ...item, ...parsed, ...(parsed.textEdit === undefined && item.textEdit !== undefined ? { textEdit: item.textEdit } : {}), ...(parsed.textEditReplace === undefined && item.textEditReplace !== undefined ? { textEditReplace: item.textEditReplace } : {}), ...(parsed.additionalTextEdits === undefined && item.additionalTextEdits !== undefined ? { additionalTextEdits: item.additionalTextEdits } : {}) });
       return completed === undefined ? { ok: false, error: { kind: 'unavailable', message: 'language server returned an invalid resolved completion' } } : { ok: true, value: completed };
     } catch (error: unknown) { return { ok: false, error: { kind: 'unavailable', message: errorMessage(error) } }; }
   }
@@ -127,6 +127,10 @@ export class CompletionController implements Disposable {
     const edits = [item.textEdit, ...(item.additionalTextEdits ?? [])].filter((edit): edit is CompletionTextEdit => edit !== undefined);
     const valid = validateEdits(edits);
     if (!valid.ok) return valid;
+    if (item.textEditReplace !== undefined) {
+      const replacementValid = validateEdits([item.textEditReplace]);
+      if (!replacementValid.ok) return replacementValid;
+    }
     this.setModel({ state: 'idle', request: undefined, items: Object.freeze([]), isIncomplete: false, selectedId: undefined, documentation: undefined, documentationOffset: 0, message: undefined });
     return { ok: true, value: { kind: 'insert', item, edits: Object.freeze(edits) } };
   }
@@ -158,16 +162,18 @@ function parseCompletionItem(value: unknown, id: string, fallbackPosition?: Comp
   const insertTextFormat = record.insertTextFormat === undefined ? undefined : record.insertTextFormat === 1 ? 'plain' : record.insertTextFormat === 2 ? 'snippet' : null;
   if (insertTextFormat === null) return undefined;
   const fallbackText = typeof record.insertText === 'string' ? record.insertText : typeof record.label === 'string' ? record.label : undefined;
-  const textEdit = parseTextEdit(record.textEdit) ?? (fallbackPosition !== undefined && fallbackText !== undefined ? { start: fallbackPosition, end: fallbackPosition, newText: fallbackText } : undefined);
-  const additional = record.additionalTextEdits === undefined ? undefined : Array.isArray(record.additionalTextEdits) ? record.additionalTextEdits.map(parseTextEdit) : null;
+  const explicitTextEdit = parseTextEdit(record.textEdit);
+  const explicitReplaceTextEdit = parseTextEdit(record.textEdit, 'replace');
+  const textEdit = explicitTextEdit ?? (fallbackPosition !== undefined && fallbackText !== undefined ? { start: fallbackPosition, end: fallbackPosition, newText: fallbackText } : undefined);
+  const additional = record.additionalTextEdits === undefined ? undefined : Array.isArray(record.additionalTextEdits) ? record.additionalTextEdits.map((value) => parseTextEdit(value)) : null;
   if (additional === null || additional?.some((edit) => edit === undefined)) return undefined;
   const documentation = typeof record.documentation === 'string' ? record.documentation : asRecord(record.documentation)?.value;
   const commitCharacters = Array.isArray(record.commitCharacters) && record.commitCharacters.every((item) => typeof item === 'string') ? Object.freeze(record.commitCharacters as string[]) : undefined;
-  return Object.freeze({ id, label: record.label, ...(typeof record.detail === 'string' ? { detail: record.detail } : {}), ...(typeof documentation === 'string' ? { documentation: documentation.slice(0, 64 * 1024) } : {}), ...(textEdit === undefined ? {} : { textEdit }), ...(additional === undefined ? {} : { additionalTextEdits: Object.freeze(additional as CompletionTextEdit[]) }), ...(commitCharacters === undefined ? {} : { commitCharacters }), ...(insertTextFormat === undefined ? {} : { insertTextFormat }), ...(record.data === undefined ? {} : { resolveData: record.data }) });
+  return Object.freeze({ id, label: record.label, textEditIsFallback: explicitTextEdit === undefined && fallbackPosition !== undefined && fallbackText !== undefined, ...(typeof record.detail === 'string' ? { detail: record.detail } : {}), ...(typeof documentation === 'string' ? { documentation: documentation.slice(0, 64 * 1024) } : {}), ...(textEdit === undefined ? {} : { textEdit }), ...(explicitReplaceTextEdit === undefined || explicitReplaceTextEdit === explicitTextEdit ? {} : { textEditReplace: explicitReplaceTextEdit }), ...(additional === undefined ? {} : { additionalTextEdits: Object.freeze(additional as CompletionTextEdit[]) }), ...(commitCharacters === undefined ? {} : { commitCharacters }), ...(insertTextFormat === undefined ? {} : { insertTextFormat }), ...(record.data === undefined ? {} : { resolveData: record.data }) });
 }
 
-function parseTextEdit(value: unknown): CompletionTextEdit | undefined {
-  const record = asRecord(value); const range = asRecord(record?.range ?? record?.insert); const end = asRecord(range?.end); const start = asRecord(range?.start);
+function parseTextEdit(value: unknown, rangeName: 'insert' | 'replace' = 'insert'): CompletionTextEdit | undefined {
+  const record = asRecord(value); const range = asRecord(record?.range ?? record?.[rangeName]); const end = asRecord(range?.end); const start = asRecord(range?.start);
   if (start === undefined || end === undefined || typeof record?.newText !== 'string') return undefined;
   const startLine = integer(start.line); const startUtf16 = integer(start.character); const endLine = integer(end.line); const endUtf16 = integer(end.character);
   if (startLine === undefined || startUtf16 === undefined || endLine === undefined || endUtf16 === undefined) return undefined;

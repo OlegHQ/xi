@@ -79,9 +79,19 @@ def run_xterm() -> str:
             subprocess.run(["xdotool", "windowfocus", window_id], env=environment, check=False)
             time.sleep(0.3)
 
+            geometry = subprocess.run(["xdotool", "getwindowgeometry", "--shell", window_id], env=environment, capture_output=True, text=True).stdout
+            fields = dict(line.split("=") for line in geometry.strip().splitlines())
+            pixel_width, pixel_height = int(fields["WIDTH"]), int(fields["HEIGHT"])
+            cell_w, cell_h = pixel_width / 120.0, pixel_height / 40.0
+
+            def cell(col: int, row: int) -> tuple[int, int]:
+                return max(1, round((col - 0.5) * cell_w)), max(1, round((row - 0.5) * cell_h))
+
             # A real click through the real terminal must open the Files sidebar control.
             offset = stderr_path.stat().st_size
-            subprocess.run(["xdotool", "mousemove", "--window", window_id, "30", "20", "click", "1"], env=environment, check=True)
+            x, y = cell(3, 1)
+            subprocess.run(["xdotool", "mousemove", "--window", window_id, str(x), str(y)], env=environment, check=True)
+            subprocess.run(["xdotool", "click", "1"], env=environment, check=True)
             chunk = wait_for(stderr_path, offset, b"XI_WORKBENCH_CONTROL", 5)
             if b'"activated":true' not in chunk:
                 raise SystemExit(f"direct-terminal click did not activate the Files control: {chunk!r}")
@@ -97,7 +107,9 @@ def run_xterm() -> str:
             if b'"enabled":false' not in chunk:
                 raise SystemExit(f"direct-terminal mouse toggle did not report disabled: {chunk!r}")
             offset = stderr_path.stat().st_size
-            subprocess.run(["xdotool", "mousemove", "--window", window_id, "60", "20", "click", "1"], env=environment, check=True)
+            x, y = cell(15, 1)
+            subprocess.run(["xdotool", "mousemove", "--window", window_id, str(x), str(y)], env=environment, check=True)
+            subprocess.run(["xdotool", "click", "1"], env=environment, check=True)
             time.sleep(1.0)
             if b"XI_WORKBENCH_CONTROL" in read_new(stderr_path, offset):
                 raise SystemExit("a real terminal click was still delivered while Xi's mouse mode was disabled")
@@ -109,7 +121,9 @@ def run_xterm() -> str:
             subprocess.run(["xdotool", "key", "--window", window_id, "m"], env=environment, check=True)
             wait_for(stderr_path, offset, b'"enabled":true', 5)
             offset = stderr_path.stat().st_size
-            subprocess.run(["xdotool", "mousemove", "--window", window_id, "30", "20", "click", "1"], env=environment, check=True)
+            x, y = cell(3, 1)
+            subprocess.run(["xdotool", "mousemove", "--window", window_id, str(x), str(y)], env=environment, check=True)
+            subprocess.run(["xdotool", "click", "1"], env=environment, check=True)
             chunk = wait_for(stderr_path, offset, b"XI_WORKBENCH_CONTROL", 5)
             if b'"activated":true' not in chunk:
                 raise SystemExit(f"direct-terminal click after re-enabling mouse mode was not delivered: {chunk!r}")

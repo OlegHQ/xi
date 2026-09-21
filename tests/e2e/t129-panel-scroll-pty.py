@@ -79,10 +79,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-scroll-") as temporary:
         read_until(master, captured, b"XI_EXPLORER_OPEN", 5)
         read_for(master, captured, 1.0)
         def thumb_near_bottom(data: bytes) -> bool:
-            # Assert movement of the bounded result window itself, rather than
-            # renderer-specific ANSI cursor runs for its one-cell scrollbar. In a diff
-            # frame, z030 is repainted near the top only after the window moved down.
-            return re.search(rb"z03[0-9]\.txt", data) is not None
+            # OpenTUI's diff frames repaint only changed filename digits, so the stable
+            # evidence here is the one-cell thumb at the sidebar's current bottom row.
+            return re.search(rb"\x1b\[(?:3[5-8]);28H(?:\x1b\[[0-9;]+m)*" + '█'.encode(), data) is not None
 
         before = len(captured)
         # Wheel-scroll down repeatedly inside the Explorer panel (column 5, any data row) until the

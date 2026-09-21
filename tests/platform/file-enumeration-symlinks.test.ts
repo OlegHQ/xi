@@ -1,0 +1,72 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { CancellationSource } from '../../packages/contracts/src/index';
+import { NodeFilesystemPort } from '../../packages/platform/src/entrypoints/launch';
+
+const parentRoot = await mkdtemp(join(tmpdir(), 'xi-file-enumeration-'));
+const root = join(parentRoot, 'workspace');
+await mkdir(root);
+try {
+  await mkdir(join(root, 'target'));
+  await writeFile(join(root, 'target', 'linked.txt'), 'linked\n');
+  await symlink(join(root, 'target'), join(root, 'alias'));
+  const filesystem = new NodeFilesystemPort();
+  const collect = async (followSymlinks: boolean, deduplicateLinks = true, maxDepth?: number): Promise<readonly string[]> => {
+    const entries: string[] = [];
+    const result = await filesystem.enumerateFiles(root, new CancellationSource().token, batch => { entries.push(...batch.map(entry => entry.relativePath)); }, { followSymlinks, deduplicateLinks, ...(maxDepth === undefined ? {} : { maxDepth }) });
+    assert.equal(result.ok, true, `T-FILES-SYMLINKS enumeration succeeds (${String(followSymlinks)})`);
+    return entries;
+  };
+  assert.deepEqual(await collect(false), ['target/linked.txt'], 'T-FILES-SYMLINKS-01 false omits symlink targets');
+  const followed = await collect(true);
+  assert.equal(followed.length, 1, 'T-FILES-SYMLINKS-02 true deduplicates the real directory identity while following it');
+  assert.match(followed[0] ?? '', /(?:alias|target)\/linked\.txt/u, 'T-FILES-SYMLINKS-02 followed path is retained');
+  const duplicated = await collect(true, false);
+  assert.deepEqual([...duplicated].sort(), ['alias/linked.txt', 'target/linked.txt'], 'T-FILES-SYMLINKS-03 false keeps both linked paths while still stopping cycles');
+  assert.deepEqual(await collect(false, true, 0), [], 'T-FILES-MAX-DEPTH-01 zero depth keeps root files only');
+  assert.deepEqual(await collect(false, true, 1), ['target/linked.txt'], 'T-FILES-MAX-DEPTH-02 depth one includes direct child directories');
+  await mkdir(join(root, '.git', 'info'), { recursive: true });
+  await mkdir(join(root, 'ignored-dir'));
+  await writeFile(join(root, 'ignored.txt'), 'ignored\n');
+  await writeFile(join(root, 'ignored-dir', 'child.txt'), 'ignored\n');
+  await writeFile(join(root, 'git.txt'), 'ignored\n');
+  await writeFile(join(root, 'global.txt'), 'ignored\n');
+  await writeFile(join(root, 'exclude.txt'), 'ignored\n');
+  await writeFile(join(root, '.ignore'), 'ignored.txt\nignored-dir/\n!ignored-dir/child.txt\n');
+  await writeFile(join(root, '.gitignore'), 'git.txt\n');
+  await writeFile(join(root, '.git', 'info', 'exclude'), 'exclude.txt\n');
+  const parent = parentRoot;
+  await writeFile(join(parent, '.ignore'), 'parent.txt\n');
+  await writeFile(join(root, 'parent.txt'), 'ignored\n');
+  const home = await mkdtemp(join(tmpdir(), 'xi-file-enumeration-home-'));
+  await mkdir(join(home, '.config', 'git'), { recursive: true });
+  await writeFile(join(home, '.config', 'git', 'ignore'), 'global.txt\n');
+  await writeFile(join(home, '.config', 'git', 'config'), '[core]\n\texcludesfile = custom-ignore\n');
+  await writeFile(join(home, 'custom-ignore'), 'custom.txt\n');
+  await writeFile(join(root, 'custom.txt'), 'ignored\n');
+  const ignoredEntries: string[] = [];
+  const ignoredResult = await filesystem.enumerateFiles(root, new CancellationSource().token, batch => { ignoredEntries.push(...batch.map(entry => entry.relativePath)); }, { followSymlinks: false, ignore: { parents: true, ignore: true, gitIgnore: true, gitGlobal: true, gitExclude: true, homeDirectory: home } });
+  assert.equal(ignoredResult.ok, true, 'T-FILES-IGNORE-01 ignore sources enumerate successfully');
+  assert.equal(ignoredEntries.includes('ignored.txt'), false, 'T-FILES-IGNORE-02 .ignore hides files');
+  assert.equal(ignoredEntries.includes('ignored-dir/child.txt'), true, 'T-FILES-IGNORE-05 negative ignore rules restore a child');
+  assert.equal(ignoredEntries.includes('git.txt'), false, 'T-FILES-GIT-IGNORE-01 .gitignore hides files');
+  assert.equal(ignoredEntries.includes('global.txt'), false, 'T-FILES-GIT-GLOBAL-01 global git ignore hides files');
+  assert.equal(ignoredEntries.includes('custom.txt'), false, 'T-FILES-GIT-GLOBAL-03 core.excludesfile is honored');
+  assert.equal(ignoredEntries.includes('exclude.txt'), false, 'T-FILES-GIT-EXCLUDE-01 git exclude hides files');
+  assert.equal(ignoredEntries.includes('parent.txt'), false, 'T-FILES-PARENTS-01 parent ignore files are honored');
+  const withoutIgnore: string[] = [];
+  const withoutIgnoreResult = await filesystem.enumerateFiles(root, new CancellationSource().token, batch => { withoutIgnore.push(...batch.map(entry => entry.relativePath)); }, { followSymlinks: false, ignore: { parents: false, ignore: false, gitIgnore: false, gitGlobal: false, gitExclude: false, homeDirectory: home } });
+  assert.equal(withoutIgnoreResult.ok, true, 'T-FILES-IGNORE-03 disabled ignore sources enumerate successfully');
+  assert.equal(withoutIgnore.includes('ignored.txt'), true, 'T-FILES-IGNORE-04 ignore=false preserves .ignore matches');
+  assert.equal(withoutIgnore.includes('git.txt'), true, 'T-FILES-GIT-IGNORE-02 git-ignore=false preserves .gitignore matches');
+  assert.equal(withoutIgnore.includes('global.txt'), true, 'T-FILES-GIT-GLOBAL-02 git-global=false preserves global matches');
+  assert.equal(withoutIgnore.includes('exclude.txt'), true, 'T-FILES-GIT-EXCLUDE-02 git-exclude=false preserves exclude matches');
+  assert.equal(withoutIgnore.includes('parent.txt'), true, 'T-FILES-PARENTS-02 parents=false preserves parent matches');
+  await rm(home, { recursive: true, force: true });
+} finally {
+  await rm(parentRoot, { recursive: true, force: true });
+}
+
+console.log('T-FILES-SYMLINKS passed bounded symlink-following enumeration and cycle protection');

@@ -16,18 +16,19 @@ path-completion = true
 auto-format = true
 idle-timeout = 250
 completion-timeout = 250
-preview-completion-insert = true
 completion-trigger-len = 2
+preview-completion-insert = true
 completion-replace = false
+color-modes = false
+rainbow-brackets = false
+bufferline = "never"
+default-line-ending = "native"
 auto-info = true
 true-color = false
 undercurl = false
 rulers = []
-bufferline = "never"
-color-modes = false
 text-width = 80
 workspace-lsp-roots = []
-default-line-ending = "native"
 insert-final-newline = true
 atomic-save = true
 trim-final-newlines = false
@@ -45,7 +46,7 @@ primary-yank = { command = "cat", args = [] }
 primary-paste = { command = "cat", args = [] }
 
 [editor.statusline]
-left = ["mode", "spinner", "file-name"]
+left = ["mode", "spinner", "file-name", "code-action-hint"]
 center = []
 right = ["diagnostics", "selections", "register", "position", "file-encoding"]
 separator = "│"
@@ -64,6 +65,7 @@ display-inlay-hints = false
 inlay-hints-length-limit = 80
 display-color-swatches = true
 display-signature-help-docs = true
+auto-document-highlight = false
 snippets = true
 goto-reference-include-declaration = true
 
@@ -121,7 +123,7 @@ character = "│"
 skip-levels = 0
 
 [editor.gutters]
-layout = ["diagnostics", "spacer", "line-numbers", "spacer", "diff"]
+layout = ["diagnostics", "spacer", "line-numbers", "spacer", "diff", "code-action-hint"]
 
 [editor.gutters.line-numbers]
 min-width = 3
@@ -140,12 +142,15 @@ supersede-menu = false
 [editor.inline-diagnostics]
 cursor-line = "disable"
 other-lines = "disable"
+min-diagnostic-width = 40
 prefix-len = 1
 max-wrap = 20
 max-diagnostics = 10
 
 [keys.normal]
 C-s = ":write"
+ret = ["no_op", "no_op"]
+"A-x" = "@x<M-s>"
 
 [keys.insert]
 C-s = ":write"

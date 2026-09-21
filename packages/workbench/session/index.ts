@@ -240,6 +240,9 @@ export class WorkbenchSession implements VimSessionReader {
       views: [{ viewId, selections: initialSelection.value, mode: 'normal', repeatTarget: null }],
     });
     if (!atomicState.ok) return { ok: false, error: { kind: 'invalid-layout', message: `initial state: ${atomicState.error.kind}` } };
+    const previousViewId = this.#activeViewId;
+    const previousBufferId = previousViewId === undefined ? undefined : this.#views.get(previousViewId)?.bufferId;
+    if (previousBufferId !== undefined && previousBufferId !== document.id) this.#alternateBufferId = previousBufferId;
     const coordinator = new AtomicCommandCoordinator(document, atomicState.value);
     const buffer: BufferRecord = {
       bufferId: document.id,
@@ -254,7 +257,6 @@ export class WorkbenchSession implements VimSessionReader {
     };
     buffer.changeSubscription = document.subscribeChanges((change) => this.mapExternalChange(buffer, change));
     this.#buffers.set(buffer.bufferId, buffer);
-    const previousViewId = this.#activeViewId;
     this.#views.set(viewId, {
       viewId,
       bufferId: buffer.bufferId,

@@ -1,5 +1,5 @@
 import type { Disposable, Result } from '../../../../packages/primitives/src/entrypoints/launch';
-import type { NodeFilesystemPort, NodeProcessPort } from '../../../../packages/platform/src/entrypoints/launch';
+import type { NodeFilesystemPort, NodeProcessPort, WorkspaceIgnoreOptions } from '../../../../packages/platform/src/entrypoints/launch';
 import type { ExplorerFilesystemPort, ExplorerFailure, ExplorerGitDecoration } from '../../../../packages/services/src/entrypoints/launch';
 import type { ApplyReplacementEditsFn, ReplaceServicePort, SearchServicePort, WorkbenchReplaceApplyPort, WorkbenchSearchBufferSource } from '../../../../packages/workbench/src/entrypoints/launch';
 import type { LaunchServices, GitServices } from './types';
@@ -15,12 +15,19 @@ type GitDiffService = InstanceType<GitServices['GitDiffService']>;
 
 export interface OptionalServicesWiringDeps {
   readonly filesystem: NodeFilesystemPort;
+  readonly explorerIncludeHidden?: boolean;
+  readonly explorerFollowSymlinks?: boolean;
+  readonly explorerFlattenDirs?: boolean;
+  readonly explorerIgnore?: WorkspaceIgnoreOptions;
+  readonly searchDebounceMilliseconds?: number;
+  readonly searchDefaultLimit?: number;
   readonly ProcessPort: typeof NodeProcessPort;
   readonly workspaceRoot: string;
+  readonly gitEnabled?: () => boolean;
   readonly fileUri: (path: string) => string;
   readonly processEnvironment: () => Readonly<Record<string, string>>;
   readonly notifySurfaceChange: () => void;
-  readonly createExplorerFilesystem: (filesystem: NodeFilesystemPort, root: string, onChanged: () => void) => ExplorerFilesystemPort;
+  readonly createExplorerFilesystem: (filesystem: NodeFilesystemPort, root: string, onChanged: () => void, ignore?: WorkspaceIgnoreOptions) => ExplorerFilesystemPort;
   readonly createGitDecorationPort: (service: GitStatusService, root: string, filesystem: { workspaceRelativePath(root: string, path: string): string | undefined }) => { read(path: string): Promise<Result<ExplorerGitDecoration | undefined, ExplorerFailure>> };
   readonly getExplorerFeature: () => {
     openNode(node: { readonly path: string; readonly kind: string }): void;
@@ -130,26 +137,27 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
         createCtagsNavigationHost,
       } = services;
       hostNavigation = new HostNavigationController(createCtagsNavigationHost({ filesystem: deps.filesystem, workspaceRoot: deps.workspaceRoot, fileUri: deps.fileUri }));
-      const nextGitStatus = new git.GitStatusService({ process: new deps.ProcessPort(), root: deps.workspaceRoot, env: deps.processEnvironment() });
+      const gitEnabled = deps.gitEnabled?.() ?? true;
+      const nextGitStatus = new git.GitStatusService({ process: new deps.ProcessPort(), root: deps.workspaceRoot, env: deps.processEnvironment(), allowed: gitEnabled });
       gitStatusSubscription = nextGitStatus.subscribe(() => {
         refreshExplorerGitDecorations();
         deps.notifySurfaceChange();
       });
       gitStatusService = nextGitStatus;
-      gitMutationCoordinator = new git.GitMutationCoordinator(git.createProcessGitMutationExecutor(new deps.ProcessPort(), deps.workspaceRoot, deps.processEnvironment()));
-      gitDiffService = new git.GitDiffService({ process: new deps.ProcessPort(), filesystem: deps.filesystem, env: deps.processEnvironment() });
-      void nextGitStatus.refresh();
+      gitMutationCoordinator = new git.GitMutationCoordinator(git.createProcessGitMutationExecutor(new deps.ProcessPort(), deps.workspaceRoot, deps.processEnvironment()), gitEnabled);
+      gitDiffService = new git.GitDiffService({ process: new deps.ProcessPort(), filesystem: deps.filesystem, env: deps.processEnvironment(), allowed: gitEnabled });
+      if (gitEnabled) void nextGitStatus.refresh();
       const nextExplorer = new ExplorerTree(
-        deps.createExplorerFilesystem(deps.filesystem, deps.workspaceRoot, () => scheduleGitRefresh()),
-        { git: deps.createGitDecorationPort(nextGitStatus, deps.workspaceRoot, deps.filesystem) },
+        deps.createExplorerFilesystem(deps.filesystem, deps.workspaceRoot, () => scheduleGitRefresh(), deps.explorerIgnore),
+        { includeHidden: deps.explorerIncludeHidden ?? false, followSymlinks: deps.explorerFollowSymlinks ?? false, flattenDirs: deps.explorerFlattenDirs ?? true, git: deps.createGitDecorationPort(nextGitStatus, deps.workspaceRoot, deps.filesystem) },
       );
       const explorerRoot = nextExplorer.addRoot({ id: 'workspace', label: deps.workspaceRoot, path: deps.workspaceRoot });
       if (!explorerRoot.ok) throw new Error(`xi-explorer-root:${explorerRoot.error.kind}`);
       explorerTree = nextExplorer;
       const nextSearch = new RealtimeSearchService({
         backend: new RipgrepSearchBackend({ process: new deps.ProcessPort(), environment: deps.processEnvironment() }),
-        debounceMilliseconds: 40,
-        defaultLimit: 10_000,
+        debounceMilliseconds: deps.searchDebounceMilliseconds ?? 40,
+        defaultLimit: deps.searchDefaultLimit ?? 10_000,
         bufferSourceProvider: () => deps.getSearchFeature().readBuffers(),
       });
       searchService = nextSearch;

@@ -11,6 +11,7 @@ import type {
   DiffFillerRow,
   FoldRegion,
   GutterCells,
+  GutterType,
   LayoutFailure,
   RelativeAnnotation,
   RelativeCell,
@@ -26,6 +27,7 @@ import type {
 } from './types';
 import type { PackedPositionIndex } from './packed-index';
 import { type GraphemeCluster, splitGraphemes } from './graphemes';
+import { DEFAULT_GUTTER_LAYOUT } from './types';
 
 export const MAX_SOURCE_PREFIX_UTF16 = 65_536;
 const MAX_LAYOUT_ANNOTATIONS = 4_096;
@@ -33,6 +35,13 @@ export const MAX_LAYOUT_ID_UTF16 = 256;
 const MAX_LAYOUT_ANNOTATION_UTF16 = 256;
 const MAX_LAYOUT_ANNOTATION_TOTAL_UTF16 = 65_536;
 const MAX_DIFF_FILLER_ROWS = 4_096;
+
+const isWrapWhitespace = (text: string): boolean => /^\s/u.test(text);
+const isWrapWordBoundary = (text: string): boolean => {
+  if (isWrapWhitespace(text)) return true;
+  const first = Array.from(text)[0];
+  return first === undefined || !/[\p{L}\p{N}_]/u.test(first);
+};
 
 export function validateFolds(
   folds: readonly FoldRegion[],
@@ -71,6 +80,7 @@ export function validateAnnotations(
     if (annotation.documentVersion !== snapshot.version || typeof annotation.id !== 'string'
       || annotation.id.length === 0 || annotation.id.length > MAX_LAYOUT_ID_UTF16 || ids.has(annotation.id) || typeof annotation.text !== 'string'
       || annotation.text.length === 0 || annotation.text.length > MAX_LAYOUT_ANNOTATION_UTF16
+      || annotation.background !== undefined && (typeof annotation.background !== 'string' || !/^#[0-9a-fA-F]{6}$/u.test(annotation.background))
       || /[\r\n\t]/u.test(annotation.text) || !Number.isSafeInteger(line) || line < 0 || line >= snapshot.lineCount
       || !Number.isSafeInteger(offset) || offset < 0 || offset > (snapshot.lengthUtf16 as number)) {
       return layoutFailure('invalid-annotations');
@@ -231,9 +241,12 @@ export function lineCacheKey(
   startCell: number,
   horizontalScroll: number,
   policy: CellWidthPolicy,
+  wrapIndicator = '',
+  maxWrap = 20,
+  maxIndentRetain = 40,
 ): string {
   return `${policy.id}|${policy.generation}|${width}|${rowBudget}|${wrap}|${tabSize}|${startCell}|${horizontalScroll}|`
-    + `${text.length}|${hashLineText(text)}`;
+    + `${JSON.stringify(wrapIndicator)}|${maxWrap}|${maxIndentRetain}|${text.length}|${hashLineText(text)}`;
 }
 
 export function shapeLine(
@@ -247,6 +260,9 @@ export function shapeLine(
   policy: CellWidthPolicy,
   sourceTruncated: boolean,
   annotations: readonly RelativeAnnotation[] = [],
+  wrapIndicator = '',
+  maxWrap = 20,
+  maxIndentRetain = 40,
 ): { readonly ok: true; readonly value: RelativeLineLayout } | { readonly ok: false; readonly error: LayoutFailure } {
   const rows: { wrapIndex: number; displayStartCell: number; displayEndCell: number; startOffset: number; endOffset: number; cells: RelativeCell[] }[] = [];
   let logicalCell = displayStart;
@@ -255,10 +271,17 @@ export function shapeLine(
   let currentStartCell = displayStart;
   let currentStartOffset = 0;
   let currentEndOffset = 0;
+  let lineIndent: number | undefined;
   let current: RelativeCell[] = [];
   let stoppedAtRowLimit = false;
   let annotationIndex = 0;
   let nextAnnotationCell = 0;
+  let wrapIndicatorClusters: readonly GraphemeCluster[] = [];
+  try {
+    wrapIndicatorClusters = wrapIndicator.length === 0 ? [] : splitGraphemes(wrapIndicator);
+  } catch {
+    return layoutFailure('invalid-viewport');
+  }
   let priorClusters: readonly GraphemeCluster[] = [];
   try {
     priorClusters = splitGraphemes(text);
@@ -281,7 +304,72 @@ export function shapeLine(
     screenColumn = 0;
     currentStartCell = logicalCell;
     currentStartOffset = currentEndOffset;
+    const retainedIndent = lineIndent !== undefined && lineIndent <= maxIndentRetain ? lineIndent : 0;
+    for (let cellIndex = 0; cellIndex < retainedIndent && screenColumn < width; cellIndex += 1) {
+      current.push({
+        kind: 'virtual-annotation', text: ' ', role: 'virtual-annotation', offset: currentStartOffset,
+        affinity: 'left', virtualCell: 0, displayCellColumn: logicalCell,
+        annotationId: `wrap-indent:${wrapIndex}`, annotationCellIndex: cellIndex, annotationCellPart: 'leading',
+      });
+      screenColumn += 1;
+    }
+    let indicatorCellIndex = 0;
+    for (const cluster of wrapIndicatorClusters) {
+      let measured: number;
+      try {
+        measured = policy.widthOfCluster(cluster.text);
+      } catch {
+        return false;
+      }
+      if (!Number.isSafeInteger(measured) || measured < 0 || measured > 2) return false;
+      if (measured === 0) measured = 1;
+      if (screenColumn + measured > width) break;
+      for (let cellIndex = 0; cellIndex < measured; cellIndex += 1) {
+        const continuation = measured === 2 && cellIndex === 1;
+        current.push({
+          kind: 'virtual-annotation',
+          text: continuation ? '' : cluster.text,
+          role: continuation ? 'virtual-annotation-continuation' : 'virtual-annotation',
+          offset: currentStartOffset,
+          affinity: 'left',
+          virtualCell: 0,
+          displayCellColumn: logicalCell,
+          annotationId: `wrap-indicator:${wrapIndex}`,
+          annotationCellIndex: indicatorCellIndex + cellIndex,
+          annotationCellPart: continuation ? 'wide-continuation' : 'leading',
+        });
+      }
+      screenColumn += measured;
+      indicatorCellIndex += measured;
+    }
     return true;
+  };
+
+  const clusterWidth = (cluster: GraphemeCluster, displayColumn: number): number | undefined => {
+    if (cluster.text === '\t') return tabSize - (displayColumn % tabSize);
+    let measured: number;
+    try {
+      measured = policy.widthOfCluster(cluster.text);
+    } catch {
+      return undefined;
+    }
+    if (!Number.isSafeInteger(measured) || measured < 0 || measured > 2) return undefined;
+    return measured === 0 ? 1 : measured;
+  };
+
+  const wordWidthFrom = (startIndex: number, startColumn: number): number | undefined => {
+    let widthAt = startColumn;
+    let wordWidth = 0;
+    for (let index = startIndex; index < priorClusters.length; index += 1) {
+      const next = priorClusters[index];
+      if (next === undefined) break;
+      const measured = clusterWidth(next, widthAt);
+      if (measured === undefined) return undefined;
+      wordWidth += measured;
+      widthAt += measured;
+      if (isWrapWordBoundary(next.text)) break;
+    }
+    return wordWidth;
   };
 
   const insertAnnotationsAt = (offset: number): { readonly ok: true } | { readonly ok: false; readonly error: LayoutFailure } => {
@@ -330,6 +418,7 @@ export function shapeLine(
               annotationId: annotation.id,
               annotationCellIndex: nextAnnotationCell + cellIndex,
               annotationCellPart: part,
+              ...(annotation.background === undefined ? {} : { background: annotation.background }),
             };
             if (wrap) current.push(cell);
             else current[screenColumnForCell] = cell;
@@ -346,7 +435,9 @@ export function shapeLine(
     return { ok: true };
   };
 
-  for (const cluster of priorClusters) {
+  for (let clusterIndex = 0; clusterIndex < priorClusters.length; clusterIndex += 1) {
+    const cluster = priorClusters[clusterIndex];
+    if (cluster === undefined) continue;
     const sourceOffset = cluster.start;
     const sourceEnd = cluster.end;
     const inserted = insertAnnotationsAt(sourceOffset);
@@ -357,6 +448,17 @@ export function shapeLine(
       return layoutFailure('invalid-annotations');
     }
     currentEndOffset = sourceOffset;
+    if (lineIndent === undefined && !isWrapWhitespace(cluster.text)) lineIndent = logicalCell - displayStart;
+    const previousCluster = clusterIndex === 0 ? undefined : priorClusters[clusterIndex - 1];
+    const wordStart = previousCluster === undefined || isWrapWordBoundary(previousCluster.text);
+    if (wrap && screenColumn > 0 && wordStart) {
+      const wordWidth = wordWidthFrom(clusterIndex, screenColumn);
+      if (wordWidth === undefined) return layoutFailure('invalid-viewport');
+      if (wordWidth <= maxWrap && screenColumn + wordWidth > width && !pushRow()) {
+        stoppedAtRowLimit = true;
+        break;
+      }
+    }
     if (cluster.text === '\t') {
       const expansion = tabSize - (logicalCell % tabSize);
       for (let cellIndex = 0; cellIndex < expansion; cellIndex += 1) {
@@ -509,6 +611,7 @@ export function buildRelativeMaterializedRows(layout: RelativeLineLayout, width:
       cellPart: cell.kind === 'virtual-annotation' ? cell.annotationCellPart : textCellPart(cell.role),
       annotationId: cell.kind === 'virtual-annotation' ? cell.annotationId : null,
       annotationCellIndex: cell.kind === 'virtual-annotation' ? cell.annotationCellIndex : -1,
+      ...(cell.kind === 'virtual-annotation' && cell.background !== undefined ? { background: cell.background } : {}),
     }));
     const paddingCount = Math.max(0, width - cells.length);
     rows.push(Object.freeze({
@@ -584,6 +687,7 @@ export function buildRebasedRows(
       cells[cellIndex] = {
         text: cell.text,
         role: cell.role,
+        ...(cell.background === undefined ? {} : { background: cell.background }),
         target: cell.kind === 'virtual-annotation'
           ? {
             kind: 'virtual-annotation' as const,
@@ -752,30 +856,41 @@ export function buildFoldRow(
  * label is unchanged, unlike the per-frame row/cell allocations in
  * `rebaseMaterializedRows`, so freezing them once is not a per-keystroke cost.
  */
-export function buildGutterCells(line: LineIndex, wrapIndex: number, gutterWidth: number): GutterCells {
-  const lineNumber = wrapIndex === 0 ? String((line as number) + 1) : '';
-  // The last gutter column is always a blank separator between the number and the text.
-  const labelWidth = Math.max(0, gutterWidth - 1);
-  const visibleNumber = lineNumber.slice(-labelWidth);
-  const leftPadding = Math.max(0, labelWidth - visibleNumber.length);
+export function gutterLayoutWidth(lineNumberWidth: number, layout: readonly GutterType[] = DEFAULT_GUTTER_LAYOUT): number {
+  return layout.reduce((width, gutter) => width + (gutter === 'line-numbers' ? lineNumberWidth : 1), 0);
+}
+
+export function buildGutterCells(line: LineIndex, wrapIndex: number, gutterWidth: number, lineNumberWidth: number, layout: readonly GutterType[] = DEFAULT_GUTTER_LAYOUT, lineNumberMode: 'absolute' | 'relative' = 'absolute', relativeLineNumberCursor?: number): GutterCells {
+  const lineNumber = wrapIndex === 0
+    ? String(lineNumberMode === 'relative' && relativeLineNumberCursor !== undefined && relativeLineNumberCursor !== line
+      ? Math.abs(relativeLineNumberCursor - (line as number))
+      : (line as number) + 1)
+    : '';
+  const visibleNumber = lineNumber.slice(-Math.max(0, lineNumberWidth));
+  const leftPadding = Math.max(0, lineNumberWidth - visibleNumber.length);
   const gutterCells: ScreenCell[] = [];
   const cellTexts: string[] = [];
-  for (let column = 0; column < gutterWidth; column += 1) {
-    const labelColumn = column - leftPadding;
-    const isLabel = labelColumn >= 0 && labelColumn < visibleNumber.length;
-    const cellText = isLabel ? visibleNumber[labelColumn] ?? ' ' : ' ';
-    cellTexts.push(cellText);
-    gutterCells.push(Object.freeze({
-      text: cellText,
-      role: 'gutter',
-      target: Object.freeze({
-        kind: 'gutter',
-        lineIndex: line,
-        wrapIndex,
-        gutterColumn: cellColumn(column),
-        region: wrapIndex === 0 ? 'line-number' : 'continuation',
-      }),
-    }));
+  let column = 0;
+  for (const gutter of layout) {
+    const width = gutter === 'line-numbers' ? lineNumberWidth : 1;
+    for (let localColumn = 0; localColumn < width && column < gutterWidth; localColumn += 1) {
+      const labelColumn = localColumn - leftPadding;
+      const isLabel = gutter === 'line-numbers' && labelColumn >= 0 && labelColumn < visibleNumber.length;
+      const cellText = isLabel ? visibleNumber[labelColumn] ?? ' ' : ' ';
+      cellTexts.push(cellText);
+      gutterCells.push(Object.freeze({
+        text: cellText,
+        role: 'gutter',
+        target: Object.freeze({
+          kind: 'gutter',
+          lineIndex: line,
+          wrapIndex,
+          gutterColumn: cellColumn(column),
+          region: gutter === 'line-numbers' ? (wrapIndex === 0 ? 'line-number' : 'continuation') : 'line-number',
+        }),
+      }));
+      column += 1;
+    }
   }
   return Object.freeze({ cells: Object.freeze(gutterCells), text: cellTexts.join('') });
 }
@@ -786,7 +901,7 @@ export function buildGutterCells(line: LineIndex, wrapIndex: number, gutterWidth
  * (cached, content-only) row text: see `rebaseMaterializedRows`'s comment on why
  * per-frame row/cell allocations here are deliberately not deep-frozen.
  */
-export function prependGutter(row: ScreenRow, gutterWidth: number, gutter: GutterCells): ScreenRow {
+export function prependGutter(row: ScreenRow, gutterWidth: number, gutter: GutterCells, gutterKey = ''): ScreenRow {
   if (gutterWidth === 0) return row;
   if (row.lineIndex === null) return row;
   const cells = [...gutter.cells, ...row.cells];
@@ -794,7 +909,7 @@ export function prependGutter(row: ScreenRow, gutterWidth: number, gutter: Gutte
     ...row,
     cells,
     text: gutter.text + row.text,
-    contentKey: row.contentKey === null ? null : `${row.contentKey}|g:${gutterWidth}:${row.lineIndex}:${row.wrapIndex}`,
+    contentKey: row.contentKey === null ? null : `${row.contentKey}|g:${gutterWidth}:${gutterKey}:${row.lineIndex}:${row.wrapIndex}`,
   };
 }
 

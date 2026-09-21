@@ -6,10 +6,19 @@ library, remote connection or fallback.
 
 ## Current direction
 
-The active product scope is [Helix configuration parity](docs/configuration.md). The parity
-matrix is the roadmap. Do not recreate the retired milestone/ticket ledger or per-ticket
-evidence archive. A config key is complete only when its Helix spelling, type, accepted
-values, default and launched-editor effect agree; parse-only support is not parity.
+The active product scope is [Helix configuration parity](docs/configuration.md). The
+machine-readable [configuration ledger](docs/configuration-ledger.json) is the progress
+authority; `bun run check:config-ledger` enforces it. Do not recreate the retired
+milestone/ticket ledger or per-ticket evidence archive. A config item is complete only
+when its Helix spelling, type, accepted values, default and launched-editor effect agree
+and every required ledger dimension names a committed test. Parse-only support is not
+parity.
+
+Xi is not rebuilding Helix's editing model. Neovim remains the oracle for Vim modes,
+motions, operators, registers, repeat, search and undo. Helix is the oracle for
+`config.toml` and for 1:1 multi-selection semantics: selection creation, primary identity,
+direction, merge/deduplication, document mapping and simultaneous edits. Helix keybindings
+and general modal commands are out of scope unless separately requested.
 
 Use `.agents/skills/xi-implement/SKILL.md` for product changes, `xi-vim-parity` for Vim
 semantics, and `xi-validate` for behavioral, PTY, visual or performance validation. Read

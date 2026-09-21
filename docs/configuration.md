@@ -4,6 +4,17 @@ Xi's next product scope is a Helix-compatible `config.toml` surface. Compatibili
 the same path, type, accepted values, default and observable effect. Accepting a key and
 then ignoring it does not count.
 
+The machine-readable [`configuration-ledger.json`](configuration-ledger.json) is the
+progress authority. It contains one entry per key, union variant or loading contract and
+seals the audited inventory. This document explains the baseline and design; its “Xi at
+audit” columns are historical context, not mutable status. Validate ledger edits with
+`bun run check:config-ledger`.
+
+This scope does not adopt Helix's editing model. Xi retains its Neovim-compatible Vim
+model. Helix is also a behavioral oracle for Xi's multi-selection semantics, which must
+match selection creation, primary identity, direction, merge/deduplication, document
+mapping and simultaneous edits 1:1.
+
 ## Reference baseline
 
 - Stable contract: Helix 25.07.1, tag commit
@@ -27,31 +38,45 @@ published page and released binary disagree.
 
 ## Status terms
 
-| Status | Meaning |
+| Audit status | Meaning |
 | --- | --- |
 | Effective | Xi accepts the Helix spelling and the launched editor applies it. |
 | Parsed only | Xi accepts it, but production behavior does not consume it. This is not parity. |
 | Incompatible | Xi has a related setting under a different path or meaning. |
 | Missing | Xi rejects or cannot represent the setting. |
 
-At the audit point, no `[editor]` setting has full end-to-end parity. `scrolloff`,
-`line-number`, `mouse`, `cursor-shape.normal`, `cursor-shape.insert` and `lsp.enable` are
-parsed but not wired. The few effective settings use Xi-specific paths. This is the gap the
-matrix tracks. The canonical fixture at
+The historical audit point predates the current effective slices; it recorded `scrolloff`,
+`line-number`, `mouse`, `cursor-shape.normal`, `cursor-shape.insert` and `lsp.enable` as
+parsed but not wired. The canonical fixture at
 `tests/fixtures/config/helix-25.07.1.toml` is accepted by the official Helix 25.07.1
-binary; Xi currently returns 105 unknown-key/value diagnostics for it.
+binary; Xi currently returns 106 unknown-key/value diagnostics for it.
+
+## Working the ledger
+
+Each ledger item has a stable ID, exact path or contract, upstream reference, default,
+current status and a `validation` object. A missing validation dimension means unfinished;
+adding a dimension means its array names the committed test files that prove it. Stable
+and master items require `schema`, `default`, `runtime`, `invalid`, `unit`, `pty` and
+`helix`; Xi extensions require all except `helix`.
+
+Update one vertical slice and its evidence together. `bun run check:config-ledger` reports
+item/status/check totals and rejects duplicate IDs, nonexistent tests, impossible status
+combinations, canonical-fixture paths absent from the ledger, and `effective` without full
+proof. The inventory hash prevents silent additions or removals. If upstream changes,
+audit the new pinned source first, then deliberately reseal using the hash printed by the
+failed check.
 
 ## Root and loading contract
 
-| Helix-compatible surface | Helix behavior | Xi now | Target |
+| Helix-compatible surface | Helix behavior | Xi at `ab211d5` | Target |
 | --- | --- | --- | --- |
-| `theme = "name"` | Top-level theme name | Incompatible: effective as `editor.theme` | Move to the root; keep a diagnosed legacy alias temporarily. |
-| `[theme] dark/light/fallback` | Master supports terminal light/dark selection | Missing | Add after string theme parity; preserve explicit persisted selection precedence. |
+| `theme = "name"` | Top-level theme name | Effective; legacy `editor.theme` remains accepted | Root spelling feeds the existing theme consumer; legacy spelling remains a migration alias. |
+| `[theme] dark/light/fallback` | Master supports terminal light/dark selection | Effective | OpenTUI terminal theme-mode events select the configured theme live; fallback is used when the terminal has no declared preference, while persisted theme state retains precedence. |
 | `[keys.normal]`, `[keys.insert]`, `[keys.select]` | Static commands, typable commands, command sequences and `@` macros | Incompatible: similar tables, `visual` naming and Xi command IDs | Accept Helix modes and value forms; keep Xi-only contexts under `[xi.keys]`. |
 | User `config.toml` | Platform config directory | Effective at `~/.config/xi/config.toml` | Keep the Xi directory but make file contents compatible. |
-| Workspace `.helix/config.toml` merge | Built-in → user → workspace | Missing | Read `.xi/config.toml` first; optionally read `.helix/config.toml` as a compatibility source when no Xi file exists. Never execute workspace settings without trust. |
-| `-c/--config` | Explicit config path | Missing | Add an explicit CLI override. |
-| `:config-open`, `:config-reload`, USR1 | Open/reload atomically | Commands exist in the catalog but startup config is effectively static | Wire last-good atomic reload; failed reload keeps prior behavior and reports source locations. |
+| Workspace `.helix/config.toml` merge | Built-in → user → workspace | Effective when no explicit `-c`/Xi config overrides it | Reads the optional `.helix/config.toml` workspace layer after defaults and user config, preserving explicit CLI precedence. |
+| `-c/--config` | Explicit config path | Effective | Loads the selected file as the highest user-facing config layer before persisted Xi state overrides. |
+| `:config-open`, `:config-reload`, USR1 | Open/reload atomically | Effective; both reload paths compile the full config and update live input settings; invalid reloads retain the last-good behavior | Reload is serialized, validated before publication, reports diagnostics, and updates keybindings plus scroll/input settings without restarting Xi. |
 | Unknown fields | Rejected by Helix schema | Rejected by Xi's hand-maintained list | Preserve strict rejection. A key enters the list only with a production consumer. |
 
 ## `[editor]` scalar and union keys
@@ -59,87 +84,105 @@ binary; Xi currently returns 105 unknown-key/value diagnostics for it.
 `Stable` defaults are from 25.07.1. A master change is called out where it changes the
 compatibility decision.
 
-| Path | Stable default | Master delta | Xi now | Target note |
+| Path | Stable default | Master delta | Xi at `ab211d5` | Target note |
 | --- | --- | --- | --- | --- |
-| `editor.scrolloff` | `5` | — | Parsed only | Wire viewport/cursor-follow behavior. |
-| `editor.mouse` | `true` | — | Parsed only; also accepts a non-Helix table | Wire boolean; move Xi mouse extensions out of this path. |
-| `editor.middle-click-paste` | `true` | — | Missing | Gate primary-selection paste. |
+| `editor.scrolloff` | `5` | — | Effective | Applies the configured cursor margin to the launched viewport and view-scroll commands. |
+| `editor.mouse` | `true` | — | Effective; legacy table accepted for migration | Keep the Helix boolean as the canonical path; legacy mouse extensions remain compatibility-only. |
+| `editor.middle-click-paste` | `true` | — | Effective | Gates primary-selection paste on a real editor pointer event. |
 | `editor.scroll-lines` | `3` | — | Incompatible: effective as `editor.mouse.scroll-lines` | Adopt the Helix path. |
-| `editor.shell` | `['sh','-c']` on Unix | — | Missing | Apply to explicit shell commands only; argv-native tasks remain argv-native. |
-| `editor.line-number` | `absolute` | — | Parsed only; also accepts `none` | Wire `absolute`/`relative`; retain `none` only as documented Xi extension if needed. |
-| `editor.cursorline` | `false` | — | Missing | Render all cursor lines with theme scopes. |
-| `editor.cursorcolumn` | `false` | — | Missing | Render all cursor columns without per-key full-frame work. |
-| `editor.continue-comments` | `true` | — | Missing | Requires syntax-aware insert behavior and fallback tests. |
-| `editor.gutters` | diagnostics/spacer/line-numbers/spacer/diff | Adds `code-action-hint` kind | Missing; Xi gutter is fixed | Implement array/table union and ordered layout. |
-| `editor.auto-completion` | `true` | — | Missing | Gate automatic completion, not manual completion. |
-| `editor.path-completion` | `true` | — | Missing | Implement bounded path completion for saved and scratch buffers. |
-| `editor.auto-format` | `true` | — | Missing; per-language auto-format exists | Add global gate composed with language settings. |
-| `editor.default-yank-register` | `"` | — | Missing | Map into the owned Vim register system. |
-| `editor.idle-timeout` | `250` ms | — | Missing | One bounded UI idle clock; never debounce keystrokes. |
-| `editor.completion-timeout` | `250` ms | — | Missing | Delay only auto-popup publication. |
-| `editor.preview-completion-insert` | `true` | — | Missing | Preview must be reversible and versioned. |
-| `editor.completion-trigger-len` | `2` | — | Missing | Apply to automatic LSP completion. |
-| `editor.completion-replace` | `false` | — | Missing | Preserve LSP text-edit ranges unless this policy expands them. |
-| `editor.auto-info` | `true` | — | Missing | Gate contextual info/prefix UI. |
-| `editor.true-color` | `false` | — | Missing; renderer has fixed/detected modes | Wire terminal capability override. |
-| `editor.undercurl` | `false` | — | Missing | Wire capability override without changing text semantics. |
-| `editor.rulers` | `[]` | — | Missing | Render configured columns, with language override later. |
-| `editor.bufferline` | `never` | — | Missing; Xi tab strips are fixed | Support `always`/`never`/`multiple`. |
-| `editor.color-modes` | `false` | — | Missing; theme scopes exist | Gate mode-colored statusline scopes. |
-| `editor.text-width` | `80` | — | Missing | Shared by reflow and optional wrap-at-width. |
-| `editor.workspace-lsp-roots` | `[]` | — | Missing | Workspace-only validation and root routing. |
-| `editor.default-line-ending` | `native` | — | Missing | Apply only to new documents; preserve existing mixed EOL data. |
-| `editor.insert-final-newline` | `true` | — | Missing | Apply at save without changing the in-memory document unexpectedly. |
-| `editor.atomic-save` | `true` | — | Missing key; persistence is currently atomic | Expose the policy and cover watcher/hot-reload behavior. |
-| `editor.trim-final-newlines` | `false` | — | Missing | Apply as one visible save transaction. |
-| `editor.trim-trailing-whitespace` | `false` | — | Missing | Apply as one visible save transaction with undo/history rules. |
-| `editor.popup-border` | `none` | — | Missing; popups currently choose borders internally | Support `none`/`popup`/`menu`/`all`. |
-| `editor.indent-heuristic` | `hybrid` | — | Missing | Support `simple` first, then tree-sitter/hybrid with explicit fallback. |
-| `editor.jump-label-alphabet` | alphabet | — | Missing | Validate uniqueness and feed jump-label generation. |
-| `editor.end-of-line-diagnostics` | `disable` | Master default `hint` | Missing; inline diagnostics are fixed | Implement severity filter; retain stable default until a deliberate default update. |
-| `editor.clipboard-provider` | platform-specific union | — | Missing | Built-ins plus custom commands at the process boundary. |
-| `editor.editor-config` | `true` | — | Missing | Add bounded EditorConfig discovery and language/document precedence. |
-| `editor.mouse-yank-register` | — | `*` on master | Missing | Master-forward item after register/clipboard parity. |
-| `editor.rainbow-brackets` | — | `false` on master | Missing | Requires language `rainbows.scm`; keep off by default. |
-| `editor.kitty-keyboard-protocol` | — | `auto` on master | Missing | Support `auto`/`enabled`/`disabled` in the terminal adapter. |
+| `editor.shell` | `['sh','-c']` on Unix | — | Effective | Applies to `:sh`/`:shell`; argv-native tasks remain argv-native. |
+| `editor.line-number` | `absolute` | — | Effective: `absolute` or `relative` | Uses the configured gutter labels in the launched editor. |
+| `editor.cursorline` | `false` | — | Effective | Gates the bounded active-row paint and uses `ui.cursorline` when supplied. |
+| `editor.cursorcolumn` | `false` | — | Effective | Gates the bounded active-column paint and uses `ui.cursorcolumn` when supplied. |
+| `editor.continue-comments` | `true` | — | Effective | Continues a recognized line-comment prefix through the owned Vim newline path, using current cached syntax when available and a bounded lexical fallback before parsing completes. |
+| `editor.gutters` | diagnostics/spacer/line-numbers/spacer/diff | Adds `code-action-hint` kind | Effective for stable gutter kinds | Scalar arrays and table `layout` reorder or omit the existing diagnostic, spacer, line-number and diff slots in the launched editor. |
+| `editor.statusline` | mode/spinner/file-name/... | Adds `code-action-hint` element | Effective | When configured, shows the number of enabled LSP code actions at the current cursor position. |
+| `editor.auto-completion` | `true` | — | Effective | Gates automatic LSP completion while preserving manual completion. |
+| `editor.path-completion` | `true` | stable | Effective | Recognized saved/scratch-buffer paths enumerate a bounded directory and use the shared versioned completion edit path. |
+| `editor.auto-format` | `true` | — | Effective; composes with per-language auto-format | Global gate composed with language settings. |
+| `editor.default-yank-register` | `"` | — | Effective | Selects the owned Vim register for implicit yank and paste commands; explicit registers remain authoritative. |
+| `editor.idle-timeout` | `250` ms | — | Effective | Drives the existing bounded contextual-help idle timer; it never debounces keystrokes. |
+| `editor.completion-timeout` | `250` ms | — | Effective | Delays only character-triggered completion; manual completion remains immediate. |
+| `editor.preview-completion-insert` | `true` | — | Effective | Preview is reversible and versioned; accepting keeps it, while moving or closing restores the prior text. |
+| `editor.completion-trigger-len` | `2` | — | Effective | Opens automatic LSP completion after the configured identifier length. |
+| `editor.completion-replace` | `false` | — | Effective | Expands fallback completion edits to the full word; explicit LSP ranges remain authoritative. |
+| `editor.auto-info` | `true` | `true` | Effective | Gates Xi’s contextual prefix-help information panel. |
+| `editor.true-color` | `false` | — | Effective | Forces truecolor when terminal capability detection reports a false negative; otherwise Xi uses detected terminal color support. |
+| `editor.undercurl` | `false` | — | Effective | Overrides terminal undercurl capability handling without changing text semantics. |
+| `editor.rulers` | `[]` | stable | Effective | Renders configured 1-based display columns through the existing editor paint path. |
+| `editor.bufferline` | `never` | — | Effective | Controls whether the existing tab strip is always hidden, always shown or shown only for multiple buffers. |
+| `editor.color-modes` | `false` | — | Effective | Gates the mode-specific statusline theme scopes. |
+| `editor.text-width` | `80` | stable | Effective | Supplies the configured content wrap width when wrap-at-text-width is enabled. |
+| `editor.workspace-lsp-roots` | `[]` | — | Effective | Validated relative directories select the deepest matching LSP session root. |
+| `editor.default-line-ending` | `native` | — | Effective | Applies `native`/`lf`/`crlf`/`ff`/`cr`/`nel` to new documents and preserves existing file EOL metadata. |
+| `editor.insert-final-newline` | `true` | — | Effective | Adds the final line ending through the document transaction before persistence, preserving the save version boundary. |
+| `editor.atomic-save` | `true` | — | Effective | Selects atomic replacement or direct writes for persistence. |
+| `editor.trim-final-newlines` | `false` | — | Effective | Removes line endings after the final one through one document transaction before persistence. |
+| `editor.trim-trailing-whitespace` | `false` | — | Effective | Removes spaces and tabs preceding line endings through one document transaction before persistence. |
+| `editor.popup-border` | `none` | — | Effective | Controls borders for popup, menu, or all transient surfaces. |
+| `editor.indent-heuristic` | `hybrid` | — | Effective | Accepts `simple`, `tree-sitter`, and `hybrid`; Xi uses Helix's documented `simple` fallback because syntax-tree indentation queries are unavailable. |
+| `editor.jump-label-alphabet` | `abcdefghijklmnopqrstuvwxyz` | — | Effective | Validated unique Unicode characters; `editor.goto-word` generates bounded two-character labels from the visible viewport in configured order and selecting one moves the cursor. |
+| `editor.end-of-line-diagnostics` | `disable` | Master default `hint` | Effective | Shows the highest-severity diagnostic not rendered inline at the source line end; `disable` suppresses it. |
+| `editor.preview-completion-insert` | `true` | `true` | Effective | Selecting a completion applies a reversible, versioned preview; accepting keeps it, while moving or closing restores the prior text. |
+| `editor.clipboard-provider` | platform-specific union | — | Effective | Built-ins use Helix’s provider-specific commands, `termcode` emits OSC52, `none` disables reads/writes, and custom commands remain argv-native. |
+| `editor.editor-config` | `true` | — | Effective; gates the project `.helix/config.toml` layer | User config is compiled first so this setting controls whether the workspace layer is admitted. |
+| `editor.mouse-yank-register` | — | `*` on master | Effective | Completed mouse selections are yanked into this owned Vim register; explicit register commands remain authoritative. |
+| `editor.rainbow-brackets` | `false` | — | Effective | Colors Tree-sitter `punctuation.bracket` spans by containing delimiter depth using `rainbow.N` theme scopes; keep off by default. |
+| `editor.kitty-keyboard-protocol` | — | `auto` on master | Effective | Controls the existing OpenTUI Kitty keyboard negotiation and parser. |
 
 ## Nested editor sections
 
 Brace notation below classifies every listed child key separately.
 
-| Section / paths | Default | Version | Xi now | Target note |
+| Section / paths | Default | Version | Xi at `ab211d5` | Target note |
 | --- | --- | --- | --- | --- |
-| `editor.cursor-shape.{normal,insert,select}` | all `block` | stable | `normal`/`insert` parsed only; incompatible `visual`; no `select` or `hidden` | Use Helix names and values `block`/`bar`/`underline`/`hidden`; migrate `visual` to `select`. |
-| `editor.file-picker.{hidden,follow-symlinks,deduplicate-links,parents,ignore,git-ignore,git-global,git-exclude,max-depth}` | all true except unset depth | stable | Missing; top-level `search.hidden/follow-symlinks` are parsed-only and `hidden` has opposite wording | Share one ignore walker with exact Helix semantics. |
-| `editor.file-explorer.{hidden,follow-symlinks,parents,ignore,git-ignore,git-global,git-exclude,flatten-dirs}` | false except `flatten-dirs=true` | master | Missing | Configure the existing Explorer independently from picker/search. |
-| `editor.buffer-picker.start-position` | `current` | master | Missing | Support `current`/`previous`. |
-| `editor.statusline.{left,center,right,separator}` | Helix lists | stable | Missing; Xi statusline fixed | Declarative layout with bounded rendering. |
-| `editor.statusline.mode.{normal,insert,select}` | `NOR`/`INS`/`SEL` | stable | Missing | Text only; mode remains engine-owned. |
-| `editor.statusline.{diagnostics,workspace-diagnostics}` | warning/error | stable | Missing | Severity filters over existing stores. |
-| Statusline element catalog | mode, spinner, file paths/name, modification/read-only, encoding/EOL/indent/type, line counts, diagnostics, selections, register, position/percentage, spacer/separator, VCS | stable | Partial fixed equivalents | Accept exact names; master also adds `current-working-directory` and `code-action-hint`. |
-| `editor.lsp.enable` | `true` | stable | Parsed only | Gate server startup and all LSP UI. |
-| `editor.lsp.{display-messages,display-progress-messages}` | true/false | stable | Missing | Route through transient status messages. |
-| `editor.lsp.{auto-signature-help,display-signature-help-docs}` | true/true | stable | Missing | Separate trigger and documentation visibility. |
-| `editor.lsp.{display-inlay-hints,inlay-hints-length-limit}` | false/unset | stable | Incompatible parsed-only `inlay-hints` | Adopt exact names and non-zero limit validation. |
-| `editor.lsp.{display-color-swatches,snippets,goto-reference-include-declaration}` | all `true` | stable | Missing | Wire to negotiated capabilities and consumers. |
-| `editor.lsp.auto-document-highlight` | `false` | master | Missing | Versioned highlight request/cancel path. |
-| `editor.auto-pairs` or `editor.auto-pairs.'x'` | `true`, standard pairs | stable | Missing | Boolean/table union; language override composes with global false. |
-| `editor.auto-save` or `editor.auto-save.focus-lost` | `false`; table form defaults false | stable | Missing | Support the boolean shorthand and table union; focus-save requires terminal focus events and ordinary save guards. |
-| `editor.auto-save.after-delay.{enable,timeout}` | false/3000 ms | stable | Missing | Reset on edits; cancellation and quit cannot lose data. |
-| `editor.search.{smart-case,wrap-around}` | true/true | stable | Missing; Xi top-level search keys mean something else | Feed owned Vim/search state consistently. |
-| `editor.whitespace.render` and `.render.{default,space,nbsp,nnbsp,tab,newline}` | `none` | stable | Missing | String/table union (`none`/`all`) and per-kind visibility. |
-| `editor.whitespace.characters.{space,nbsp,nnbsp,tab,tabpad,newline}` | Helix glyphs | stable | Missing | Validate one character and terminal-cell behavior. |
-| `editor.indent-guides.{render,character,skip-levels}` | false/`│`/0 | stable | Missing | Viewport-bounded rendering only. |
-| `editor.gutters.layout` | standard five entries | stable | Missing | Same semantics as scalar `gutters` form. |
-| `editor.gutters.line-numbers.min-width` | `3` | stable | Missing | Compose with absolute/relative numbering. |
-| Empty `editor.gutters.{diagnostics,diff,spacer}` sections | no children | stable | Missing | Accept empty tables only; unknown children still fail. |
-| Empty `editor.gutters.code-action-hint` section | no children | master | Missing | Master-forward layout kind. |
-| `editor.soft-wrap.{enable,max-wrap,max-indent-retain,wrap-indicator,wrap-at-text-width}` | false/20/40/`↪ `/false | stable | Incompatible parsed-only `editor.wrap` | Replace the alias with the full section and real layout behavior. |
-| `editor.smart-tab.{enable,supersede-menu}` | true/false | stable | Missing as editor config; Vim insert has its own smart-tab semantics | Define precedence between menu routing and owned Vim insertion. |
-| `editor.inline-diagnostics.{cursor-line,other-lines,prefix-len,max-wrap,max-diagnostics}` | disable/disable/1/20/10 | stable | Missing; rendering is currently fixed | Severity filters and bounds; master changes only `cursor-line` default to warning. |
-| `editor.word-completion.{enable,trigger-length}` | true/7 | master | Missing | Complete from bounded open-buffer indexes. |
-| `editor.workspace-trust.{level,prompt,trusted}` | servers/true/[] | master | Missing | Gate workspace config, LSP/DAP and Git execution; hash trusted `.xi` inputs and detect changes. |
-| `editor.clipboard-provider.custom.{yank,paste,primary-yank,primary-paste}` | required yank/paste; primary optional | stable | Missing | Each command is validated argv; stdin/stdout carry contents. |
+| `editor.cursor-shape.{normal,insert,select}` | all `block` | stable | `normal`/`insert`/`select` effective; `visual` remains a migration spelling | Uses Helix names and values `block`/`bar`/`underline`/`hidden`; `visual` maps to `select`. |
+| `editor.file-picker.hidden` | `true` | stable | Effective; picker index defaults to the configured hidden-file policy | Wired through the canonical config snapshot into the production file picker. |
+| `editor.file-picker.follow-symlinks` | `true` | stable | Effective; filesystem traversal follows symlink directories with real-path cycle protection | The platform enumerator owns async traversal and bounds the index population. |
+| `editor.file-picker.deduplicate-links` | `true` | stable | Effective; real-path deduplication is configurable while cycles remain bounded | Controls whether followed symlink paths collapse onto one real directory. |
+| `editor.file-picker.max-depth` | unset | stable | Effective; filesystem traversal stops at the configured directory depth | Bounds background picker enumeration without blocking input. |
+| `editor.file-picker.{parents,ignore,git-ignore,git-global,git-exclude}` | all true | stable | Effective; the bounded picker index reads workspace, parent, Helix and Git ignore sources | The async platform walker applies ordered negation rules and honors `core.excludesfile` without blocking input. |
+| `editor.file-explorer.hidden` | `false` | master | Effective | `true` hides hidden entries in the existing Explorer; `false` includes them. |
+| `editor.file-explorer.follow-symlinks` | `false` | master | Effective | Passes the policy to the existing Explorer tree; symlink traversal is disabled or enabled accordingly. |
+| `editor.file-explorer.{parents,ignore,git-ignore,git-global,git-exclude}` | `false` | master | Effective | Applies the existing bounded ignore matcher to Explorer entries; parent, `.ignore`, `.gitignore`, global Git and `.git/info/exclude` sources are independently configurable. |
+| `editor.file-explorer.flatten-dirs` | `true` | master | Effective | Flattens loaded single-child directory chains into one stable Explorer row; disabling it preserves separate directory rows. |
+| `editor.buffer-picker.start-position` | `current` | master | Effective | Opens the buffer picker on the active buffer or the tracked alternate buffer, as configured. |
+| `editor.statusline.{left,center,right,separator}` | Helix lists | stable | Layout lists effective; separator effective | Declarative layout with bounded rendering. |
+| `editor.statusline.mode.{normal,insert,select}` | `NOR`/`INS`/`SEL` | stable | Effective | Configures the text for the existing mode-owned statusline indicator. |
+| `editor.statusline.separator` | `│` | stable | Effective | Configures the separator between the existing statusline elements. |
+| `editor.statusline.{diagnostics,workspace-diagnostics}` | warning/error | stable | Effective | Severity filters over the existing document and workspace diagnostic stores. |
+| Statusline element catalog | mode, spinner, file paths/name, modification/read-only, encoding/EOL/indent/type, line counts, diagnostics, selections, register, position/percentage, spacer/separator, VCS | stable | Effective; master `current-working-directory` is also effective | All stable names are accepted and routed to the existing statusline renderer; unsupported metadata stays empty rather than fabricating a value. |
+| `editor.lsp.enable` | `true` | stable | Effective | Gates language-server startup and dependent LSP UI in the launched editor. |
+| `editor.lsp.{display-messages,display-progress-messages}` | true/false | stable | Effective | Routes validated LSP window messages and progress updates through transient status messages. |
+| `editor.lsp.{auto-signature-help,display-signature-help-docs}` | true/true | stable | Effective | Separate automatic trigger and documentation visibility. |
+| `editor.lsp.{display-inlay-hints,inlay-hints-length-limit}` | false/unset | stable | Effective; versioned LSP inlay hints are decoded, length-limited and rendered as virtual annotations | Uses exact Helix names, accepts string and label-part results, and rejects invalid coordinates or limits. |
+| `editor.lsp.snippets` | `true` | stable | Effective; capability advertisement and snippet completion filtering are configurable | Controls LSP snippet support in the launched editor. |
+| `editor.lsp.display-color-swatches` | `true` | stable | Effective | Requests negotiated LSP document colors and paints validated one-cell RGB swatches inline; `false` suppresses the request and annotation. |
+| `editor.lsp.goto-reference-include-declaration` | `true` | stable | Effective | Controls the LSP `textDocument/references` `includeDeclaration` context used by `:xi references` and the `lsp.references` command binding. |
+| `editor.lsp.auto-document-highlight` | `false` | master | Effective | Requests negotiated LSP document highlights at the primary cursor and paints validated ranges with `ui.highlight`. |
+| `editor.auto-pairs` or `editor.auto-pairs.'x'` | `true`, standard pairs | stable | Effective | Boolean disables pairing; a validated single-character table reaches the owned Vim insert engine, including closer-skip and paired backspace. |
+| `editor.auto-save` or `editor.auto-save.focus-lost` | `false`; table form defaults false | stable | Effective | Boolean/table schema and focus-loss saves use the guarded versioned save path. |
+| `editor.auto-save.after-delay.{enable,timeout}` | false/3000 ms | stable | Effective | Resets on edits and routes through the guarded versioned save path; cancellation and quit clear pending timers. |
+| `editor.search.{smart-case,wrap-around}` | true/true | stable | Effective for Xi's owned workspace-search panel; Vim search remains Neovim-owned | Smart-case matching and wrap-around result navigation are loaded from the launched editor config. |
+| `editor.whitespace.render` and `.render.{default,space,nbsp,nnbsp,tab,newline}` | `none` | stable | Effective | String/table render modes and per-kind visibility reach the bounded viewport painter. |
+| `editor.whitespace.characters.{space,nbsp,nnbsp,tab,tabpad,newline}` | Helix glyphs | stable | Effective | Validated single-cell glyphs render spaces, tabs, non-breaking spaces and line endings in the launched editor. |
+| `editor.indent-guides.{render,character,skip-levels}` | false/`│`/0 | stable | Effective | Visible leading indentation renders the configured glyph, honoring skipped levels in the launched editor. |
+| `editor.gutters.layout` | standard five entries | stable | Effective | Ordered gutter components reach the bounded viewport geometry; scalar `gutters` and table `layout` forms share validation. |
+| `editor.gutters.line-numbers.min-width` | `3` | stable | Effective | Reserves the configured minimum number width and composes with absolute/relative numbering. |
+| Empty `editor.gutters.{diagnostics,diff,spacer}` sections | no children | stable | Effective | Empty optionless sections are accepted and preserve Xi's existing diagnostic, spacer, and line-number gutter rendering; unknown children still fail. |
+| Empty `editor.gutters.code-action-hint` section | no children | master | Effective | Accepted as an optionless section; the gutter is enabled only when included in the gutter layout. |
+| `editor.soft-wrap.{enable,max-wrap,max-indent-retain,wrap-indicator}` | false/20/40/`↪ ` | stable | Effective | Soft-wrap limits now control bounded word breaks and continuation indentation; indicators remain non-editable layout annotations. |
+| `editor.soft-wrap.wrap-at-text-width` | `false` | stable | Effective | Uses `editor.text-width` as a bounded layout wrap width. |
+| `editor.smart-tab.enable` | `true` | stable | Effective; maps the launched editor setting to owned Vim insertion | |
+| `editor.smart-tab.supersede-menu` | `false` | stable | Effective | When a completion menu is open, configured `true` routes Tab to the owned smart-tab insertion path instead of accepting the selected item. |
+| `editor.inline-diagnostics.{cursor-line,other-lines}` | disable/disable | stable | Effective | Filters inline diagnostics by severity on the cursor line and other lines; master changes only `cursor-line` default to warning. |
+| `editor.inline-diagnostics.prefix-len` | 1 | stable | Effective; diagnostic branch prefixes use the configured number of horizontal bars | |
+| `editor.inline-diagnostics.max-wrap` | 20 | stable | Effective; diagnostic wrapping honors the configured maximum trailing free space | |
+| `editor.inline-diagnostics.min-diagnostic-width` | 40 | stable | Effective; narrow viewports suppress diagnostics and edge anchors receive the configured minimum text width | |
+| `editor.inline-diagnostics.max-diagnostics` | `10` | stable | Effective | Caps the number of inline diagnostics rendered for each source line. |
+| `editor.word-completion.{enable,trigger-length}` | true/7 | master | Effective | Bounded open-buffer word completion is wired into the launched automatic completion path and honors enable/trigger-length. |
+| `editor.workspace-trust.{level,prompt,trusted}` | servers/true/[] | master | Effective | Gates workspace config, LSP/DAP and Git execution; hashes trusted `.helix` inputs and detects changes. |
+| `editor.clipboard-provider.custom.{yank,paste,primary-yank,primary-paste}` | required yank/paste; primary optional | stable | Effective | Each command is validated argv; stdin/stdout carry contents. |
 | `editor.terminal.{command,args}` | optional | source schema | Missing | Treat as source-backed, not documented stable compatibility. |
 
 ## Xi extensions and migration
@@ -150,7 +193,7 @@ deprecation diagnostic for one development cycle and are then removed.
 
 | Current Xi path | Replacement |
 | --- | --- |
-| `schema-version`, `profile` | `xi.schema-version`, `xi.profile` |
+| `schema-version`, `profile` | `[xi].schema-version`, `[xi].profile` |
 | `editor.theme` | top-level `theme` |
 | `editor.wrap` | `editor.soft-wrap.enable` |
 | `editor.cursor-shape.visual` | `editor.cursor-shape.select` |
@@ -158,7 +201,7 @@ deprecation diagnostic for one development cycle and are then removed.
 | `editor.mouse.enabled` | `editor.mouse` |
 | `editor.mouse.scroll-lines` | `editor.scroll-lines` |
 | `editor.mouse.modifier` | `xi.mouse.modifier` |
-| `editor.sidebar-visible/width/panel` | `xi.sidebar.visible/width/panel` |
+| `editor.sidebar-visible/width/panel` | `[xi.sidebar].{visible,width,panel}` |
 | `editor.motion-trail` | `xi.motion-trail` |
 | `editor.selection-limit/history-limit` | `xi.selection.limit/history-limit` |
 | `editor.hints.delay-ms` | `xi.hints.delay-ms` |
@@ -173,7 +216,7 @@ features. Parity must not remove them.
 
 ## Implementation order
 
-The matrix is the roadmap; there is no separate ticket ledger.
+The configuration ledger is the roadmap; there is no ticket ledger.
 
 1. Make root loading, `theme`, key-mode names, strict schema data and migration diagnostics
    Helix-shaped. Add a canonical 25.07.1 fixture validated by both editors.
@@ -190,5 +233,6 @@ The matrix is the roadmap; there is no separate ticket ledger.
    Effective or carry a documented intentional Xi divergence before claiming parity.
 
 Each change should complete a vertical slice: schema, default, migration, production
-consumer, negative validation, behavioral test and PTY-visible effect. Do not bulk-add
-accepted keys ahead of their consumers.
+consumer, negative validation, behavioral test, PTY-visible effect and Helix comparison.
+Update that item's ledger evidence in the same change. Do not bulk-add accepted keys ahead
+of their consumers or mark an item `effective` before the ledger gate accepts it.

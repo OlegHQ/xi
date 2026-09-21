@@ -21,6 +21,7 @@ export function scrollViewBy(
   viewId: ViewId,
   delta: number,
   viewportHeight: number | undefined,
+  configuredScrolloff = 0,
 ): ScrollViewResult | undefined {
   const view = workbench.readView(viewId);
   if (view === undefined) return undefined;
@@ -33,8 +34,13 @@ export function scrollViewBy(
   const cursorLine = primary === undefined ? undefined : view.document.lineIndexAt(primary.head.at.offset);
   if (session !== undefined && cursorLine?.ok === true) {
     const line = cursorLine.value as number;
-    const bottom = scrollTop + Math.max(1, viewportHeight ?? 1) - 1;
-    const clamped = line < scrollTop ? scrollTop : line > bottom ? bottom : line;
+    const height = Math.max(1, viewportHeight ?? 1);
+    const scrolloff = Number.isSafeInteger(configuredScrolloff) && configuredScrolloff >= 0 ? configuredScrolloff : 0;
+    const topMargin = Math.min(scrolloff, Math.floor(Math.max(0, height - 1) / 2));
+    const bottomMargin = Math.min(scrolloff, Math.floor(height / 2));
+    const bottom = Math.min(view.document.lineCount - 1, scrollTop + height - bottomMargin - 1);
+    const lower = Math.min(view.document.lineCount - 1, scrollTop + topMargin);
+    const clamped = line < lower ? lower : line > bottom ? bottom : line;
     if (clamped !== line) {
       const lineStart = view.document.lineStartOffset(cursorLine.value);
       const column = primary!.head.kind === 'line' ? primary!.desiredColumn.logicalUtf16 ?? 0 : lineStart.ok ? (primary!.head.at.offset as number) - (lineStart.value as number) : 0;

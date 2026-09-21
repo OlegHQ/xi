@@ -7,7 +7,7 @@ import {
 } from '../../packages/workbench/commands/host-commands';
 
 const noopWorkspaceEdits: HostCommandsWorkspaceEditsPort = { renameCurrent: async () => true, requestCodeActions: async () => true };
-const noopProblems: HostCommandsProblemsPort = { runConfiguredTask: async () => {}, listConfiguredTasks: async () => {}, cancelTask: async () => {} };
+const noopProblems: HostCommandsProblemsPort = { runConfiguredTask: async () => {}, runShellCommand: async () => {}, listConfiguredTasks: async () => {}, cancelTask: async () => {} };
 
 // T116-HOST-01: `:wa` with a dirty buffer that has never been saved (no path) reports
 // "no file name" through the injected `onError` port and counts it as a failure --

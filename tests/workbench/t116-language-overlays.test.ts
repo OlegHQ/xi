@@ -49,6 +49,7 @@ class FakeNavigationController implements NavigationControllerPort {
     this.publish({ state: 'ready', generation: 1, symbols: Object.freeze([{ id: 's1', name: 'foo', kind: 12, children: Object.freeze([]) }]), hover: undefined, message: undefined });
     return { ok: true, value: [] };
   }
+  async references(): Promise<unknown> { return { ok: true, value: [] }; }
   async requestHover(): Promise<unknown> { return { ok: true, value: '' }; }
   returnToOrigin(): unknown { this.returnToOriginCalls.push(1); return undefined; }
 }

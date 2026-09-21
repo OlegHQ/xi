@@ -55,6 +55,7 @@ class FakeSearchService implements SearchServicePort {
   #model: WorkbenchSearchModel = { generation: 0, query: { rootId: '', rootPath: '', query: '' }, state: 'idle', matches: [], totalMatches: 0, message: undefined };
   #generation = 0;
   readonly queries: string[] = [];
+  readonly caseSensitive: boolean[] = [];
   readonly cancels: number[] = [];
   readonly #listeners = new Set<(model: WorkbenchSearchModel) => void>();
   readonly #pending = new Map<number, () => void>();
@@ -64,8 +65,9 @@ class FakeSearchService implements SearchServicePort {
     this.#listeners.add(listener);
     return Object.freeze({ dispose: () => { this.#listeners.delete(listener); } });
   }
-  query(query: { readonly query: string }): Promise<unknown> {
+  query(query: { readonly query: string; readonly caseSensitive?: boolean }): Promise<unknown> {
     this.queries.push(query.query);
+    this.caseSensitive.push(query.caseSensitive === true);
     this.#generation += 1;
     const generation = this.#generation;
     return new Promise<void>((resolve) => { this.#pending.set(generation, resolve); });
@@ -160,6 +162,8 @@ const controller = new SearchController({
   onError: (message) => { errors.push(message); },
   workspaceRoot: '/workspace',
   ensureServices: async () => { ensureServicesCalls += 1; },
+  searchSmartCase: true,
+  searchWrapAround: true,
 });
 
 const search = new FakeSearchService();
@@ -174,6 +178,7 @@ assert.deepEqual(search.queries, [''], 'T116-SEARCH-01c open() issues the initia
 await controller.handleKeypress(key('a', 'a'));
 await controller.handleKeypress(key('b', 'b'));
 assert.deepEqual(search.queries, ['', 'a', 'ab'], 'T116-SEARCH-01d each keystroke re-queries with the accumulated text');
+assert.deepEqual(search.caseSensitive, [false, false, false], 'T116-SEARCH-01e lowercase queries remain case-insensitive under smart-case');
 search.resolve(2, [matchFixture('stale')]);
 search.resolve(3, [matchFixture('fresh')]);
 assert.equal(search.model.matches.length, 1, 'T116-SEARCH-01e only one result is visible');
@@ -187,7 +192,7 @@ await controller.handleKeypress(key('down', ''));
 await controller.handleKeypress(key('down', ''));
 assert.equal(controller.selectedIndex, 2, 'T116-SEARCH-02b moving down twice reaches the last match');
 await controller.handleKeypress(key('down', ''));
-assert.equal(controller.selectedIndex, 2, 'T116-SEARCH-02c moving down past the last match clamps');
+assert.equal(controller.selectedIndex, 0, 'T116-SEARCH-02c moving down past the last match wraps to the first match');
 await controller.handleKeypress(key('up', ''));
 await controller.handleKeypress(key('up', ''));
 await controller.handleKeypress(key('up', ''));
@@ -289,6 +294,58 @@ assert.equal(filesystem.contents.get('/workspace/disk.txt'), 'HELLO disk', 'sani
 
 controller.dispose();
 
+// T036-SEARCH: production controller wiring applies smart-case to uppercase queries and wraps
+// result navigation when the Helix settings are enabled.
+{
+  const smartController = new SearchController({
+    host,
+    session,
+    filesystem,
+    marker: () => {},
+    onError: (message) => { errors.push(message); },
+    workspaceRoot: '/workspace',
+    searchSmartCase: true,
+    searchWrapAround: true,
+    ensureServices: async () => {},
+  });
+  const smartService = new FakeSearchService();
+  smartController.attachServices(smartService, new FakeReplaceService(), applyReplacementEditsFn);
+  smartController.open();
+  await smartController.handleKeypress(key('A', 'A'));
+  assert.equal(smartService.caseSensitive.at(-1), true, 'T036-SEARCH-SMART-CASE-UNIT-01 uppercase query enables case-sensitive search');
+  smartService.resolve(2, [matchFixture('s0'), matchFixture('s1')]);
+  await smartController.handleKeypress(key('down', ''));
+  await smartController.handleKeypress(key('down', ''));
+  assert.equal(smartController.selectedIndex, 0, 'T036-SEARCH-WRAP-AROUND-UNIT-01 result navigation wraps at the end');
+  smartController.dispose();
+}
+
+// The explicit false settings remain meaningful: uppercase search is not promoted to
+// case-sensitive matching and result navigation clamps at the final row.
+{
+  const clampedController = new SearchController({
+    host,
+    session,
+    filesystem,
+    marker: () => {},
+    onError: (message) => { errors.push(message); },
+    workspaceRoot: '/workspace',
+    searchSmartCase: false,
+    searchWrapAround: false,
+    ensureServices: async () => {},
+  });
+  const clampedService = new FakeSearchService();
+  clampedController.attachServices(clampedService, new FakeReplaceService(), applyReplacementEditsFn);
+  clampedController.open();
+  await clampedController.handleKeypress(key('A', 'A'));
+  assert.equal(clampedService.caseSensitive.at(-1), false, 'T036-SEARCH-SMART-CASE-UNIT-02 disabled smart-case keeps uppercase search case-insensitive');
+  clampedService.resolve(2, [matchFixture('c0'), matchFixture('c1')]);
+  await clampedController.handleKeypress(key('down', ''));
+  await clampedController.handleKeypress(key('down', ''));
+  assert.equal(clampedController.selectedIndex, 1, 'T036-SEARCH-WRAP-AROUND-UNIT-02 disabled wrap-around clamps at the last result');
+  clampedController.dispose();
+}
+
 // F2-13: a rejected ensureServices() must not leave open()/query() as a silent, permanently
 // unresolved dead panel -- it must surface via onError instead of an unhandled rejection.
 {
@@ -309,4 +366,4 @@ controller.dispose();
   failingController.dispose();
 }
 
-console.log('T116 SearchController passed generation-drop, selection-clamp, escape-close, dirty-buffer-replace, durable disk-replace journal (F2-3) and ensureServices rejection handling (F2-13) fixtures');
+console.log('T116 SearchController passed generation-drop, smart-case, wrap-around, selection-clamp, escape-close, dirty-buffer-replace, durable disk-replace journal (F2-3) and ensureServices rejection handling (F2-13) fixtures');

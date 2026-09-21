@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Prove configured workspace LSP roots select the launched server's process root."""
+from __future__ import annotations
+
+import json
+import os
+import pty
+import re
+import select
+import stat
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+SESSION_ROOT = re.compile(rb"XI_LSP_SESSION_ROOT (\{[^\r\n]*\})")
+SERVER = r'''#!/usr/bin/env python3
+import json
+import sys
+
+def read_message():
+    length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        key, _, value = line.partition(b":")
+        if key.lower() == b"content-length":
+            length = int(value.strip())
+    if length is None:
+        return None
+    return json.loads(sys.stdin.buffer.read(length).decode("utf-8"))
+
+def send(message):
+    body = json.dumps(message, separators=(",", ":")).encode("utf-8")
+    sys.stdout.buffer.write(b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n\r\n" + body)
+    sys.stdout.buffer.flush()
+
+while True:
+    message = read_message()
+    if message is None:
+        break
+    if message.get("method") == "initialize":
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {"textDocumentSync": 1}}})
+    elif message.get("method") == "exit":
+        break
+    elif "id" in message:
+        send({"jsonrpc": "2.0", "id": message["id"], "result": None})
+'''
+
+
+def read_for(master: int, captured: bytearray, seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not select.select([master], [], [], 0.05)[0]:
+            continue
+        try:
+            captured.extend(os.read(master, 65536))
+        except OSError:
+            return
+
+
+with tempfile.TemporaryDirectory(prefix="xi-workspace-lsp-roots-pty-") as temporary:
+    workspace = Path(temporary)
+    fake_bin = workspace / "bin"
+    fake_bin.mkdir()
+    server = fake_bin / "typescript-language-server"
+    server.write_text(SERVER, encoding="utf-8")
+    server.chmod(stat.S_IRWXU)
+    config = workspace / "config.toml"
+    config.write_text('schema-version = 1\n[editor]\nworkspace-lsp-roots = ["client", "server"]\n', encoding="utf-8")
+    source = workspace / "client" / "main.ts"
+    source.parent.mkdir()
+    source.write_text("const value: number = 1;\n", encoding="utf-8")
+    master, slave = pty.openpty()
+    environment = os.environ.copy()
+    environment.update({"HOME": temporary, "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1", "PATH": f"{fake_bin}:{environment.get('PATH', '')}"})
+    child = subprocess.Popen(
+        ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "--config", str(config), str(source)],
+        cwd=workspace,
+        env=environment,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        close_fds=True,
+    )
+    os.close(slave)
+    captured = bytearray()
+    try:
+        deadline = time.monotonic() + 12
+        while not SESSION_ROOT.search(captured) and time.monotonic() < deadline:
+            read_for(master, captured, 0.05)
+        matches = [json.loads(match.group(1)) for match in SESSION_ROOT.finditer(captured)]
+        if not matches or matches[-1].get("root") != str(workspace / "client"):
+            raise SystemExit(f"workspace-lsp-roots did not select client root: {matches!r}; output={captured[-5000:]!r}")
+        os.write(master, b"q")
+        child.wait(timeout=5)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        os.close(master)
+    if child.returncode != 0:
+        raise SystemExit(f"Xi exited {child.returncode}: {captured[-5000:]!r}")
+
+print("Config workspace-lsp-roots PTY passed: production LSP session used the configured client root.")

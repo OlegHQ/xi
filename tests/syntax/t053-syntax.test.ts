@@ -387,6 +387,33 @@ async function treeCleanupOnCloseAndDispose(): Promise<void> {
   assert.equal(tracker.readSyntax(id), undefined, 'T053-CLEANUP-03 dispose drops every retained read');
 }
 
+async function rainbowBracketsUseContainingDepth(): Promise<void> {
+  const text = 'function f(a) { return [a, {x: (a)}]; }';
+  const tasks: Array<() => void> = [];
+  const service = new IncrementalSyntaxHighlighter({ grammars: grammarProvider, runtime: runtimeOptions, rainbowBrackets: true, schedule: task => tasks.push(task) });
+  service.submit(request(1, text, { languageId: 'typescript' }));
+  for (let attempt = 0; attempt < 100 && service.latest() === undefined; attempt += 1) {
+    while (tasks.length > 0) tasks.shift()?.();
+    if (service.latest() === undefined) await new Promise<void>(resolve => setTimeout(resolve, 0));
+  }
+  const result = service.latest();
+  assert.ok(result, 'T053-RAINBOW-01 syntax result is published');
+  drainAllWindows(tasks, result, text.length);
+  const at = (token: string, from = 0): number => text.indexOf(token, from);
+  const expected = [
+    [at('(', 0), 'rainbow.0'],
+    [at('{', at('(', 0)), 'rainbow.0'],
+    [at('[', at('{', at('(', 0))), 'rainbow.1'],
+    [at('{', at('[', at('{', at('(', 0)))), 'rainbow.2'],
+    [at('(', at('{', at('[', at('{', at('(', 0))))), 'rainbow.3'],
+  ] as const;
+  for (const [offset, scope] of expected) {
+    const bracketSpan: SyntaxHighlightResult['spans'][number] | undefined = result.spans.find((candidate: SyntaxHighlightResult['spans'][number]) => candidate.start === offset && candidate.end === offset + 1);
+    assert.equal(bracketSpan?.scope, scope, `T053-RAINBOW-02 bracket at ${offset} uses ${scope}`);
+  }
+  service.dispose();
+}
+
 function clippedRowsAreBounded(): void {
   const spans = [
     { start: 12, end: 20, kind: 'keyword' as const },
@@ -413,4 +440,5 @@ await slicingBoundProducesSameResult();
 await luaMatchTranslation();
 await utf16UnitsAreVerified();
 await treeCleanupOnCloseAndDispose();
+await rainbowBracketsUseContainingDepth();
 clippedRowsAreBounded();

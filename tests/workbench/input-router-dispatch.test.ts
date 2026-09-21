@@ -39,6 +39,7 @@ const testClock: ClockPort = {
 const noopCompletion: RouterCompletionPort = {
   isCompletionTrigger: () => false,
   isSignatureTrigger: () => false,
+  isAutoSignatureTrigger: () => false,
   isSnippetActive: false,
   openCompletion: () => true,
   openSignature: () => true,
@@ -134,6 +135,7 @@ function makeRouter(
   bindings: readonly RouterBindingConfig[] = [],
   withoutActiveView = false,
   executeWorkbenchCommand?: (source: string) => 'handled' | 'unhandled' | 'quit',
+  reloadConfig?: () => Promise<boolean>,
 ): { readonly router: WorkbenchInputRouter; readonly vim: FakeVimSession; readonly explorerPort: FakeExplorer; readonly searchPort: FakeSearch } {
   const explorerPort = new FakeExplorer();
   const searchPort = new FakeSearch();
@@ -162,6 +164,7 @@ function makeRouter(
     toggleMouseMode: () => true,
     launchViewId: 'view-1' as never,
     bindings,
+    ...(reloadConfig === undefined ? {} : { reloadConfig }),
     scrollLines: 1,
     getViewportHeight: () => 10,
     clock: testClock,
@@ -178,6 +181,17 @@ function makeRouter(
     overlaySignature: overlays.signature,
   });
   return { router, vim, explorerPort, searchPort };
+}
+
+// ROUTER-CONFIG-RELOAD-01: the production command route invokes the injected atomic reload
+// owner instead of reporting the old unavailable-session error.
+{
+  let calls = 0;
+  const overlays = makeRecordingOverlays();
+  const { router } = makeRouter(overlays, [{ mode: 'normal', keys: ['x'], commandId: 'config.reload' }], false, undefined, async () => { calls += 1; return true; });
+  assert.equal(await resolve(router.dispatchKey(key('x', 'x'))), 'consumed');
+  assert.equal(calls, 1, 'ROUTER-CONFIG-RELOAD-01 config.reload reaches the injected reload owner');
+  router.dispose();
 }
 
 // ROUTER-DISPATCH-06: a workbench with no active editable view still owns a usable Ex prompt.

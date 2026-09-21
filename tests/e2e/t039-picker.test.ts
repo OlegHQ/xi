@@ -55,6 +55,14 @@ if (hidden.ok) assert.equal(hidden.value.totalMatches, 0, 'T039-HIDDEN-02 hidden
 const hiddenShown = await index.queryAsync('settings', { includeHidden: true });
 assert.equal(hiddenShown.ok, true, 'T039-HIDDEN-03 hidden paths can be selected');
 if (hiddenShown.ok) assert.equal(hiddenShown.value.totalMatches, 1, 'T039-HIDDEN-04 hidden result is retained when enabled');
+const hiddenByDefaultIndex = new FilePathIndex({ includeHidden: false });
+assert.equal(hiddenByDefaultIndex.addRoot({ id: 'config-root', label: 'config', path: '/workspace/config' }).ok, true, 'T039-HIDDEN-05 configured picker index registers its root');
+assert.equal(hiddenByDefaultIndex.addPaths('config-root', [{ rootId: 'config-root', relativePath: '.hidden/settings.json', hidden: true }, { rootId: 'config-root', relativePath: 'visible/settings.json' }]).ok, true, 'T039-HIDDEN-06 configured picker index accepts hidden and visible paths');
+hiddenByDefaultIndex.markReady();
+const hiddenByDefault = await hiddenByDefaultIndex.queryAsync('settings');
+assert.equal(hiddenByDefault.ok, true, 'T039-HIDDEN-07 configured picker default query succeeds');
+if (hiddenByDefault.ok) assert.deepEqual(hiddenByDefault.value.entries.map((entry) => entry.relativePath), ['visible/settings.json'], 'T039-HIDDEN-08 editor.file-picker.hidden=false filters hidden paths without per-query overrides');
+hiddenByDefaultIndex.dispose();
 
 // T039-ASYNC-INDEX: queryAsync must time-slice a large index -- yielding to the
 // event loop between chunks -- and honor cancellation/generation between those

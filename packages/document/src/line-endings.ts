@@ -1,6 +1,6 @@
-export type LineEnding = 'lf' | 'crlf' | 'cr';
+export type LineEnding = 'lf' | 'crlf' | 'cr' | 'ff' | 'nel';
 
-type EndingCode = 0 | 1 | 2;
+type EndingCode = 0 | 1 | 2 | 3 | 4;
 type Root = Node | null;
 
 const MAX_BLOCK_LENGTH = 8192;
@@ -36,8 +36,8 @@ export interface LineEndingReader {
 }
 
 /**
- * Mutable only while constructing a sequence. It stores four ending codes per
- * byte, so normalization never creates one object or string record per line.
+ * Mutable only while constructing a sequence. It stores each three-bit ending
+ * code densely, so normalization never creates one object or string record per line.
  */
 export class LineEndingSequenceBuilder {
   #packed = new Uint8Array(0);
@@ -45,6 +45,8 @@ export class LineEndingSequenceBuilder {
   #lfCount = 0;
   #crlfCount = 0;
   #crCount = 0;
+  #ffCount = 0;
+  #nelCount = 0;
   #firstCode: EndingCode | undefined;
 
   get length(): number { return this.#length; }
@@ -52,27 +54,32 @@ export class LineEndingSequenceBuilder {
   push(value: LineEnding): void {
     const code = endingCode(value);
     if (code === undefined) throw new RangeError('invalid-line-ending');
-    const byteIndex = this.#length >>> 2;
-    if (byteIndex >= this.#packed.length) {
-      const nextLength = Math.max(byteIndex + 1, Math.max(4, this.#packed.length * 2));
+    const bitOffset = this.#length * 3;
+    const byteIndex = bitOffset >>> 3;
+    if (byteIndex + ((bitOffset & 7) > 5 ? 1 : 0) >= this.#packed.length) {
+      const nextLength = Math.max(byteIndex + ((bitOffset & 7) > 5 ? 2 : 1), Math.max(4, this.#packed.length * 2));
       const next = new Uint8Array(nextLength);
       next.set(this.#packed);
       this.#packed = next;
     }
-    this.#packed[byteIndex] = (this.#packed[byteIndex] ?? 0) | (code << ((this.#length & 3) * 2));
+    setPackedCode(this.#packed, this.#length, code);
     this.#length += 1;
     this.#firstCode ??= code;
     if (code === 0) this.#lfCount += 1;
     else if (code === 1) this.#crlfCount += 1;
-    else this.#crCount += 1;
+    else if (code === 2) this.#crCount += 1;
+    else if (code === 3) this.#ffCount += 1;
+    else this.#nelCount += 1;
   }
 
   finish(seed = 0x6d2b79f5): { readonly sequence: LineEndingSequence; readonly defaultLineEnding: LineEnding } {
     const firstCode = this.#firstCode ?? 0;
-    const countFor = (code: EndingCode): number => code === 0 ? this.#lfCount : code === 1 ? this.#crlfCount : this.#crCount;
+    const countFor = (code: EndingCode): number => code === 0 ? this.#lfCount : code === 1 ? this.#crlfCount : code === 2 ? this.#crCount : code === 3 ? this.#ffCount : this.#nelCount;
     let defaultCode = firstCode;
     if (countFor(1) > countFor(defaultCode)) defaultCode = 1;
     if (countFor(2) > countFor(defaultCode)) defaultCode = 2;
+    if (countFor(3) > countFor(defaultCode)) defaultCode = 3;
+    if (countFor(4) > countFor(defaultCode)) defaultCode = 4;
     return {
       sequence: LineEndingSequence.fromPacked(this.#length, this.#packed, seed),
       defaultLineEnding: lineEndingValue(defaultCode),
@@ -115,7 +122,7 @@ export class LineEndingSequence {
   static fromPacked(length: number, packed: Uint8Array, seed = 0x6d2b79f5): LineEndingSequence {
     if (!Number.isSafeInteger(length) || length < 0) throw new RangeError('invalid-line-ending-length');
     if (!(packed instanceof Uint8Array)) throw new RangeError('invalid-line-ending-packed-payload');
-    const byteLength = Math.ceil(length / 4);
+    const byteLength = Math.ceil(length * 3 / 8);
     if (packed.length < byteLength) throw new RangeError('line-ending-packed-length-mismatch');
     if (length === 0) return new LineEndingSequence(null, seed >>> 0);
     // Take ownership of a bounded copy so callers cannot mutate a published sequence.
@@ -123,7 +130,7 @@ export class LineEndingSequence {
     const blocks: EolBlock[] = [];
     for (let start = 0; start < length; start += MAX_BLOCK_LENGTH) {
       const blockLength = Math.min(length - start, MAX_BLOCK_LENGTH);
-      blocks.push(makeBlockFromPacked(blockLength, owned, start >>> 2));
+      blocks.push(makeBlockFromPacked(blockLength, owned, start));
     }
     return LineEndingSequence.fromBlocks(blocks, seed);
   }
@@ -319,27 +326,27 @@ function makeBlockFromValues(values: readonly LineEnding[], start: number, end: 
     if (code !== firstCode) uniform = false;
   }
   if (uniform) return makeUniformBlock(length, firstCode);
-  const packed = new Uint8Array(Math.ceil(length / 4));
+  const packed = new Uint8Array(Math.ceil(length * 3 / 8));
   for (let index = 0; index < length; index += 1) {
     const code = endingCode(values[start + index]);
     if (code === undefined) throw new RangeError('invalid-line-ending');
-    packed[index >>> 2] = (packed[index >>> 2] ?? 0) | (code << ((index & 3) * 2));
+    setPackedCode(packed, index, code);
   }
   return Object.freeze({ length, uniformCode: null, packed });
 }
 
-function makeBlockFromPacked(length: number, packed: Uint8Array, byteOffset: number): EolBlock {
-  const firstCode = packedCode(packed, byteOffset, 0);
+function makeBlockFromPacked(length: number, packed: Uint8Array, startIndex: number): EolBlock {
+  const firstCode = packedCode(packed, startIndex);
   let uniform = true;
   for (let index = 1; index < length; index += 1) {
-    if (packedCode(packed, byteOffset, index) !== firstCode) {
+    if (packedCode(packed, startIndex + index) !== firstCode) {
       uniform = false;
       break;
     }
   }
   if (uniform) return makeUniformBlock(length, firstCode);
-  const bytes = Math.ceil(length / 4);
-  const blockPacked = packed.slice(byteOffset, byteOffset + bytes);
+  const blockPacked = new Uint8Array(Math.ceil(length * 3 / 8));
+  for (let index = 0; index < length; index += 1) setPackedCode(blockPacked, index, packedCode(packed, startIndex + index));
   return Object.freeze({ length, uniformCode: null, packed: blockPacked });
 }
 
@@ -347,13 +354,25 @@ function blockAt(block: EolBlock, index: number): EndingCode {
   if (block.uniformCode !== null) return block.uniformCode;
   const packed = block.packed;
   if (packed === null) throw new Error('line-ending-block-missing-payload');
-  return ((packed[index >>> 2] ?? 0) >>> ((index & 3) * 2) & 3) as EndingCode;
+  return packedCode(packed, index);
 }
 
-function packedCode(packed: Uint8Array, byteOffset: number, index: number): EndingCode {
-  const code = (packed[byteOffset + (index >>> 2)] ?? 0) >>> ((index & 3) * 2) & 3;
-  if (code === 3) throw new RangeError('invalid-line-ending-code');
+function packedCode(packed: Uint8Array, index: number): EndingCode {
+  const bitOffset = index * 3;
+  const shift = bitOffset & 7;
+  const first = (packed[bitOffset >>> 3] ?? 0) >>> shift;
+  const second = shift > 5 ? (packed[(bitOffset >>> 3) + 1] ?? 0) << (8 - shift) : 0;
+  const code = (first | second) & 7;
+  if (code > 4) throw new RangeError('invalid-line-ending-code');
   return code as EndingCode;
+}
+
+function setPackedCode(packed: Uint8Array, index: number, code: EndingCode): void {
+  const bitOffset = index * 3;
+  const shift = bitOffset & 7;
+  const byteIndex = bitOffset >>> 3;
+  packed[byteIndex] = (packed[byteIndex] ?? 0) | ((code << shift) & 0xff);
+  if (shift > 5) packed[byteIndex + 1] = (packed[byteIndex + 1] ?? 0) | (code >>> (8 - shift));
 }
 
 function rangeEqualsUniform(root: Root, start: number, length: number, code: EndingCode): boolean {
@@ -406,13 +425,13 @@ function splitBlock(block: EolBlock, leftLength: number): readonly [EolBlock, Eo
   if (block.uniformCode !== null) {
     return [makeUniformBlock(leftLength, block.uniformCode), makeUniformBlock(rightLength, block.uniformCode)];
   }
-  const leftPacked = new Uint8Array(Math.ceil(leftLength / 4));
-  const rightPacked = new Uint8Array(Math.ceil(rightLength / 4));
+  const leftPacked = new Uint8Array(Math.ceil(leftLength * 3 / 8));
+  const rightPacked = new Uint8Array(Math.ceil(rightLength * 3 / 8));
   for (let index = 0; index < leftLength; index += 1) {
-    leftPacked[index >>> 2] = (leftPacked[index >>> 2] ?? 0) | (blockAt(block, index) << ((index & 3) * 2));
+    setPackedCode(leftPacked, index, blockAt(block, index));
   }
   for (let index = 0; index < rightLength; index += 1) {
-    rightPacked[index >>> 2] = (rightPacked[index >>> 2] ?? 0) | (blockAt(block, leftLength + index) << ((index & 3) * 2));
+    setPackedCode(rightPacked, index, blockAt(block, leftLength + index));
   }
   return [makePackedOrUniformBlock(leftLength, leftPacked), makePackedOrUniformBlock(rightLength, rightPacked)];
 }
@@ -453,9 +472,9 @@ function nextPriority(seed: number): { readonly priority: number; readonly seed:
 function size(root: Root): number { return root?.size ?? 0; }
 
 function endingCode(value: LineEnding | undefined): EndingCode | undefined {
-  return value === 'lf' ? 0 : value === 'crlf' ? 1 : value === 'cr' ? 2 : undefined;
+  return value === 'lf' ? 0 : value === 'crlf' ? 1 : value === 'cr' ? 2 : value === 'ff' ? 3 : value === 'nel' ? 4 : undefined;
 }
 
 function lineEndingValue(code: EndingCode): LineEnding {
-  return code === 0 ? 'lf' : code === 1 ? 'crlf' : 'cr';
+  return code === 0 ? 'lf' : code === 1 ? 'crlf' : code === 2 ? 'cr' : code === 3 ? 'ff' : 'nel';
 }

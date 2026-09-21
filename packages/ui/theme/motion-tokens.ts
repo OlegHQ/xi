@@ -19,10 +19,14 @@ export interface MotionPaintTokens {
   readonly operatorPreview: ThemeColor;
   /** Background of workspace-search matches shown in the editor while the Search panel is open. */
   readonly searchMatch: ThemeColor;
+  readonly cursorline: ThemeColor;
+  readonly cursorcolumn: ThemeColor;
+  readonly ruler: ThemeColor;
 }
 
 export interface MotionPaintThemeSource {
   readonly background?: ThemeColor;
+  readonly surfaceActive?: ThemeColor;
   readonly selectionPrimary?: ThemeColor;
   readonly selectionSecondary?: ThemeColor;
   readonly cursorPrimary?: ThemeColor;
@@ -31,6 +35,10 @@ export interface MotionPaintThemeSource {
   readonly motionTrail?: ThemeColor;
   readonly operatorPreview?: ThemeColor;
   readonly searchMatch?: ThemeColor;
+  readonly cursorline?: ThemeColor;
+  readonly cursorcolumn?: ThemeColor;
+  readonly border?: ThemeColor;
+  readonly ruler?: ThemeColor;
 }
 
 export const DEFAULT_MOTION_PAINT_TOKENS: MotionPaintTokens = Object.freeze({
@@ -42,6 +50,9 @@ export const DEFAULT_MOTION_PAINT_TOKENS: MotionPaintTokens = Object.freeze({
   motionTrail: '#EEF2F4',
   operatorPreview: '#C4D8E8',
   searchMatch: '#F5E3A1',
+  cursorline: '#E2E8F2',
+  cursorcolumn: '#E2E8F2',
+  ruler: '#D5D4CF',
 });
 
 /** Resolve optional theme tokens while retaining T034's small theme contract. */
@@ -60,6 +71,9 @@ export function resolveMotionPaintTokens(theme: MotionPaintThemeSource): MotionP
     motionTrail: themeColor(theme.motionTrail ?? trail, 'bg'),
     operatorPreview: themeColor(theme.operatorPreview ?? DEFAULT_MOTION_PAINT_TOKENS.operatorPreview, 'bg'),
     searchMatch: themeColor(theme.searchMatch ?? theme.background ?? DEFAULT_MOTION_PAINT_TOKENS.searchMatch, 'bg'),
+    cursorline: themeColor(theme.cursorline ?? theme.surfaceActive ?? theme.selectionSecondary ?? DEFAULT_MOTION_PAINT_TOKENS.cursorline, 'bg'),
+    cursorcolumn: themeColor(theme.cursorcolumn ?? theme.surfaceActive ?? theme.selectionSecondary ?? DEFAULT_MOTION_PAINT_TOKENS.cursorcolumn, 'bg'),
+    ruler: themeColor(theme.ruler ?? theme.border ?? DEFAULT_MOTION_PAINT_TOKENS.ruler, 'bg'),
   });
 }
 
@@ -103,21 +117,13 @@ export function pickCursorForeground(tokenForeground: RGBA, cursorBackground: RG
 export function resolvePaintColor(value: ThemeColor, mode: EditorColorMode): RGBA {
   const color = parseColor(themeColor(value));
   if (mode !== 'ansi256') return color;
-  const red = quantize256(color.r);
-  const green = quantize256(color.g);
-  const blue = quantize256(color.b);
-  return parseColor(rgbHex(red, green, blue));
+  return RGBA.fromIndex(ansi256Index(color.r, color.g, color.b));
 }
 
-function quantize256(value: number): number {
-  const level = Math.max(0, Math.min(5, Math.round((value / 255) * 5)));
-  return Math.round(level * 255 / 5);
-}
-
-function rgbHex(red: number, green: number, blue: number): string {
-  return `#${hex(red)}${hex(green)}${hex(blue)}`;
-}
-
-function hex(value: number): string {
-  return value.toString(16).padStart(2, '0');
+function ansi256Index(red: number, green: number, blue: number): number {
+  if (red === green && green === blue && red >= 8 && red <= 248) return 232 + Math.round((red - 8) / 10);
+  const r = Math.max(0, Math.min(5, Math.round((red / 255) * 5)));
+  const g = Math.max(0, Math.min(5, Math.round((green / 255) * 5)));
+  const b = Math.max(0, Math.min(5, Math.round((blue / 255) * 5)));
+  return 16 + 36 * r + 6 * g + b;
 }

@@ -38,6 +38,10 @@ async function testExactRoundTripAndSafeBinaryFallback(): Promise<void> {
   assert.equal(saved.ok, true, 'T037-SAVE-01 unchanged snapshot saves');
   assert.deepEqual(fs.bytes('/tmp/T037-roundtrip.txt'), bytes, 'T037-ROUNDTRIP-01 bytes are exactly preserved');
   assert.equal(opened.value.document.isDirty, false, 'T037-SAVE-02 successful save marks the captured revision');
+  assert.equal(opened.value.document.apply({ start: offset(opened.value.document.snapshot().lengthUtf16), end: offset(opened.value.document.snapshot().lengthUtf16), text: '!' }, opened.value.document.version).ok, true, 'T037-ATOMIC-SAVE-UNIT-01 direct-write fixture creates a dirty revision');
+  const direct = await service.saveFile(opened.value.document, opened.value.path, cancellation, { atomic: false });
+  assert.equal(direct.ok, true, 'T037-ATOMIC-SAVE-UNIT-02 non-atomic save uses the direct filesystem primitive');
+  assert.deepEqual(fs.bytes('/tmp/T037-roundtrip.txt'), Uint8Array.from([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('first\r\nsecond\nthird!')]), 'T037-ATOMIC-SAVE-UNIT-03 direct save persists exact bytes');
   const withExplicitFormat = await service.openFile('/tmp/T037-roundtrip.txt', id('T037-roundtrip-format'), cancellation, { fileFormat: 'dos', seed: 19 });
   assert.equal(withExplicitFormat.ok && withExplicitFormat.value.kind === 'editable', true, 'T037-OPEN-05 explicit file format and document seed compose');
 
@@ -205,6 +209,12 @@ class FakeFilesystem implements FilesystemPort {
       this.failAfterRename = false;
       return fail('crash-between-rename-and-ack');
     }
+    return { ok: true, value: undefined };
+  }
+  async writeFile(path: string, bytes: Uint8Array, token: CancellationToken): Promise<Result<void, PlatformFailure>> {
+    if (token.isCancelled) return fail('cancelled');
+    if (this.#writeFailure !== undefined) return fail(this.#writeFailure);
+    this.seed(path, bytes);
     return { ok: true, value: undefined };
   }
   async stat(path: string, token: CancellationToken): Promise<Result<FileInfo, PlatformFailure>> {

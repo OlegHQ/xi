@@ -48,7 +48,7 @@ function checkAlternatingDenseStorageAndBlockEdits(): void {
 
 function checkPackedCodeBoundary(): void {
   assert.throws(
-    () => LineEndingSequence.fromPacked(1, new Uint8Array([3])),
+    () => LineEndingSequence.fromPacked(1, new Uint8Array([7])),
     /invalid-line-ending-code/u,
     'reserved packed EOL code is rejected at the storage boundary',
   );

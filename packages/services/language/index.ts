@@ -59,8 +59,8 @@ export { PullDiagnosticStore } from './pull-diagnostics';
 export type { PullDiagnosticReport, PullDiagnosticProvider, PullDiagnosticFailure, PullDiagnosticSnapshot } from './pull-diagnostics';
 export { HierarchyController, LanguageServerHierarchyProvider } from './hierarchy';
 export type { HierarchyKind, HierarchyRelation, HierarchyItem, DocumentLink, HierarchyProvider, HierarchyFailure, HierarchyReadState, HierarchyReadModel } from './hierarchy';
-export { LanguagePresentationFeatures } from './folding';
-export type { FoldRange, SelectionRange, InlayHint, CodeLens, FoldingResult, SelectionRangeResult, HintResult, FoldingFailure, PresentationResolve, PresentationExecute } from './folding';
+export { LanguagePresentationFeatures, decodeInlayHints, decodeDocumentColors, decodeDocumentHighlights } from './folding';
+export type { FoldRange, SelectionRange, InlayHint, DocumentColorSwatch, DocumentHighlightRange, CodeLens, FoldingResult, SelectionRangeResult, HintResult, ColorResult, DocumentHighlightResult, FoldingFailure, PresentationResolve, PresentationExecute } from './folding';
 export { WorkspaceEditCoordinator, LanguageServerWorkspaceEditProvider, executeLanguageCodeAction } from './workspace-edits';
 export type { WorkspaceTextEdit, WorkspaceResourceOperation, WorkspaceEditProposal, WorkspaceEditTarget, WorkspaceEditPort, WorkspaceEditFailure, WorkspaceEditPosition, WorkspaceEditDocument, WorkspaceEditRequest, CodeActionRequest, LanguageCodeAction, WorkspaceEditProviderFailure, WorkspaceFileOperationKind, LanguageCodeActionExecutionFailure, LanguageCodeActionExecutor } from './workspace-edits';
 export {

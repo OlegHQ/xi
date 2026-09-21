@@ -255,7 +255,7 @@ async function testAsyncDispatchAndFrame(): Promise<void> {
   assert.deepEqual(keys, ['a', 'b', 'c']);
   assert.ok(frames > startFrames);
   const cursor = setup.renderer.getCursorState();
-  assert.equal(cursor.x, 8, 'T133-INFLIGHT the final cursor includes the key received during paint (1-based gutter 5 + offset 3)');
+  assert.equal(cursor.x, 11, 'T133-INFLIGHT the final cursor includes the key received during paint (1-based default Helix gutter 8 + offset 3)');
   const settled = frames;
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(frames, settled, 'T133-IDLE no delayed duplicate frame after settling');
@@ -291,7 +291,7 @@ async function testOutputBackpressure(): Promise<void> {
   held = false;
   releaseWrite?.();
   await setup.renderer.idle();
-  assert.equal(setup.renderer.getCursorState().x, 8, 'T133-BACKPRESSURE final cursor renders after drain without another input');
+  assert.equal(setup.renderer.getCursorState().x, 11, 'T133-BACKPRESSURE final cursor renders after drain without another input');
   setup.renderer.destroy();
   await run;
 }

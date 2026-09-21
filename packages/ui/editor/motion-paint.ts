@@ -1,8 +1,9 @@
-import { TextAttributes, type OptimizedBuffer, type RGBA } from "@opentui/core/renderer";
+import { TextAttributes, parseColor, type OptimizedBuffer, type RGBA } from "@opentui/core/renderer";
 import type {
   CellPoint,
   ProjectedSelection,
   ScreenRow,
+  ScreenCell,
   VisibleFrame,
 } from "../../layout/src/index";
 import type { MotionPaintTokens, EditorColorMode } from "../theme/motion-tokens";
@@ -60,6 +61,7 @@ export interface EditorPresentationRead {
   readonly motionPreview?: MotionPreviewRead | null;
   readonly operatorPreview?: OperatorPreviewRead | null;
   readonly searchHighlight?: SearchHighlightRead | null;
+  readonly documentHighlight?: SearchHighlightRead | null;
   readonly motionTrail?: "off" | "last-motion";
   readonly reducedMotion?: boolean;
   readonly colorMode?: EditorColorMode;
@@ -73,12 +75,19 @@ export interface MotionPaintOptions {
   readonly frame: VisibleFrame;
   readonly presentation?: EditorPresentationRead;
   readonly mode: "normal" | "insert" | "visual" | string;
+  /** Native terminal cursor shape for the primary cursor; omitted keeps the block paint. */
+  readonly cursorShape?: "block" | "bar" | "underline" | "hidden";
+  readonly cursorLine?: boolean;
+  readonly cursorColumn?: boolean;
+  readonly rulers?: readonly number[];
   readonly theme: MotionPaintTokens;
   readonly foreground: RGBA;
   readonly muted: RGBA;
   readonly background: RGBA;
   readonly accent: RGBA;
   readonly colorMode: EditorColorMode;
+  /** Override a terminal undercurl false negative; false falls back curl styles to a line. */
+  readonly undercurl?: boolean;
   readonly ascii: boolean;
   readonly x: number;
   readonly y: number;
@@ -112,7 +121,12 @@ interface ResolvedSyntaxStyle {
   readonly attributes: number;
 }
 
-function syntaxAttributes(style: HelixThemeStyle | undefined): number {
+const DEFAULT_RAINBOW_COLORS = Object.freeze([
+  '#e06c75', '#d19a66', '#e5c07b', '#98c379',
+  '#56b6c2', '#61afef', '#c678dd', '#be5046',
+]);
+
+function syntaxAttributes(style: HelixThemeStyle | undefined, undercurl = true): number {
   let attributes = 0;
   for (const modifier of style?.modifiers ?? []) {
     if (modifier === "bold") attributes |= TextAttributes.BOLD;
@@ -125,7 +139,7 @@ function syntaxAttributes(style: HelixThemeStyle | undefined): number {
     else if (modifier === "hidden") attributes |= TextAttributes.HIDDEN;
     else if (modifier === "crossed_out") attributes |= TextAttributes.STRIKETHROUGH;
   }
-  const underlineStyle = style?.underline?.style;
+  const underlineStyle = style?.underline?.style === 'curl' && !undercurl ? 'line' : style?.underline?.style;
   if (underlineStyle !== undefined) {
     attributes |=
       underlineStyle === "double_line"
@@ -145,6 +159,7 @@ function resolveSyntaxStyles(
   colors: Partial<Record<SyntaxTokenKind, ThemeColor>> | undefined,
   styles: Readonly<Record<string, HelixThemeStyle>> | undefined,
   colorMode: EditorColorMode,
+  undercurl: boolean,
 ): Map<string, ResolvedSyntaxStyle> {
   const resolved = new Map<string, ResolvedSyntaxStyle>();
   for (const kind of new Set([...Object.keys(colors ?? {}), ...Object.keys(styles ?? {})])) {
@@ -163,9 +178,13 @@ function resolveSyntaxStyles(
         ...(style?.underline?.color === undefined
           ? {}
           : { underlineColor: resolvePaintColor(style.underline.color, colorMode) }),
-        attributes: syntaxAttributes(style),
+        attributes: syntaxAttributes(style, undercurl),
       }),
     );
+  }
+  for (let index = 0; index < DEFAULT_RAINBOW_COLORS.length; index += 1) {
+    const scope = `rainbow.${index}`;
+    if (!resolved.has(scope)) resolved.set(scope, { foreground: resolvePaintColor(DEFAULT_RAINBOW_COLORS[index] as string, colorMode), attributes: 0 });
   }
   return resolved;
 }
@@ -176,25 +195,27 @@ function resolveSyntaxStyles(
 // range, several ranges per frame, every frame.
 const syntaxStyleCache = new WeakMap<
   object,
-  Map<EditorColorMode, Map<string, ResolvedSyntaxStyle>>
+  Map<string, Map<string, ResolvedSyntaxStyle>>
 >();
 
 function resolveSyntaxStylesCached(
   colors: Partial<Record<SyntaxTokenKind, ThemeColor>> | undefined,
   styles: Readonly<Record<string, HelixThemeStyle>> | undefined,
   colorMode: EditorColorMode,
+  undercurl: boolean,
 ): Map<string, ResolvedSyntaxStyle> {
   const source = styles ?? colors;
-  if (source === undefined) return resolveSyntaxStyles(colors, styles, colorMode);
+  if (source === undefined) return resolveSyntaxStyles(colors, styles, colorMode, undercurl);
   let byMode = syntaxStyleCache.get(source);
   if (byMode === undefined) {
     byMode = new Map();
     syntaxStyleCache.set(source, byMode);
   }
-  let resolved = byMode.get(colorMode);
+  const cacheKey = `${colorMode}:${undercurl ? 'curl' : 'line'}`;
+  let resolved = byMode.get(cacheKey);
   if (resolved === undefined) {
-    resolved = resolveSyntaxStyles(colors, styles, colorMode);
-    byMode.set(colorMode, resolved);
+    resolved = resolveSyntaxStyles(colors, styles, colorMode, undercurl);
+    byMode.set(cacheKey, resolved);
   }
   return resolved;
 }
@@ -294,6 +315,9 @@ function syntaxStyle(
   )
     return undefined;
   const target = cell.target;
+  if (target?.kind === "virtual-annotation" && target.annotationId.startsWith("wrap-indicator:")) {
+    return styleForScope(styles, "ui.virtual.wrap");
+  }
   if (target === null || target.kind !== "text") return undefined;
   const span = cursor.spanAt(target.offset as unknown as number);
   if (span === undefined) return undefined;
@@ -359,14 +383,75 @@ function cursorGuideStyle(
   styles: Map<string, ResolvedSyntaxStyle> | undefined,
   row: number,
   cursors: CursorPoints,
+  enabled: boolean,
+  fallbackBackground: RGBA | undefined,
 ): ResolvedSyntaxStyle | undefined {
+  if (!enabled) return undefined;
   if (cursors.primary?.row === row)
-    return styleForScope(styles, "ui.cursorline.primary") ?? styleForScope(styles, "ui.cursorline");
+    return styleForScope(styles, "ui.cursorline.primary") ?? styleForScope(styles, "ui.cursorline") ?? (fallbackBackground === undefined ? undefined : { background: fallbackBackground, attributes: 0 });
   if (cursors.secondary.some((cursor) => cursor.row === row))
     return (
       styleForScope(styles, "ui.cursorline.secondary") ?? styleForScope(styles, "ui.cursorline")
+      ?? (fallbackBackground === undefined ? undefined : { background: fallbackBackground, attributes: 0 })
     );
   return undefined;
+}
+
+function cursorColumnStyle(
+  styles: Map<string, ResolvedSyntaxStyle> | undefined,
+  column: number,
+  cursors: CursorPoints,
+  enabled: boolean,
+  fallbackBackground: RGBA | undefined,
+): ResolvedSyntaxStyle | undefined {
+  if (!enabled) return undefined;
+  if (cursors.primary?.column === column)
+    return styleForScope(styles, "ui.cursorcolumn.primary") ?? styleForScope(styles, "ui.cursorcolumn") ?? (fallbackBackground === undefined ? undefined : { background: fallbackBackground, attributes: 0 });
+  if (cursors.secondary.some((cursor) => cursor.column === column))
+    return styleForScope(styles, "ui.cursorcolumn.secondary") ?? styleForScope(styles, "ui.cursorcolumn") ?? (fallbackBackground === undefined ? undefined : { background: fallbackBackground, attributes: 0 });
+  return undefined;
+}
+
+function rulerStyle(
+  styles: Map<string, ResolvedSyntaxStyle> | undefined,
+  displayColumn: number | undefined,
+  rulers: readonly number[],
+  fallbackBackground: RGBA | undefined,
+): ResolvedSyntaxStyle | undefined {
+  if (displayColumn === undefined || !rulers.includes(displayColumn)) return undefined;
+  return styleForScope(styles, "ui.virtual.ruler") ?? (fallbackBackground === undefined ? undefined : { background: fallbackBackground, attributes: 0 });
+}
+
+function cursorGuideForCell(
+  styles: Map<string, ResolvedSyntaxStyle> | undefined,
+  row: number,
+  column: number,
+  cursors: CursorPoints,
+  cursorLine: boolean,
+  cursorColumn: boolean,
+  lineBackground: RGBA | undefined,
+  columnBackground: RGBA | undefined,
+  displayColumn: number | undefined,
+  rulers: readonly number[],
+  rulerBackground: RGBA | undefined,
+): ResolvedSyntaxStyle | undefined {
+  return cursorGuideStyle(styles, row, cursors, cursorLine, lineBackground)
+    ?? cursorColumnStyle(styles, column, cursors, cursorColumn, columnBackground)
+    ?? rulerStyle(styles, displayColumn, rulers, rulerBackground);
+}
+
+function displayColumnForCell(cell: ScreenCell | undefined): number | undefined {
+  const target = cell?.target;
+  return target?.kind === "text" || target?.kind === "virtual-annotation" ? target.displayCellColumn as number : undefined;
+}
+
+function virtualAnnotationBackground(cell: ScreenCell, colorMode: EditorColorMode): RGBA | undefined {
+  if (cell.background === undefined || colorMode === "no-color") return undefined;
+  try {
+    return parseColor(cell.background);
+  } catch {
+    return undefined;
+  }
 }
 
 const PAINT_PRIMARY_SELECTION = 1;
@@ -374,6 +459,7 @@ const PAINT_SECONDARY_SELECTION = 2;
 const PAINT_TRAIL = 4;
 const PAINT_OPERATOR = 8;
 const PAINT_SEARCH = 16;
+const PAINT_DOCUMENT_HIGHLIGHT = 32;
 
 /**
  * Paint one visible frame in strict layer order. All range work is bounded by
@@ -385,6 +471,10 @@ export function paintEditorFrame(
 ): MotionPaintStats {
   // @xi-perf H1 RENDER-120 -- Per-cell damage paint issuing native buffer writes; mask lookups are scalar, no retained per-cell object.
   const colorMode = options.presentation?.colorMode ?? options.colorMode;
+  const softwarePrimaryCursor = options.cursorShape === undefined || options.cursorShape === "block";
+  const cursorline = options.cursorLine === true ? resolvePaintColor(options.theme.cursorline, colorMode) : undefined;
+  const cursorcolumn = options.cursorColumn === true ? resolvePaintColor(options.theme.cursorcolumn, colorMode) : undefined;
+  const ruler = options.rulers === undefined ? undefined : resolvePaintColor(options.theme.ruler, colorMode);
   const rowRange = paintRowRange(options.frame, options.rows);
   if (canPaintPlainFrameCached(options.frame, options.presentation)) {
     return paintPlainFrame(buffer, options, rowRange);
@@ -399,7 +489,7 @@ export function paintEditorFrame(
   const syntaxStyles =
     colorMode === "no-color"
       ? undefined
-      : resolveSyntaxStylesCached(options.syntaxColors, options.syntaxStyles, colorMode);
+      : resolveSyntaxStylesCached(options.syntaxColors, options.syntaxStyles, colorMode, options.undercurl ?? true);
   const searchStyle = styleForScope(syntaxStyles, "ui.highlight");
   const primarySelectionStyle = styleForScope(syntaxStyles, "ui.selection.primary");
   const secondarySelectionStyle = styleForScope(syntaxStyles, "ui.selection");
@@ -450,18 +540,19 @@ export function paintEditorFrame(
       const trail = (mask & PAINT_TRAIL) !== 0;
       const operator = (mask & PAINT_OPERATOR) !== 0;
       const search = (mask & PAINT_SEARCH) !== 0;
+      const documentHighlight = (mask & PAINT_DOCUMENT_HIGHLIGHT) !== 0;
       if (primarySelection) selectedCells += 1;
       if (secondarySelection) secondarySelectedCells += 1;
       if (trail) trailCells += 1;
       if (operator) operatorPreviewCells += 1;
       const style = syntaxStyle(cell, syntaxCursor, syntaxStyles);
-      const guide = cursorGuideStyle(syntaxStyles, rowIndex, cursors);
+      const guide = cursorGuideForCell(syntaxStyles, rowIndex, column, cursors, options.cursorLine !== false, options.cursorColumn === true, cursorline, cursorcolumn, displayColumnForCell(cell), options.rulers ?? [], ruler);
       const gutter =
         cell.role === "gutter" ? lineNumberStyle(syntaxStyles, rowIndex, cursors) : undefined;
       let foreground = cell.role === "gutter"
         ? (gutter?.foreground ?? options.muted)
         : (guide?.foreground ?? style?.foreground ?? options.foreground);
-      let background = gutter?.background ?? guide?.background ?? style?.background ?? options.background;
+      let background = gutter?.background ?? guide?.background ?? virtualAnnotationBackground(cell, colorMode) ?? style?.background ?? options.background;
       let attributes =
         (style?.attributes ?? 0) | (guide?.attributes ?? 0) | (gutter?.attributes ?? 0);
       let underlineColor = colorMode === "no-color"
@@ -469,6 +560,12 @@ export function paintEditorFrame(
         : (gutter?.underlineColor ?? guide?.underlineColor ?? style?.underlineColor);
       if (trail) background = colors.trail;
       if (search) {
+        foreground = searchStyle?.foreground ?? foreground;
+        background = searchStyle?.background ?? colors.search;
+        attributes |= searchStyle?.attributes ?? 0;
+        underlineColor = searchStyle?.underlineColor ?? underlineColor;
+      }
+      if (documentHighlight) {
         foreground = searchStyle?.foreground ?? foreground;
         background = searchStyle?.background ?? colors.search;
         attributes |= searchStyle?.attributes ?? 0;
@@ -499,7 +596,7 @@ export function paintEditorFrame(
         if (primarySelection) attributes |= TextAttributes.INVERSE;
       }
       const cursorInfo = cursorCells.get(key);
-      if (cursorInfo !== undefined) {
+      if (cursorInfo !== undefined && (softwarePrimaryCursor || !cursorInfo.primary)) {
         if (colorMode === "no-color") {
           attributes |= cursorInfo.primary ? TextAttributes.INVERSE : TextAttributes.UNDERLINE;
         } else {
@@ -653,13 +750,17 @@ function cursorCellStyle(
   muted: RGBA,
   foreground: RGBA,
   background: RGBA,
+  cursorLine: boolean,
+  cursorlineBackground: RGBA | undefined,
+  cursorColumn: boolean,
+  cursorcolumnBackground: RGBA | undefined,
 ): { readonly glyph: string; readonly foreground: RGBA; readonly background: RGBA; readonly attributes: number; readonly underlineColor?: RGBA } {
   const cell = row?.cells[column];
   if (row === undefined || cell === undefined) return { glyph: " ", foreground, background, attributes: 0 };
   const cursor =
     syntaxStyles === undefined ? undefined : rowSyntaxCursor(frame, row, syntax, fallback);
   const style = syntaxStyle(cell, cursor, syntaxStyles);
-  const guide = cursorGuideStyle(syntaxStyles, rowIndex, cursors);
+  const guide = cursorGuideForCell(syntaxStyles, rowIndex, column, cursors, cursorLine, cursorColumn, cursorlineBackground, cursorcolumnBackground, undefined, [], undefined);
   const underlineColor = guide?.underlineColor ?? style?.underlineColor;
   return {
     glyph: cell.text,
@@ -676,14 +777,18 @@ function paintPlainFrame(
   rowRange: PaintRowRange,
 ): MotionPaintStats {
   // @xi-perf H1 RENDER-120 -- Per-cell run-coalesced plain paint; run buffers are bounded per row, not per cell.
+  const softwarePrimaryCursor = options.cursorShape === undefined || options.cursorShape === "block";
   const colors = {
     cursorPrimary: resolvePaintColor(options.theme.cursorPrimary, options.colorMode),
     cursorSecondary: resolvePaintColor(options.theme.cursorSecondary, options.colorMode),
+    cursorline: options.cursorLine === true ? resolvePaintColor(options.theme.cursorline, options.colorMode) : undefined,
+    cursorcolumn: options.cursorColumn === true ? resolvePaintColor(options.theme.cursorcolumn, options.colorMode) : undefined,
+    ruler: options.rulers === undefined ? undefined : resolvePaintColor(options.theme.ruler, options.colorMode),
   };
   const syntaxStyles =
     options.colorMode === "no-color"
       ? undefined
-      : resolveSyntaxStylesCached(options.syntaxColors, options.syntaxStyles, options.colorMode);
+      : resolveSyntaxStylesCached(options.syntaxColors, options.syntaxStyles, options.colorMode, options.undercurl ?? true);
   const cursors = cursorPoints(options.frame);
   for (let rowIndex = rowRange.start; rowIndex < rowRange.end; rowIndex += 1) {
     const row = options.frame.rows[rowIndex];
@@ -726,7 +831,7 @@ function paintPlainFrame(
       const cell = row.cells[column];
       if (cell === undefined) continue;
       const style = syntaxStyle(cell, syntaxCursor, syntaxStyles);
-      const guide = cursorGuideStyle(syntaxStyles, rowIndex, cursors);
+      const guide = cursorGuideForCell(syntaxStyles, rowIndex, column, cursors, options.cursorLine !== false, options.cursorColumn === true, colors.cursorline, colors.cursorcolumn, displayColumnForCell(cell), options.rulers ?? [], colors.ruler);
       const gutter =
         cell.role === "gutter" ? lineNumberStyle(syntaxStyles, rowIndex, cursors) : undefined;
       const foreground =
@@ -734,7 +839,7 @@ function paintPlainFrame(
           ? (gutter?.foreground ?? options.muted)
           : (guide?.foreground ?? style?.foreground ?? options.foreground);
       const background =
-        gutter?.background ?? guide?.background ?? style?.background ?? options.background;
+        gutter?.background ?? guide?.background ?? virtualAnnotationBackground(cell, options.colorMode) ?? style?.background ?? options.background;
       const attributes =
         (style?.attributes ?? 0) | (guide?.attributes ?? 0) | (gutter?.attributes ?? 0);
       const underlineColor = gutter?.underlineColor ?? guide?.underlineColor ?? style?.underlineColor;
@@ -772,8 +877,12 @@ function paintPlainFrame(
       options.muted,
       options.foreground,
       options.background,
+      options.cursorLine !== false,
+      colors.cursorline,
+      options.cursorColumn === true,
+      colors.cursorcolumn,
     );
-    if (options.colorMode === "no-color") {
+    if (options.colorMode === "no-color" && (softwarePrimaryCursor || !selection.primary)) {
       const attributes = base.attributes | (selection.primary ? TextAttributes.INVERSE : TextAttributes.UNDERLINE);
       buffer.setCell(
         options.x + point.column,
@@ -783,7 +892,7 @@ function paintPlainFrame(
         base.background,
         attributes,
       );
-    } else {
+    } else if (softwarePrimaryCursor || !selection.primary) {
       const styleForCursor = cursorStyle(syntaxStyles, selection.primary, options.mode, false);
       if (styleForCursor !== undefined) {
         buffer.setCell(
@@ -926,6 +1035,23 @@ function buildPaintMasks(
         (row, column) => setMask(row, column, PAINT_SEARCH),
         rowRange,
       );
+    }
+  }
+  const documentHighlight = presentation?.documentHighlight;
+  if (
+    documentHighlight !== undefined &&
+    documentHighlight !== null &&
+    documentHighlight.documentId === identity.documentId &&
+    documentHighlight.documentVersion === identity.documentVersion
+  ) {
+    const firstRow = frame.rows[rowRange.start];
+    const lastRow = frame.rows[rowRange.end - 1];
+    const lowest = (firstRow?.startOffset as number | null | undefined) ?? 0;
+    const highest = (lastRow?.endOffset as number | null | undefined) ?? Number.MAX_SAFE_INTEGER;
+    for (const range of documentHighlight.ranges) {
+      if (range.start > highest) break;
+      if (range.end < lowest) continue;
+      paintOffsetRange(frame, range.start, range.end, (row, column) => setMask(row, column, PAINT_DOCUMENT_HIGHLIGHT), rowRange);
     }
   }
   return Object.freeze({

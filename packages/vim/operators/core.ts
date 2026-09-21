@@ -33,6 +33,8 @@ export interface VimOperatorPreparationInput {
   /** Doubled forms (`dd`, `cc`, `yy`) turn the multiplied count into line count. */
   readonly doubled?: boolean;
   readonly register?: string;
+  /** Default destination for an implicit yank; explicit `register` remains authoritative. */
+  readonly defaultYankRegister?: string;
   readonly state: VimOperatorSessionState;
 }
 
@@ -163,12 +165,12 @@ export function prepareVimOperator(
     const registerEffect: VimOperatorRegisterEffect = input.operator === 'yank'
       ? Object.freeze({
         operation: 'yank',
-        destination: input.register ?? '0',
-        alsoUnnamed: (input.register ?? '0') !== '_',
+        destination: input.register ?? input.defaultYankRegister ?? '0',
+        alsoUnnamed: (input.register ?? input.defaultYankRegister ?? '0') !== '_',
         rotateNumbered: false,
         lines: Object.freeze(['']),
         type: 'v',
-        ...((input.register ?? '0') === '_' ? { noOp: true } : {}),
+        ...((input.register ?? input.defaultYankRegister ?? '0') === '_' ? { noOp: true } : {}),
       })
       : Object.freeze({
         operation: input.operator,
@@ -233,7 +235,7 @@ export function prepareVimOperator(
     };
   }
 
-  const registerEffect = makeRegisterEffect(input.operator, input.register, range);
+  const registerEffect = makeRegisterEffect(input.operator, input.register, input.defaultYankRegister, range);
   const mode = input.operator === 'change' ? 'insert' : 'normal';
   const nextRepeat = input.operator === 'yank'
     ? input.state.repeatTarget
@@ -332,13 +334,14 @@ function makeEdits(
 function makeRegisterEffect(
   operator: VimCoreOperator,
   requestedRegister: string | undefined,
+  defaultYankRegister: string | undefined,
   range: VimNormalizedOperatorRange,
 ): VimOperatorRegisterEffect {
   const hasNewline = range.registerLines.length > 1;
   // A "small" delete/change (charwise, single line) never rotates the
   // numbered registers, regardless of whether a register was named.
   const isSmall = range.kind !== 'linewise' && !hasNewline;
-  const destination = requestedRegister ?? (operator === 'yank' ? '0' : isSmall ? '-' : '1');
+  const destination = requestedRegister ?? (operator === 'yank' ? defaultYankRegister ?? '0' : isSmall ? '-' : '1');
   return Object.freeze({
     operation: operator,
     destination,

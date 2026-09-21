@@ -141,6 +141,8 @@ export interface SyntaxHighlighterOptions {
   readonly onCaptureWindowMeasured?: (elapsedMilliseconds: number) => void;
   /** Test/diagnostic hook: called once per DocumentSnapshot#slice the parse callback issues. */
   readonly onSnapshotSliceCall?: () => void;
+  /** Paint syntax-query bracket captures with Helix rainbow scopes. */
+  readonly rainbowBrackets?: boolean;
 }
 
 export interface SyntaxServiceDiagnostics {
@@ -261,6 +263,28 @@ export function preprocessHighlightsQuerySource(source: string): string {
   );
 }
 
+const RAINBOW_BRACKET_SCOPES: Readonly<Record<string, string>> = Object.freeze({ '(': ')', '[': ']', '{': '}' });
+const RAINBOW_PALETTE_LENGTH = 8;
+
+function isRainbowBracket(text: string | undefined): boolean {
+  return text !== undefined && (Object.hasOwn(RAINBOW_BRACKET_SCOPES, text) || Object.values(RAINBOW_BRACKET_SCOPES).includes(text));
+}
+
+function isRainbowScope(node: TSNode): boolean {
+  const first = node.firstChild?.text;
+  const last = node.lastChild?.text;
+  return first !== undefined && last !== undefined && RAINBOW_BRACKET_SCOPES[first] === last;
+}
+
+/** Existing language queries already classify delimiter nodes as punctuation.bracket. Derive
+ * the containing delimiter depth from the parsed tree so rainbow painting stays language-aware
+ * without a second parser pass or a whole-document scan. */
+function rainbowScopeFor(node: TSNode): string {
+  let depth = 0;
+  for (let parent = node.parent; parent !== null; parent = parent.parent) if (isRainbowScope(parent)) depth += 1;
+  return `rainbow.${Math.max(0, depth - 1) % RAINBOW_PALETTE_LENGTH}`;
+}
+
 // --- Capture name -> SyntaxTokenKind mapping. ---------------------------------------------
 
 function captureNameToKind(name: string): SyntaxTokenKind | undefined {
@@ -370,6 +394,7 @@ class LiveHighlightResult implements SyntaxHighlightResult {
   readonly #schedule: (task: () => void) => void;
   readonly #notifyWindowReady: () => void;
   readonly #onWindowMeasured: ((elapsedMilliseconds: number) => void) | undefined;
+  readonly #rainbowBrackets: boolean;
   #tree: TSTree | null;
   #query: TSQuery | null;
   readonly #windowCache = new Map<number, readonly SyntaxHighlightSpan[]>();
@@ -385,6 +410,7 @@ class LiveHighlightResult implements SyntaxHighlightResult {
     schedule: (task: () => void) => void,
     notifyWindowReady: () => void,
     onWindowMeasured?: (elapsedMilliseconds: number) => void,
+    rainbowBrackets = false,
   ) {
     this.documentId = request.documentId;
     this.documentVersion = request.documentVersion;
@@ -397,6 +423,7 @@ class LiveHighlightResult implements SyntaxHighlightResult {
     this.#schedule = schedule;
     this.#notifyWindowReady = notifyWindowReady;
     this.#onWindowMeasured = onWindowMeasured;
+    this.#rainbowBrackets = rainbowBrackets;
   }
 
   /** O(cached-so-far), not O(document): tests/diagnostics only; see spansInRange. */
@@ -511,7 +538,10 @@ class LiveHighlightResult implements SyntaxHighlightResult {
       const kind = captureNameToKind(capture.name);
       if (kind === undefined) continue;
       const node: TSNode = capture.node;
-      resolved.push({ start: node.startIndex, end: node.endIndex, kind, scope: capture.name, order: order++ });
+      const scope = this.#rainbowBrackets && capture.name === 'punctuation.bracket' && isRainbowBracket(node.text)
+        ? rainbowScopeFor(node)
+        : capture.name;
+      resolved.push({ start: node.startIndex, end: node.endIndex, kind, scope, order: order++ });
     }
     return Object.freeze(resolveSpans(resolved));
   }
@@ -608,6 +638,7 @@ export class IncrementalSyntaxHighlighter {
   readonly #sliceBudgetMilliseconds: number;
   readonly #onCaptureWindowMeasured: ((elapsedMilliseconds: number) => void) | undefined;
   readonly #onSnapshotSliceCall: (() => void) | undefined;
+  readonly #rainbowBrackets: boolean;
   readonly #schedule: (task: () => void) => void;
   readonly #grammarProvider: SyntaxGrammarProvider | undefined;
   readonly #runtimeOptions: TreeSitterRuntimeOptions | (() => Promise<TreeSitterRuntimeOptions>) | undefined;
@@ -657,6 +688,7 @@ export class IncrementalSyntaxHighlighter {
     this.#sliceBudgetMilliseconds = Math.max(0.1, options.sliceBudgetMilliseconds ?? DEFAULT_SLICE_BUDGET_MS);
     this.#onCaptureWindowMeasured = options.onCaptureWindowMeasured;
     this.#onSnapshotSliceCall = options.onSnapshotSliceCall;
+    this.#rainbowBrackets = options.rainbowBrackets === true;
     this.#grammarProvider = options.grammars;
     this.#runtimeOptions = options.runtime;
     // Yield between requests. This does not bound the CPU cost of one slice;
@@ -1013,6 +1045,7 @@ export class IncrementalSyntaxHighlighter {
       this.#schedule,
       () => this.#notifyListeners(result),
       this.#onCaptureWindowMeasured,
+      this.#rainbowBrackets,
     );
     this.#publishParsed(active.item, result);
     if (this.#queue.length !== 0) this.#schedulePump();

@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import {
   asIdentifier,
+  asLineIndex,
   asUndoGroupId,
   type DocumentId,
   type SelectionId,
@@ -44,6 +45,14 @@ function selectionAt(document: TextFileDocument, at = 0): SelectionSetSnapshot {
   });
   if (!set.ok) throw new Error(`fixture-selection:${set.error.kind}`);
   return set.value.selectionSet;
+}
+
+function selectionAtLine(document: TextFileDocument, line: number): SelectionSetSnapshot {
+  const lineIndex = asLineIndex(line);
+  if (!lineIndex.ok) throw new Error(`fixture-line:${line}`);
+  const start = document.snapshot().lineStartOffset(lineIndex.value);
+  if (!start.ok) throw new Error(`fixture-line:${line}`);
+  return selectionAt(document, start.value as number);
 }
 
 function project(
@@ -436,6 +445,86 @@ function checkHorizontalScrollFollowsCursorOffScreen(): void {
   console.log('T014-HSCROLL-01 passed: resolveScrollAnchor scrolls horizontally to keep an off-screen cursor column visible and unclipped.');
 }
 
+function checkScrolloffKeepsCursorAwayFromViewportEdges(): void {
+  const document = editable(Array.from({ length: 30 }, (_value, index) => `line-${index}`).join('\n'));
+  const layout = new ViewportLayout();
+  const heightCells = 10;
+  const selection = selectionAtLine(document, 15);
+  const resolved = resolveScrollAnchor(document.snapshot(), selection, 0, heightCells, 80, 0, { scrolloff: 5 });
+  assert.equal(resolved.ok, true, 'T014-SCROLLOFF-01 resolveScrollAnchor accepts Helix scrolloff');
+  if (!resolved.ok) return;
+  assert.equal(resolved.value.scrollTop, 11, 'T014-SCROLLOFF-01 bottom margin leaves five rows below the cursor');
+
+  const nearTop = resolveScrollAnchor(document.snapshot(), selectionAtLine(document, 12), 11, heightCells, 80, 0, { scrolloff: 5 });
+  assert.equal(nearTop.ok, true, 'T014-SCROLLOFF-02 top-margin resolution succeeds');
+  if (nearTop.ok) assert.equal(nearTop.value.scrollTop, 8, 'T014-SCROLLOFF-02 top margin leaves four rows above the cursor');
+
+  const horizontalDocument = editable('x'.repeat(600));
+  const horizontal = resolveScrollAnchor(horizontalDocument.snapshot(), selectionAt(horizontalDocument, 500), 0, heightCells, 80, 0, { scrolloff: 5 });
+  assert.equal(horizontal.ok, true, 'T014-SCROLLOFF-03 horizontal scrolloff resolution succeeds');
+  if (horizontal.ok) assert.equal(horizontal.value.scrollLeft, 426, 'T014-SCROLLOFF-03 right margin leaves five cells after the cursor');
+  console.log('T014-SCROLLOFF-01 passed: Helix scrolloff applies asymmetric vertical and horizontal cursor margins and caps at the viewport edge.');
+}
+
+function checkRelativeLineNumbersFollowPrimaryCursor(): void {
+  const document = editable('one\ntwo\nthree');
+  const layout = new ViewportLayout();
+  const frame = project(layout, document, 12, 3, selectionAtLine(document, 1), {
+    wrap: false,
+    gutterWidthCells: 4,
+    lineNumberMode: 'relative',
+    relativeLineNumberCursor: 1,
+  });
+  assert.equal(frame.rows[0]?.text.startsWith('  1 '), true, 'T014-LINE-NUMBER-01 line above the cursor shows relative distance 1');
+  assert.equal(frame.rows[1]?.text.startsWith('  2 '), true, 'T014-LINE-NUMBER-01 the cursor line shows its absolute line number 2');
+  assert.equal(frame.rows[2]?.text.startsWith('  1 '), true, 'T014-LINE-NUMBER-01 line below the cursor shows relative distance 1');
+  console.log('T014-LINE-NUMBER-01 passed: relative gutter labels follow the primary cursor while retaining an absolute label on the cursor line.');
+}
+
+function checkSoftWrapProjectsOneLogicalLineAcrossRows(): void {
+  const document = editable('abcdefghi\nnext');
+  const layout = new ViewportLayout();
+  const frame = project(layout, document, 10, 4, selectionAt(document), { wrap: true, gutterWidthCells: 4 });
+  assert.equal(frame.rows[0]?.lineIndex, 0, 'T014-SOFT-WRAP-01 first wrapped row maps to the logical line');
+  assert.equal(frame.rows[1]?.lineIndex, 0, 'T014-SOFT-WRAP-01 continuation row maps to the same logical line');
+  assert.equal(frame.rows[1]?.wrapIndex, 1, 'T014-SOFT-WRAP-01 continuation row carries the next wrap index');
+  assert.equal(frame.rows[2]?.lineIndex, 1, 'T014-SOFT-WRAP-01 following logical line starts after wrapped content');
+  console.log('T014-SOFT-WRAP-01 passed: one logical line wraps through the production viewport rows without changing document line identity.');
+}
+
+function checkSoftWrapIndicatorIsNonEditableAndThemeable(): void {
+  const document = editable('abcdef');
+  const layout = new ViewportLayout();
+  const frame = project(layout, document, 4, 3, selectionAt(document), { wrap: true, wrapIndicator: '> ' });
+  assert.equal(frame.rows[0]?.text, 'abcd', 'T014-WRAP-INDICATOR-01 first row keeps source text');
+  assert.equal(frame.rows[1]?.text.startsWith('> '), true, 'T014-WRAP-INDICATOR-01 continuation row begins with configured indicator');
+  const hit = layout.hitTest(frame.identity.frameId, { row: 1, column: 0 });
+  assert.equal(hit.ok, true, 'T014-WRAP-INDICATOR-02 indicator cell is hit-testable');
+  if (hit.ok) {
+    assert.equal(hit.value.target.kind, 'virtual-annotation', 'T014-WRAP-INDICATOR-02 indicator is not editable text');
+    assert.equal(hit.value.target.annotationId, 'wrap-indicator:1', 'T014-WRAP-INDICATOR-02 indicator target is stable');
+  }
+  console.log('T014-WRAP-INDICATOR-01 passed: soft-wrap continuation rows paint the configured non-editable indicator.');
+}
+
+function checkSoftWrapLimitsControlWordAndIndentRetention(): void {
+  const document = editable('12345678 abc\n    alpha beta');
+  const layout = new ViewportLayout();
+  const selection = selectionAt(document);
+  const preserved = project(layout, document, 10, 6, selection, {
+    wrap: true, wrapIndicator: '', maxWrap: 20, maxIndentRetain: 4,
+  });
+  assert.deepEqual(preserved.rows.slice(0, 2).map(row => row.text), ['12345678  ', 'abc       '], 'T014-SOFT-WRAP-LIMIT-01 short words move intact to the next row');
+  assert.deepEqual(preserved.rows.slice(2, 4).map(row => row.text), ['    alpha ', '    beta  '], 'T014-SOFT-WRAP-LIMIT-02 continuation rows retain bounded indentation');
+
+  const split = project(layout, document, 10, 6, selection, {
+    wrap: true, wrapIndicator: '', maxWrap: 0, maxIndentRetain: 0,
+  });
+  assert.deepEqual(split.rows.slice(0, 2).map(row => row.text), ['12345678 a', 'bc        '], 'T014-SOFT-WRAP-LIMIT-03 zero max-wrap permits mid-word splitting');
+  assert.deepEqual(split.rows.slice(2, 4).map(row => row.text), ['    alpha ', 'beta      '], 'T014-SOFT-WRAP-LIMIT-04 zero max-indent-retain removes continuation indentation');
+  console.log('T014-SOFT-WRAP-LIMIT-01 passed: max-wrap and max-indent-retain alter the production row geometry.');
+}
+
 /**
  * Regression for the shaping/line-cache mismatch: `readVisibleLineText` reads up to
  * `MAX_SOURCE_PREFIX_UTF16` (65,536) UTF-16 units, but the line cache used to cap
@@ -519,5 +608,10 @@ checkCustomWidthAndEmptyLinePolicies();
 checkRaggedRowsAndWideGlyphClippedAtViewportEdge();
 checkTypingOnFirstLineKeepsLowerRowContentIdentityAndShiftsOffsetsCorrectly();
 checkHorizontalScrollFollowsCursorOffScreen();
+checkScrolloffKeepsCursorAwayFromViewportEdges();
+checkRelativeLineNumbersFollowPrimaryCursor();
+checkSoftWrapProjectsOneLogicalLineAcrossRows();
+checkSoftWrapIndicatorIsNonEditableAndThemeable();
+checkSoftWrapLimitsControlWordAndIndentRetention();
 checkLongLineHitsLineCacheOnSecondProjection();
 checkRepeatProjectionReturnsSameFrameObject();

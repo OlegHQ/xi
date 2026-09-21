@@ -213,6 +213,10 @@ export interface SearchControllerOptions {
   /** Lazily constructs the services-owned `RealtimeSearchService`/`WorkspaceReplaceService`
    * (composition-root work, never duplicated here) and resolves once `attachServices` has run. */
   readonly ensureServices: () => Promise<void>;
+  /** Helix editor.search.smart-case behavior for workspace queries. */
+  readonly searchSmartCase?: boolean;
+  /** Helix editor.search.wrap-around behavior for result navigation. */
+  readonly searchWrapAround?: boolean;
 }
 
 /**
@@ -771,8 +775,15 @@ export class SearchController {
   #moveSelection(delta: number): void {
     const count = this.#search?.model.matches.length ?? 0;
     if (count === 0) { this.#selectedIndex = 0; return; }
-    this.#selectedIndex = Math.max(0, Math.min(count - 1, this.#selectedIndex + delta));
+    const next = this.#selectedIndex + delta;
+    this.#selectedIndex = this.#options.searchWrapAround === true
+      ? (next % count + count) % count
+      : Math.max(0, Math.min(count - 1, next));
     this.previewSelected();
+  }
+
+  #effectiveCaseSensitive(): boolean {
+    return this.#caseSensitive || (this.#options.searchSmartCase === true && /[A-Z]/u.test(this.#query));
   }
 
   #runQuery(): void {
@@ -788,7 +799,7 @@ export class SearchController {
       rootPath: this.#options.workspaceRoot,
       query: this.#query,
       regex: this.#regex,
-      caseSensitive: this.#caseSensitive,
+      caseSensitive: this.#effectiveCaseSensitive(),
       wholeWord: this.#wholeWord,
       includeHidden: this.#includeHidden,
       maxResults: 10_000,

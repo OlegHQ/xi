@@ -256,7 +256,7 @@ def problem_matcher_case() -> None:
             deadline = time.monotonic() + 40
             while time.monotonic() < deadline:
                 before = len(captured)
-                os.write(master, b" d")
+                os.write(master, b" e")
                 read_for(master, captured, 1.5)
                 match = PROBLEMS_OPEN.search(captured[before:])
                 if match is not None:

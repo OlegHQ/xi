@@ -65,6 +65,8 @@ export type TextFileFormat = 'auto' | 'unix' | 'dos' | 'mac' | 'legacy';
 
 export interface OpenTextDocumentOptions {
   readonly fileFormat?: TextFileFormat;
+  /** Applied only to an empty, newly-created document; existing file EOL metadata wins. */
+  readonly defaultLineEnding?: LineEnding;
 }
 
 export interface TextFileSnapshot extends DocumentSnapshot {
@@ -166,7 +168,7 @@ export function openTextDocument(
     id,
     normalized.text,
     normalized.lineEndingSequence,
-    normalized.defaultLineEnding,
+    bytes.length === 0 ? resolveDefaultLineEnding(options) ?? normalized.defaultLineEnding : normalized.defaultLineEnding,
     hasUtf8Bom,
     seed,
     normalizedHasCarriageReturn ? 'literal-control' : undefined,
@@ -1405,7 +1407,8 @@ function resolveFileFormat(options: OpenTextDocumentOptions): TextFileFormat | u
   try {
     if (typeof options !== 'object' || options === null || Array.isArray(options)
       || (Object.getPrototypeOf(options) !== Object.prototype && Object.getPrototypeOf(options) !== null)
-      || Object.keys(options).some((key) => key !== 'fileFormat')) return undefined;
+      || Object.keys(options).some((key) => key !== 'fileFormat' && key !== 'defaultLineEnding')
+      || (options.defaultLineEnding !== undefined && !isLineEnding(options.defaultLineEnding))) return undefined;
     const selected = options.fileFormat ?? 'legacy';
     return selected === 'auto' || selected === 'unix' || selected === 'dos'
       || selected === 'mac' || selected === 'legacy'
@@ -1416,8 +1419,13 @@ function resolveFileFormat(options: OpenTextDocumentOptions): TextFileFormat | u
   }
 }
 
+function resolveDefaultLineEnding(options: OpenTextDocumentOptions): LineEnding | undefined {
+  const value = options.defaultLineEnding;
+  return isLineEnding(value) ? value : undefined;
+}
+
 function isLineEnding(value: unknown): value is LineEnding {
-  return value === 'lf' || value === 'crlf' || value === 'cr';
+  return value === 'lf' || value === 'crlf' || value === 'cr' || value === 'ff' || value === 'nel';
 }
 
 function isEditOrigin(value: unknown): value is EditOrigin {
@@ -1465,6 +1473,8 @@ function lineEndingText(ending: LineEnding): string {
     case 'lf': return '\n';
     case 'crlf': return '\r\n';
     case 'cr': return '\r';
+    case 'ff': return '\f';
+    case 'nel': return '\u0085';
   }
 }
 

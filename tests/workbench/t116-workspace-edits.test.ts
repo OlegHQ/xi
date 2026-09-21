@@ -36,14 +36,16 @@ function textOf(doc: TextFileDocument): string {
 
 class ReadyLanguageSession implements LanguageServerSessionPort {
   async waitForReady(): Promise<Result<unknown, { readonly message: string }>> { return { ok: true, value: undefined }; }
-  supportsRequest(): boolean { return false; }
+  supportsRequest(method: string): boolean { return method === 'textDocument/codeAction'; }
 }
 
 // -- A rename provider whose `rename` call always fails, mirroring a language server that
 // cannot answer the request (e.g. project not yet indexed). --
 class FailingRenameProvider implements WorkspaceEditProviderPort {
   readonly renameCalls: Array<{ readonly request: WorkspaceEditRequestPort; readonly newName: string }> = [];
-  async codeActions(): Promise<Result<readonly LanguageCodeActionPort[], WorkspaceEditProviderFailurePort>> { return { ok: true, value: [] }; }
+  async codeActions(): Promise<Result<readonly LanguageCodeActionPort[], WorkspaceEditProviderFailurePort>> {
+    return { ok: true, value: [{ id: 'quickfix', title: 'Fix value' }, { id: 'disabled', title: 'Disabled', disabledReason: 'not applicable' }] };
+  }
   async prepareRename(): Promise<Result<undefined, WorkspaceEditProviderFailurePort>> { return { ok: true, value: undefined }; }
   async rename(request: WorkspaceEditRequestPort, newName: string): Promise<Result<WorkspaceEditProposalPort, WorkspaceEditProviderFailurePort>> {
     this.renameCalls.push({ request, newName });
@@ -88,10 +90,13 @@ const controller = new WorkspaceEditsController({
   runWorkspaceEditProposal: async () => { runWorkspaceEditProposalCalls += 1; throw new Error('T116-workspace-edit: runWorkspaceEditProposal must not run for a failed rename'); },
   renameWithRetry: async (request, newName, rename, _options: RenameRetryOptionsPort | undefined) => rename(request, newName),
   ensureCodeActionExecutor: async () => undefined,
+  codeActionHints: true,
 });
 
 const provider = new FailingRenameProvider();
 controller.attachLanguage(new ReadyLanguageSession(), provider);
+await controller.refreshCodeActionHints();
+assert.equal(controller.codeActionHint(String(launchDocument.id), Number(launchDocument.version)), 1, 'T116-CODE-ACTION-HINT-UNIT-01 enabled code actions are exposed for the current document version');
 
 // T116-WORKSPACE-EDIT-01: renaming with a provider that fails reports the failure through
 // `onError`, never touches the open document, and never reaches `runWorkspaceEditProposal`.

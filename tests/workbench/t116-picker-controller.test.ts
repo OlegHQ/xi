@@ -83,6 +83,7 @@ const model = new FakePickerModel<FixtureEntry>();
 const markers: Array<{ readonly name: string; readonly payload: unknown }> = [];
 const secondaryActions: Array<{ readonly entryId: string; readonly key: string }> = [];
 const diagnosticJumps: string[] = [];
+let configOpens = 0;
 
 const testClock: ClockPort = {
   monotonicMilliseconds: () => Date.now(),
@@ -102,6 +103,7 @@ const picker = new PickerController<FixtureEntry, string>({
   startFileIndexPopulation: async () => {},
   toggleMouseMode: () => true,
   openDiagnostic: async diagnosticId => { diagnosticJumps.push(diagnosticId); },
+  openConfig: async () => { configOpens += 1; },
   openFile: (path, preview) => host.openBufferAtPath(path, { preview }),
   onSecondaryAction: (entry, key) => { secondaryActions.push({ entryId: entry.id, key }); },
 });
@@ -182,6 +184,14 @@ assert.equal(picker.isOpen, false, 'T116-PICKER-04a enter on a git entry closes 
 const openedGit = session.buffers().find((buffer) => buffer.path === '/workspace/b.txt');
 assert.ok(openedGit !== undefined, 'T116-PICKER-04b the git entry opened its file through the same openBufferAtPath route');
 
+model.entries = session.buffers().map((buffer) => ({ id: String(buffer.bufferId), mode: 'buffer' as const, value: String(buffer.bufferId) }));
+picker.open('buffer');
+await flush();
+assert.equal(model.selectedId, String(openedGit?.bufferId), 'T036-BUFFER-PICKER-UNIT-01 current start-position selects the active buffer');
+assert.ok(markers.some((entry) => entry.name === 'XI_BUFFER_PICKER' && (entry.payload as { readonly startPosition: string }).startPosition === 'current'), 'T036-BUFFER-PICKER-UNIT-01 picker reports the configured start position');
+assert.equal(host.bufferPickerSelection('previous'), String(opened?.bufferId), 'T036-BUFFER-PICKER-UNIT-01 previous start-position resolves the alternate buffer');
+await picker.close(true);
+
 // T116-PICKER-05: 's'/'u' in git mode dispatch onSecondaryAction instead of typing into the
 // filter query, and are ignored outside git mode.
 model.entries = [{ id: 'c.txt', mode: 'git', value: '/workspace/c.txt' }];
@@ -213,6 +223,13 @@ assert.equal(diagnosticJumps.length, 0, 'preview never changes editor position')
 await picker.handleKeypress({ name: 'return', raw: '\r', shift: false, option: false, ctrl: false, meta: false });
 assert.deepEqual(diagnosticJumps, ['problem-2']);
 assert.equal(picker.isOpen, false);
+
+model.entries = [{ id: 'config.open', mode: 'config', value: 'config.open' }];
+picker.open('config');
+await flush();
+await picker.handleKeypress({ name: 'enter', raw: '\r', shift: false, option: false, ctrl: false, meta: false });
+assert.equal(configOpens, 1, 'T036-CONFIG-OPEN-UNIT-01 config picker activation opens the user configuration through its injected buffer owner');
+assert.equal(picker.isOpen, false, 'T036-CONFIG-OPEN-UNIT-02 config activation closes the picker');
 
 // A new preview during asynchronous persistence must not replace the committed id on disk.
 let releaseDirectory: () => void = () => {};

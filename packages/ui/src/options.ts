@@ -10,6 +10,8 @@ import type { SearchReadPort, SearchUiState } from '../search/index';
 import type { GitReadPort } from '../git/index';
 import type { ProblemsReadPort } from '../problems/index';
 import type { GitDiffReadPort } from '../git/diff';
+import type { GutterType } from '../../layout/src/index';
+import type { VirtualAnnotation } from '../../layout/src/index';
 import type { TaskOutputReadPort } from '../output/index';
 import type { OutlineReadPort, HierarchyReadPort, HoverReadPort } from '../navigation/index';
 import type { CompletionReadPort, SignatureReadPort } from '../completion/index';
@@ -26,6 +28,8 @@ export interface OpenTuiWorkbenchOptions {
   readonly renderer?: Promise<CliRenderer>;
   /** Called after the first frame starts; nonessential services may activate here. */
   readonly onReady?: () => void | Promise<void>;
+  /** Terminal focus state forwarded from the renderer's focus reporting. */
+  readonly onFocusChange?: (focused: boolean) => void;
   /**
    * Hands the application a toggle for the renderer's own mouse-reporting mode, so a documented
    * keybinding can flip it and let the terminal's native click-drag text selection work again.
@@ -46,12 +50,87 @@ export interface OpenTuiWorkbenchOptions {
   /** The theme every renderable surface starts painted with, before any picker interaction --
    * e.g. a persisted selection restored at launch. Defaults to the built-in light theme. */
   readonly theme?: WorkbenchTheme;
+  /** Helix master light/dark themes selected from OpenTUI's terminal theme-mode signal. */
+  readonly themeVariants?: { readonly dark?: { readonly id: string; readonly theme: WorkbenchTheme }; readonly light?: { readonly id: string; readonly theme: WorkbenchTheme }; readonly fallback?: { readonly id: string; readonly theme: WorkbenchTheme } };
+  readonly onThemeMode?: (mode: 'dark' | 'light' | 'fallback', id: string) => void;
+  /** Initial renderer mouse reporting state from `editor.mouse`; omitted keeps OpenTUI's default. */
+  readonly mouseEnabled?: boolean;
+  /** Helix master terminal keyboard protocol policy. */
+  readonly kittyKeyboardProtocol?: 'auto' | 'enabled' | 'disabled';
   /** Read-only syntax spans for the editor viewport; see `WorkbenchRenderableOptions.syntax`. */
   readonly syntax?: SyntaxReadPort;
   readonly editorDiagnostics?: import('./workbench').WorkbenchRenderableOptions['editorDiagnostics'];
+  /** Helix-compatible line/cell padding around the cursor while following it. */
+  readonly scrolloff?: number;
+  /** Helix-compatible line-number display mode. */
+  readonly lineNumber?: 'absolute' | 'relative';
+  /** Helix-compatible minimum line-number gutter width in digits. */
+  readonly lineNumberMinWidth?: number;
+  /** Helix-compatible ordered gutter components. */
+  readonly gutters?: readonly GutterType[];
+  /** Helix-compatible indentation guide rendering. */
+  readonly indentGuides?: { readonly render: boolean; readonly character: string; readonly skipLevels: number };
+  /** Helix-compatible visible whitespace rendering. */
+  readonly whitespace?: { readonly render: { readonly default: boolean; readonly space: boolean; readonly nbsp: boolean; readonly nnbsp: boolean; readonly tab: boolean; readonly newline: boolean }; readonly characters: { readonly space: string; readonly nbsp: string; readonly nnbsp: string; readonly tab: string; readonly tabpad: string; readonly newline: string } };
+  /** Helix-compatible statusline elements, labels and separator. */
+  readonly statusline?: { readonly left: readonly string[]; readonly center: readonly string[]; readonly right: readonly string[]; readonly separator: string; readonly mode: { readonly normal: string; readonly insert: string; readonly select: string }; readonly diagnostics: readonly ('hint' | 'info' | 'warning' | 'error')[]; readonly workspaceDiagnostics: readonly ('hint' | 'info' | 'warning' | 'error')[] };
+  /** Workspace root used by the `current-working-directory` statusline element. */
+  readonly workspaceRoot?: string;
+  /** Live statusline metadata for the stable Helix element catalog. */
+  readonly statuslineFileType?: () => string | undefined;
+  readonly statuslineLspActivity?: () => boolean;
+  readonly statuslineRegister?: () => string | undefined;
+  readonly statuslineCodeActionHints?: () => number;
+  readonly editorCodeActionHints?: (documentId: string, documentVersion: number) => number;
+  /** Helix-compatible popup border policy. */
+  readonly popupBorder?: 'none' | 'popup' | 'menu' | 'all';
+  /** Workspace diagnostics for the statusline's `workspace-diagnostics` element. */
+  readonly workspaceDiagnostics?: () => readonly import('../problems/index').Problem[];
+  /** Helix-compatible soft-wrap toggle. */
+  readonly wrap?: boolean;
+  /** Optional Helix text-width wrap limit, enabled only with wrap-at-text-width. */
+  readonly wrapWidth?: number;
+  /** Maximum word width carried intact to the next soft-wrapped row. */
+  readonly maxWrap?: number;
+  /** Maximum indentation retained on soft-wrapped continuation rows. */
+  readonly maxIndentRetain?: number;
+  /** Helix-compatible text shown before soft-wrapped continuation rows. */
+  readonly wrapIndicator?: string;
+  /** Maximum number of inline diagnostics shown for one source line. */
+  readonly inlineDiagnosticsMaxDiagnostics?: number;
+  /** Number of horizontal bars rendered before inline diagnostic text. */
+  readonly inlineDiagnosticsPrefixLen?: number;
+  /** Maximum trailing free space before an inline diagnostic wraps mid-word. */
+  readonly inlineDiagnosticsMaxWrap?: number;
+  /** Minimum diagnostic text width before inline diagnostics are suppressed or constrained. */
+  readonly inlineDiagnosticsMinDiagnosticWidth?: number;
+  /** Minimum severity rendered on the cursor line. */
+  readonly inlineDiagnosticsCursorLine?: import('../problems/inline').InlineDiagnosticsFilter;
+  /** Minimum severity rendered on non-cursor lines. */
+  readonly inlineDiagnosticsOtherLines?: import('../problems/inline').InlineDiagnosticsFilter;
+  /** Minimum severity rendered at the end of a source line when not shown inline. */
+  readonly endOfLineDiagnostics?: import('../problems/inline').InlineDiagnosticsFilter;
+  /** Helix-compatible normal- and insert-mode cursor shapes. */
+  readonly cursorShape?: { readonly normal: 'block' | 'bar' | 'underline' | 'hidden'; readonly insert: 'block' | 'bar' | 'underline' | 'hidden'; readonly select: 'block' | 'bar' | 'underline' | 'hidden' };
+  /** Helix-compatible active-row highlight. */
+  readonly cursorLine?: boolean;
+  /** Helix-compatible active-column highlight. */
+  readonly cursorColumn?: boolean;
+  /** Helix-compatible mode-colored statusline toggle. */
+  readonly colorModes?: boolean;
+  /** Terminal color capability selected by the application boundary. */
+  readonly colorMode?: 'truecolor' | 'ansi256' | 'no-color';
+  /** Helix-compatible terminal undercurl override. */
+  readonly undercurl?: boolean;
+  /** Helix-compatible buffer tab strip policy. */
+  readonly bufferline?: 'always' | 'never' | 'multiple';
+  /** Helix-compatible vertical ruler display columns. */
+  readonly rulers?: readonly number[];
   /** Optional editor presentation read (workspace-search match highlights, previews); see
    * `WorkbenchRenderableOptions.presentation`. */
   readonly presentation?: EditorPresentationReadPort;
+  /** Versioned non-editable inline annotations, such as LSP inlay hints. */
+  readonly virtualAnnotations?: (documentId: string, documentVersion: number) => readonly VirtualAnnotation[];
   /** Current Git branch for the status line; undefined hides it. */
   readonly gitBranch?: () => string | undefined;
   /** Live sidebar section/width read model; see `WorkbenchRenderableOptions.sidebar`. Also

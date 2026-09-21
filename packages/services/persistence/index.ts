@@ -30,8 +30,8 @@ export interface PersistenceDocumentFactory {
   restoreCheckpoint(
     id: DocumentId,
     normalizedText: string,
-    lineEndings: readonly ('lf' | 'crlf' | 'cr')[],
-    defaultLineEnding: 'lf' | 'crlf' | 'cr',
+    lineEndings: readonly ('lf' | 'crlf' | 'cr' | 'ff' | 'nel')[],
+    defaultLineEnding: 'lf' | 'crlf' | 'cr' | 'ff' | 'nel',
     hasUtf8Bom: boolean,
     seed: number,
     textIntent: 'literal-control' | undefined,
@@ -101,6 +101,8 @@ export interface SaveFileOptions {
   readonly expectedDisk?: FileIdentity | null;
   /** Save exactly this immutable document revision; a later edit remains dirty. */
   readonly expectedVersion?: DocumentVersion;
+  /** Whether to replace through the atomic filesystem primitive; defaults to true. */
+  readonly atomic?: boolean;
 }
 
 export interface SaveFileResult {
@@ -122,8 +124,8 @@ export interface RecoveryCheckpoint {
   readonly revisionId: number;
   readonly baseDisk: FileIdentity | null;
   readonly normalizedText: string;
-  readonly lineEndings: readonly ('lf' | 'crlf' | 'cr')[];
-  readonly defaultLineEnding: 'lf' | 'crlf' | 'cr';
+  readonly lineEndings: readonly ('lf' | 'crlf' | 'cr' | 'ff' | 'nel')[];
+  readonly defaultLineEnding: 'lf' | 'crlf' | 'cr' | 'ff' | 'nel';
   readonly hasUtf8Bom: boolean;
 }
 
@@ -320,8 +322,15 @@ export class PersistenceService {
     }
     let written: Result<void, PlatformFailure>;
     let persistedHash: string;
-    const writeChunks = this.#filesystem.writeFileAtomicChunks;
-    if (writeChunks !== undefined) {
+    if (options.atomic === false) {
+      const directWrite = this.#filesystem.writeFile;
+      if (directWrite === undefined) return { ok: false, error: { kind: 'platform', failure: { code: 'direct-write-unavailable', message: 'the filesystem does not support non-atomic saves', retryable: false } } };
+      const serialized = document.serializeSnapshot(snapshot);
+      if (!serialized.ok) return { ok: false, error: { kind: 'serialize', message: serialized.error.kind } };
+      written = await directWrite.call(this.#filesystem, path, serialized.value, cancellation);
+      persistedHash = fingerprint(serialized.value);
+    } else if (this.#filesystem.writeFileAtomicChunks !== undefined) {
+      const writeChunks = this.#filesystem.writeFileAtomicChunks;
       try {
         const hash = createFingerprintAccumulator();
         const encoded = (async function* (): AsyncIterable<Uint8Array> {
@@ -745,8 +754,8 @@ function validateCheckpoint(value: unknown): Result<RecoveryCheckpoint, string> 
   if (!isRecord(value) || value.schemaVersion !== RECOVERY_SCHEMA_VERSION || typeof value.path !== 'string'
     || typeof value.documentId !== 'string' || !Number.isSafeInteger(value.documentVersion) || (value.documentVersion as number) < 1
     || !Number.isSafeInteger(value.revisionId) || (value.revisionId as number) < 1 || typeof value.normalizedText !== 'string'
-    || !Array.isArray(value.lineEndings) || !value.lineEndings.every((ending): ending is 'lf' | 'crlf' | 'cr' => ending === 'lf' || ending === 'crlf' || ending === 'cr')
-    || (value.defaultLineEnding !== 'lf' && value.defaultLineEnding !== 'crlf' && value.defaultLineEnding !== 'cr')
+    || !Array.isArray(value.lineEndings) || !value.lineEndings.every((ending): ending is 'lf' | 'crlf' | 'cr' | 'ff' | 'nel' => ending === 'lf' || ending === 'crlf' || ending === 'cr' || ending === 'ff' || ending === 'nel')
+    || (value.defaultLineEnding !== 'lf' && value.defaultLineEnding !== 'crlf' && value.defaultLineEnding !== 'cr' && value.defaultLineEnding !== 'ff' && value.defaultLineEnding !== 'nel')
     || typeof value.hasUtf8Bom !== 'boolean' || !hasOnlyKeys(value, ['schemaVersion', 'path', 'documentId', 'documentVersion', 'revisionId', 'baseDisk', 'normalizedText', 'lineEndings', 'defaultLineEnding', 'hasUtf8Bom'])
     || (value.baseDisk !== null && !validateIdentity(value.baseDisk))) {
     return { ok: false, error: 'checkpoint schema is invalid' };

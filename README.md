@@ -15,9 +15,11 @@ Initialize submodules before the first install:
 git submodule update --init --recursive
 ```
 
-The active scope is [Helix-compatible configuration](docs/configuration.md). The matrix in
-that document records every stable `[editor]` key, master additions, Xi's current behavior
-and the implementation order. Historical milestone plans, per-ticket evidence and
+The active scope is [Helix-compatible configuration](docs/configuration.md). The
+[machine-readable ledger](docs/configuration-ledger.json) tracks every stable key, master
+addition and Xi extension; validate it with `bun run check:config-ledger`. Xi retains its
+Neovim editing model while matching Helix multi-selection semantics 1:1. Historical
+milestone plans, per-ticket evidence and
 prototype trees were retired after commit `ab211d5`; Git history remains available when a
 past decision is needed.
 

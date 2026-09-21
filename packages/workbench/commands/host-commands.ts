@@ -37,6 +37,7 @@ export interface HostCommandsWorkspaceEditsPort {
 
 export interface HostCommandsProblemsPort {
   runConfiguredTask(taskId: string): Promise<void>;
+  runShellCommand(command: string): Promise<void>;
   listConfiguredTasks(): Promise<void>;
   cancelTask(): Promise<void>;
 }
@@ -53,6 +54,12 @@ export interface HostCommandsSaveCoordinatorPort {
  * ever dispatches the `:Explore` Ex command name to it. */
 export interface HostCommandsDirectoryDraftPort {
   open(target: string | undefined, viewId: ViewId): Promise<void>;
+}
+
+export interface HostCommandsWorkspaceTrustPort {
+  trust(): Promise<boolean>;
+  untrust(): Promise<boolean>;
+  exclude(): Promise<boolean>;
 }
 
 export interface HostCommandsOptions {
@@ -72,9 +79,15 @@ export interface HostCommandsOptions {
   readonly problems: HostCommandsProblemsPort;
   readonly saveCoordinator: HostCommandsSaveCoordinatorPort;
   readonly directoryDrafts: HostCommandsDirectoryDraftPort;
+  readonly workspaceTrust?: HostCommandsWorkspaceTrustPort;
+  /** Opens the user config file through the composition-root buffer owner. */
+  readonly openConfig?: () => Promise<void>;
   /** `gd`: language-server definition lookup for the active cursor; resolves to the first
    * location, or a user-facing reason when no server/definition is available. */
   readonly lookupDefinition?: () => Promise<{ readonly ok: true; readonly location: HostNavigationLocation } | { readonly ok: false; readonly message: string }>;
+  /** `xi references`: language-server reference lookup for the active cursor; resolves to the
+   * first workspace location after sending the configured include-declaration context. */
+  readonly lookupReferences?: () => Promise<{ readonly ok: true; readonly location: HostNavigationLocation } | { readonly ok: false; readonly message: string }>;
   /** `Ctrl-W h`/`Ctrl-W w` past the leftmost pane: hand focus to the sidebar panel; returns
    * whether a sidebar took it. */
   readonly focusSidebar?: () => boolean;
@@ -288,7 +301,20 @@ export class WorkbenchHostCommands {
     const rename = /^xi\s+rename\s+(\S+)$/iu.exec(normalized);
     if (rename?.[1] !== undefined) return workspaceEdits.renameCurrent(rename[1]).then(() => 'handled' as const);
     if (command === 'xi code-action') return workspaceEdits.requestCodeActions().then(() => 'handled' as const);
+    if (command === 'xi references') return (async (): Promise<'handled'> => {
+      const found = await this.#options.lookupReferences?.();
+      if (found?.ok === true) await this.openHostLocation(found.location, false, viewId);
+      else if (found !== undefined) this.#options.marker('XI_REFERENCES_UNAVAILABLE', { message: found.message });
+      return 'handled';
+    })();
     if (command === 'format') return this.formatCurrentDocument(viewId).then(() => 'handled' as const);
+    if (command === 'config-open') return (this.#options.openConfig?.() ?? Promise.resolve()).then(() => 'handled' as const);
+    if (command === 'workspace-trust' || command === 'workspace-untrust' || command === 'workspace-exclude') {
+      const trust = this.#options.workspaceTrust;
+      if (trust === undefined) { onError('xi: workspace trust is unavailable\n'); return 'handled'; }
+      const changed = command === 'workspace-trust' ? trust.trust() : command === 'workspace-untrust' ? trust.untrust() : trust.exclude();
+      return changed.then(ok => { if (!ok) onError(`xi: ${command} failed\n`); return 'handled' as const; });
+    }
     const tag = /^(?:tag|tjump|tj)\s+(\S+)$/iu.exec(normalized);
     if (tag?.[1] !== undefined) return this.handleVimHostCommand({ kind: 'open-tag', name: tag[1], split: false }, viewId).then(() => 'handled' as const);
     // `Space O`/`Space o` (docs/architecture.md "Directory as editable text") route through
@@ -297,6 +323,8 @@ export class WorkbenchHostCommands {
     if (explore) return this.#options.directoryDrafts.open(explore[1]?.trim(), viewId).then(() => 'handled' as const);
     const task = /^task\s+(\S+)$/iu.exec(normalized);
     if (task?.[1] !== undefined) return problems.runConfiguredTask(task[1]).then(() => 'handled' as const);
+    const shell = /^(?:sh|shell|!)\s*(.*)$/isu.exec(normalized);
+    if (shell !== null) return problems.runShellCommand(shell[1] ?? '').then(() => 'handled' as const);
     if (command === 'tasks') return problems.listConfiguredTasks().then(() => 'handled' as const);
     if (command === 'taskstop') return problems.cancelTask().then(() => 'handled' as const);
     if (

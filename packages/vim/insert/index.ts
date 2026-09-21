@@ -10,6 +10,7 @@ import { lookupDefaultVimDigraph } from './default-digraphs';
 export type VimInsertMode = 'insert' | 'replace' | 'virtual-replace';
 export type VimInsertEntryKey = 'i' | 'I' | 'a' | 'A' | 'o' | 'O' | 'R' | 'gR' | 'gi' | 'gI';
 export type VimBackspaceOption = 'indent' | 'eol' | 'start';
+export type VimAutoPairs = false | Readonly<Record<string, string>>;
 
 /** Versioned context retained by the Vim owner for the previous Insert exit. */
 export interface VimInsertLastContext {
@@ -40,21 +41,28 @@ export interface VimInsertRegisterPayload {
 export interface VimInsertOptions {
   readonly backspace?: string;
   readonly autoindent?: boolean;
+  /** Helix editor.continue-comments; returns the comment prefix for a new line. */
+  readonly continueComments?: boolean;
+  readonly commentContinuation?: (snapshot: DocumentSnapshot, lineStart: number, cursorOffset: number) => string | undefined;
   readonly expandtab?: boolean;
   readonly shiftwidth?: number;
   readonly tabstop?: number;
   readonly softtabstop?: number;
   readonly smarttab?: boolean;
+  readonly autoPairs?: VimAutoPairs;
 }
 
 export interface NormalizedVimInsertOptions {
   readonly backspace: readonly VimBackspaceOption[];
   readonly autoindent: boolean;
+  readonly continueComments: boolean;
+  readonly commentContinuation?: (snapshot: DocumentSnapshot, lineStart: number, cursorOffset: number) => string | undefined;
   readonly expandtab: boolean;
   readonly shiftwidth: number;
   readonly tabstop: number;
   readonly softtabstop: number;
   readonly smarttab: boolean;
+  readonly autoPairs: VimAutoPairs;
 }
 
 interface ReplaceFrame {
@@ -214,12 +222,14 @@ const EMPTY_REPEAT_PIECES: readonly string[] = Object.freeze([]);
 const DEFAULT_OPTIONS: NormalizedVimInsertOptions = Object.freeze({
   backspace: Object.freeze(['indent', 'eol', 'start'] as const),
   autoindent: false,
+  continueComments: true,
   expandtab: false,
   shiftwidth: 8,
   tabstop: 8,
   softtabstop: 0,
   // nvim default: `:echo &smarttab` -> 1 (on) in --clean.
   smarttab: true,
+  autoPairs: Object.freeze({ '(': ')', '{': '}', '[': ']', "'": "'", '"': '"', '`': '`' }),
 });
 
 interface LineWindow {
@@ -586,7 +596,58 @@ function planKey(
   if (isCursorMoveKey(key)) return moveInsertCursor(snapshot, source, base, session, key, lineStart);
   const text = textKey(key);
   if (text === undefined) return success(ignored(snapshot, session));
+  if (session.mode === 'insert' && session.pending.kind === 'none') {
+    const cursor = (session.cursorOffset as number) - base;
+    if (isAutoPairCloser(session.options.autoPairs, text)
+      && source.slice(cursor, cursor + text.length) === text) {
+      return success(advanceInsertCursor(snapshot, session, base + cursor + text.length));
+    }
+    const pair = autoPairFor(session.options.autoPairs, text);
+    if (pair !== undefined) {
+      if (source.slice(cursor, cursor + pair.length) === pair) {
+        return success(advanceInsertCursor(snapshot, session, base + cursor + pair.length));
+      }
+      return insertPair(snapshot, source, base, session, text, pair, lineStart);
+    }
+    if (isAutoPairCloser(session.options.autoPairs, text)) return insertPayload(snapshot, source, base, session, text, lineStart, 'continued');
+  }
   return insertPayload(snapshot, source, base, session, text, lineStart, 'continued');
+}
+
+function autoPairFor(options: VimAutoPairs, text: string): string | undefined {
+  if (options === false || [...text].length !== 1) return undefined;
+  const pair = options[text];
+  return typeof pair === 'string' ? pair : undefined;
+}
+
+function isAutoPairCloser(options: VimAutoPairs, text: string): boolean {
+  return options !== false && Object.values(options).some((closing) => closing === text);
+}
+
+function insertPair(
+  snapshot: DocumentSnapshot,
+  source: string,
+  base: number,
+  session: VimInsertSession,
+  opening: string,
+  closing: string,
+  lineStart: number,
+): VimInsertResult<VimInsertTransition> {
+  const planned = insertPayload(snapshot, source, base, session, opening + closing, lineStart, 'continued');
+  if (!planned.ok) return planned;
+  if (planned.value.kind === 'exited' || planned.value.session === null) return failure('invalid-session');
+  const cursor = (planned.value.session.cursorOffset as number) - closing.length;
+  const next = freezeSession({ ...planned.value.session, cursorOffset: offset(cursor) });
+  return success(Object.freeze({
+    ...planned.value,
+    session: next,
+    plan: makePlan(snapshot, planned.value.plan.edits, next.cursorOffset, planned.value.plan.undoAction),
+  }));
+}
+
+function advanceInsertCursor(snapshot: DocumentSnapshot, session: VimInsertSession, cursor: number): VimInsertTransition {
+  const next = freezeSession({ ...session, cursorOffset: offset(cursor), desiredColumn: null });
+  return continued(snapshot, next, []);
 }
 
 function prepareEntry(
@@ -762,7 +823,10 @@ function insertNewline(snapshot: DocumentSnapshot, source: string, base: number,
     if (read === undefined) return failure('snapshot-read-failed');
     indent = read;
   }
-  const value = `\n${indent}`;
+  const comment = session.options.continueComments
+    ? session.options.commentContinuation?.(snapshot, lineStart, base + cursor) ?? ''
+    : '';
+  const value = `\n${indent}${comment}`;
   const nextCursor = base + cursor + value.length;
   const next = freezeSession({
     ...session,
@@ -795,6 +859,23 @@ function backspace(snapshot: DocumentSnapshot, source: string, base: number, ses
   const absoluteCursor = base + cursor;
   if (cursor < 0 || cursor > source.length) return failure('invalid-cursor');
   if (absoluteCursor === 0) return success(ignored(snapshot, session));
+  if (session.mode === 'insert' && cursor > 0) {
+    const openingStart = previousGrapheme(source, cursor, 0);
+    const opening = source.slice(openingStart, cursor);
+    const closingEnd = nextGrapheme(source, cursor, source.length);
+    const closing = source.slice(cursor, closingEnd);
+    if (autoPairFor(session.options.autoPairs, opening) === closing) {
+      const absoluteStart = base + openingStart;
+      const next = freezeSession({
+        ...session,
+        cursorOffset: offset(absoluteStart),
+        ...removeRepeatSuffix(session, opening + closing),
+        autoIndentSpan: adjustSpanAfterEdit(session.autoIndentSpan, absoluteStart, base + closingEnd, ''),
+        desiredColumn: null,
+      });
+      return success(continued(snapshot, next, [makeEdit(absoluteStart, base + closingEnd, '')], 'continued'));
+    }
+  }
   // `lineStart` (not window-local 0) decides a line crossing, since a bounded
   // per-key window on a giant line no longer always starts at the true line start.
   const crossesLine = absoluteCursor === lineStart;
@@ -1237,16 +1318,24 @@ function normalizeOptions(options: VimInsertOptions): NormalizedVimInsertOptions
   if (![shiftwidth, tabstop, softtabstop].every((value) => Number.isSafeInteger(value) && value >= 0)
     || tabstop === 0 || shiftwidth > 256 || tabstop > 256 || softtabstop > 256) return undefined;
   if (options.autoindent !== undefined && typeof options.autoindent !== 'boolean') return undefined;
+  if (options.continueComments !== undefined && typeof options.continueComments !== 'boolean') return undefined;
+  if (options.commentContinuation !== undefined && typeof options.commentContinuation !== 'function') return undefined;
   if (options.expandtab !== undefined && typeof options.expandtab !== 'boolean') return undefined;
   if (options.smarttab !== undefined && typeof options.smarttab !== 'boolean') return undefined;
+  const autoPairs = options.autoPairs ?? DEFAULT_OPTIONS.autoPairs;
+  if (autoPairs !== false && (typeof autoPairs !== 'object' || autoPairs === null
+    || Object.entries(autoPairs).some(([opening, closing]) => [...opening].length !== 1 || [...closing].length !== 1 || /[\r\n]/u.test(opening + closing)))) return undefined;
   return Object.freeze({
     backspace: Object.freeze(['indent', 'eol', 'start'].filter((value): value is VimBackspaceOption => backspaceSet.has(value))),
     autoindent: options.autoindent ?? false,
+    continueComments: options.continueComments ?? true,
+    ...(options.commentContinuation === undefined ? {} : { commentContinuation: options.commentContinuation }),
     expandtab: options.expandtab ?? false,
     shiftwidth: shiftwidth === 0 ? tabstop : shiftwidth,
     tabstop,
     softtabstop,
     smarttab: options.smarttab ?? DEFAULT_OPTIONS.smarttab,
+    autoPairs: autoPairs === false ? false : Object.freeze({ ...autoPairs }),
   });
 }
 

@@ -81,6 +81,9 @@ def main() -> None:
         (workspace / "package.json").write_text("{}\n", encoding="utf-8")
         source = workspace / "broken.ts"
         source.write_text("const value: number = 'not-a-number';\n", encoding="utf-8")
+        config = workspace / ".config" / "xi" / "config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text("schema-version = 1\n[editor.statusline]\nright = [\"diagnostics\"]\ndiagnostics = [\"error\"]\n", encoding="utf-8")
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
         environment = os.environ.copy()
@@ -116,6 +119,8 @@ def main() -> None:
                 read_for(master, captured, 0.3)
             if count == 0:
                 raise SystemExit(f"no real diagnostics arrived within 40s: {captured[-4000:]!r}")
+            if b"\xe2\x97\x8f 1" not in captured:
+                raise SystemExit(f"configured statusline did not render the filtered diagnostic count: {captured[-4000:]!r}")
 
             # Real click activation of the diagnostic row (T127's own acceptance scenario).
             # Problems panel bounds at 120x40: left=1, top=27, height=12 -> header at PTY row

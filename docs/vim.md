@@ -3,6 +3,13 @@
 Xi owns its Vim engine. Neovim 0.12.4 is a pinned development oracle only; there is no
 runtime process, library, remote connection or fallback.
 
+Neovim is the semantic oracle for Vim modes, motions, operators, registers, repeat,
+search and undo. Xi does not adopt Helix's general editing model or keybindings. Helix is
+the separate 1:1 oracle for multi-selection behavior: creation, primary identity,
+direction, merge/deduplication, mapping through document changes and simultaneous edits.
+When the two models intersect, Vim determines the command and Helix determines how that
+command is applied across the selection set.
+
 Behavior comparisons include text, semantic cursor and desired column, mode, selection
 shape, registers and types, marks, repeat/search state and undo history. UTF-8 oracle
 columns are converted against the exact checkpoint document before comparison. Rendering

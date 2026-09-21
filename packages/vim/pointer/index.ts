@@ -26,7 +26,7 @@ export interface PointerEvent {
    * (see `handle` below) reads this instead of sampling time itself. */
   readonly timestampMilliseconds: number;
 }
-export interface PointerSelectionIntent { readonly kind: PointerGestureKind; readonly viewId: string; readonly anchor: PointerCell; readonly head: PointerCell; readonly modifiers: InputModifiers; }
+export interface PointerSelectionIntent { readonly kind: PointerGestureKind; readonly viewId: string; readonly anchor: PointerCell; readonly head: PointerCell; readonly modifiers: InputModifiers; readonly completed?: boolean; }
 export interface PointerEnginePort { cancelPendingOperator(): void; place(intent: PointerSelectionIntent): void; scroll(viewId: string, delta: number, viewportHeight: number | undefined): void; }
 
 /** Captures a pointer gesture to its press view until release/cancellation. */
@@ -70,7 +70,7 @@ export class PointerGestureController implements Disposable {
       }
       return true;
     }
-    if (event.phase === 'up') { const kind = capture.kind === 'click' && event.cell.row === capture.anchor.row && event.cell.column === capture.anchor.column ? 'click' : capture.kind; this.#engine.place({ kind, viewId: capture.viewId, anchor: capture.anchor, head: event.cell, modifiers: capture.modifiers }); this.#capture = undefined; return true; }
+    if (event.phase === 'up') { const kind = capture.kind === 'click' && event.cell.row === capture.anchor.row && event.cell.column === capture.anchor.column ? 'click' : capture.kind; this.#engine.place({ kind, viewId: capture.viewId, anchor: capture.anchor, head: event.cell, modifiers: capture.modifiers, completed: true }); this.#capture = undefined; return true; }
     return false;
   }
   cancel(reason: 'focus-loss' | 'resize' | 'escape' | 'dispose' = 'escape'): void { if (this.#capture === undefined) return; this.#capture = undefined; if (reason !== 'dispose') this.#engine.cancelPendingOperator(); }

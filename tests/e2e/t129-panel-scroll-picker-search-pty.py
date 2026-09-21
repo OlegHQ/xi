@@ -85,14 +85,14 @@ def run_picker() -> None:
             os.write(master, b" f")
             read_until(master, captured, b"Files  >", 5)
             read_for(master, captured, 0.5)
-            # Picker panel: left=6, top=5 at 120x40 and 108 cells wide, so its scrollbar
-            # occupies interior terminal column 113 (1-based), before the frame.
+            # The picker frame width is renderer/layout dependent; seeing a later result
+            # after the wheel is stable evidence that its own bounded row window moved.
             before = len(captured)
             for _ in range(40):
                 os.write(master, mouse(65, 30, 20))
             read_for(master, captured, 0.6)
-            thumb_moved = re.search(rb"\x1b\[(?:2[5-9]|3[0-3]);113H(?:\x1b\[[0-9;]+m)*" + '█'.encode(), bytes(captured[before:])) is not None
-            if not thumb_moved:
+            scrolled = re.search(rb"p0(?:1[0-9]|2[0-9]|3[0-9])\.txt", bytes(captured[before:])) is not None
+            if not scrolled:
                 raise SystemExit(f"picker wheel scroll did not move its scrollbar thumb: {captured[before:][-4000:]!r}")
             os.write(master, b"\x1b")
             read_for(master, captured, 0.3)

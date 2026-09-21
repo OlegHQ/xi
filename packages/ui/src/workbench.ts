@@ -15,7 +15,7 @@ import type {
 } from '../../workbench/src/index.ts';
 import type { SidebarReadModel, WorkbenchTabSnapshot } from '../../workbench/src/entrypoints/launch';
 import { ComparisonEditor, type ComparisonReadPort, type ComparisonPaint } from '../git/editor';
-import { resolveScrollAnchor, ViewportLayout, type CellHitTarget, type ProjectedSelection, type ViewportAnchor, type VisibleFrame } from '../../layout/src/index';
+import { DEFAULT_GUTTER_LAYOUT, resolveScrollAnchor, ViewportLayout, type CellHitTarget, type GutterType, type ProjectedSelection, type ViewportAnchor, type VirtualAnnotation, type VisibleFrame } from '../../layout/src/index';
 import type { SyntaxRead, SyntaxReadPort, SyntaxSpan } from '../../contracts/src/index';
 import {
   paintEditorFrame,
@@ -26,6 +26,7 @@ import {
 } from '../editor/motion-paint';
 import {
   resolveMotionPaintTokens,
+  resolvePaintColor,
   type EditorColorMode,
   type MotionTrailMode,
 } from '../theme/motion-tokens';
@@ -35,7 +36,7 @@ export { helixTextAttributes, helixThemeColor, themeColor } from '../theme/color
 import { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, type WorkbenchTheme } from '../theme/workbench-themes';
 import { themeColor } from '../theme/color-input';
 import { diagnosticColor, type Problem } from '../problems/index';
-import { inlineDiagnosticLines, type DiagnosticLine } from '../problems/inline';
+import { endOfLineDiagnosticLines, inlineDiagnosticLines, type DiagnosticLine, type EndOfLineDiagnostic, type InlineDiagnosticsFilter } from '../problems/inline';
 
 export interface WorkbenchLayout {
   readonly compact: boolean;
@@ -87,6 +88,54 @@ export interface WorkbenchPointerEvent {
 export interface WorkbenchRenderableOptions extends RenderableOptions<WorkbenchRenderable> {
   readonly comparison?: ComparisonReadPort;
   readonly workbench: WorkbenchReadPort;
+  /** Helix-compatible line/cell padding around the cursor while following it. */
+  readonly scrolloff?: number;
+  /** Helix-compatible line-number display mode. */
+  readonly lineNumber?: 'absolute' | 'relative';
+  /** Helix-compatible minimum line-number gutter width in digits. */
+  readonly lineNumberMinWidth?: number;
+  /** Helix-compatible ordered gutter components. */
+  readonly gutters?: readonly GutterType[];
+  /** Helix-compatible indentation guide rendering. */
+  readonly indentGuides?: { readonly render: boolean; readonly character: string; readonly skipLevels: number };
+  /** Helix-compatible visible whitespace rendering. */
+  readonly whitespace?: { readonly render: { readonly default: boolean; readonly space: boolean; readonly nbsp: boolean; readonly nnbsp: boolean; readonly tab: boolean; readonly newline: boolean }; readonly characters: { readonly space: string; readonly nbsp: string; readonly nnbsp: string; readonly tab: string; readonly tabpad: string; readonly newline: string } };
+  /** Helix-compatible soft-wrap toggle. */
+  readonly wrap?: boolean;
+  /** Optional Helix text-width wrap limit. */
+  readonly wrapWidth?: number;
+  /** Maximum word width carried intact to the next soft-wrapped row. */
+  readonly maxWrap?: number;
+  /** Maximum indentation retained on soft-wrapped continuation rows. */
+  readonly maxIndentRetain?: number;
+  /** Helix-compatible text shown before soft-wrapped continuation rows. */
+  readonly wrapIndicator?: string;
+  /** Maximum number of inline diagnostics shown for one source line. */
+  readonly inlineDiagnosticsMaxDiagnostics?: number;
+  /** Number of horizontal bars rendered before inline diagnostic text. */
+  readonly inlineDiagnosticsPrefixLen?: number;
+  /** Maximum trailing free space before an inline diagnostic wraps mid-word. */
+  readonly inlineDiagnosticsMaxWrap?: number;
+  /** Minimum diagnostic text width before inline diagnostics are suppressed or constrained. */
+  readonly inlineDiagnosticsMinDiagnosticWidth?: number;
+  /** Minimum severity rendered on the cursor line. */
+  readonly inlineDiagnosticsCursorLine?: InlineDiagnosticsFilter;
+  /** Minimum severity rendered on non-cursor lines. */
+  readonly inlineDiagnosticsOtherLines?: InlineDiagnosticsFilter;
+  /** Minimum severity rendered at the end of a source line when not shown inline. */
+  readonly endOfLineDiagnostics?: InlineDiagnosticsFilter;
+  /** Helix-compatible normal- and insert-mode cursor shapes. */
+  readonly cursorShape?: { readonly normal: 'block' | 'bar' | 'underline' | 'hidden'; readonly insert: 'block' | 'bar' | 'underline' | 'hidden'; readonly select: 'block' | 'bar' | 'underline' | 'hidden' };
+  /** Helix-compatible active-row highlight. */
+  readonly cursorLine?: boolean;
+  /** Helix-compatible active-column highlight. */
+  readonly cursorColumn?: boolean;
+  /** Helix-compatible terminal undercurl override. */
+  readonly undercurl?: boolean;
+  /** Helix-compatible buffer tab strip policy. */
+  readonly bufferline?: 'always' | 'never' | 'multiple';
+  /** Helix-compatible vertical ruler display columns. */
+  readonly rulers?: readonly number[];
   readonly theme?: WorkbenchTheme;
   readonly ascii?: boolean;
   readonly fileLabel?: string;
@@ -94,6 +143,10 @@ export interface WorkbenchRenderableOptions extends RenderableOptions<WorkbenchR
    * status text); returns `undefined` outside a Git workspace or before the first status
    * refresh. */
   readonly gitBranch?: () => string | undefined;
+  /** Workspace root used by the `current-working-directory` statusline element. */
+  readonly workspaceRoot?: string;
+  /** Helix-compatible popup border policy. */
+  readonly popupBorder?: 'none' | 'popup' | 'menu' | 'all';
   readonly showBottomPanel?: boolean;
   /** Live sidebar section/width read model (`SidebarController.readModel()`); omitted keeps
    * the legacy static "Files  Search  Git" sidebar header for callers with no controller. */
@@ -103,9 +156,12 @@ export interface WorkbenchRenderableOptions extends RenderableOptions<WorkbenchR
   readonly tabs?: (viewId?: string) => readonly WorkbenchTabSnapshot[];
   /** Optional immutable presentation read model supplied by the workbench. */
   readonly presentation?: EditorPresentationReadPort;
+  /** Versioned non-editable inline annotations, such as LSP inlay hints. */
+  readonly virtualAnnotations?: (documentId: string, documentVersion: number) => readonly VirtualAnnotation[];
   /** Optional read-only syntax boundary; painted only when its version matches the frame's. */
   readonly syntax?: SyntaxReadPort;
   readonly editorDiagnostics?: (documentId: import('../../contracts/src/index').DocumentId) => readonly Problem[];
+  readonly editorCodeActionHints?: (documentId: string, documentVersion: number) => number;
   readonly motionTrail?: MotionTrailMode;
   readonly reducedMotion?: boolean;
   readonly colorMode?: EditorColorMode;
@@ -200,11 +256,11 @@ interface SplitterRect {
  * launches before one exists). */
 // Keep the pure geometry calculation cheap for the viewport and Solid chrome, which both read
 // the same terminal-cell layout during a frame.
-let lastWorkbenchLayout: { readonly width: number; readonly height: number; readonly showBottomPanel: boolean; readonly sidebarWidthOverride: number | undefined; readonly showSidebar: boolean; readonly value: WorkbenchLayout } | undefined;
+let lastWorkbenchLayout: { readonly width: number; readonly height: number; readonly showBottomPanel: boolean; readonly sidebarWidthOverride: number | undefined; readonly showSidebar: boolean; readonly showBufferline: boolean; readonly value: WorkbenchLayout } | undefined;
 
-export function calculateWorkbenchLayout(width: number, height: number, showBottomPanel = false, sidebarWidthOverride?: number, showSidebar = true): WorkbenchLayout {
+export function calculateWorkbenchLayout(width: number, height: number, showBottomPanel = false, sidebarWidthOverride?: number, showSidebar = true, showBufferline = true): WorkbenchLayout {
   if (lastWorkbenchLayout !== undefined && lastWorkbenchLayout.width === width && lastWorkbenchLayout.height === height
-    && lastWorkbenchLayout.showBottomPanel === showBottomPanel && lastWorkbenchLayout.sidebarWidthOverride === sidebarWidthOverride && lastWorkbenchLayout.showSidebar === showSidebar) {
+    && lastWorkbenchLayout.showBottomPanel === showBottomPanel && lastWorkbenchLayout.sidebarWidthOverride === sidebarWidthOverride && lastWorkbenchLayout.showSidebar === showSidebar && lastWorkbenchLayout.showBufferline === showBufferline) {
     return lastWorkbenchLayout.value;
   }
   const safeWidth = Math.max(0, Math.trunc(width));
@@ -221,10 +277,10 @@ export function calculateWorkbenchLayout(width: number, height: number, showBott
   const statusRow = Math.max(0, safeHeight - 1);
   const bottomHeight = !compact && showBottomPanel && safeHeight >= 16 ? Math.min(10, Math.max(3, Math.floor(safeHeight * 0.25))) : 0;
   const bottomTop = Math.max(0, statusRow - bottomHeight);
-  const editorTop = compact ? 0 : 1;
+  const editorTop = compact || !showBufferline ? 0 : 1;
   const editorHeight = Math.max(1, bottomTop - editorTop);
   const value = Object.freeze({ compact, sidebarVisible, sidebarWidth, editorX, editorWidth, editorTop, editorHeight, bottomTop, bottomHeight, statusRow });
-  lastWorkbenchLayout = { width, height, showBottomPanel, sidebarWidthOverride, showSidebar, value };
+  lastWorkbenchLayout = { width, height, showBottomPanel, sidebarWidthOverride, showSidebar, showBufferline, value };
   return value;
 }
 
@@ -303,15 +359,41 @@ export class WorkbenchRenderable extends Renderable {
   readonly #comparisonEditor = new ComparisonEditor();
   #comparisonPaint: ComparisonPaint | undefined;
   readonly #workbench: WorkbenchReadPort;
+  readonly #scrolloff: number;
+  readonly #lineNumber: 'absolute' | 'relative';
+  readonly #lineNumberMinWidth: number;
+  readonly #gutters: readonly GutterType[];
+  readonly #indentGuides: { readonly render: boolean; readonly character: string; readonly skipLevels: number };
+  readonly #whitespace: NonNullable<WorkbenchRenderableOptions['whitespace']>;
+  readonly #wrap: boolean;
+  readonly #wrapWidth: number | undefined;
+  readonly #maxWrap: number;
+  readonly #maxIndentRetain: number;
+  readonly #wrapIndicator: string;
+  readonly #inlineDiagnosticsCursorLine: InlineDiagnosticsFilter;
+  readonly #inlineDiagnosticsOtherLines: InlineDiagnosticsFilter;
+  readonly #inlineDiagnosticsPrefixLen: number;
+  readonly #inlineDiagnosticsMaxWrap: number;
+  readonly #inlineDiagnosticsMinDiagnosticWidth: number;
+  readonly #endOfLineDiagnostics: InlineDiagnosticsFilter;
+  readonly #inlineDiagnosticsMaxDiagnostics: number;
+  readonly #cursorShape: { readonly normal: 'block' | 'bar' | 'underline' | 'hidden'; readonly insert: 'block' | 'bar' | 'underline' | 'hidden'; readonly select: 'block' | 'bar' | 'underline' | 'hidden' };
+  readonly #cursorLine: boolean | undefined;
+  readonly #cursorColumn: boolean | undefined;
+  readonly #undercurl: boolean;
+  readonly #rulers: readonly number[] | undefined;
   #theme: WorkbenchTheme;
   readonly #ascii: boolean;
   readonly #showBottomPanel: boolean;
   readonly #presentation: EditorPresentationReadPort | undefined;
+  readonly #virtualAnnotations: ((documentId: string, documentVersion: number) => readonly VirtualAnnotation[]) | undefined;
   readonly #sidebar: (() => SidebarReadModel) | undefined;
   readonly #tabs: ((viewId?: string) => readonly WorkbenchTabSnapshot[]) | undefined;
+  readonly #bufferline: 'always' | 'never' | 'multiple';
   #sidebarSplitterCapture = false;
   readonly #syntax: SyntaxReadPort | undefined;
   readonly #editorDiagnostics: WorkbenchRenderableOptions['editorDiagnostics'];
+  readonly #editorCodeActionHints: WorkbenchRenderableOptions['editorCodeActionHints'];
   readonly #motionTrail: MotionTrailMode;
   readonly #reducedMotion: boolean;
   readonly #colorMode: EditorColorMode;
@@ -343,7 +425,7 @@ export class WorkbenchRenderable extends Renderable {
   #motionPaintTokens: ReturnType<typeof resolveMotionPaintTokens>;
   /** `layout` only depends on size and `#showBottomPanel` (constant); avoid recomputing it
    * from every `renderSelf`/pointer-hit-test access at up to 30x/s while idle. */
-  #cachedLayout: { readonly width: number; readonly height: number; readonly sidebarWidth: number | undefined; readonly showSidebar: boolean; readonly value: WorkbenchLayout } | undefined;
+  #cachedLayout: { readonly width: number; readonly height: number; readonly sidebarWidth: number | undefined; readonly showSidebar: boolean; readonly showBufferline: boolean; readonly value: WorkbenchLayout } | undefined;
   #splitterCapture: string | undefined;
   #tabPress: { readonly control: NonNullable<WorkbenchPointerEvent['control']>; readonly x: number; readonly y: number; dragging: boolean } | undefined;
   #background: RGBA;
@@ -377,15 +459,41 @@ export class WorkbenchRenderable extends Renderable {
     };
     super(ctx, renderOptions);
     this.#workbench = options.workbench;
+    this.#scrolloff = options.scrolloff ?? 0;
+    this.#lineNumber = options.lineNumber ?? 'absolute';
+    this.#lineNumberMinWidth = options.lineNumberMinWidth ?? 3;
+    this.#gutters = options.gutters ?? DEFAULT_GUTTER_LAYOUT;
+    this.#indentGuides = options.indentGuides ?? { render: false, character: '│', skipLevels: 0 };
+    this.#whitespace = options.whitespace ?? { render: { default: false, space: false, nbsp: false, nnbsp: false, tab: false, newline: false }, characters: { space: '·', nbsp: '⍽', nnbsp: '␣', tab: '→', tabpad: ' ', newline: '⏎' } };
+    this.#wrap = options.wrap ?? false;
+    this.#wrapWidth = options.wrapWidth;
+    this.#maxWrap = options.maxWrap ?? 20;
+    this.#maxIndentRetain = options.maxIndentRetain ?? 40;
+    this.#wrapIndicator = options.wrapIndicator ?? '';
+    this.#inlineDiagnosticsCursorLine = options.inlineDiagnosticsCursorLine ?? 'warning';
+    this.#inlineDiagnosticsOtherLines = options.inlineDiagnosticsOtherLines ?? 'disable';
+    this.#inlineDiagnosticsPrefixLen = options.inlineDiagnosticsPrefixLen ?? 1;
+    this.#inlineDiagnosticsMaxWrap = options.inlineDiagnosticsMaxWrap ?? 20;
+    this.#inlineDiagnosticsMinDiagnosticWidth = options.inlineDiagnosticsMinDiagnosticWidth ?? 40;
+    this.#endOfLineDiagnostics = options.endOfLineDiagnostics ?? 'hint';
+    this.#inlineDiagnosticsMaxDiagnostics = options.inlineDiagnosticsMaxDiagnostics ?? 10;
+    this.#cursorShape = options.cursorShape ?? { normal: 'block', insert: 'block', select: 'block' };
+    this.#cursorLine = options.cursorLine;
+    this.#cursorColumn = options.cursorColumn;
+    this.#undercurl = options.undercurl ?? false;
+    this.#rulers = options.rulers;
     this.#comparison = options.comparison;
     this.#ascii = options.ascii ?? false;
     this.#theme = options.theme ?? (this.#ascii ? ASCII_WORKBENCH_THEME : LIGHT_WORKBENCH_THEME);
     this.#showBottomPanel = options.showBottomPanel ?? false;
     this.#presentation = options.presentation;
+    this.#virtualAnnotations = options.virtualAnnotations;
     this.#sidebar = options.sidebar;
     this.#tabs = options.tabs;
+    this.#bufferline = options.bufferline ?? 'always';
     this.#syntax = options.syntax;
     this.#editorDiagnostics = options.editorDiagnostics;
+    this.#editorCodeActionHints = options.editorCodeActionHints;
     this.#motionTrail = options.motionTrail ?? 'off';
     this.#reducedMotion = options.reducedMotion ?? true;
     this.#colorMode = options.colorMode ?? 'truecolor';
@@ -393,12 +501,12 @@ export class WorkbenchRenderable extends Renderable {
     this.#onPointerCancel = options.onPointerCancel;
     this.#onViewportAnchorChange = options.onViewportAnchorChange;
     this.#onViewportSizeChange = options.onViewportSizeChange;
-    this.#background = parseColor(themeColor(this.#theme.background, 'bg'));
-    this.#surface = parseColor(themeColor(this.#theme.surface, 'bg'));
-    this.#foreground = parseColor(themeColor(this.#theme.foreground));
-    this.#muted = parseColor(themeColor(this.#theme.muted));
-    this.#border = parseColor(themeColor(this.#theme.border));
-    this.#accent = parseColor(themeColor(this.#theme.accent));
+    this.#background = resolvePaintColor(this.#theme.background, this.#colorMode);
+    this.#surface = resolvePaintColor(this.#theme.surface, this.#colorMode);
+    this.#foreground = resolvePaintColor(this.#theme.foreground, this.#colorMode);
+    this.#muted = resolvePaintColor(this.#theme.muted, this.#colorMode);
+    this.#border = resolvePaintColor(this.#theme.border, this.#colorMode);
+    this.#accent = resolvePaintColor(this.#theme.accent, this.#colorMode);
     this.#motionPaintTokens = resolveMotionPaintTokens(this.#theme);
     this.onMouse = (event: MouseEvent): void => {
       if (this.#onPointer === undefined || event.target !== this) return;
@@ -428,7 +536,7 @@ export class WorkbenchRenderable extends Renderable {
       const pane = this.paneAt(event.x, event.y);
       let frameColumn = pane === undefined ? event.x - geometry.editorX : event.x - pane.x;
       const activeViewForGutter = this.#workbench.readView((pane?.viewId ?? this.#workbench.activeViewId) as import('../../contracts/src/index').ViewId);
-      const gutter = gutterWidthFor(activeViewForGutter?.document.lineCount ?? 0);
+      const gutter = gutterWidthFor(activeViewForGutter?.document.lineCount ?? 0, this.#lineNumberMinWidth, this.#gutters);
       let column = frameColumn - gutter;
       let row = pane === undefined ? event.y - geometry.editorTop : event.y - pane.y;
       const insideEditor = pane === undefined
@@ -527,18 +635,27 @@ export class WorkbenchRenderable extends Renderable {
     const sidebarWidth = sidebar?.width;
     const showSidebar = sidebar?.visible !== false;
     const cached = this.#cachedLayout;
-    if (cached !== undefined && cached.width === this.width && cached.height === this.height && cached.sidebarWidth === sidebarWidth && cached.showSidebar === showSidebar) return cached.value;
-    const value = calculateWorkbenchLayout(this.width, this.height, this.#showBottomPanel, sidebarWidth, showSidebar);
-    this.#cachedLayout = { width: this.width, height: this.height, sidebarWidth, showSidebar, value };
+    const showBufferline = this.bufferlineVisible();
+    if (cached !== undefined && cached.width === this.width && cached.height === this.height && cached.sidebarWidth === sidebarWidth && cached.showSidebar === showSidebar && cached.showBufferline === showBufferline) return cached.value;
+    const value = calculateWorkbenchLayout(this.width, this.height, this.#showBottomPanel, sidebarWidth, showSidebar, showBufferline);
+    this.#cachedLayout = { width: this.width, height: this.height, sidebarWidth, showSidebar, showBufferline, value };
     return value;
   }
   get tabStrips() { return this.getTabStrips(this.width, this.height); }
   getTabStrips(width: number, height: number): readonly { readonly viewId: string; readonly x: number; readonly y: number; readonly width: number }[] {
     const sidebar = this.#sidebar?.();
-    const geometry = calculateWorkbenchLayout(width, height, this.#showBottomPanel, sidebar?.width, sidebar?.visible !== false);
+    const showBufferline = this.bufferlineVisible();
+    if (!showBufferline) return Object.freeze([]);
+    const geometry = calculateWorkbenchLayout(width, height, this.#showBottomPanel, sidebar?.width, sidebar?.visible !== false, showBufferline);
     const layoutRead = this.#workbench.readLayout?.();
     if (layoutRead?.split.root?.kind === 'split') return this.#collectPanes(geometry, layoutRead).panes.map(pane => ({ viewId: pane.viewId, x: pane.x, y: pane.y - 1, width: pane.width }));
     return [{ viewId: String(this.#workbench.activeViewId ?? ''), x: geometry.editorX, y: 0, width: geometry.editorWidth }];
+  }
+  private bufferlineVisible(): boolean {
+    if (this.#bufferline === 'always') return true;
+    if (this.#bufferline === 'never') return false;
+    const viewId = this.#workbench.activeViewId;
+    return this.#tabs?.(viewId === undefined ? undefined : String(viewId)).length !== 1;
   }
   get lastFrame(): WorkbenchFrameRead | undefined { return this.#lastFrame; }
   get cursorCell(): { readonly x: number; readonly y: number } | undefined { return this.#cursorCell; }
@@ -551,12 +668,12 @@ export class WorkbenchRenderable extends Renderable {
    * only; this reassigns those same cached fields and requests one fresh frame. */
   setTheme(theme: WorkbenchTheme): void {
     this.#theme = theme;
-    this.#background = parseColor(themeColor(theme.background, 'bg'));
-    this.#surface = parseColor(themeColor(theme.surface, 'bg'));
-    this.#foreground = parseColor(themeColor(theme.foreground));
-    this.#muted = parseColor(themeColor(theme.muted));
-    this.#border = parseColor(themeColor(theme.border));
-    this.#accent = parseColor(themeColor(theme.accent));
+    this.#background = resolvePaintColor(theme.background, this.#colorMode);
+    this.#surface = resolvePaintColor(theme.surface, this.#colorMode);
+    this.#foreground = resolvePaintColor(theme.foreground, this.#colorMode);
+    this.#muted = resolvePaintColor(theme.muted, this.#colorMode);
+    this.#border = resolvePaintColor(theme.border, this.#colorMode);
+    this.#accent = resolvePaintColor(theme.accent, this.#colorMode);
     this.#motionPaintTokens = resolveMotionPaintTokens(theme);
     this.#lastViewportSize = undefined;
     // The composition requests the frame after updating all themed surfaces.
@@ -636,9 +753,10 @@ export class WorkbenchRenderable extends Renderable {
     viewId: string, view: WorkbenchViewSnapshot, widthCells: number, heightCells: number,
   ): { readonly anchor: ViewportAnchor; readonly scrollLeft: number } | undefined {
     const diagnostics = this.#editorDiagnostics?.(view.document.id) ?? [];
-    const lines = inlineDiagnosticLines(view.document, diagnostics, view.scrollTop, widthCells + gutterWidthFor(view.document.lineCount), heightCells, gutterWidthFor(view.document.lineCount), view.scrollLeft);
     const head = view.selections.members.find(member => member.id === view.selections.primaryId)?.head;
     const cursorLine = head === undefined ? undefined : view.document.lineIndexAt(head.at.offset);
+    const gutter = gutterWidthFor(view.document.lineCount, this.#lineNumberMinWidth, this.#gutters);
+    const lines = inlineDiagnosticLines(view.document, diagnostics, view.scrollTop, widthCells + gutter, heightCells, gutter, view.scrollLeft, this.#inlineDiagnosticsMaxDiagnostics, cursorLine?.ok === true ? Number(cursorLine.value) : -1, this.#inlineDiagnosticsCursorLine, this.#inlineDiagnosticsOtherLines, this.#inlineDiagnosticsPrefixLen, this.#inlineDiagnosticsMaxWrap, this.#inlineDiagnosticsMinDiagnosticWidth);
     if (cursorLine?.ok) heightCells = Math.max(1, heightCells - lines.filter(line => Number(line.beforeLine) <= Number(cursorLine.value)).length);
     const previousTop = view.scrollTop;
     const previousLeft = view.scrollLeft;
@@ -649,7 +767,11 @@ export class WorkbenchRenderable extends Renderable {
     const memo = this.#anchorMemo.get(viewId);
     if (memo !== undefined && memo.document === view.document && memo.selections === view.selections && memo.top === previousTop
       && memo.left === previousLeft && memo.width === widthCells && memo.height === heightCells) return memo.result;
-    const resolved = resolveScrollAnchor(view.document, view.selections, previousTop, heightCells, widthCells, previousLeft);
+    const resolved = resolveScrollAnchor(view.document, view.selections, previousTop, heightCells, widthCells, previousLeft, {
+      scrolloff: this.#scrolloff,
+      wrap: this.#wrap,
+      ...(this.#wrapWidth === undefined ? {} : { wrapWidth: this.#wrapWidth }),
+    });
     if (!resolved.ok) return undefined;
     this.#anchorMemo.set(viewId, { document: view.document, selections: view.selections, top: previousTop, left: previousLeft, width: widthCells, height: heightCells,
       result: { anchor: resolved.value.anchor, scrollLeft: resolved.value.scrollLeft } });
@@ -693,7 +815,7 @@ export class WorkbenchRenderable extends Renderable {
         const view = this.#workbench.readView(pane.viewId as import('../../contracts/src/index').ViewId);
         if (view === undefined) continue;
         liveViewIds.add(pane.viewId);
-        const anchor = this.#resolveAndReportAnchor(pane.viewId, view, pane.width - gutterWidthFor(view.document.lineCount), pane.height);
+        const anchor = this.#resolveAndReportAnchor(pane.viewId, view, pane.width - gutterWidthFor(view.document.lineCount, this.#lineNumberMinWidth, this.#gutters), pane.height);
         if (anchor !== undefined) this.#resolvedAnchors.set(pane.viewId, anchor);
       }
       for (const viewId of this.#resolvedAnchors.keys()) {
@@ -705,7 +827,7 @@ export class WorkbenchRenderable extends Renderable {
     const activeViewId = this.#workbench.activeViewId;
     const view = activeViewId === undefined ? undefined : this.#workbench.readView(activeViewId);
     if (activeViewId === undefined || view === undefined) return;
-    const anchor = this.#resolveAndReportAnchor(String(activeViewId), view, geometry.editorWidth - gutterWidthFor(view.document.lineCount), geometry.editorHeight);
+    const anchor = this.#resolveAndReportAnchor(String(activeViewId), view, geometry.editorWidth - gutterWidthFor(view.document.lineCount, this.#lineNumberMinWidth, this.#gutters), geometry.editorHeight);
     if (anchor !== undefined) this.#resolvedAnchors.set(String(activeViewId), anchor);
   }
 
@@ -722,6 +844,17 @@ export class WorkbenchRenderable extends Renderable {
       height: geometry.editorHeight + 1,
     }, panes, splitters, layoutRead.split.minimumPaneSize, String(this.#workbench.activeViewId ?? ''));
     return { panes: panes.map(pane => ({ ...pane, y: pane.y + 1, height: Math.max(1, pane.height - 1) })), splitters };
+  }
+
+  private relativeLineNumberCursor(view: WorkbenchViewSnapshot): number | undefined {
+    if (this.#lineNumber !== 'relative') return undefined;
+    return this.cursorLine(view);
+  }
+
+  private cursorLine(view: WorkbenchViewSnapshot): number | undefined {
+    const head = view.selections.members.find(member => member.id === view.selections.primaryId)?.head;
+    const cursorLine = head === undefined ? undefined : view.document.lineIndexAt(head.at.offset);
+    return cursorLine?.ok === true ? Number(cursorLine.value) : undefined;
   }
 
   protected override renderSelf(buffer: OptimizedBuffer): void {
@@ -755,7 +888,15 @@ export class WorkbenchRenderable extends Renderable {
       return;
     }
     this.#comparisonPaint = undefined;
-    const diagnosticLines = view === undefined ? [] : inlineDiagnosticLines(view.document, this.#editorDiagnostics?.(view.document.id) ?? [], Number(anchor?.anchor.lineIndex ?? view.scrollTop), geometry.editorWidth, geometry.editorHeight, gutterWidthFor(view.document.lineCount), anchor?.scrollLeft ?? 0);
+    const relativeLineNumberCursor = view === undefined ? undefined : this.relativeLineNumberCursor(view);
+    const cursorLine = view === undefined ? undefined : this.cursorLine(view);
+    const diagnostics = view === undefined ? [] : this.#editorDiagnostics?.(view.document.id) ?? [];
+    const diagnosticTop = Number(anchor?.anchor.lineIndex ?? view?.scrollTop ?? 0);
+    const diagnosticGutter = view === undefined ? 0 : gutterWidthFor(view.document.lineCount, this.#lineNumberMinWidth, this.#gutters);
+    const diagnosticOffset = gutterOffsetFor(this.#gutters, lineNumberWidthFor(view?.document.lineCount ?? 0, this.#lineNumberMinWidth), 'diagnostics');
+    const diagnosticWidth = geometry.editorWidth;
+    const diagnosticLines = view === undefined ? [] : inlineDiagnosticLines(view.document, diagnostics, diagnosticTop, diagnosticWidth, geometry.editorHeight, diagnosticGutter, anchor?.scrollLeft ?? 0, this.#inlineDiagnosticsMaxDiagnostics, cursorLine ?? -1, this.#inlineDiagnosticsCursorLine, this.#inlineDiagnosticsOtherLines, this.#inlineDiagnosticsPrefixLen, this.#inlineDiagnosticsMaxWrap, this.#inlineDiagnosticsMinDiagnosticWidth);
+    const endOfLineLines = view === undefined ? [] : endOfLineDiagnosticLines(view.document, diagnostics, diagnosticTop, geometry.editorHeight, diagnosticWidth, this.#inlineDiagnosticsMaxDiagnostics, cursorLine ?? -1, this.#inlineDiagnosticsCursorLine, this.#inlineDiagnosticsOtherLines, this.#endOfLineDiagnostics, this.#inlineDiagnosticsPrefixLen, this.#inlineDiagnosticsMinDiagnosticWidth);
     const projected = activeViewId === undefined || view === undefined || geometry.compact
       ? undefined
       : this.#layout.project({
@@ -764,7 +905,21 @@ export class WorkbenchRenderable extends Renderable {
         selection: view.selections,
         widthCells: geometry.editorWidth,
         heightCells: geometry.editorHeight,
-        options: { wrap: false, gutterWidthCells: gutterWidthFor(view.document.lineCount), horizontalScrollCells: anchor?.scrollLeft ?? 0, diffFillerRows: diagnosticLines },
+        options: {
+          wrap: this.#wrap,
+          ...(this.#wrapWidth === undefined ? {} : { wrapWidth: this.#wrapWidth }),
+          maxWrap: this.#maxWrap,
+          maxIndentRetain: this.#maxIndentRetain,
+          wrapIndicator: this.#wrapIndicator,
+          gutterWidthCells: diagnosticGutter,
+          gutterLayout: this.#gutters,
+          gutterLineNumberWidth: lineNumberWidthFor(view.document.lineCount, this.#lineNumberMinWidth),
+          lineNumberMode: this.#lineNumber,
+          ...(relativeLineNumberCursor === undefined ? {} : { relativeLineNumberCursor }),
+          horizontalScrollCells: anchor?.scrollLeft ?? 0,
+          virtualAnnotations: this.#virtualAnnotations?.(String(view.document.id), Number(view.document.version)) ?? [],
+          diffFillerRows: diagnosticLines,
+        },
         ...(anchor === undefined ? {} : { anchor: anchor.anchor }),
       });
     const frame = projected?.ok === true ? projected.value : undefined;
@@ -803,7 +958,12 @@ export class WorkbenchRenderable extends Renderable {
           motionTrail: this.#motionTrail,
           reducedMotion: this.#reducedMotion,
           colorMode: this.#colorMode,
+          undercurl: this.#undercurl,
           mode: view.session.mode,
+          cursorShape: cursorShapeFor(view.session.mode, frame, this.#cursorShape),
+          ...(this.#cursorLine === undefined ? {} : { cursorLine: this.#cursorLine }),
+          ...(this.#cursorColumn === undefined ? {} : { cursorColumn: this.#cursorColumn }),
+          ...(this.#rulers === undefined ? {} : { rulers: this.#rulers }),
           theme: this.#motionPaintTokens,
           ...(syntaxRead === undefined ? {} : { syntax: syntaxRead }),
           ...(this.#theme.syntax === undefined ? {} : { syntaxColors: this.#theme.syntax }),
@@ -813,22 +973,30 @@ export class WorkbenchRenderable extends Renderable {
         });
       }
       this.#lastPaintStats = paintStats ?? this.#lastPaintStats;
-      this.paintDiagnostics(buffer, frame, diagnosticLines, geometry.editorX, geometry.editorTop);
+      this.paintIndentGuides(buffer, frame, geometry.editorX, geometry.editorTop);
+      this.paintDiagnostics(buffer, frame, diagnosticLines, endOfLineLines, geometry.editorX, geometry.editorTop, diagnosticOffset);
+      this.paintCodeActionHints(buffer, frame, view, geometry.editorX, geometry.editorTop);
+      this.paintWhitespace(buffer, frame, geometry.editorX, geometry.editorTop, view.document.lineCount);
       this.#lastCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead, this.#lastCurrentSyntax) ?? this.#lastCurrentSyntax;
       const primary = frame.selections.find((selection) => selection.primary);
       const point = primary?.head.position;
       if (point !== null && point !== undefined) {
-        // The cursor is software-painted onto the cell (see motion-paint.ts), so the
-        // terminal's own hardware cursor must stay hidden or the two would overlay.
+        const configuredShape = cursorShapeFor(view.session.mode, frame, this.#cursorShape);
+        const nativeShape = configuredShape !== 'block'
+          ? configuredShape === 'bar' ? 'line' : 'underline'
+          : 'block';
+        this.ctx.setCursorStyle({ style: nativeShape, blinking: false });
         this.#cursorCell = { x: geometry.editorX + point.column, y: geometry.editorTop + point.row };
-        this.ctx.setCursorPosition(geometry.editorX + point.column + 1, geometry.editorTop + point.row + 1, false);
+        this.ctx.setCursorPosition(geometry.editorX + point.column + 1, geometry.editorTop + point.row + 1, configuredShape !== 'block' && configuredShape !== 'hidden');
       } else {
         this.#cursorCell = undefined;
+        this.ctx.setCursorStyle({ style: 'block', blinking: false });
         this.ctx.setCursorPosition(0, 0, false);
       }
     } else {
       this.#lastPaintStats = undefined;
       drawText(buffer, 'No editable buffer', geometry.editorX + 1, geometry.editorTop, this.#muted, this.#background, geometry.editorWidth - 2);
+      this.ctx.setCursorStyle({ style: 'block', blinking: false });
       this.ctx.setCursorPosition(0, 0, false);
     }
     this.#lastPresentation = presentation;
@@ -863,14 +1031,35 @@ export class WorkbenchRenderable extends Renderable {
       }
       // Read-only: resolved (and reported) by `syncAnchors()` before this render.
       const paneAnchor = this.#resolvedAnchors.get(pane.viewId);
-      const diagnosticLines = inlineDiagnosticLines(view.document, this.#editorDiagnostics?.(view.document.id) ?? [], Number(paneAnchor?.anchor.lineIndex ?? view.scrollTop), pane.width, pane.height, gutterWidthFor(view.document.lineCount), paneAnchor?.scrollLeft ?? 0);
+      const relativeLineNumberCursor = this.relativeLineNumberCursor(view);
+      const cursorLine = this.cursorLine(view);
+      const diagnostics = this.#editorDiagnostics?.(view.document.id) ?? [];
+      const diagnosticTop = Number(paneAnchor?.anchor.lineIndex ?? view.scrollTop);
+      const diagnosticGutter = gutterWidthFor(view.document.lineCount, this.#lineNumberMinWidth, this.#gutters);
+      const diagnosticOffset = gutterOffsetFor(this.#gutters, lineNumberWidthFor(view.document.lineCount, this.#lineNumberMinWidth), 'diagnostics');
+      const diagnosticLines = inlineDiagnosticLines(view.document, diagnostics, diagnosticTop, pane.width, pane.height, diagnosticGutter, paneAnchor?.scrollLeft ?? 0, this.#inlineDiagnosticsMaxDiagnostics, cursorLine ?? -1, this.#inlineDiagnosticsCursorLine, this.#inlineDiagnosticsOtherLines, this.#inlineDiagnosticsPrefixLen, this.#inlineDiagnosticsMaxWrap, this.#inlineDiagnosticsMinDiagnosticWidth);
+      const endOfLineLines = endOfLineDiagnosticLines(view.document, diagnostics, diagnosticTop, pane.height, pane.width, this.#inlineDiagnosticsMaxDiagnostics, cursorLine ?? -1, this.#inlineDiagnosticsCursorLine, this.#inlineDiagnosticsOtherLines, this.#endOfLineDiagnostics, this.#inlineDiagnosticsPrefixLen, this.#inlineDiagnosticsMinDiagnosticWidth);
       const projected = paneLayout.project({
         viewId: pane.viewId as import('../../contracts/src/index').ViewId,
         snapshot: view.document,
         selection: view.selections,
         widthCells: pane.width,
         heightCells: pane.height,
-        options: { wrap: false, gutterWidthCells: gutterWidthFor(view.document.lineCount), horizontalScrollCells: paneAnchor?.scrollLeft ?? 0, diffFillerRows: diagnosticLines },
+        options: {
+          wrap: this.#wrap,
+          ...(this.#wrapWidth === undefined ? {} : { wrapWidth: this.#wrapWidth }),
+          maxWrap: this.#maxWrap,
+          maxIndentRetain: this.#maxIndentRetain,
+          wrapIndicator: this.#wrapIndicator,
+          gutterWidthCells: diagnosticGutter,
+          gutterLayout: this.#gutters,
+          gutterLineNumberWidth: lineNumberWidthFor(view.document.lineCount, this.#lineNumberMinWidth),
+          lineNumberMode: this.#lineNumber,
+          ...(relativeLineNumberCursor === undefined ? {} : { relativeLineNumberCursor }),
+          horizontalScrollCells: paneAnchor?.scrollLeft ?? 0,
+          virtualAnnotations: this.#virtualAnnotations?.(String(view.document.id), Number(view.document.version)) ?? [],
+          diffFillerRows: diagnosticLines,
+        },
         ...(paneAnchor === undefined ? {} : { anchor: paneAnchor.anchor }),
       });
       if (!projected.ok) {
@@ -898,7 +1087,12 @@ export class WorkbenchRenderable extends Renderable {
           motionTrail: this.#motionTrail,
           reducedMotion: this.#reducedMotion,
           colorMode: this.#colorMode,
+          undercurl: this.#undercurl,
           mode: view.session.mode,
+          cursorShape: cursorShapeFor(view.session.mode, frame, this.#cursorShape),
+          ...(this.#cursorLine === undefined ? {} : { cursorLine: this.#cursorLine }),
+          ...(this.#cursorColumn === undefined ? {} : { cursorColumn: this.#cursorColumn }),
+          ...(this.#rulers === undefined ? {} : { rulers: this.#rulers }),
           theme: this.#motionPaintTokens,
           ...(syntaxRead === undefined ? {} : { syntax: syntaxRead }),
           ...(this.#theme.syntax === undefined ? {} : { syntaxColors: this.#theme.syntax }),
@@ -908,7 +1102,10 @@ export class WorkbenchRenderable extends Renderable {
         });
       }
       this.#paneLastFrames.set(pane.viewId, Object.freeze({ layout: geometry, frame, view }));
-      this.paintDiagnostics(buffer, frame, diagnosticLines, pane.x, pane.y);
+      this.paintIndentGuides(buffer, frame, pane.x, pane.y);
+      this.paintDiagnostics(buffer, frame, diagnosticLines, endOfLineLines, pane.x, pane.y, diagnosticOffset);
+      this.paintCodeActionHints(buffer, frame, view, pane.x, pane.y);
+      this.paintWhitespace(buffer, frame, pane.x, pane.y, view.document.lineCount);
       this.#paneLastPresentations.set(pane.viewId, presentation);
       this.#paneLastSyntaxReads.set(pane.viewId, syntaxRead);
       const paneCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead, previousPaneCurrentSyntax);
@@ -921,7 +1118,14 @@ export class WorkbenchRenderable extends Renderable {
         const primary = frame.selections.find((selection) => selection.primary);
         const point = primary?.head.position;
         this.#cursorCell = point === null || point === undefined ? undefined : { x: pane.x + point.column, y: pane.y + point.row };
-        if (point !== null && point !== undefined) this.ctx.setCursorPosition(pane.x + point.column + 1, pane.y + point.row + 1, false);
+        if (point !== null && point !== undefined) {
+          const configuredShape = cursorShapeFor(view.session.mode, frame, this.#cursorShape);
+          const nativeShape = configuredShape !== 'block'
+            ? configuredShape === 'bar' ? 'line' : 'underline'
+            : 'block';
+          this.ctx.setCursorStyle({ style: nativeShape, blinking: false });
+          this.ctx.setCursorPosition(pane.x + point.column + 1, pane.y + point.row + 1, configuredShape !== 'block' && configuredShape !== 'hidden');
+        }
       }
     }
     for (const splitter of splitters) {
@@ -932,24 +1136,97 @@ export class WorkbenchRenderable extends Renderable {
     this.#lastPaintStats = activePaint ?? (fullRepaint ? undefined : this.#lastPaintStats);
   }
 
-  private paintDiagnostics(buffer: OptimizedBuffer, frame: VisibleFrame, lines: readonly DiagnosticLine[], x: number, y: number): void {
+  private paintIndentGuides(buffer: OptimizedBuffer, frame: VisibleFrame, x: number, y: number): void {
+    if (!this.#indentGuides.render) return;
+    for (let rowIndex = 0; rowIndex < frame.rows.length; rowIndex += 1) {
+      const row = frame.rows[rowIndex]!;
+      if (row.kind !== 'text' || row.lineIndex === null || row.wrapIndex !== 0) continue;
+      const maxLevel = Math.floor((row.displayEndCell - row.displayStartCell) / 4);
+      for (let level = this.#indentGuides.skipLevels + 1; level <= maxLevel; level += 1) {
+        const displayColumn = level * 4 - 1;
+        const cellIndex = row.cells.findIndex(cell => cell.target?.kind === 'text' && cell.target.displayCellColumn === displayColumn && (cell.role === 'glyph' || cell.role === 'tab-fill') && cell.text === ' ');
+        if (cellIndex >= 0) buffer.drawText(this.#indentGuides.character, x + cellIndex, y + rowIndex, this.#muted, this.#background);
+      }
+    }
+  }
+
+  private paintWhitespace(buffer: OptimizedBuffer, frame: VisibleFrame, x: number, y: number, lineCount: number): void {
+    const render = this.#whitespace.render;
+    const characters = this.#whitespace.characters;
+    for (let rowIndex = 0; rowIndex < frame.rows.length; rowIndex += 1) {
+      const row = frame.rows[rowIndex]!;
+      if (row.kind !== 'text' || row.lineIndex === null) continue;
+      for (let cellIndex = 0; cellIndex < row.cells.length; cellIndex += 1) {
+        const cell = row.cells[cellIndex]!;
+        if (cell.target?.kind !== 'text') continue;
+        const replacement = cell.role === 'tab-fill'
+          ? (render.tab ? (cell.target.virtualCell === 0 ? characters.tab : characters.tabpad) : undefined)
+          : cell.role === 'glyph' && cell.text === ' ' && render.space ? characters.space
+          : cell.role === 'glyph' && cell.text === '\u00a0' && render.nbsp ? characters.nbsp
+          : cell.role === 'glyph' && cell.text === '\u202f' && render.nnbsp ? characters.nnbsp
+          : undefined;
+        if (replacement !== undefined) buffer.drawText(replacement, x + cellIndex, y + rowIndex, this.#muted, this.#background);
+      }
+      const next = frame.rows[rowIndex + 1];
+      const lastWrappedRow = next?.lineIndex !== row.lineIndex;
+      if (render.newline && lastWrappedRow && Number(row.lineIndex) < lineCount - 1) {
+        const paddingIndex = row.cells.findIndex(cell => cell.role === 'padding');
+        if (paddingIndex >= 0) buffer.drawText(characters.newline, x + paddingIndex, y + rowIndex, this.#muted, this.#background);
+      }
+    }
+  }
+
+  private paintDiagnostics(buffer: OptimizedBuffer, frame: VisibleFrame, lines: readonly DiagnosticLine[], endOfLineLines: readonly EndOfLineDiagnostic[], x: number, y: number, diagnosticOffset: number): void {
     let diagnosticIndex = 0;
+    const lastRows = new Map<number, number>();
+    for (let row = 0; row < frame.rows.length; row++) {
+      const screen = frame.rows[row]!;
+      if (screen.kind === 'text' && screen.lineIndex !== null) lastRows.set(Number(screen.lineIndex), row);
+    }
+    const endOfLineByLine = new Map(endOfLineLines.map(line => [line.problem.range.startLine, line] as const));
+    for (const [lineIndex, row] of lastRows) {
+      const screen = frame.rows[row]!;
+      let lastContent = -1;
+      for (let column = 0; column < screen.cells.length; column += 1) {
+        const role = screen.cells[column]?.role;
+        if (role !== 'padding' && role !== 'gutter' && role !== 'filler') lastContent = column;
+      }
+      const start = Math.max(0, lastContent + 1);
+      if (start < frame.widthCells) buffer.fillRect(x + start, y + row, frame.widthCells - start, 1, this.#background);
+      const line = endOfLineByLine.get(lineIndex);
+      if (line !== undefined && start < frame.widthCells) {
+        const color = resolvePaintColor(diagnosticColor(this.#theme, line.problem.severity), this.#colorMode);
+        buffer.drawText(line.text, x + start, y + row, color, this.#background);
+      }
+    }
     for (let row = 0; row < frame.rows.length; row++) {
       const screen = frame.rows[row]!;
       if (screen.kind === 'diff-filler') {
         const target = screen.cells[0]?.target;
         const line = target?.kind === 'diff-filler' ? lines[target.ordinal] : undefined;
         if (line === undefined) continue;
-        const color = parseColor(themeColor(diagnosticColor(this.#theme, line.problem.severity), 'fg'));
+        const color = resolvePaintColor(diagnosticColor(this.#theme, line.problem.severity), this.#colorMode);
         buffer.fillRect(x, y + row, frame.widthCells, 1, this.#background);
         buffer.drawText(this.#ascii ? line.text.replace(/[└├]─/u, '+-').replace('│', '|') : line.text, x + line.column, y + row, color, this.#background);
       } else if (screen.lineIndex !== null) {
-        if (this.#editorDiagnostics !== undefined) buffer.drawText(screen.cells[0]?.text ?? ' ', x, y + row, this.#muted, this.#background);
+        if (this.#editorDiagnostics !== undefined && this.#gutters.includes('diagnostics')) buffer.drawText(screen.cells[0]?.text ?? ' ', x + diagnosticOffset, y + row, this.#muted, this.#background);
         while (diagnosticIndex < lines.length && lines[diagnosticIndex]!.problem.range.startLine < Number(screen.lineIndex)) diagnosticIndex++;
         const candidate = lines[diagnosticIndex];
         const line = candidate?.problem.range.startLine === Number(screen.lineIndex) ? candidate : undefined;
-        if (line !== undefined) buffer.drawText(line.problem.severity === 1 ? 'E' : line.problem.severity === 2 ? 'W' : line.problem.severity === 3 ? 'I' : 'H', x, y + row, parseColor(themeColor(diagnosticColor(this.#theme, line.problem.severity), 'fg')), this.#background);
+        if (line !== undefined && this.#gutters.includes('diagnostics')) buffer.drawText(line.problem.severity === 1 ? 'E' : line.problem.severity === 2 ? 'W' : line.problem.severity === 3 ? 'I' : 'H', x + diagnosticOffset, y + row, resolvePaintColor(diagnosticColor(this.#theme, line.problem.severity), this.#colorMode), this.#background);
       }
+    }
+  }
+
+  private paintCodeActionHints(buffer: OptimizedBuffer, frame: VisibleFrame, view: WorkbenchViewSnapshot, x: number, y: number): void {
+    if (!this.#gutters.includes('code-action-hint') || this.#editorCodeActionHints === undefined) return;
+    if (this.#editorCodeActionHints(String(view.document.id), Number(view.document.version)) < 1) return;
+    const offset = gutterOffsetFor(this.#gutters, lineNumberWidthFor(view.document.lineCount, this.#lineNumberMinWidth), 'code-action-hint');
+    const cursorLine = this.cursorLine(view);
+    if (cursorLine === undefined) return;
+    for (let row = 0; row < frame.rows.length; row += 1) {
+      const screen = frame.rows[row];
+      if (screen?.lineIndex === cursorLine) buffer.drawText('C', x + offset, y + row, this.#accent, this.#background);
     }
   }
 
@@ -1153,13 +1430,28 @@ interface EditorPaintSettings {
   readonly motionTrail: MotionTrailMode;
   readonly reducedMotion: boolean;
   readonly colorMode: EditorColorMode;
+  readonly undercurl?: boolean;
   readonly mode: string;
+  readonly cursorShape: 'block' | 'bar' | 'underline' | 'hidden';
+  readonly cursorLine?: boolean;
+  readonly cursorColumn?: boolean;
+  readonly rulers?: readonly number[];
   readonly theme: import('../theme/motion-tokens').MotionPaintTokens;
   readonly syntax?: SyntaxRead;
   readonly syntaxColors?: WorkbenchTheme['syntax'];
   readonly syntaxStyles?: WorkbenchTheme['styles'] | WorkbenchTheme['syntaxStyles'];
   readonly syntaxFallbackRows?: readonly (SyntaxFallbackRow | undefined)[];
   readonly rows?: { readonly start: number; readonly end: number };
+}
+
+type WorkbenchCursorShape = 'block' | 'bar' | 'underline' | 'hidden';
+type WorkbenchCursorShapes = { readonly normal: WorkbenchCursorShape; readonly insert: WorkbenchCursorShape; readonly select: WorkbenchCursorShape };
+
+function cursorShapeFor(mode: string, frame: VisibleFrame, shapes: WorkbenchCursorShapes): WorkbenchCursorShape {
+  const primary = frame.selections.find(selection => selection.primary);
+  if (mode === 'insert') return shapes.insert;
+  if (mode === 'normal' && primary?.kind.startsWith('visual-') === true) return shapes.select;
+  return shapes.normal;
 }
 
 function drawFrame(buffer: OptimizedBuffer, frame: VisibleFrame, x: number, y: number, foreground: RGBA, muted: RGBA, background: RGBA, accent: RGBA, ascii: boolean, settings: EditorPaintSettings): MotionPaintStats {
@@ -1176,12 +1468,17 @@ function drawFrame(buffer: OptimizedBuffer, frame: VisibleFrame, x: number, y: n
     ...(settings.syntaxStyles === undefined ? {} : { syntaxStyles: settings.syntaxStyles }),
     ...(settings.syntaxFallbackRows === undefined ? {} : { syntaxFallbackRows: settings.syntaxFallbackRows }),
     mode: settings.mode,
+    cursorShape: settings.cursorShape,
+    ...(settings.cursorLine === undefined ? {} : { cursorLine: settings.cursorLine }),
+    ...(settings.cursorColumn === undefined ? {} : { cursorColumn: settings.cursorColumn }),
+    ...(settings.rulers === undefined ? {} : { rulers: settings.rulers }),
     theme: settings.theme,
     foreground,
     muted,
     background,
     accent,
     colorMode: settings.colorMode,
+    undercurl: settings.undercurl ?? true,
     ascii,
     x,
     y,
@@ -1337,9 +1634,24 @@ interface TabLayoutEntry {
   readonly hasClose: boolean;
 }
 
-/** Vim `numberwidth`-style gutter: at least three digits plus one blank separator column. */
-export function gutterWidthFor(lineCount: number): number {
-  return Math.max(3, String(Math.max(1, lineCount)).length) + 1;
+/** Helix line-number width: configured minimum or the document's largest line number. */
+export function lineNumberWidthFor(lineCount: number, minWidth = 3): number {
+  return Math.max(Math.max(1, Math.trunc(minWidth)), String(Math.max(1, lineCount)).length);
+}
+
+/** Width of one ordered Helix gutter layout. */
+export function gutterWidthFor(lineCount: number, minWidth = 3, layout: readonly GutterType[] = DEFAULT_GUTTER_LAYOUT): number {
+  const lineNumberWidth = lineNumberWidthFor(lineCount, minWidth);
+  return layout.reduce((width, gutter) => width + (gutter === 'line-numbers' ? lineNumberWidth : 1), 0);
+}
+
+export function gutterOffsetFor(layout: readonly GutterType[], lineNumberWidth: number, target: GutterType): number {
+  let offset = 0;
+  for (const gutter of layout) {
+    if (gutter === target) return offset;
+    offset += gutter === 'line-numbers' ? lineNumberWidth : 1;
+  }
+  return 0;
 }
 
 const TAB_MIN_WIDTH = 8;

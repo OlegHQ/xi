@@ -90,6 +90,9 @@ def launch(binary: Path, source: Path, environment: dict[str, str], keys: bytes,
                 raise SystemExit("T064 Ex PTY did not shut down")
             if child.returncode != 0:
                 raise SystemExit(f"T064 Ex PTY exited with {child.returncode}")
+            # OpenTUI can flush its final terminal-reset bytes as the process exits; reap
+            # before the last bounded read so the assertion sees the complete transcript.
+            drain(master, captured, time.monotonic() + 0.25)
         return captured
     finally:
         os.close(master)

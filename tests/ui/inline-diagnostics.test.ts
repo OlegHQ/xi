@@ -3,7 +3,7 @@ import { createTestRenderer } from '@opentui/core/testing';
 import { TextFileDocument } from '../../packages/document/src/index';
 import { WorkbenchSession } from '../../packages/workbench/session/index';
 import { WorkbenchRenderable } from '../../packages/ui/src/workbench';
-import { inlineDiagnosticLines } from '../../packages/ui/problems/inline';
+import { endOfLineDiagnosticLines, inlineDiagnosticLines } from '../../packages/ui/problems/inline';
 import type { Problem } from '../../packages/ui/problems/index';
 
 const created = TextFileDocument.create('diagnostic-doc' as never, 'const x: string = 2;\nconst next = 3;\n', ['lf', 'lf'], 'lf');
@@ -16,7 +16,7 @@ const problem: Problem = { id: 'error', uri: 'file:///test.ts', serverId: 'ts', 
   range: { startLine: 0, endLine: 0, startUtf16: 6, endUtf16: 7 }, severity: 1, code: 2322, source: 'ts', message: "Type 'number' is not assignable to type 'string'." };
 let problems: readonly Problem[] = [problem, { ...problem, id: 'hint', severity: 4, code: 6133, message: "'x' is declared but its value is never read." }];
 const setup = await createTestRenderer({ width: 100, height: 25, bufferedOutput: 'memory' });
-const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench: session, editorDiagnostics: () => problems });
+const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench: session, editorDiagnostics: () => problems, inlineDiagnosticsCursorLine: 'hint', inlineDiagnosticsOtherLines: 'hint' });
 setup.renderer.root.add(viewport);
 try {
   viewport.syncAnchors();
@@ -38,8 +38,32 @@ try {
   const stale = inlineDiagnosticLines(document.snapshot(), [{ ...problem, documentVersion: 999 }], 0, 60, 10, 4);
   assert.equal(stale.length, 0, 'stale positions cannot decorate new text');
   assert.ok(inlineDiagnosticLines(document.snapshot(), [{ ...problem, documentVersion: undefined, generation: 42 }], 0, 60, 10, 4).length > 0, 'task generations are not document versions');
-  const hostile = inlineDiagnosticLines(document.snapshot(), [{ ...problem, message: '\x1b[31m你好 😀\n'.repeat(10000) }], 0, 30, 8, 4);
+  const hostile = inlineDiagnosticLines(document.snapshot(), [{ ...problem, message: '\x1b[31m你好 😀\n'.repeat(10000) }], 0, 60, 8, 4);
   assert.ok(hostile.length <= 8);
   assert.ok(hostile.every(line => !line.text.includes('\x1b') && !line.text.includes('\n')));
+  const limited = inlineDiagnosticLines(document.snapshot(), [problem, { ...problem, id: 'hint', severity: 4, code: 6133, message: "'x' is declared but its value is never read." }], 0, 60, 10, 4, 0, 1);
+  assert.match(limited.map(line => line.text).join('\n'), /2322: Type/u, 'T036-INLINE-DIAGNOSTICS-MAX-05 first diagnostic remains visible');
+  assert.doesNotMatch(limited.map(line => line.text).join('\n'), /6133: 'x'/u, 'T036-INLINE-DIAGNOSTICS-MAX-05 per-line cap hides later diagnostics');
+  const otherLine = { ...problem, id: 'other-line', severity: 2 as const, range: { ...problem.range, startLine: 1, endLine: 1 }, code: 7000, message: 'warning on another line' };
+  const filtered = inlineDiagnosticLines(document.snapshot(), [problem, otherLine], 0, 60, 10, 4, 0, 10, 0, 'error', 'warning');
+  assert.match(filtered.map(line => line.text).join('\n'), /2322: Type/u, 'T036-INLINE-DIAGNOSTICS-FILTER-05 error remains on cursor line');
+  assert.match(filtered.map(line => line.text).join('\n'), /7000: warning/u, 'T036-INLINE-DIAGNOSTICS-FILTER-05 warning remains on other lines');
+  const prefixed = inlineDiagnosticLines(document.snapshot(), [problem], 0, 60, 10, 4, 0, 10, 0, 'error', 'error', 3);
+  assert.match(prefixed[0]?.text ?? '', /^└─── /u, 'T036-INLINE-DIAGNOSTICS-PREFIX-LEN-05 configured bars render');
+  const wordWrapped = inlineDiagnosticLines(document.snapshot(), [{ ...problem, code: undefined, range: { ...problem.range, startUtf16: 0 }, message: 'one two three' }], 0, 20, 10, 4, 0, 10, 0, 'error', 'error', 1, 5, 8);
+  assert.match(wordWrapped[0]?.text ?? '', /one two$/u, 'T036-INLINE-DIAGNOSTICS-MAX-WRAP-05 keeps a natural break within the configured free-space bound');
+  assert.match(wordWrapped[1]?.text ?? '', /three$/u, 'T036-INLINE-DIAGNOSTICS-MAX-WRAP-05 continues after the natural break');
+  const edgeProblem = { ...problem, code: undefined, range: { ...problem.range, startUtf16: 20 }, message: 'a'.repeat(50) };
+  const wideMinimum = inlineDiagnosticLines(document.snapshot(), [edgeProblem], 0, 60, 10, 4, 0, 10, 0, 'error', 'error', 1, 0, 40);
+  const smallMinimum = inlineDiagnosticLines(document.snapshot(), [edgeProblem], 0, 60, 10, 4, 0, 10, 0, 'error', 'error', 1, 0, 8);
+  assert.ok((wideMinimum[0]?.text.length ?? 0) > (smallMinimum[0]?.text.length ?? 0), 'T036-INLINE-DIAGNOSTICS-MIN-WIDTH-05 edge anchors receive the minimum diagnostic width');
+  assert.equal(inlineDiagnosticLines(document.snapshot(), [edgeProblem], 0, 20, 10, 4, 0, 10, 0, 'error', 'error', 1, 0, 40).length, 0, 'T036-INLINE-DIAGNOSTICS-MIN-WIDTH-06 narrow viewports suppress inline diagnostics');
+  const warning = { ...problem, id: 'warning', severity: 2 as const, code: 7000, message: 'warning remains at line end' };
+  const endOfLine = endOfLineDiagnosticLines(document.snapshot(), [problem, warning], 0, 10, 60, 10, -1, 'error', 'error', 'warning');
+  assert.match(endOfLine[0]?.text ?? '', /7000: warning remains at line end/u, 'T036-END-OF-LINE-DIAGNOSTICS-05 highest unshown severity renders at line end');
+  assert.equal(endOfLineDiagnosticLines(document.snapshot(), [problem], 0, 10, 60, 10, -1, 'error', 'error', 'disable').length, 0, 'T036-END-OF-LINE-DIAGNOSTICS-06 disable suppresses end-of-line diagnostics');
+  const narrowEndOfLine = endOfLineDiagnosticLines(document.snapshot(), [problem, warning], 0, 10, 20, 10, -1, 'error', 'error', 'warning');
+  assert.match(narrowEndOfLine[0]?.text ?? '', /2322: Type/u, 'T036-END-OF-LINE-DIAGNOSTICS-07 narrow viewports move inline candidates to line-end diagnostics');
+  assert.doesNotMatch(inlineDiagnosticLines(document.snapshot(), [problem], 0, 60, 10, 4, 0, 10, 0, 'disable', 'disable').map(line => line.text).join('\n'), /2322/u, 'T036-INLINE-DIAGNOSTICS-FILTER-06 disable suppresses inline diagnostics');
 } finally { setup.renderer.destroy(); session.dispose(); }
 console.log('inline diagnostics: visible messages, wrapping, noneditable hit maps, clearing, stale versions and bounded hostile payload pass');

@@ -56,12 +56,14 @@ class FakeDiagnostics implements DiagnosticsPort {
 class FakeTaskController implements TaskControllerPort {
   #snapshot: WorkbenchTaskOutputSnapshot = { taskId: '', stdout: '', stderr: '', bytes: 0, truncated: false, state: 'idle', exitCode: null };
   readonly #listeners = new Set<(snapshot: WorkbenchTaskOutputSnapshot) => void>();
+  readonly starts: WorkbenchTaskSpec[] = [];
   get snapshot(): WorkbenchTaskOutputSnapshot { return this.#snapshot; }
   subscribe(listener: (snapshot: WorkbenchTaskOutputSnapshot) => void): Disposable {
     this.#listeners.add(listener);
     return Object.freeze({ dispose: () => { this.#listeners.delete(listener); } });
   }
   async start(spec: WorkbenchTaskSpec): Promise<Result<WorkbenchTaskOutputSnapshot, { readonly kind: 'spawn' | 'failed' | 'cancelled' | 'output-limit' | 'disposed'; readonly message: string }>> {
+    this.starts.push(spec);
     this.#snapshot = { taskId: spec.id, stdout: 'ok', stderr: '', bytes: 2, truncated: false, state: 'exited', exitCode: 0 };
     for (const listener of [...this.#listeners]) listener(this.#snapshot);
     return { ok: true, value: this.#snapshot };
@@ -115,6 +117,7 @@ const controller = new ProblemsController({
   marker: (name, payload) => { markers.push({ name, payload }); },
   onError: (message) => { errors.push(message); },
   workspaceRoot: '/workspace',
+  shell: ['test-shell', '-c'],
   resolvePath: (base, relative) => `${base}/${relative}`,
   fileUri: (path) => `file://${path}`,
   workspacePathFromUri: (uri) => (uri.startsWith('file:///workspace/') ? uri.slice('file://'.length) : undefined),
@@ -181,6 +184,11 @@ const secondGeneration = diagnostics.publishes[1]?.generation;
 assert.equal(typeof firstGeneration, 'number', 'sanity: first generation recorded');
 assert.equal(typeof secondGeneration, 'number', 'sanity: second generation recorded');
 assert.ok((secondGeneration as number) > (firstGeneration as number), 'T116-PROBLEMS-04g the second run used a strictly higher generation than the first');
+
+await controller.runShellCommand('printf shell-ok');
+const shellStart = fakeTaskController.starts.at(-1);
+assert.deepEqual(shellStart?.argv, ['test-shell', '-c', 'printf shell-ok'], 'T116-PROBLEMS-05a :sh uses the configured shell argv');
+assert.ok(markers.some((entry) => entry.name === 'XI_SHELL_STARTED'), 'T116-PROBLEMS-05b shell execution emits a start marker');
 
 const beforeStaleJump = session.readView(problemViewId)?.selections;
 await controller.openProblem({ ...selected, documentVersion: Number(problemDocument.version) + 1, range: { startLine: 0, startUtf16: 0 } });

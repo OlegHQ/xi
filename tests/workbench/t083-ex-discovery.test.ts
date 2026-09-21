@@ -44,7 +44,10 @@ function command(value: string, requiredCapabilities: readonly string[] = []) {
 const registry = new CommandRegistry({ nativeExNames: DEFAULT_NATIVE_EX_COMMANDS.map((entry) => entry.name) });
 const registered = registry.register({ commands: [command('xi.buffer.next'), command('xi.theme.pick', ['workspace.write'])] });
 assert.equal(registered.ok, true, 'T083-REG-01 Xi commands register in the T074 registry');
-const aliases = registerNativeSafeAliases(registry, [{ name: 'theme', target: id('xi.theme.pick') }]);
+const aliases = registerNativeSafeAliases(registry, [
+  { name: 'theme', target: id('xi.theme.pick') },
+  { name: 'config-reload', target: id('xi.buffer.next') },
+]);
 assert.equal(aliases.ok, true, 'T083-ALIAS-01 friendly aliases register only through the command registry');
 
 const quitModel = buildExCommandLineReadModel({ source: ':q', registry }, 99);
@@ -94,6 +97,9 @@ assert.equal(aliasModel.candidates.find((candidate) => candidate.kind === 'alias
 const aliasResult = resolveExExecution(':theme', registry, { availability: { contexts: [], capabilities: ['workspace.write'] } });
 assert.equal(aliasResult.ok, true, 'EX04-ALIAS-03 exact alias resolves only with its capability');
 if (aliasResult.ok) assert.equal(aliasResult.value.kind, 'xi-alias', 'EX04-ALIAS-04 alias retains Xi origin');
+const hyphenAliasResult = resolveExExecution(':config-reload', registry);
+assert.equal(hyphenAliasResult.ok, true, 'EX04-ALIAS-05 hyphenated aliases resolve as one Ex command token');
+if (hyphenAliasResult.ok) assert.equal(hyphenAliasResult.value.kind, 'xi-alias', 'EX04-ALIAS-06 hyphenated aliases retain Xi origin');
 
 const beforeCollision = registry.snapshot;
 const collision = validateNativeSafeAliases([{ name: 'q', target: id('xi.buffer.next') }], registry.snapshot);

@@ -15,13 +15,14 @@ export type {
   WorkbenchNavigationSymbol,
 } from './overlays';
 
-export { CompletionSnippetController, nonOverlappingDocumentEdits, planCompletionEdits } from './completion';
+export { CompletionSnippetController, createWordCompletionProvider, nonOverlappingDocumentEdits, pathCompletionToken, planCompletionEdits } from './completion';
 export type {
   CompletionControllerPort,
   CompletionKeyEvent,
   CompletionModelRead,
   CompletionProviderPort,
   CompletionSnippetControllerOptions,
+  WordCompletionDocumentSource,
   ExpandSnippetFn,
   SignatureControllerPort,
   SignatureModelRead,

@@ -107,6 +107,7 @@ export interface ProblemsControllerOptions {
   /** PTY-visible stderr sink; never writes to `process.stderr` itself. */
   readonly onError: (message: string) => void;
   readonly workspaceRoot: string;
+  readonly shell: readonly [string, string];
   /** `filesystem.resolvePath`'s subset this controller needs for a configured task's `cwd`
    * and for resolving a problem matcher's relative file path against it. */
   readonly resolvePath: (base: string, relative: string) => string;
@@ -271,6 +272,26 @@ export class ProblemsController {
       env: { ...this.#options.processEnvironment(), ...config.env },
     });
     this.#options.marker('XI_TASK_STARTED', { id: config.id, ok: started.ok });
+  }
+
+  async runShellCommand(command: string): Promise<void> {
+    const value = command.trim();
+    if (value.length === 0) { this.#options.onError('xi: :sh requires a command\n'); return; }
+    const controller = await this.#options.ensureTaskController();
+    this.#taskController = controller;
+    this.openOutput();
+    const subscription = controller.subscribe((snapshot) => {
+      if (snapshot.state !== 'exited' && snapshot.state !== 'failed') return;
+      subscription.dispose();
+      this.#options.marker('XI_SHELL_EXITED', { state: snapshot.state, exitCode: snapshot.exitCode });
+    });
+    const started = await controller.start({
+      id: 'shell',
+      argv: [this.#options.shell[0], this.#options.shell[1], value],
+      cwd: this.#options.workspaceRoot,
+      env: this.#options.processEnvironment(),
+    });
+    this.#options.marker('XI_SHELL_STARTED', { ok: started.ok });
   }
 
   /** For `:taskstop`: cancels the running task, if any, without requiring the output panel

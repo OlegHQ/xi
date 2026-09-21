@@ -9,6 +9,7 @@ export {
   loadStartupXiConfig,
   resolveFormatOnSave,
   resolveFormatterSelection,
+  workspaceTrustAllows,
 } from '../../config/index';
 export type {
   CompiledConfig,
@@ -18,9 +19,14 @@ export type {
   HelixWorkbenchThemeTokens,
   LanguageConfig,
   LanguageServerConfig,
+  ClipboardCommandConfig,
+  ClipboardProviderConfig,
   LoadedStartupConfig,
   RequiredWorkbenchThemeTokens,
   StartupConfigFilesystemPort,
+  WorkspaceTrustConfig,
+  WorkspaceTrustDecision,
+  WorkspaceTrustResolver,
   WorkbenchThemeTokens,
 } from '../../config/index';
 

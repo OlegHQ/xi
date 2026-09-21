@@ -159,7 +159,8 @@ def run() -> str:
             key("i")
             type_text("RIGHT")
             key("Escape")
-            click(10, 3)
+            # The sidebar occupies columns 1..28; the left editor pane begins after it.
+            click(40, 3)
             key("End")
             type_text("aLEFT")
             key("Escape")

@@ -98,6 +98,7 @@ export interface IndexedPath {
 export interface FilePathIndexOptions {
   readonly maxEntries?: number;
   readonly includeIgnored?: boolean;
+  readonly includeHidden?: boolean;
 }
 
 export interface FileIndexSnapshot {
@@ -131,6 +132,7 @@ export interface FilePickerQueryResult {
 export class FilePathIndex implements Disposable {
   readonly #maxEntries: number;
   readonly #includeIgnored: boolean;
+  readonly #includeHidden: boolean;
   readonly #roots = new Map<string, WorkspaceRoot>();
   readonly #entries = new Map<string, IndexedPath>();
   readonly #normalizedEntries = new Map<string, string>();
@@ -143,6 +145,7 @@ export class FilePathIndex implements Disposable {
     if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) throw new TypeError('navigation-index-max-entries-must-be-positive');
     this.#maxEntries = maxEntries;
     this.#includeIgnored = options.includeIgnored === true;
+    this.#includeHidden = options.includeHidden ?? true;
   }
 
   get snapshot(): FileIndexSnapshot {
@@ -236,7 +239,7 @@ export class FilePathIndex implements Disposable {
     if (!this.#ready) return { ok: false, error: { kind: 'not-ready', mode: 'file', message: 'filename index is still warming' } };
     const generation = this.#generation;
     const limit = boundedLimit(options.limit);
-    const includeHidden = options.includeHidden ?? true;
+    const includeHidden = options.includeHidden ?? this.#includeHidden;
     const includeIgnored = options.includeIgnored ?? this.#includeIgnored;
     const normalizedQuery = normalizeForSearch(query);
     const anchor = normalizedQuery.length >= 3 && !normalizedQuery.includes(' ')

@@ -30,6 +30,20 @@ export interface InlayHint {
   readonly resolveData?: unknown;
 }
 
+export interface DocumentColorSwatch {
+  readonly id: string;
+  readonly line: number;
+  readonly utf16: number;
+  readonly color: string;
+}
+
+export interface DocumentHighlightRange {
+  readonly startLine: number;
+  readonly startUtf16: number;
+  readonly endLine: number;
+  readonly endUtf16: number;
+}
+
 export interface CodeLens {
   readonly id: string;
   readonly line: number;
@@ -61,6 +75,20 @@ export interface HintResult {
   readonly lenses: readonly CodeLens[];
 }
 
+export interface ColorResult {
+  readonly documentId: string;
+  readonly documentVersion: number;
+  readonly generation: number;
+  readonly colors: readonly DocumentColorSwatch[];
+}
+
+export interface DocumentHighlightResult {
+  readonly documentId: string;
+  readonly documentVersion: number;
+  readonly generation: number;
+  readonly ranges: readonly DocumentHighlightRange[];
+}
+
 export type FoldingFailure = {
   readonly kind: 'invalid-range' | 'overlap' | 'stale' | 'disposed' | 'invalid-result' | 'not-found' | 'execution-failed';
   readonly message: string;
@@ -69,11 +97,75 @@ export type FoldingFailure = {
 export type PresentationResolve<T> = (value: T) => Promise<Result<T, FoldingFailure>>;
 export type PresentationExecute = (command: string) => Promise<Result<void, FoldingFailure>>;
 
+/** Decode the LSP `textDocument/inlayHint` result at the protocol boundary. */
+export function decodeInlayHints(value: unknown, documentId: string, documentVersion: number, generation: number, lengthLimit?: number): Result<HintResult, FoldingFailure> {
+  if (!Array.isArray(value) && value !== null) return failure('invalid-result', 'inlay hint result must be an array or null');
+  const hints: InlayHint[] = [];
+  const values = value === null ? [] : value;
+  if (values.length > MAX_PRESENTATION_ITEMS) return failure('invalid-result', 'hint result exceeds the presentation limit');
+  for (let index = 0; index < values.length; index += 1) {
+    const item = values[index];
+    if (!isRecord(item)) return failure('invalid-result', 'inlay hint is not an object');
+    const position = isRecord(item.position) ? item.position : undefined;
+    const line = position?.line;
+    const utf16 = position?.character;
+    const label = inlayLabel(item.label);
+    if (typeof line !== 'number' || !Number.isSafeInteger(line) || line < 0 || typeof utf16 !== 'number' || !Number.isSafeInteger(utf16) || utf16 < 0 || label === undefined) return failure('invalid-result', 'inlay hint position or label is invalid');
+    const text = lengthLimit === undefined ? label : label.slice(0, lengthLimit);
+    if (text.length === 0) continue;
+    hints.push(Object.freeze({ id: `${documentId}:inlay:${String(documentVersion)}:${String(index)}`, line, utf16, label: text }));
+  }
+  return { ok: true, value: Object.freeze({ documentId, documentVersion, generation, hints: Object.freeze(hints), lenses: Object.freeze([]) }) };
+}
+
+/** Decode the LSP `textDocument/documentColor` result at the protocol boundary. */
+export function decodeDocumentColors(value: unknown, documentId: string, documentVersion: number, generation: number): Result<ColorResult, FoldingFailure> {
+  if (!Array.isArray(value) && value !== null) return failure('invalid-result', 'document color result must be an array or null');
+  const colors: DocumentColorSwatch[] = [];
+  const values = value === null ? [] : value;
+  if (values.length > MAX_PRESENTATION_ITEMS) return failure('invalid-result', 'document color result exceeds the presentation limit');
+  for (let index = 0; index < values.length; index += 1) {
+    const item = values[index];
+    if (!isRecord(item)) return failure('invalid-result', 'document color entry is not an object');
+    const range = isRecord(item.range) ? item.range : undefined;
+    const start = lspPosition(range?.start);
+    const end = lspPosition(range?.end);
+    const color = colorHex(item.color);
+    if (start === undefined || end === undefined || color === undefined
+      || comparePosition(start.line, start.utf16, end.line, end.utf16) > 0) {
+      return failure('invalid-result', 'document color range or color is invalid');
+    }
+    colors.push(Object.freeze({ id: `${documentId}:color:${String(documentVersion)}:${String(index)}`, line: start.line, utf16: start.utf16, color }));
+  }
+  return { ok: true, value: Object.freeze({ documentId, documentVersion, generation, colors: Object.freeze(colors) }) };
+}
+
+/** Decode the LSP `textDocument/documentHighlight` result at the protocol boundary. */
+export function decodeDocumentHighlights(value: unknown, documentId: string, documentVersion: number, generation: number): Result<DocumentHighlightResult, FoldingFailure> {
+  if (!Array.isArray(value) && value !== null) return failure('invalid-result', 'document highlight result must be an array or null');
+  const ranges: DocumentHighlightRange[] = [];
+  const values = value === null ? [] : value;
+  if (values.length > MAX_PRESENTATION_ITEMS) return failure('invalid-result', 'document highlight result exceeds the presentation limit');
+  for (const item of values) {
+    if (!isRecord(item)) return failure('invalid-result', 'document highlight entry is not an object');
+    const range = isRecord(item.range) ? item.range : undefined;
+    const start = lspPosition(range?.start);
+    const end = lspPosition(range?.end);
+    if (start === undefined || end === undefined || comparePosition(start.line, start.utf16, end.line, end.utf16) >= 0) {
+      return failure('invalid-result', 'document highlight range is invalid');
+    }
+    ranges.push(Object.freeze({ startLine: start.line, startUtf16: start.utf16, endLine: end.line, endUtf16: end.utf16 }));
+  }
+  return { ok: true, value: Object.freeze({ documentId, documentVersion, generation, ranges: Object.freeze(ranges) }) };
+}
+
 /** Owns versioned language decorations; layout consumes only immutable read results. */
 export class LanguagePresentationFeatures implements Disposable {
   #folds = new Map<string, FoldingResult>();
   #selectionRanges = new Map<string, SelectionRangeResult>();
   #hints = new Map<string, HintResult>();
+  #colors = new Map<string, ColorResult>();
+  #documentHighlights = new Map<string, DocumentHighlightResult>();
   #resolutionTokens = new Map<string, number>();
   #disposed = false;
 
@@ -123,6 +215,36 @@ export class LanguagePresentationFeatures implements Disposable {
     return { ok: true, value };
   }
 
+  applyColors(result: ColorResult): Result<ColorResult, FoldingFailure> {
+    if (this.#disposed) return failure('disposed', 'presentation features disposed');
+    const checked = validateEnvelope(result);
+    if (!checked.ok) return checked;
+    const previous = this.#colors.get(result.documentId);
+    if (isOlder(result, previous)) return failure('stale', 'color result is stale');
+    const colors = validateColors(result.colors);
+    if (!colors.ok) return colors;
+    const value = Object.freeze({ ...result, colors: colors.value });
+    this.#colors.set(result.documentId, value);
+    return { ok: true, value };
+  }
+
+  applyDocumentHighlights(result: DocumentHighlightResult): Result<DocumentHighlightResult, FoldingFailure> {
+    if (this.#disposed) return failure('disposed', 'presentation features disposed');
+    const checked = validateEnvelope(result);
+    if (!checked.ok) return checked;
+    const previous = this.#documentHighlights.get(result.documentId);
+    if (isOlder(result, previous)) return failure('stale', 'document highlight result is stale');
+    if (!Array.isArray(result.ranges) || result.ranges.length > MAX_PRESENTATION_ITEMS) return failure('invalid-result', 'document highlight result exceeds the presentation limit');
+    for (const range of result.ranges) {
+      if (!Number.isSafeInteger(range.startLine) || range.startLine < 0 || !Number.isSafeInteger(range.startUtf16) || range.startUtf16 < 0
+        || !Number.isSafeInteger(range.endLine) || range.endLine < 0 || !Number.isSafeInteger(range.endUtf16) || range.endUtf16 < 0
+        || comparePosition(range.startLine, range.startUtf16, range.endLine, range.endUtf16) >= 0) return failure('invalid-range', 'document highlight range is invalid');
+    }
+    const value = Object.freeze({ ...result, ranges: Object.freeze(result.ranges.map((range) => Object.freeze({ ...range }))) });
+    this.#documentHighlights.set(result.documentId, value);
+    return { ok: true, value };
+  }
+
   folds(documentId: string): readonly FoldRange[] { return this.#folds.get(documentId)?.folds ?? EMPTY_FOLDS; }
 
   selectionRanges(documentId: string): readonly SelectionRange[] {
@@ -130,6 +252,10 @@ export class LanguagePresentationFeatures implements Disposable {
   }
 
   hints(documentId: string): HintResult | undefined { return this.#hints.get(documentId); }
+
+  colors(documentId: string): ColorResult | undefined { return this.#colors.get(documentId); }
+
+  documentHighlights(documentId: string): DocumentHighlightResult | undefined { return this.#documentHighlights.get(documentId); }
 
   /** Return only decorations in the visible logical-line window, with a hard cap. */
   visibleHints(documentId: string, startLine: number, endLine: number, limit = 256): HintResult | undefined {
@@ -201,6 +327,8 @@ export class LanguagePresentationFeatures implements Disposable {
     this.#folds.delete(documentId);
     this.#selectionRanges.delete(documentId);
     this.#hints.delete(documentId);
+    this.#colors.delete(documentId);
+    this.#documentHighlights.delete(documentId);
   }
 
   dispose(): void {
@@ -209,6 +337,8 @@ export class LanguagePresentationFeatures implements Disposable {
     this.#folds.clear();
     this.#selectionRanges.clear();
     this.#hints.clear();
+    this.#colors.clear();
+    this.#documentHighlights.clear();
     this.#resolutionTokens.clear();
   }
 
@@ -290,6 +420,26 @@ function validateHints(hints: readonly InlayHint[]): Result<readonly InlayHint[]
   return { ok: true, value: Object.freeze(output) };
 }
 
+function validateColors(colors: readonly DocumentColorSwatch[]): Result<readonly DocumentColorSwatch[], FoldingFailure> {
+  if (!Array.isArray(colors) || colors.length > MAX_PRESENTATION_ITEMS) return failure('invalid-result', 'document color result exceeds the presentation limit');
+  const ids = new Set<string>();
+  const output: DocumentColorSwatch[] = [];
+  for (const color of colors) {
+    if (!isRecord(color)) return failure('invalid-result', 'document color entry is invalid or duplicated');
+    const id = color['id'];
+    const line = color['line'];
+    const utf16 = color['utf16'];
+    const value = color['color'];
+    if (typeof id !== 'string' || id.length === 0 || id.length > MAX_LABEL_UTF16 || ids.has(id)
+      || typeof line !== 'number' || !Number.isSafeInteger(line) || line < 0
+      || typeof utf16 !== 'number' || !Number.isSafeInteger(utf16) || utf16 < 0
+      || typeof value !== 'string' || !/^#[0-9a-f]{6}$/u.test(value)) return failure('invalid-result', 'document color entry is invalid or duplicated');
+    ids.add(id);
+    output.push(Object.freeze({ id, line, utf16, color: value }));
+  }
+  return { ok: true, value: Object.freeze(output) };
+}
+
 function validateLenses(lenses: readonly CodeLens[]): Result<readonly CodeLens[], FoldingFailure> {
   if (!Array.isArray(lenses) || lenses.length > MAX_PRESENTATION_ITEMS) return failure('invalid-result', 'code lens result exceeds the presentation limit');
   const ids = new Set<string>();
@@ -307,6 +457,35 @@ function validateLenses(lenses: readonly CodeLens[]): Result<readonly CodeLens[]
     output.push(Object.freeze({ id, line, command, title, ...(Object.hasOwn(lens, 'resolveData') ? { resolveData: lens['resolveData'] } : {}) }));
   }
   return { ok: true, value: Object.freeze(output) };
+}
+
+function inlayLabel(value: unknown): string | undefined {
+  if (typeof value === 'string') return value.length <= MAX_LABEL_UTF16 ? value : undefined;
+  if (!Array.isArray(value)) return undefined;
+  let output = '';
+  for (const part of value) {
+    if (!isRecord(part) || typeof part.value !== 'string') return undefined;
+    output += part.value;
+    if (output.length > MAX_LABEL_UTF16) return undefined;
+  }
+  return output;
+}
+
+function lspPosition(value: unknown): { readonly line: number; readonly utf16: number } | undefined {
+  if (!isRecord(value)) return undefined;
+  const line = value['line'];
+  const utf16 = value['character'];
+  return typeof line === 'number' && Number.isSafeInteger(line) && line >= 0
+    && typeof utf16 === 'number' && Number.isSafeInteger(utf16) && utf16 >= 0
+    ? { line, utf16 } : undefined;
+}
+
+function colorHex(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const channels = ['red', 'green', 'blue', 'alpha'] as const;
+  if (channels.some((channel) => typeof value[channel] !== 'number' || !Number.isFinite(value[channel]) || value[channel] < 0 || value[channel] > 1)) return undefined;
+  const channel = (name: 'red' | 'green' | 'blue'): string => Math.round(value[name] as number * 255).toString(16).padStart(2, '0');
+  return `#${channel('red')}${channel('green')}${channel('blue')}`;
 }
 
 function cloneSelectionRange(range: SelectionRange, seen: Set<SelectionRange>, depth: number): Result<SelectionRange, FoldingFailure> {

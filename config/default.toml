@@ -1,38 +1,115 @@
+[xi]
 schema-version = 1
 profile = "xi"
 
+[xi.sidebar]
+visible = true
+width = 28
+panel = "files"
+
+[xi.mouse]
+modifier = "none"
+
+[xi.selection]
+limit = 10000
+history-limit = 100
+
+[xi.hints]
+delay-ms = 250
+
+[xi.search]
+debounce-ms = 40
+max-visible-results = 10000
+
 [editor]
-sidebar-visible = true
-sidebar-width = 28
-sidebar-panel = "files"
 theme = "xi-light"
 line-number = "absolute"
+cursorline = false
+continue-comments = true
+cursorcolumn = false
+rainbow-brackets = false
+rulers = []
+text-width = 80
 scrolloff = 5
+auto-completion = true
+completion-timeout = 250
+completion-trigger-len = 2
+preview-completion-insert = true
+auto-info = true
+completion-replace = false
+color-modes = false
+true-color = false
+bufferline = "never"
+default-line-ending = "native"
+popup-border = "none"
+jump-label-alphabet = "abcdefghijklmnopqrstuvwxyz"
 wrap = false
-motion-trail = "last-motion"
-selection-limit = 10000
-selection-history-limit = 100
+auto-format = true
+default-yank-register = '"'
+insert-final-newline = true
+trim-final-newlines = false
+trim-trailing-whitespace = false
+
+[editor.word-completion]
+enable = true
+trigger-length = 7
+
+[editor.workspace-trust]
+level = "servers"
+prompt = true
+trusted = []
+
+[editor.auto-save]
+focus-lost = false
+after-delay.enable = false
+after-delay.timeout = 3000
+
+[editor.statusline]
+left = ["mode", "spinner", "file-name", "read-only-indicator", "file-modification-indicator"]
+center = []
+right = ["diagnostics", "selections", "register", "position", "file-encoding"]
+separator = "│"
+mode.normal = "NOR"
+mode.insert = "INS"
+mode.select = "SEL"
+diagnostics = ["warning", "error"]
+workspace-diagnostics = ["warning", "error"]
+
+[editor.gutters.line-numbers]
+min-width = 3
 
 [editor.cursor-shape]
 normal = "block"
 insert = "block"
-visual = "block"
+select = "block"
+
+[editor.soft-wrap]
+max-wrap = 20
+max-indent-retain = 40
+wrap-indicator = "↪ "
+
+[editor.file-picker]
+hidden = true
+follow-symlinks = true
+deduplicate-links = true
 
 [editor.lsp]
 enable = true
-inlay-hints = false
+display-inlay-hints = false
+display-color-swatches = true
+auto-document-highlight = false
+goto-reference-include-declaration = true
+snippets = true
+display-messages = true
+display-progress-messages = false
+auto-signature-help = true
+display-signature-help-docs = true
 
 [editor.mouse]
 enabled = true
-modifier = "none"
 scroll-lines = 3
 
-[editor.hints]
-delay-ms = 250
-
 [search]
-debounce-ms = 40
-max-visible-results = 10000
 hidden = true
 follow-symlinks = false
 
@@ -62,31 +139,31 @@ g = "panel.git.focus"
 o = "panel.outline.focus"
 d = "git.diff"
 
-[keys.files-panel.space]
+[xi.keys.files-panel.space]
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
-[keys.search-panel.space]
+[xi.keys.search-panel.space]
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
-[keys.git-panel.space]
+[xi.keys.git-panel.space]
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
-[keys.diff-panel.space]
+[xi.keys.diff-panel.space]
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
-[aliases]
+[xi.aliases]
 files = "files.pick"
 buffers = "buffers.pick"
 commands = "command.pick"

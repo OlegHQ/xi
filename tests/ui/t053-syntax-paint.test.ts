@@ -278,6 +278,7 @@ async function syntaxStylesPaintBackgroundAndModifiers(): Promise<void> {
     fileLabel: "editor.ts",
     theme,
     syntax: syntaxPort(fixture.snapshot.version),
+    undercurl: true,
   });
   setup.renderer.root.add(viewport);
   await setup.renderOnce();
@@ -297,6 +298,38 @@ async function syntaxStylesPaintBackgroundAndModifiers(): Promise<void> {
     "T053-STYLE-05 Helix curl underline shape reaches the native cell attribute",
   );
   setup.renderer.destroy();
+
+  const fallback = await createTestRenderer({
+    width: 80,
+    height: 24,
+    bufferedOutput: "memory",
+    gatherStats: true,
+  });
+  const fallbackViewport = new WorkbenchRenderable(fallback.renderer.root.ctx, {
+    workbench: fixture.workbench,
+    fileLabel: "editor.ts",
+    theme,
+    syntax: syntaxPort(fixture.snapshot.version),
+    undercurl: false,
+  });
+  fallback.renderer.root.add(fallbackViewport);
+  await fallback.renderOnce();
+  const fallbackAttributes = fallback.renderer.currentRenderBuffer.buffers.attributes;
+  assert.ok(
+    fallbackAttributes.some(
+      (attribute) =>
+        (attribute & TextAttributes.UNDERLINE) === TextAttributes.UNDERLINE,
+    ),
+    "T036-UNDERCURL-UNIT-01 disabled undercurl falls back to a native line underline",
+  );
+  assert.ok(
+    fallbackAttributes.every(
+      (attribute) =>
+        (attribute & TextAttributes.UNDERLINE_STYLE_CURL) !== TextAttributes.UNDERLINE_STYLE_CURL,
+    ),
+    "T036-UNDERCURL-UNIT-01 disabled undercurl does not emit curl attributes",
+  );
+  fallback.renderer.destroy();
 }
 
 async function exactCaptureScopeWinsOverItsParent(): Promise<void> {
@@ -413,7 +446,7 @@ async function helixSelectionStylePatchesEveryChannel(): Promise<void> {
     },
   };
   const setup = await createTestRenderer({ width: 80, height: 24, bufferedOutput: "memory", gatherStats: true });
-  const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench: fixture.workbench, fileLabel: "editor.ts", theme });
+  const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench: fixture.workbench, fileLabel: "editor.ts", theme, undercurl: true });
   setup.renderer.root.add(viewport);
   await setup.renderOnce();
   const spans = setup.captureSpans().lines.flatMap(line => line.spans).filter(span => span.text.includes("cons") || span.text.includes("onst"));

@@ -102,6 +102,7 @@ export interface ExplorerVisibleRow {
   readonly depth: number;
   readonly kind: ExplorerNodeKind;
   readonly selected: boolean;
+  readonly label?: string;
 }
 
 export interface ExplorerReadModel {
@@ -114,6 +115,8 @@ export interface ExplorerReadModel {
   readonly filter: string;
   readonly includeHidden: boolean;
   readonly includeIgnored: boolean;
+  readonly followSymlinks: boolean;
+  readonly flattenDirs: boolean;
   readonly focused: boolean;
   readonly state: 'ready' | 'loading' | 'empty' | 'error';
   readonly message: string | undefined;
@@ -128,6 +131,7 @@ export interface ExplorerOptions {
   readonly includeHidden?: boolean;
   readonly includeIgnored?: boolean;
   readonly followSymlinks?: boolean;
+  readonly flattenDirs?: boolean;
   readonly metadata?: ExplorerMetadataPort;
   readonly git?: ExplorerGitDecorationPort;
 }
@@ -166,6 +170,7 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
   readonly #metadata: ExplorerMetadataPort | undefined;
   readonly #git: ExplorerGitDecorationPort | undefined;
   readonly #followSymlinks: boolean;
+  readonly #flattenDirs: boolean;
   readonly #nodes = new Map<string, MutableNode>();
   readonly #roots: string[] = [];
   readonly #rootPaths = new Map<string, ExplorerRoot>();
@@ -195,6 +200,7 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     this.#metadata = options.metadata;
     this.#git = options.git;
     this.#followSymlinks = options.followSymlinks === true;
+    this.#flattenDirs = options.flattenDirs !== false;
     this.#includeHidden = options.includeHidden === true;
     this.#includeIgnored = options.includeIgnored === true;
     this.#model = this.buildModel('ready', undefined);
@@ -714,8 +720,15 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
   }
 
   private retainSelectionOrFirst(preferred?: string): string | undefined {
-    if (preferred !== undefined && this.isVisible(preferred)) return preferred;
-    if (this.#selectedId !== undefined && this.isVisible(this.#selectedId)) return this.#selectedId;
+    const visibleSelection = (nodeId: string | undefined): string | undefined => {
+      if (nodeId === undefined) return undefined;
+      if (this.isVisible(nodeId)) return nodeId;
+      const node = this.#nodes.get(nodeId);
+      const flattened = node === undefined ? undefined : this.flattenedNode(node).node.id;
+      return flattened !== undefined && this.isVisible(flattened) ? flattened : undefined;
+    };
+    const retained = visibleSelection(preferred) ?? visibleSelection(this.#selectedId);
+    if (retained !== undefined) return retained;
     return this.#model.visibleRows[0]?.nodeId;
   }
 
@@ -733,6 +746,8 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
       filter: this.#filter,
       includeHidden: this.#includeHidden,
       includeIgnored: this.#includeIgnored,
+      followSymlinks: this.#followSymlinks,
+      flattenDirs: this.#flattenDirs,
       focused: this.#focused,
       state,
       message,
@@ -745,9 +760,31 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     const descendants = node.children.some((childId) => this.hasMatchingDescendant(childId));
     const matches = this.matchesFilter(node);
     if (this.#filter.length > 0 && !matches && !descendants) return false;
-    rows.push(Object.freeze({ nodeId, depth: node.depth, kind: node.kind, selected: node.id === this.#selectedId }));
-    if (node.expanded) for (const childId of node.children) this.appendVisible(childId, rows);
+    const flattened = this.flattenedNode(node);
+    rows.push(Object.freeze({ nodeId: flattened.node.id, depth: node.depth, kind: flattened.node.kind, selected: flattened.node.id === this.#selectedId, ...(flattened.label === flattened.node.name ? {} : { label: flattened.label }) }));
+    if (flattened.node.expanded) for (const childId of flattened.node.children) this.appendVisible(childId, rows);
     return true;
+  }
+
+  private flattenedNode(start: MutableNode): { readonly node: MutableNode; readonly label: string } {
+    if (!this.#flattenDirs) return { node: start, label: start.name };
+    let node = start;
+    let label = start.name;
+    while (node.kind === 'directory' && node.expanded) {
+      let onlyChild: MutableNode | undefined;
+      let childCount = 0;
+      for (const childId of node.children) {
+        const child = this.#nodes.get(childId);
+        if (child === undefined || !this.matchesPolicy(child)) continue;
+        childCount += 1;
+        onlyChild = child;
+        if (childCount > 1) break;
+      }
+      if (childCount !== 1 || onlyChild?.kind !== 'directory') break;
+      node = onlyChild;
+      label += `/${node.name}`;
+    }
+    return { node, label };
   }
 
   private hasMatchingDescendant(nodeId: string): boolean {

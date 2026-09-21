@@ -1,8 +1,9 @@
 import type { EditorStatePersistence } from '../../../../packages/services/src/entrypoints/config';
 import { asIdentifier, asUtf16Offset, CancellationSource, type DocumentId, type Disposable, type ViewId, type Result } from '../../../../packages/primitives/src/entrypoints/launch';
+import type { ClipboardPort } from '../../../../packages/contracts/src/entrypoints/launch';
 import type { DocumentSnapshot, TextFileDocument } from '../../../../packages/document/src/entrypoints/launch';
 import { openTextDocument } from '../../../../packages/document/src/entrypoints/launch';
-import type { NodeFilesystemPort, NodeProcessPort, WorkspaceDirectoryEntry, WorkspaceDirectoryWatchEvent, createNodeClock } from '../../../../packages/platform/src/entrypoints/launch';
+import type { NodeFilesystemPort, NodeProcessPort, WorkspaceDirectoryEntry, WorkspaceDirectoryWatchEvent, WorkspaceIgnoreOptions, createNodeClock } from '../../../../packages/platform/src/entrypoints/launch';
 import type { WorkbenchTheme } from '../../../../packages/ui/src/entrypoints/launch';
 import type {
   FilePathIndex,
@@ -17,6 +18,7 @@ import {
   buildNavigationRequest,
   BufferHost,
   CompletionSnippetController,
+  createWordCompletionProvider,
   DiffViewController,
   ExplorerController,
   GitPanelController,
@@ -54,7 +56,9 @@ import type { StatusMessageController } from '../../../../packages/workbench/src
 import type { ThemeWiring } from './theme';
 import { createTaskWiring, type TaskWiring } from './tasks';
 import { createLanguageWiring, type LanguageWiring } from './language';
+import { createPathCompletionProvider } from './path-completion';
 import { createOptionalServicesWiring, type OptionalServicesWiring } from './optional-services';
+import type { WorkspaceTrustWiring } from './workspace-trust';
 import type { ResolvedFileArgument } from '../cli';
 
 type CoreServicesModule = typeof import('../../../../packages/services/src/entrypoints/launch-core');
@@ -68,6 +72,7 @@ type UiModule = typeof import('../../../../packages/ui/src/entrypoints/launch');
  * abstractions. */
 export interface ControllersDeps {
   readonly filesystem: NodeFilesystemPort;
+  readonly userConfigPath: string;
   readonly clock: ReturnType<typeof createNodeClock>;
   readonly persistence: PersistenceService;
   readonly document: TextFileDocument;
@@ -81,14 +86,19 @@ export interface ControllersDeps {
   readonly xiUiTestMarkersEnabled: boolean;
   readonly startupTrace: (label: string) => void;
   readonly startupConfigPromise: ReturnType<typeof loadStartupXiConfig>;
+  readonly reloadStartupConfig: () => ReturnType<typeof loadStartupXiConfig>;
   readonly themeWiring: ThemeWiring;
   readonly coreServices: CoreServicesModule;
   readonly ContextMenuStore: UiModule['ContextMenuStore'];
   readonly statusMessages: StatusMessageController;
+  readonly clipboard: ClipboardPort;
+  readonly workspaceTrust: WorkspaceTrustWiring;
 }
 
 export interface Controllers {
   readonly editorState: EditorStatePersistence;
+  readonly startupConfig: StartupConfig;
+  readonly reloadConfig: () => Promise<boolean>;
   readonly statusMessages: StatusMessageController;
   readonly workbench: InstanceType<typeof WorkbenchSession>;
   readonly host: BufferHost;
@@ -157,13 +167,13 @@ function createDeferredStart(delayMilliseconds: number, start: () => void): { re
   };
 }
 
-async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string): Promise<void> {
+async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions): Promise<void> {
   const cancellation = new CancellationSource();
   try {
     await filesystem.enumerateFiles(root, cancellation.token, (entries) => {
       const indexed = entries.map((entry) => ({ rootId: 'workspace' as const, relativePath: entry.relativePath, absolutePath: entry.absolutePath, hidden: entry.hidden }));
       index.addPaths('workspace', indexed);
-    }, { maxEntries: 120_000 });
+    }, { maxEntries: 120_000, followSymlinks, deduplicateLinks, ...(maxDepth === undefined ? {} : { maxDepth }), ignore });
   } finally {
     index.markReady();
     cancellation.dispose();
@@ -172,10 +182,10 @@ async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePat
 
 /** A single lazily-started, memoized population run -- replaces a bare `let ...Population`
  * closure with one owned handle. */
-function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, onDone: () => void): () => Promise<void> {
+function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onDone: () => void): () => Promise<void> {
   let population: Promise<void> | undefined;
   return () => {
-    population ??= populateFileIndex(fileIndex, filesystem, root).then(onDone);
+    population ??= populateFileIndex(fileIndex, filesystem, root, followSymlinks, deduplicateLinks, maxDepth, ignore).then(onDone);
     return population;
   };
 }
@@ -230,10 +240,10 @@ function toExplorerWatchEvent(filesystem: NodeFilesystemPort, event: WorkspaceDi
 /** Compose the platform adapter into the service-owned Explorer contract. `onChanged` (piggybacking
  * on the same watch subscription the explorer already owns) lets the composition root coalesce a
  * Git status refresh onto workspace filesystem activity without a second watcher. */
-function createExplorerFilesystem(filesystem: NodeFilesystemPort, root: string, onChanged?: () => void): ExplorerFilesystemPort {
+function createExplorerFilesystem(filesystem: NodeFilesystemPort, root: string, onChanged?: () => void, ignore?: WorkspaceIgnoreOptions): ExplorerFilesystemPort {
   return {
     async enumerateDirectory(path, cancellation): Promise<Result<readonly ExplorerDirectoryEntry[], ExplorerFailure>> {
-      const result = await filesystem.enumerateDirectory(path, root, cancellation);
+      const result = await filesystem.enumerateDirectory(path, root, cancellation, ignore === undefined ? {} : { ignore });
       if (!result.ok) return { ok: false, error: toExplorerFailure(result.error, path) };
       return { ok: true, value: Object.freeze(result.value.map(toExplorerEntry)) };
     },
@@ -261,6 +271,7 @@ interface ForwardRefs {
   inputRouter: WorkbenchInputRouter;
   languageWiring: LanguageWiring;
   completionFeature: CompletionSnippetController;
+  workspaceEditsFeature?: WorkspaceEditsController;
   explorerFeature: ExplorerController;
   sidebarController: SidebarController;
   overlayFeature: LanguageOverlayController;
@@ -295,11 +306,12 @@ interface BuildContext {
 /** Syntax tracking is constructed first and touched by almost everything else (workbench,
  * host, language wiring); grammar/runtime wasm loads lazily on the first request for a known
  * languageId, never here, so this does no filesystem or wasm work. */
-function createSyntaxTracker(filesystem: NodeFilesystemPort): { readonly syntaxAssetsCancellation: CancellationSource; readonly syntaxTracker: SyntaxDocumentTracker } {
+function createSyntaxTracker(filesystem: NodeFilesystemPort, rainbowBrackets: boolean): { readonly syntaxAssetsCancellation: CancellationSource; readonly syntaxTracker: SyntaxDocumentTracker } {
   const syntaxAssetsCancellation = new CancellationSource();
   const syntaxTracker = new SyntaxDocumentTracker({
-    grammars: createBundledGrammarProvider(filesystem, syntaxAssetsCancellation.token),
+    grammars: createBundledGrammarProvider(filesystem, syntaxAssetsCancellation.token, rainbowBrackets),
     runtime: resolveTreeSitterRuntimeOptions,
+    rainbowBrackets,
   });
   return { syntaxAssetsCancellation, syntaxTracker };
 }
@@ -329,6 +341,7 @@ function createWorkbenchCore(ctx: BuildContext, forward: ForwardRefs, syntaxTrac
       if (change.origin !== 'vim') for (const session of forward.host.sessions.values()) session.applyExternalChange(change);
       forward.completionFeature.cancelSnippetOnExternalChange();
       forward.saveCoordinator.scheduleCheckpoint(change.snapshot.id);
+      forward.saveCoordinator.scheduleAutoSave(change.snapshot.id);
     },
   });
   const opened = workbench.openBuffer(document, {
@@ -350,13 +363,19 @@ async function loadStartupSettings(deps: ControllersDeps): Promise<{ readonly st
   if (startupLoaded.diagnostics.length > 0) deps.statusMessages.publish(`xi: config: ${startupLoaded.diagnostics.join('; ')}`);
   const startupConfig = startupLoaded.config;
   const configuredTheme = startupConfig?.editor.theme;
+  const themeVariants = startupConfig?.editor.themeVariants;
+  if (themeVariants !== undefined && deps.themeWiring.persistedThemeId === undefined) {
+    for (const id of [themeVariants.dark, themeVariants.light, themeVariants.fallback]) {
+      if (id !== undefined && !deps.themeWiring.themeController.has(id)) await deps.themeWiring.loadCustomTheme(id);
+    }
+  }
   if (configuredTheme !== undefined && (deps.themeWiring.persistedThemeId === undefined || startupConfig?.provenance['editor.theme'] === 'state-overrides')) {
     if (!deps.themeWiring.themeController.has(configuredTheme)) await deps.themeWiring.loadCustomTheme(configuredTheme);
     if (deps.themeWiring.themeController.has(configuredTheme)) deps.themeWiring.themeController.setActiveId(configuredTheme);
     else deps.statusMessages.publish(`xi: configured theme ${configuredTheme} was not found; using ${deps.themeWiring.themeController.activeId}`);
   }
   const configuredLanguages = startupConfig?.languages;
-  const formatOnSave = resolveFormatOnSave(process.env, deps.languageId !== undefined && (configuredLanguages?.find((entry) => entry.name === deps.languageId)?.autoFormat ?? false));
+  const formatOnSave = resolveFormatOnSave(process.env, deps.languageId !== undefined && (configuredLanguages?.find((entry) => entry.name === deps.languageId)?.autoFormat ?? false), startupConfig?.editor.autoFormat ?? true);
   return { startupConfig, configuredLanguages, formatOnSave, workspaceRoot };
 }
 
@@ -377,11 +396,20 @@ function createLanguageAndTaskWiring(
     ProcessPort: deps.NodeProcessPort,
     createClock: deps.createClock,
     workspaceRoot,
+    workspaceLspRoots: startupConfig?.editor.workspaceLspRoots ?? [],
     fileUri,
     processEnvironment,
     diagnostics,
     configuredLanguages,
     configuredLanguageServers: startupConfig?.languageServers,
+    lspEnabled: () => (startupConfig?.editor.lsp.enable ?? true) && deps.workspaceTrust.allowsServers(),
+    snippets: startupConfig?.editor.lsp.snippets ?? true,
+    displayLspMessages: startupConfig?.editor.lsp.displayMessages ?? true,
+    displayLspProgressMessages: startupConfig?.editor.lsp.displayProgressMessages ?? false,
+    displayInlayHints: startupConfig?.editor.lsp.displayInlayHints ?? startupConfig?.editor.lsp.inlayHints ?? false,
+    inlayHintsLengthLimit: startupConfig?.editor.lsp.inlayHintsLengthLimit,
+    displayColorSwatches: startupConfig?.editor.lsp.displayColorSwatches ?? true,
+    autoDocumentHighlight: startupConfig?.editor.lsp.autoDocumentHighlight ?? false,
     launchDocument: document,
     launchDocumentPath: filePath?.path,
     readDocumentText,
@@ -389,6 +417,7 @@ function createLanguageAndTaskWiring(
     renameBufferPath: (bufferId, path) => workbench.renameBufferPath(bufferId, path),
     statusMessages: deps.statusMessages,
     marker,
+    notifySurfaceChange: () => forward.host.notifySurfaceChange(),
   });
   forward.languageWiring = languageWiring;
   // On-demand rendering only paints after a keypress/resize/pointer event requests a frame.
@@ -398,7 +427,10 @@ function createLanguageAndTaskWiring(
   diagnostics.subscribe(() => forward.host.notifySurfaceChange());
   const syntaxResultSubscription = syntaxTracker.onResult((result) => {
     // spans are lazy/windowed now: sample the first 4,096 units instead of the O(document) spans getter.
-    if (deps.xiUiTestMarkersEnabled) marker('XI_SYNTAX_STATE', { documentId: result.documentId, version: result.documentVersion, status: result.status, spanCount: result.spansInRange(0, 4096).length });
+    if (deps.xiUiTestMarkersEnabled) {
+      const spans = result.spansInRange(0, 4096);
+      marker('XI_SYNTAX_STATE', { documentId: result.documentId, version: result.documentVersion, status: result.status, spanCount: spans.length, rainbowScopes: [...new Set(spans.flatMap(span => span.scope?.startsWith('rainbow.') === true ? [span.scope] : []))] });
+    }
     forward.host.notifySurfaceChange();
   });
   const taskWiring = createTaskWiring({ filesystem, ProcessPort: deps.NodeProcessPort, notifySurfaceChange: () => forward.host.notifySurfaceChange() });
@@ -415,7 +447,7 @@ async function createRegistries(ctx: BuildContext): Promise<{
 }> {
   const { deps, workspaceRoot } = ctx;
   const { FilePathIndex, createNavigationContributionModule } = deps.coreServices;
-  const fileIndex = new FilePathIndex({ maxEntries: 120_000 });
+  const fileIndex = new FilePathIndex({ maxEntries: 120_000, includeHidden: ctx.startupConfig?.editor.filePicker.hidden ?? true });
   const rootAdded = fileIndex.addRoot({ id: 'workspace', label: workspaceRoot, path: workspaceRoot });
   if (!rootAdded.ok) throw new Error(`xi-file-index-root:${rootAdded.error.kind}`);
   const commandRegistry = new CommandRegistry({ nativeExNames: DEFAULT_NATIVE_EX_COMMANDS.map((command) => command.name) });
@@ -504,8 +536,36 @@ function createPickerModel(
 function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench: WorkbenchSession, syntaxTracker: SyntaxDocumentTracker): BufferHost {
   const { deps, filesystem, persistence, marker, workspaceRoot, clock } = ctx;
   const { document, filePath } = deps;
+  const indentHeuristic = ctx.startupConfig?.editor.indentHeuristic;
+  const motionTrail = ctx.startupConfig?.editor.motionTrail ?? 'last-motion';
+  marker('XI_CONFIG_PROFILE', {
+    profile: ctx.startupConfig?.profile ?? 'xi',
+    schemaVersion: ctx.startupConfig?.schemaVersion ?? 1,
+    motionTrail,
+    motionGhost: motionTrail !== 'off',
+    mouseModifier: ctx.startupConfig?.editor.mouse.modifier ?? 'none',
+    selectionLimit: ctx.startupConfig?.editor.selection.limit ?? 10_000,
+    selectionHistoryLimit: ctx.startupConfig?.editor.selection.historyLimit ?? 100,
+    hintsDelayMs: ctx.startupConfig?.editor.hintsDelayMs ?? 250,
+    searchDebounceMs: ctx.startupConfig?.search.debounceMs ?? 40,
+    searchMaxVisibleResults: ctx.startupConfig?.search.maxVisibleResults ?? 10_000,
+  });
+  // Xi has no syntax-tree indentation queries yet; Helix's documented fallback is simple.
+  const autoindent = indentHeuristic !== undefined;
   const host = new BufferHost(workbench, document, {
-    motionGhost: ctx.startupConfig?.editor.motionTrail !== 'off',
+    motionGhost: motionTrail !== 'off',
+    ...(ctx.startupConfig?.editor.selection.limit === undefined ? {} : { selectionLimit: ctx.startupConfig.editor.selection.limit }),
+    ...(ctx.startupConfig?.editor.selection.historyLimit === undefined ? {} : { selectionHistoryLimit: ctx.startupConfig.editor.selection.historyLimit }),
+    defaultYankRegister: ctx.startupConfig?.editor.defaultYankRegister ?? '"',
+    mouseYankRegister: ctx.startupConfig?.editor.mouseYankRegister ?? '*',
+    clipboard: deps.clipboard,
+    insertOptions: {
+      autoindent,
+      continueComments: ctx.startupConfig?.editor.continueComments ?? true,
+      commentContinuation: (snapshot, lineStart, cursorOffset) => commentContinuationPrefix(snapshot, syntaxTracker, lineStart, cursorOffset),
+      smarttab: ctx.startupConfig?.editor.smartTab.enable ?? true,
+      ...(ctx.startupConfig?.editor.autoPairs === undefined ? {} : { autoPairs: ctx.startupConfig.editor.autoPairs }),
+    },
     openDocument: async (path, documentId) => (path === undefined ? undefined : await forward.directoryDraftController.openDocumentIfDirectory(path, documentId)) ?? deps.openDocumentAt(path, documentId),
     workspaceRelativePath: (path) => filesystem.workspaceRelativePath(workspaceRoot, path),
     marker,
@@ -529,6 +589,17 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
     onPrefixStateChange: (viewId, state) => forward.inputRouter.schedulePrefixHelp(viewId, state.pendingKeys, state.parserContinuations),
     onCommandLineChange: (state) => forward.inputRouter.handleCommandLineChange(state),
     onHostCommand: (command, viewId) => forward.hostCommands.handleVimHostCommand(command, viewId),
+    onStateChange: (sessionDocument, state) => {
+      const primary = state.selections.members.find((member) => member.id === state.selections.primaryId) ?? state.selections.members[0];
+      if (primary === undefined) return;
+      const snapshot = sessionDocument.snapshot();
+      const line = snapshot.lineIndexAt(primary.head.at.offset);
+      if (!line.ok) return;
+      const start = snapshot.lineStartOffset(line.value);
+      if (!start.ok) return;
+      forward.languageWiring.refreshDocumentHighlights(String(sessionDocument.id), Number(line.value), Number(primary.head.at.offset) - Number(start.value));
+      void forward.workspaceEditsFeature?.refreshCodeActionHints();
+    },
     onBufferOpened: (buffer) => {
       syntaxTracker.openDocument({ documentId: buffer.documentId, languageId: languageIdForPath(buffer.path), snapshot: buffer.document.snapshot() });
       forward.languageWiring.admitBufferToLanguageSession(buffer.path, buffer.documentId, buffer.document);
@@ -540,6 +611,11 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
       forward.languageWiring.releaseBufferFromLanguageSession(buffer.path);
     },
   });
+  marker('XI_SMART_TAB', { enable: ctx.startupConfig?.editor.smartTab.enable ?? true });
+  marker('XI_CONTINUE_COMMENTS', { enable: ctx.startupConfig?.editor.continueComments ?? true });
+  marker('XI_INDENT_HEURISTIC', { configured: indentHeuristic ?? 'hybrid', applied: autoindent ? 'simple' : 'disabled' });
+  marker('XI_AUTO_PAIRS', { enabled: ctx.startupConfig?.editor.autoPairs !== false, pairs: ctx.startupConfig?.editor.autoPairs ?? {} });
+  marker('XI_EDITOR_CONFIG', { enabled: ctx.startupConfig?.editor.editorConfig ?? true, lineNumber: ctx.startupConfig?.editor.lineNumber ?? 'absolute' });
   forward.host = host;
   return host;
 }
@@ -558,6 +634,19 @@ function createOptionalServicesAndPicker(
   const { deps, filesystem, clock, marker, workspaceRoot } = ctx;
   const optionalServices = createOptionalServicesWiring({
     filesystem,
+    explorerIncludeHidden: !(ctx.startupConfig?.editor.fileExplorer.hidden ?? false),
+    explorerFollowSymlinks: ctx.startupConfig?.editor.fileExplorer.followSymlinks ?? false,
+    explorerFlattenDirs: ctx.startupConfig?.editor.fileExplorer.flattenDirs ?? true,
+    ...(ctx.startupConfig?.search.debounceMs === undefined ? {} : { searchDebounceMilliseconds: ctx.startupConfig.search.debounceMs }),
+    ...(ctx.startupConfig?.search.maxVisibleResults === undefined ? {} : { searchDefaultLimit: ctx.startupConfig.search.maxVisibleResults }),
+    explorerIgnore: {
+      parents: ctx.startupConfig?.editor.fileExplorer.parents ?? false,
+      ignore: ctx.startupConfig?.editor.fileExplorer.ignore ?? false,
+      gitIgnore: ctx.startupConfig?.editor.fileExplorer.gitIgnore ?? false,
+      gitGlobal: ctx.startupConfig?.editor.fileExplorer.gitGlobal ?? false,
+      gitExclude: ctx.startupConfig?.editor.fileExplorer.gitExclude ?? false,
+      homeDirectory: process.env.HOME ?? process.cwd(),
+    },
     ProcessPort: deps.NodeProcessPort,
     workspaceRoot,
     fileUri,
@@ -567,6 +656,7 @@ function createOptionalServicesAndPicker(
     createGitDecorationPort,
     getExplorerFeature: () => forward.explorerFeature,
     getSearchFeature: () => forward.searchFeature,
+    gitEnabled: deps.workspaceTrust.allowsGit,
   });
   forward.optionalServices = optionalServices;
   const picker = new PickerController<PickerEntry, WorkbenchTheme>({
@@ -575,9 +665,14 @@ function createOptionalServicesAndPicker(
     theme: deps.themeWiring.themeController,
     clock,
     marker,
+    bufferStartPosition: ctx.startupConfig?.editor.bufferPicker.startPosition ?? 'current',
     startFileIndexPopulation: () => forward.startFileIndexPopulation(),
     toggleMouseMode: mouseMode.toggle,
     openDiagnostic,
+    openConfig: async () => {
+      const opened = await host.openBufferAtPath(deps.userConfigPath);
+      if (opened !== undefined) marker('XI_CONFIG_OPEN', { path: deps.userConfigPath, viewId: opened.viewId });
+    },
     openFile: async (path, preview) => {
       const opened = await host.openBufferAtPath(path, { preview });
       // The Files tree follows a picker commit (VS Code "reveal in explorer"); previews
@@ -729,6 +824,8 @@ function createSearchProblemsOverlaySidebar(
     marker,
     onError: (message) => ctx.deps.statusMessages.publish(message),
     workspaceRoot,
+    searchSmartCase: ctx.startupConfig?.editor.search.smartCase ?? true,
+    searchWrapAround: ctx.startupConfig?.editor.search.wrapAround ?? true,
     ensureServices: async () => { await forward.optionalServices.ensure(); },
   });
   forward.searchFeature = searchFeature;
@@ -787,6 +884,7 @@ function createSearchProblemsOverlaySidebar(
     marker,
     onError: (message) => ctx.deps.statusMessages.publish(message),
     workspaceRoot,
+    shell: ctx.startupConfig?.editor.shell ?? ['sh', '-c'],
     resolvePath: (base, relative) => filesystem.resolvePath(base, relative),
     fileUri,
     workspacePathFromUri,
@@ -812,7 +910,31 @@ function createSearchProblemsOverlaySidebar(
     panelState: () => (forward.searchFeature.isOpen ? 'search' : forward.gitPanelFeature.isOpen ? 'git' : 'files'),
     outline: { get hasSymbols() { return overlayFeature.outlineRead.model.symbols.length > 0; } },
   });
+  marker('XI_SIDEBAR_CONFIG', { visible: sidebarController.visible, panel: sidebarController.lastPanel, width: sidebarController.width });
   return { searchFeature, gitPanelFeature, gitDiffFeature, problemsFeature, overlayFeature, sidebarController };
+}
+
+/** Return a bounded line-comment prefix for a newly opened line. Cached syntax confirms the
+ * marker when available; the lexical fallback keeps Enter useful before the background parse
+ * completes and only recognizes comment markers at the line start. */
+function commentContinuationPrefix(snapshot: DocumentSnapshot, syntaxTracker: SyntaxDocumentTracker, lineStart: number, cursorOffset: number): string | undefined {
+  if (cursorOffset < lineStart || cursorOffset > snapshot.lengthUtf16) return undefined;
+  const end = Math.min(cursorOffset, lineStart + 256);
+  const startOffset = asUtf16Offset(lineStart);
+  const endOffset = asUtf16Offset(end);
+  if (!startOffset.ok || !endOffset.ok) return undefined;
+  const read = snapshot.slice(startOffset.value, endOffset.value);
+  if (!read.ok) return undefined;
+  const match = /^(?:[ \t]*)(\/\/+|#+|;+|--+|%+|<!--)([ \t]*)/u.exec(read.value);
+  const marker = match?.[1];
+  const spacing = match?.[2];
+  if (match === null || marker === undefined || spacing === undefined || cursorOffset < lineStart + match[0].length) return undefined;
+  const markerStart = lineStart + (match[0].length - marker.length - spacing.length);
+  const markerEnd = markerStart + marker.length;
+  const syntax = syntaxTracker.readSyntax(snapshot.id);
+  if (syntax !== undefined && (syntax.documentVersion as unknown as number) === (snapshot.version as unknown as number)
+    && !syntax.spansInRange(markerStart, markerEnd).some((span) => span.kind === 'comment')) return undefined;
+  return `${marker}${spacing}`;
 }
 
 /** Completion/snippets and workspace-edit (rename/code-action) controllers, plus connecting
@@ -839,6 +961,19 @@ function createCompletionAndWorkspaceEdits(
     ensureLanguage: () => forward.languageWiring.ensureLanguage(),
     ensureOptionalServices: async () => { await forward.optionalServices.ensure(); },
     getSnippetSupport: () => (forward.optionalServices.current === undefined ? undefined : { expandSnippet: forward.optionalServices.current.expandSnippet, SnippetSession: forward.optionalServices.current.SnippetSession }),
+    autoCompletion: ctx.startupConfig?.editor.autoCompletion ?? true,
+    completionTimeoutMs: ctx.startupConfig?.editor.completionTimeout ?? 250,
+    completionTriggerLen: ctx.startupConfig?.editor.completionTriggerLen ?? 2,
+    wordCompletion: ctx.startupConfig?.editor.wordCompletion.enable ?? true,
+    wordCompletionProvider: createWordCompletionProvider(() => [...host.documents.values()].map((document) => document.snapshot()), ctx.startupConfig?.editor.wordCompletion.triggerLength ?? 7),
+    pathCompletion: ctx.startupConfig?.editor.pathCompletion ?? true,
+    pathCompletionProvider: createPathCompletionProvider(filesystem, workbench, workspaceRoot),
+    previewCompletionInsert: ctx.startupConfig?.editor.previewCompletionInsert ?? true,
+    completionReplace: ctx.startupConfig?.editor.completionReplace ?? false,
+    smartTabSupersedeMenu: ctx.startupConfig?.editor.smartTab.supersedeMenu ?? false,
+    snippets: ctx.startupConfig?.editor.lsp.snippets ?? true,
+    autoSignatureHelp: ctx.startupConfig?.editor.lsp.autoSignatureHelp ?? true,
+    displaySignatureHelpDocs: ctx.startupConfig?.editor.lsp.displaySignatureHelpDocs ?? true,
   });
   forward.completionFeature = completionFeature;
   const workspaceEditsFeature = new WorkspaceEditsController({
@@ -879,7 +1014,13 @@ function createCompletionAndWorkspaceEdits(
       const resolved = await forward.optionalServices.ensure();
       return resolved.executeLanguageCodeAction;
     },
+    codeActionHints: ctx.startupConfig?.editor.statusline.left.includes('code-action-hint') === true
+      || ctx.startupConfig?.editor.statusline.center.includes('code-action-hint') === true
+      || ctx.startupConfig?.editor.statusline.right.includes('code-action-hint') === true
+      || ctx.startupConfig?.editor.gutters.includes('code-action-hint') === true,
+    notifySurfaceChange: () => forward.host.notifySurfaceChange(),
   });
+  forward.workspaceEditsFeature = workspaceEditsFeature;
   forward.languageWiring.connect({ getBufferDocument: (documentId) => host.documents.get(documentId), overlayFeature, completionFeature, workspaceEditsFeature });
   return { completionFeature, workspaceEditsFeature };
 }
@@ -897,7 +1038,7 @@ function createPointerCapture(ctx: BuildContext, host: BufferHost, workbench: Wo
       }
     },
     scroll: (viewId, delta, viewportHeight) => {
-      const result = scrollViewBy(workbench, (viewIdentifier) => host.sessions.get(viewIdentifier), viewId as ViewId, delta, viewportHeight);
+      const result = scrollViewBy(workbench, (viewIdentifier) => host.sessions.get(viewIdentifier), viewId as ViewId, delta, viewportHeight, ctx.startupConfig?.editor.scrolloff ?? 0);
       marker('XI_POINTER_SCROLL', { viewId, delta, scrollTop: result?.scrollTop });
     },
   });
@@ -913,7 +1054,7 @@ function createSaveAndHostCommands(
   problemsFeature: ProblemsController,
   workspacePathFromUri: CoreServicesModule['workspacePathFromUri'],
 ): { readonly saveCoordinator: SaveCoordinator; readonly hostCommands: WorkbenchHostCommands } {
-  const { deps, filesystem, clock, persistence, marker, workspaceRoot, formatOnSave, configuredLanguages } = ctx;
+  const { deps, filesystem, clock, persistence, marker, workspaceRoot, formatOnSave, configuredLanguages, startupConfig } = ctx;
   const { languageId } = deps;
   const saveCoordinator = new SaveCoordinator({
     host,
@@ -923,6 +1064,12 @@ function createSaveAndHostCommands(
     marker,
     onError: (message) => ctx.deps.statusMessages.publish(message),
     formatOnSave,
+    insertFinalNewline: startupConfig?.editor.insertFinalNewline ?? true,
+    trimFinalNewlines: startupConfig?.editor.trimFinalNewlines ?? false,
+    trimTrailingWhitespace: startupConfig?.editor.trimTrailingWhitespace ?? false,
+    atomicSave: startupConfig?.editor.atomicSave ?? true,
+    ...(startupConfig?.editor.autoSave.afterDelay === undefined ? {} : { autoSaveAfterDelay: startupConfig.editor.autoSave.afterDelay }),
+    autoSaveFocusLost: startupConfig?.editor.autoSave.focusLost ?? false,
     createFormatterPipeline: async () => {
       const { FormatterPipeline, createExternalFormatter } = await import('../../../../packages/services/src/entrypoints/formatting');
       const configuredFormatter = languageId === undefined ? undefined : configuredLanguages?.find((entry) => entry.name === languageId)?.formatter;
@@ -945,6 +1092,11 @@ function createSaveAndHostCommands(
     problems: problemsFeature,
     saveCoordinator,
     directoryDrafts: { open: (target, viewId) => forward.directoryDraftController.explore(target, viewId) },
+    workspaceTrust: deps.workspaceTrust,
+    openConfig: async () => {
+      const opened = await host.openBufferAtPath(deps.userConfigPath);
+      if (opened !== undefined) marker('XI_CONFIG_OPEN', { path: deps.userConfigPath, viewId: opened.viewId });
+    },
     lookupDefinition: async () => {
       await forward.languageWiring.ensureLanguage();
       const navigation = forward.languageWiring.navigationController;
@@ -961,6 +1113,23 @@ function createSaveAndHostCommands(
       // Servers may list the local import alias first; prefer the declaration in another file.
       const first = result.value.find((location) => location.uri !== request.uri) ?? result.value[0];
       if (first === undefined) return { ok: false, message: 'no definition found' };
+      return { ok: true, location: { uri: first.uri, line: first.startLine, utf16: first.startUtf16 } };
+    },
+    lookupReferences: async () => {
+      await forward.languageWiring.ensureLanguage();
+      const navigation = forward.languageWiring.navigationController;
+      const languageSession = forward.languageWiring.session;
+      if (navigation === undefined || languageSession === undefined) return { ok: false, message: 'no language server for this file' };
+      const request = buildNavigationRequest(workbench, ctx.deps.coreServices.fileUri);
+      if (request === undefined) return { ok: false, message: 'no active buffer' };
+      const ready = await Promise.race([languageSession.waitForReady(request.uri), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8000))]);
+      if (ready !== undefined && !ready.ok) return { ok: false, message: ready.error.message };
+      const includeDeclaration = ctx.startupConfig?.editor.lsp.gotoReferenceIncludeDeclaration ?? true;
+      const result = await navigation.references(request, includeDeclaration);
+      marker('XI_REFERENCES_REQUEST', { includeDeclaration, count: result.ok ? result.value.length : 0 });
+      if (!result.ok) return { ok: false, message: result.error.message };
+      const first = result.value.find((location) => location.uri !== request.uri || location.startLine !== request.position.line || location.startUtf16 !== request.position.utf16) ?? result.value[0];
+      if (first === undefined) return { ok: false, message: 'no references found' };
       return { ok: true, location: { uri: first.uri, line: first.startLine, utf16: first.startUtf16 } };
     },
     focusSidebar: () => {
@@ -1004,9 +1173,15 @@ function createInputAndPointerRouters(
   mouseMode: ReturnType<typeof createMouseModeToggle>,
   directoryDraftController: DirectoryDraftController,
   gitDiffFeature: DiffViewController,
+  onConfigReload: () => Promise<boolean>,
 ): { readonly inputRouter: WorkbenchInputRouter; readonly pointerRouter: WorkbenchPointerRouter } {
   forward.gitPanelOpen = () => picker.isOpen && picker.mode === 'git';
   const { marker, startupConfig, clock } = ctx;
+  const canonicalHintsSource = startupConfig?.provenance['xi.hints.delay-ms'];
+  const legacyHintsSource = startupConfig?.provenance['editor.hints.delay-ms'];
+  const hintsOverride = (canonicalHintsSource !== undefined && canonicalHintsSource !== 'defaults')
+    || (legacyHintsSource !== undefined && legacyHintsSource !== 'defaults');
+  const prefixHelpDelay = hintsOverride ? startupConfig?.editor.hintsDelayMs : startupConfig?.editor.idleTimeout ?? 250;
   const inputRouter = new WorkbenchInputRouter({
     host,
     session: workbench,
@@ -1019,6 +1194,8 @@ function createInputAndPointerRouters(
     problems: problemsFeature,
     overlays: overlayFeature,
     completion: forward.completionFeature,
+    autoInfo: startupConfig?.editor.autoInfo ?? true,
+    ...(prefixHelpDelay === undefined ? {} : { idleTimeout: prefixHelpDelay }),
     workspaceEdits: workspaceEditsFeature,
     executeWorkbenchCommand: (source, viewId) => forward.hostCommands.handleWorkbenchCommand(source, viewId),
     isExplorerServiceLoaded: () => forward.optionalServices.current !== undefined,
@@ -1039,7 +1216,10 @@ function createInputAndPointerRouters(
     },
     launchViewId: id<ViewId>('xi-launch-view'),
     bindings: startupConfig?.bindings ?? [],
+    ...(startupConfig?.editor.jumpLabelAlphabet === undefined ? {} : { jumpLabelAlphabet: startupConfig.editor.jumpLabelAlphabet }),
+    reloadConfig: onConfigReload,
     scrollLines: startupConfig?.editor.mouse.scrollLines ?? 1,
+    scrolloff: startupConfig?.editor.scrolloff ?? 0,
     getViewportHeight: () => {
       const active = workbench.activeViewId;
       const reported = active === undefined ? undefined : workbench.viewViewportHeight(active);
@@ -1079,10 +1259,21 @@ function createInputAndPointerRouters(
     session: workbench,
     marker,
     clock,
+    mouseModifier: startupConfig?.editor.mouse.modifier ?? 'none',
     onTabActivate: (bufferId, viewId) => { host.focusBufferById(bufferId, viewId as ViewId | undefined); host.notifySurfaceChange(); },
     onEditorPointerDown: () => {
       inputRouter.focusEditor();
       if (forward.explorerFeature.isOpen || forward.searchFeature.isOpen) { host.closeAllPanels(); host.notifySurfaceChange(); }
+    },
+    onMiddleClick: (event) => {
+      if (startupConfig?.editor.middleClickPaste !== true || event.target === undefined) return false;
+      const session = host.sessions.get(event.viewId as ViewId);
+      if (session === undefined) return false;
+      const cell = { row: event.cell.row, column: event.cell.column, target: event.target };
+      if (!session.placePointer({ kind: 'click', viewId: event.viewId, anchor: cell, head: cell, modifiers: { shift: event.modifiers?.shift ?? false, alt: event.modifiers?.alt ?? false, ctrl: event.modifiers?.ctrl ?? false, meta: event.modifiers?.meta ?? false } })) return false;
+      void session.handleClipboardPaste('primary');
+      marker('XI_MIDDLE_CLICK_PASTE', { viewId: event.viewId, row: event.cell.row, column: event.cell.column });
+      return true;
     },
     onTabPin: (bufferId) => { workbench.pinBuffer(id<DocumentId>(bufferId)); host.notifySurfaceChange(); },
     // `closeBuffer` with no decision closes a clean buffer immediately and returns a
@@ -1150,10 +1341,10 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const mouseMode = createMouseModeToggle();
   const jobControlDisposables: Disposable[] = [];
 
-  const { syntaxAssetsCancellation, syntaxTracker } = createSyntaxTracker(filesystem);
+  const settings = await loadStartupSettings(deps);
+  const { syntaxAssetsCancellation, syntaxTracker } = createSyntaxTracker(filesystem, settings.startupConfig?.editor.rainbowBrackets ?? false);
   forward.syntaxTracker = syntaxTracker;
   const editorState = deps.themeWiring.editorState;
-  const settings = await loadStartupSettings(deps);
   const ctx: BuildContext = { editorState, deps, filesystem, clock, persistence, marker, ...settings };
 
   const workbench = createWorkbenchCore(ctx, forward, syntaxTracker);
@@ -1175,14 +1366,45 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const { completionFeature, workspaceEditsFeature } = createCompletionAndWorkspaceEdits(ctx, forward, host, workbench, diagnostics, overlayFeature, fileUri, workspaceRelativePathFromUri);
   const pointerCapture = createPointerCapture(ctx, host, workbench);
   createSaveAndHostCommands(ctx, forward, host, workbench, workspaceEditsFeature, problemsFeature, workspacePathFromUri);
-  const { inputRouter, pointerRouter } = createInputAndPointerRouters(ctx, forward, host, workbench, commandRegistry, picker, problemsFeature, overlayFeature, workspaceEditsFeature, sidebarController, pointerCapture, contextMenuStore, pickerModel, diagnostics, mouseMode, directoryDraftController, gitDiffFeature);
+  let applyReloadedConfig: () => Promise<boolean> = async () => false;
+  const { inputRouter, pointerRouter } = createInputAndPointerRouters(ctx, forward, host, workbench, commandRegistry, picker, problemsFeature, overlayFeature, workspaceEditsFeature, sidebarController, pointerCapture, contextMenuStore, pickerModel, diagnostics, mouseMode, directoryDraftController, gitDiffFeature, () => applyReloadedConfig());
+  let currentConfig = ctx.startupConfig;
+  let reloadInFlight: Promise<boolean> | undefined;
+  const reloadConfig = (): Promise<boolean> => {
+    if (reloadInFlight !== undefined) return reloadInFlight;
+    const attempt = (async (): Promise<boolean> => {
+      const loaded = await deps.reloadStartupConfig();
+      if (loaded.config === undefined) {
+        const detail = loaded.diagnostics.length === 0 ? 'configuration was rejected' : loaded.diagnostics.join('; ');
+        deps.statusMessages.publish(`xi: config reload failed: ${detail}`);
+        marker('XI_CONFIG_RELOAD', { ok: false, diagnostics: loaded.diagnostics });
+        return false;
+      }
+      currentConfig = loaded.config;
+      inputRouter.updateConfig({
+        bindings: loaded.config.bindings,
+        autoInfo: loaded.config.editor.autoInfo,
+        scrollLines: loaded.config.editor.mouse.scrollLines,
+        scrolloff: loaded.config.editor.scrolloff,
+        jumpLabelAlphabet: loaded.config.editor.jumpLabelAlphabet,
+      });
+      deps.statusMessages.publish(`xi: configuration reloaded (generation ${loaded.config.generation})`, 'info');
+      marker('XI_CONFIG_RELOAD', { ok: true, generation: loaded.config.generation });
+      return true;
+    })().finally(() => { reloadInFlight = undefined; });
+    reloadInFlight = attempt;
+    return attempt;
+  };
+  deps.workspaceTrust.attachReload(reloadConfig);
+  applyReloadedConfig = reloadConfig;
 
   // Deferred until every controller `onPrefixStateChange`/`onCommandLineChange` delegates to
   // (`inputRouter`, constructed above) exists: `createSession`'s initial state publish can
   // invoke those callbacks synchronously.
   host.createSession(deps.document, id<ViewId>('xi-launch-view'));
 
-  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, () => host.notifySurfaceChange());
+  const filePicker = ctx.startupConfig?.editor.filePicker;
+  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd() }, () => host.notifySurfaceChange());
   forward.startFileIndexPopulation = startFileIndexPopulation;
   const fileIndexStarter = createDeferredStart(1000, () => { void startFileIndexPopulation(); });
   async function ensureGitAndOpenPicker(): Promise<void> {
@@ -1193,6 +1415,8 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
 
   return {
     editorState,
+    get startupConfig() { return currentConfig; },
+    reloadConfig,
     statusMessages: deps.statusMessages,
     workbench,
     host,

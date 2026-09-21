@@ -211,6 +211,11 @@ export interface LanguageProgressEvent {
   readonly value: unknown;
 }
 
+export interface LanguageWindowMessage {
+  readonly type: 1 | 2 | 3 | 4;
+  readonly message: string;
+}
+
 export interface LanguageDynamicCapability {
   readonly id: string;
   readonly method: string;
@@ -245,12 +250,18 @@ export interface LanguageServerSessionOptions {
   readonly initializationOptions?: unknown;
   readonly clientName?: string;
   readonly clientVersion?: string;
+  /** Advertise and honor snippet-format completion support; defaults to true. */
+  readonly snippetSupport?: boolean;
   readonly processTimeoutMilliseconds?: number;
   readonly requestTimeoutMilliseconds?: number;
   readonly shutdownTimeoutMilliseconds?: number;
   readonly retry?: LanguageRetryPolicy;
   /** Optional owner store for validated `textDocument/publishDiagnostics`. */
   readonly diagnostics?: DiagnosticStore;
+  /** Receives validated `window/showMessage` notifications without coupling this service to UI. */
+  readonly onWindowMessage?: (message: LanguageWindowMessage) => void;
+  /** Receives validated progress notifications; the health snapshot remains authoritative. */
+  readonly onProgress?: (event: LanguageProgressEvent) => void;
   /** Documents at or under this UTF-16 length are admitted; larger ones are rejected at
    * `openDocument` instead of being sent to the transport, which enforces its own
    * (byte) outgoing-body budget. Defaults to the sync layer's full-sync UTF-16 bound. */
@@ -724,7 +735,9 @@ export class LanguageServerSession implements Disposable {
         // yet been converted at their request boundary.
         general: { positionEncodings: ['utf-16'] },
         textDocument: {
-          completion: { dynamicRegistration: true, completionItem: { snippetSupport: true } },
+          completion: { dynamicRegistration: true, completionItem: { snippetSupport: this.#options.snippetSupport !== false } },
+          inlayHint: { dynamicRegistration: true },
+          colorProvider: { dynamicRegistration: true },
           // Without declaring this, a spec-compliant server (confirmed: typescript-language-server)
           // reads the absence of `textDocument.publishDiagnostics` as "this client does not want
           // diagnostics pushed" and never sends any `textDocument/publishDiagnostics` notification.
@@ -761,9 +774,19 @@ export class LanguageServerSession implements Disposable {
       // map (and every future health snapshot copying it) grows without bound.
       if (asRecord(record?.value)?.kind === 'end') this.#progress.delete(tokenKey(token));
       else this.#progress.set(tokenKey(token), event);
+      try { this.#options.onProgress?.(event); } catch { /* observers cannot break protocol dispatch */ }
       for (const listener of [...this.#progressListeners]) {
         try { listener(event); } catch { /* observers cannot break protocol dispatch */ }
       }
+    });
+    transport.onNotification('window/showMessage', (params: unknown) => {
+      const record = asRecord(params);
+      const type = integer(record?.type);
+      if (type !== 1 && type !== 2 && type !== 3 && type !== 4 || typeof record?.message !== 'string') {
+        this.recordProtocolIssue('language server sent invalid window/showMessage parameters');
+        return;
+      }
+      try { this.#options.onWindowMessage?.({ type, message: record.message }); } catch { /* observers cannot break protocol dispatch */ }
     });
     transport.onNotification('textDocument/publishDiagnostics', (params: unknown) => {
       const publish = decodeDiagnostics(params, this.#documents);
@@ -1318,6 +1341,10 @@ const STATIC_CAPABILITY_FIELDS: Readonly<Record<string, string>> = Object.freeze
   'textDocument/hover': 'hoverProvider',
   'textDocument/signatureHelp': 'signatureHelpProvider',
   'textDocument/definition': 'definitionProvider',
+  'textDocument/references': 'referencesProvider',
+  'textDocument/inlayHint': 'inlayHintProvider',
+  'textDocument/documentColor': 'colorProvider',
+  'textDocument/documentHighlight': 'documentHighlightProvider',
   'textDocument/documentSymbol': 'documentSymbolProvider',
   'textDocument/codeAction': 'codeActionProvider',
   'textDocument/rename': 'renameProvider',
@@ -1330,7 +1357,7 @@ const STATIC_CAPABILITY_FIELDS: Readonly<Record<string, string>> = Object.freeze
 
 const SUPPORTED_DYNAMIC_METHODS: ReadonlySet<string> = new Set([
   'textDocument/completion', 'textDocument/hover', 'textDocument/signatureHelp',
-  'textDocument/definition', 'textDocument/documentSymbol', 'textDocument/codeAction',
+  'textDocument/definition', 'textDocument/references', 'textDocument/documentSymbol', 'textDocument/codeAction', 'textDocument/inlayHint', 'textDocument/documentColor', 'textDocument/documentHighlight',
   'textDocument/rename', 'textDocument/diagnostic', 'textDocument/prepareCallHierarchy',
   'textDocument/prepareTypeHierarchy', 'textDocument/documentLink',
   'workspace/willCreateFiles', 'workspace/willRenameFiles', 'workspace/willDeleteFiles',

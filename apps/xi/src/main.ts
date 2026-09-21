@@ -1,7 +1,8 @@
 import '../../../packages/ui/src/entrypoints/preload';
-import { CancellationSource, type DocumentId } from '../../../packages/primitives/src/entrypoints/launch';
+import { CancellationSource, type Disposable, type DocumentId } from '../../../packages/primitives/src/entrypoints/launch';
+import type { ClipboardPort } from '../../../packages/contracts/src/entrypoints/launch';
 // Value imports of the UI entrypoint would evaluate OpenTUI before main() runs; keep the UI lazy.
-import type { TextFileDocument } from '../../../packages/document/src/entrypoints/launch';
+import type { LineEnding, TextFileDocument } from '../../../packages/document/src/entrypoints/launch';
 import type { PersistenceService } from '../../../packages/services/src/entrypoints/launch';
 import { languageIdForPath, VIEW_COMMAND_IDS, StatusMessageController } from '../../../packages/workbench/src/entrypoints/launch';
 import { loadStartupXiConfig } from '../../../packages/services/src/entrypoints/config';
@@ -11,6 +12,8 @@ import { createThemeWiring, themeStateDirectory } from './wiring/theme';
 import { createControllers, id, type Controllers } from './wiring/controllers';
 import { wireControllerPanels } from './wiring/pointer';
 import { buildWorkbenchUiOptions } from './wiring/ui';
+import { createConfiguredClipboardPort } from './wiring/clipboard';
+import { createWorkspaceTrustWiring, workspaceTrustStateDirectory } from './wiring/workspace-trust';
 
 const XI_VERSION = '0.0.1';
 
@@ -36,6 +39,7 @@ async function main(): Promise<void> {
   const action = parseCliArgs(process.argv.slice(2), XI_VERSION);
   if (action.kind !== 'launch') {
     process.stdout.write(action.text);
+    if (action.kind === 'error') process.exitCode = 2;
     return;
   }
   const filePath = action.fileArgument === undefined ? undefined : resolveFileArgument(action.fileArgument, process.cwd());
@@ -54,6 +58,7 @@ async function main(): Promise<void> {
   const [{ PersistenceService }, { NodeFilesystemPort, NodeProcessPort, createNodeClock, installJobControl }, { openTextDocument, openTextDocumentChunks, TextFileDocument, positionToOffset }] = await Promise.all([persistenceModule, platformModule, documentModule]);
   startupTrace('base-modules');
   const filesystem = new NodeFilesystemPort();
+  const workspaceTrust = createWorkspaceTrustWiring(filesystem, process.cwd(), workspaceTrustStateDirectory(process.env), process.env);
   const clock = createNodeClock();
   // PersistenceService (a service) never constructs documents itself
   // (docs/architecture.md); this composition root owns that and hands it a factory.
@@ -71,12 +76,14 @@ async function main(): Promise<void> {
   const statusMessages = new StatusMessageController(clock);
   // Kicked off now, alongside the other startup filesystem work, so the awaits below (once,
   // before it's first needed) do not add a second sequential round-trip on top of it.
-  const startupConfigPromise = loadStartupXiConfig(filesystem, themeStateDirectory(), configCancellation.token, VIEW_COMMAND_IDS, `${process.env.HOME ?? process.cwd()}/.xi.toml`);
+  const configPath = action.configPath === undefined ? undefined : (action.configPath.startsWith('/') ? action.configPath : `${process.cwd()}/${action.configPath}`);
+  const loadConfig = (): ReturnType<typeof loadStartupXiConfig> => loadStartupXiConfig(filesystem, themeStateDirectory(), configCancellation.token, VIEW_COMMAND_IDS, `${process.env.HOME ?? process.cwd()}/.xi.toml`, configPath, `${process.cwd()}/.helix/config.toml`, process.env, workspaceTrust);
+  const startupConfigPromise = loadConfig();
   // The document open and the theme-state read are independent IO: overlap them. Custom
   // theme files are only enumerated before the first frame when the persisted theme is not
   // builtin; otherwise they load after the first frame for the picker.
   const themeWiringPromise = createThemeWiring(filesystem, statusMessages);
-  const documentPromise = openDocument(openTextDocument, persistence, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages);
+  const documentPromise = openDocument(openTextDocument, persistence, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages, startupConfigPromise);
   const themeWiring = await themeWiringPromise;
   const document = await documentPromise;
   if (document === undefined) {
@@ -96,13 +103,18 @@ async function main(): Promise<void> {
   // was created) before rethrowing.
   renderer.catch(() => {});
   installCrashHandlers(renderer);
+  const clipboardRef: { value?: ClipboardPort & Disposable } = {};
   try {
     const coreServices = await coreServicesModule;
-    const [, { runOpenTuiWorkbench, ContextMenuStore }] = await Promise.all([vimSession, ui]);
+    const [, { createOpenTuiClipboardPort, createOpenTuiTermcodeClipboardPort, runOpenTuiWorkbench, ContextMenuStore }] = await Promise.all([vimSession, ui]);
     startupTrace('core-modules');
+    const builtinClipboard = createOpenTuiClipboardPort();
+    const clipboard = createConfiguredClipboardPort((await startupConfigPromise).config?.editor.clipboardProvider ?? { kind: 'builtin', name: 'platform' }, builtinClipboard, NodeProcessPort, process.cwd(), createOpenTuiTermcodeClipboardPort());
+    clipboardRef.value = clipboard;
 
     const controllers = await createControllers({
       filesystem,
+      userConfigPath: `${themeStateDirectory()}/config.toml`,
       clock,
       persistence,
       document,
@@ -112,33 +124,46 @@ async function main(): Promise<void> {
       createClock: createNodeClock,
       positionToOffset,
       statusMessages,
-      openDocumentAt: (path, documentId) => openDocument(openTextDocument, persistence, path, documentId, statusMessages),
+      openDocumentAt: (path, documentId) => openDocument(openTextDocument, persistence, path, documentId, statusMessages, startupConfigPromise),
       marker,
       xiUiTestMarkersEnabled: XI_UI_TEST_MARKERS_ENABLED,
       startupTrace,
       startupConfigPromise,
+      reloadStartupConfig: loadConfig,
       themeWiring,
       coreServices,
       ContextMenuStore,
+      clipboard,
+      workspaceTrust,
     });
 
     wireControllerPanels(controllers);
+    const reloadOnUsr1 = (): void => { void controllers.reloadConfig(); };
+    process.on('SIGUSR1', reloadOnUsr1);
 
-    startupTrace('renderer-call');
-    await runOpenTuiWorkbench(controllers.workbench, filePath?.label ?? '[No Name]', buildWorkbenchUiOptions(controllers, {
-      renderer,
-      themeWiring,
-      marker,
-      startupTrace,
-      installJobControl,
-    }));
+    try {
+      startupTrace('renderer-call');
+      await runOpenTuiWorkbench(controllers.workbench, filePath?.label ?? '[No Name]', buildWorkbenchUiOptions(controllers, {
+        renderer,
+        themeWiring,
+        marker,
+        startupTrace,
+        installJobControl,
+      }));
+    } catch (error) {
+      process.off('SIGUSR1', reloadOnUsr1);
+      throw error;
+    }
     marker('XI_TEARDOWN', { step: 'workbench-returned' });
+    process.off('SIGUSR1', reloadOnUsr1);
     await teardownControllers(controllers, persistence, marker);
+    await clipboard.dispose();
     statusMessages.dispose();
     // Bun can retain the PTY stdin reference after OpenTUI has restored the terminal. Every
     // Xi-owned disposable is closed above, so finish the successful process boundary here.
     process.exit(0);
   } catch (error) {
+    await clipboardRef.value?.dispose();
     const created = await renderer.catch(() => undefined);
     if (created !== undefined && !created.isDestroyed) created.destroy();
     statusMessages.dispose();
@@ -168,6 +193,7 @@ async function teardownControllers(controllers: Controllers, persistence: Persis
   controllers.gitPanelFeature.dispose();
   controllers.languageWiring.completionSubscription?.dispose();
   controllers.languageWiring.signatureSubscription?.dispose();
+  controllers.languageWiring.inlaySubscription?.dispose();
   resolvedOptionalServices?.searchService.dispose();
   resolvedOptionalServices?.replaceService.dispose();
   marker('XI_TEARDOWN', { step: 'language-dispose' });
@@ -218,9 +244,14 @@ async function openDocument(
   path: string | undefined,
   documentId: DocumentId,
   statusMessages: StatusMessageController,
+  startupConfigPromise: ReturnType<typeof loadStartupXiConfig>,
 ): Promise<TextFileDocument | undefined> {
   if (path === undefined) {
-    const opened = openTextDocument(documentId, new TextEncoder().encode(''));
+    const configured = (await startupConfigPromise).config?.editor.defaultLineEnding;
+    const defaultLineEnding = configured === undefined || configured === 'native'
+      ? process.platform === 'win32' ? 'crlf' : 'lf'
+      : configured;
+    const opened = openTextDocument(documentId, new TextEncoder().encode(''), 41027, { defaultLineEnding: defaultLineEnding as LineEnding });
     if (opened.kind !== 'editable') throw new Error(`xi cannot edit this input: ${opened.kind}`);
     return opened.document;
   }

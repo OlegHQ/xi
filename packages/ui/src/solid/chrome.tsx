@@ -8,7 +8,10 @@ import { sidebarTheme } from '../../theme/sidebar';
 import type { Disposable } from '../../../contracts/src/index';
 import type { WorkbenchReadPort } from '../../../workbench/src/index';
 import type { SidebarReadModel, WorkbenchTabSnapshot } from '../../../workbench/src/entrypoints/launch';
-import { calculateWorkbenchLayout, computeSidebarTabLayout, computeTabLayout, helixTextAttributes, helixThemeColor, helixThemeStyle, themeColor, type SidebarTabId, type ThemeColor, type WorkbenchTheme } from '../workbench';
+import type { DocumentId } from '../../../contracts/src/index';
+import type { Problem } from '../../problems/index';
+import { calculateWorkbenchLayout, computeSidebarTabLayout, computeTabLayout, helixTextAttributes, helixThemeColor, helixThemeStyle, type SidebarTabId, type ThemeColor, type WorkbenchTheme } from '../workbench';
+import { resolvePaintColor } from '../../theme/motion-tokens';
 
 export interface ChromeSurfaceSpec {
   readonly workbench: WorkbenchReadPort;
@@ -16,6 +19,17 @@ export interface ChromeSurfaceSpec {
   readonly fileLabel: string;
   readonly ascii?: boolean;
   readonly gitBranch?: () => string | undefined;
+  readonly statusline?: { readonly left: readonly string[]; readonly center: readonly string[]; readonly right: readonly string[]; readonly separator: string; readonly mode: { readonly normal: string; readonly insert: string; readonly select: string }; readonly diagnostics: readonly ('hint' | 'info' | 'warning' | 'error')[]; readonly workspaceDiagnostics: readonly ('hint' | 'info' | 'warning' | 'error')[] };
+  readonly workspaceRoot?: string;
+  readonly statuslineFileType?: () => string | undefined;
+  readonly statuslineLspActivity?: () => boolean;
+  readonly statuslineRegister?: () => string | undefined;
+  readonly statuslineCodeActionHints?: () => number;
+  readonly colorModes?: boolean;
+  readonly colorMode?: 'truecolor' | 'ansi256' | 'no-color';
+  readonly bufferline?: 'always' | 'never' | 'multiple';
+  readonly editorDiagnostics?: (documentId: DocumentId) => readonly Problem[];
+  readonly workspaceDiagnostics?: () => readonly Problem[];
   readonly sidebar?: () => SidebarReadModel;
   readonly tabStrips?: (width: number, height: number) => readonly { readonly viewId: string; readonly x: number; readonly y: number; readonly width: number }[];
   readonly tabs?: (viewId?: string) => readonly WorkbenchTabSnapshot[];
@@ -33,14 +47,21 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
   const themeSubscription = spec.setTheme(nextTheme => setTheme(nextTheme));
   const subscription = spec.subscribe?.(() => setVersion(value => value + 1));
   onCleanup(() => { themeSubscription.dispose(); subscription?.dispose(); });
-  const color = (scope: string, channel: 'fg' | 'bg', fallback: ThemeColor): ThemeColor => helixThemeColor(theme(), scope, channel, fallback);
+  const paint = (value: ThemeColor): ReturnType<typeof resolvePaintColor> => resolvePaintColor(value, spec.colorMode ?? 'truecolor');
+  const color = (scope: string, channel: 'fg' | 'bg', fallback: ThemeColor): ReturnType<typeof resolvePaintColor> => paint(helixThemeColor(theme(), scope, channel, fallback));
   const sidebar = () => sidebarTheme(theme());
   const attributes = (scope: string) => helixTextAttributes(helixThemeStyle(theme(), scope));
+  const bufferlineVisible = (): boolean => {
+    if (spec.bufferline === 'never') return false;
+    if (spec.bufferline !== 'multiple') return true;
+    const viewId = spec.workbench.activeViewId;
+    return spec.tabs?.(viewId === undefined ? undefined : String(viewId)).length !== 1;
+  };
 
   const layout = () => {
     version();
     const size = dimensions();
-    return calculateWorkbenchLayout(size.width, size.height, spec.showBottomPanel, spec.sidebar?.().width, spec.sidebar?.().visible !== false);
+    return calculateWorkbenchLayout(size.width, size.height, spec.showBottomPanel, spec.sidebar?.().width, spec.sidebar?.().visible !== false, bufferlineVisible());
   };
   const sidebarSections = () => {
     version();
@@ -52,8 +73,8 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
         const style = attributes('ui.sidebar');
         return <span style={{
           ...style,
-          fg: themeColor(sidebar().foreground),
-          bg: themeColor(sidebar().surface, 'bg'),
+          fg: paint(sidebar().foreground),
+          bg: paint(sidebar().surface),
           bold: section.expanded || style.bold,
         }}>{`${chevron(section.expanded)} ${section.label}${index + 1 < model.sections.length ? '\n' : ''}`}</span>;
       })}
@@ -69,8 +90,8 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
     return computeSidebarTabLayout(layout().sidebarWidth).map(entry => {
       const selected = entry.id === active;
       const hovered = entry.id === hoveredSidebarTabId();
-      const background = selected ? themeColor(sidebar().surfaceActive, 'bg') : hovered ? themeColor(theme().surfaceActive, 'bg') : themeColor(sidebar().surface, 'bg');
-      const foreground = readableTextColor(themeColor(sidebar().foreground), background, themeColor(theme().foreground));
+      const background = selected ? paint(sidebar().surfaceActive) : hovered ? paint(theme().surfaceActive) : paint(sidebar().surface);
+      const foreground = readableTextColor(paint(sidebar().foreground), background, paint(theme().foreground));
       const style = attributes(selected ? 'ui.sidebar.selected' : 'ui.sidebar');
       return <box position="absolute" left={entry.x} top={0} width={entry.width} height={1} backgroundColor={background}>
         <text fg={foreground}>
@@ -80,33 +101,112 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
       </box>;
     });
   };
+  const statuslineDiagnostics = (problems: readonly Problem[], severities: readonly ('hint' | 'info' | 'warning' | 'error')[], workspace: boolean): string => {
+    const counts = new Map<string, number>();
+    for (const problem of problems) {
+      const severity = problem.severity === 1 ? 'error' : problem.severity === 2 ? 'warning' : problem.severity === 3 ? 'info' : 'hint';
+      counts.set(severity, (counts.get(severity) ?? 0) + 1);
+    }
+    const values = severities.filter(severity => (counts.get(severity) ?? 0) > 0).map(severity => `● ${counts.get(severity) ?? 0}`);
+    return values.length === 0 ? '' : `${workspace ? ' W ' : ' '}${values.join(' ')}`;
+  };
+  const statuslineElement = (element: string, view: ReturnType<WorkbenchReadPort['readView']>, modeLabel: string, branch: string | undefined): string => {
+    switch (element) {
+      case 'mode': return ` ${modeLabel} `;
+      case 'spinner': return spec.statuslineLspActivity?.() === true ? ' ⠋ ' : '';
+      case 'file-name':
+      case 'file-absolute-path': return ` ${spec.fileLabel} `;
+      case 'file-base-name': return ` ${spec.fileLabel.split(/[\\/]/u).at(-1) ?? spec.fileLabel} `;
+      case 'file-modification-indicator': {
+        const active = view === undefined ? undefined : spec.tabs?.(String(view.session.viewId)).find(tab => tab.active);
+        return active?.dirty === true ? '[+]' : '   ';
+      }
+      case 'read-only-indicator': return view?.document.readOnly === true ? ' [readonly] ' : '';
+      case 'file-encoding': return '';
+      case 'file-line-ending': {
+        const ending = (view?.document as unknown as { readonly defaultLineEnding?: string }).defaultLineEnding;
+        return ending === 'crlf' ? ' CRLF ' : ending === 'cr' ? ' CR ' : ending === 'lf' ? ' LF ' : '';
+      }
+      case 'file-indent-style': return '';
+      case 'file-type': return spec.statuslineFileType?.() ?? '';
+      case 'version-control': return branch ?? '';
+      case 'selections': {
+        const count = view?.selections.members.length ?? 0;
+        if (count === 0) return '';
+        const primary = view?.selections.members.findIndex(member => member.id === view.selections.primaryId) ?? 0;
+        return count === 1 ? ' 1 sel ' : ` ${primary + 1}/${count} sels `;
+      }
+      case 'primary-selection-length': {
+        const selection = view?.selections.members.find(member => member.id === view.selections.primaryId);
+        if (selection === undefined) return '';
+        const length = Math.abs(Number(selection.head.at.offset) - Number(selection.anchor.at.offset));
+        return ` ${length} char${length === 1 ? '' : 's'} `;
+      }
+      case 'total-line-numbers': return view === undefined ? '' : ` ${view.document.lineCount} `;
+      case 'position': {
+        if (view === undefined) return '';
+        const head = view.selections.members.find(member => member.id === view.selections.primaryId)?.head;
+        if (head === undefined) return '';
+        const line = view.document.lineIndexAt(head.at.offset);
+        const start = line.ok ? view.document.lineStartOffset(line.value) : undefined;
+        return line.ok && start?.ok ? ` ${Number(line.value) + 1}:${Number(head.at.offset) - Number(start.value) + 1} ` : '';
+      }
+      case 'position-percentage': {
+        const head = view?.selections.members.find(member => member.id === view.selections.primaryId)?.head;
+        const line = head === undefined ? undefined : view?.document.lineIndexAt(head.at.offset);
+        return line?.ok === true && view !== undefined ? ` ${Math.round(((Number(line.value) + 1) / Math.max(1, view.document.lineCount)) * 100)}% ` : '';
+      }
+      case 'separator': return spec.statusline?.separator ?? '│';
+      case 'spacer': return ' ';
+      case 'diagnostics': return view === undefined ? '' : statuslineDiagnostics(spec.editorDiagnostics?.(view.document.id) ?? [], spec.statusline?.diagnostics ?? ['warning', 'error'], false);
+      case 'workspace-diagnostics': return statuslineDiagnostics(spec.workspaceDiagnostics?.() ?? [], spec.statusline?.workspaceDiagnostics ?? ['warning', 'error'], true);
+      case 'current-working-directory': return spec.workspaceRoot === undefined ? '' : ` ${spec.workspaceRoot} `;
+      case 'register': return spec.statuslineRegister?.() === undefined ? '' : ` ${spec.statuslineRegister?.()} `;
+      case 'code-action-hint': {
+        const count = spec.statuslineCodeActionHints?.() ?? 0;
+        return count > 0 ? ` C:${count} ` : '';
+      }
+      default: return '';
+    }
+  };
+  const statuslineArea = (elements: readonly string[], view: ReturnType<WorkbenchReadPort['readView']>, modeLabel: string, branch: string | undefined): string => elements.map(element => statuslineElement(element, view, modeLabel, branch)).join('');
   const statusLine = () => {
     version();
     const view = spec.workbench.activeViewId === undefined ? undefined : spec.workbench.readView(spec.workbench.activeViewId);
-    const count = view?.selections.members.length ?? 0;
-    const mode = view?.session.mode.toUpperCase() ?? 'NORMAL';
+    const mode = view?.session.mode;
+    const modeLabel = mode === 'insert'
+      ? spec.statusline?.mode.insert ?? 'INSERT'
+      : mode === 'visual'
+        ? spec.statusline?.mode.select ?? 'SELECT'
+        : spec.statusline?.mode.normal ?? 'NORMAL';
     const branch = spec.gitBranch?.();
-    const line = ` ${mode}   ${spec.fileLabel}${branch === undefined ? '' : ` (${branch})`}   ${count} cursor${count === 1 ? '' : 's'}`;
-    return line;
+    const width = Math.max(1, dimensions().width);
+    const statusline = spec.statusline;
+    const left = statusline === undefined ? `${modeLabel}   ${spec.fileLabel}${branch === undefined ? '' : ` (${branch})`}` : statuslineArea(statusline.left, view, modeLabel, branch);
+    const center = statusline === undefined ? '' : statuslineArea(statusline.center, view, modeLabel, branch);
+    const right = statusline === undefined ? `${view?.selections.members.length ?? 0} cursor${(view?.selections.members.length ?? 0) === 1 ? '' : 's'}` : statuslineArea(statusline.right, view, modeLabel, branch);
+    const cells = Array.from({ length: width }, () => ' ');
+    const write = (text: string, start: number): void => { let index = Math.max(0, start); for (const cell of text) { if (index >= cells.length) break; cells[index] = cell; index += 1; } };
+    write(` ${left}`, 0);
+    write(center, Math.max(0, Math.floor((width - Array.from(center).length) / 2)));
+    write(right, Math.max(0, width - Array.from(right).length - 1));
+    return cells.join('');
   };
-  const statusScope = () => {
-    const mode = spec.workbench.activeViewId === undefined ? undefined : spec.workbench.readView(spec.workbench.activeViewId)?.session.mode;
-    return mode === 'insert' ? 'ui.statusline.insert' : mode === 'visual' ? 'ui.statusline.select' : 'ui.statusline.normal';
-  };
-  const strips = () => { version(); return spec.tabStrips?.(dimensions().width, dimensions().height) ?? [{ viewId: undefined, x: layout().editorX, y: 0, width: layout().editorWidth }]; };
+  const statusScope = () => statuslineThemeScope(spec.colorModes === true, spec.workbench.activeViewId === undefined ? undefined : spec.workbench.readView(spec.workbench.activeViewId)?.session.mode);
+  const strips = () => { version(); return bufferlineVisible() ? spec.tabStrips?.(dimensions().width, dimensions().height) ?? [{ viewId: undefined, x: layout().editorX, y: 0, width: layout().editorWidth }] : []; };
   const tabContent = (width: number, viewId?: string) => {
     version();
     const tabs = spec.tabs?.(viewId);
     if (tabs === undefined) return `  ${spec.fileLabel}`;
     return computeTabLayout(tabs, width).map(entry => {
-      if (entry.tab === undefined) return <span style={{ fg: themeColor(theme().muted), bg: themeColor(theme().surface, 'bg') }}>…</span>;
+      if (entry.tab === undefined) return <span style={{ fg: paint(theme().muted), bg: paint(theme().surface) }}>…</span>;
       const tab = entry.tab;
       const closeWidth = entry.hasClose ? 3 : 0;
       const labelWidth = Math.max(0, entry.width - closeWidth);
       const label = `${tab.label}${tab.dirty ? ' ●' : ''}`.slice(0, labelWidth).padEnd(labelWidth);
       const close = entry.hasClose ? ` ${spec.ascii === true ? 'x' : '×'} ` : '';
-      const background = tab.active ? color('ui.bufferline.active', 'bg', theme().accent) : hoveredTabId() === `${viewId}:${tab.id}` ? themeColor(theme().surfaceActive, 'bg') : color('ui.bufferline', 'bg', theme().surface);
-      const foreground = tab.active ? color('ui.bufferline.active', 'fg', theme().background) : tab.preview ? themeColor(theme().muted) : color('ui.bufferline', 'fg', theme().foreground);
+      const background = tab.active ? color('ui.bufferline.active', 'bg', theme().accent) : hoveredTabId() === `${viewId}:${tab.id}` ? paint(theme().surfaceActive) : color('ui.bufferline', 'bg', theme().surface);
+      const foreground = tab.active ? color('ui.bufferline.active', 'fg', theme().background) : tab.preview ? paint(theme().muted) : color('ui.bufferline', 'fg', theme().foreground);
       const style = attributes(tab.active ? 'ui.bufferline.active' : 'ui.bufferline');
       return <span style={{ ...style, fg: readableTextColor(foreground, background, theme().foreground), bg: background, bold: tab.active || style.bold, italic: tab.preview || style.italic }}>{`${label}${close}`}</span>;
     });
@@ -132,9 +232,9 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
   return (
     <box position="absolute" left={0} top={0} width="100%" height="100%" zIndex={2} onMouse={onMouse}>
       <box position="absolute" left={0} top={0} width={layout().sidebarWidth} height={layout().statusRow}
-        visible={layout().sidebarVisible} backgroundColor={themeColor(sidebar().surface, 'bg')}>
+        visible={layout().sidebarVisible} backgroundColor={paint(sidebar().surface)}>
         {sidebarTabs()}
-        <text position="absolute" left={0} top={1} fg={themeColor(sidebar().foreground)}>{sidebarSections()}</text>
+        <text position="absolute" left={0} top={1} fg={paint(sidebar().foreground)}>{sidebarSections()}</text>
       </box>
       <box position="absolute" left={layout().sidebarWidth} top={0} width={1} height={layout().statusRow}
         visible={layout().sidebarVisible} backgroundColor={color('ui.background.separator', 'fg', color('ui.window', 'fg', theme().border))} />
@@ -150,4 +250,9 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
       </box>
     </box>
   );
+}
+
+export function statuslineThemeScope(colorModes: boolean, mode: string | undefined): string {
+  if (!colorModes) return 'ui.statusline';
+  return mode === 'insert' ? 'ui.statusline.insert' : mode === 'visual' ? 'ui.statusline.select' : 'ui.statusline.normal';
 }

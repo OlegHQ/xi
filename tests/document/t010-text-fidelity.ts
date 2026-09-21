@@ -17,6 +17,7 @@ import {
   openTextDocument,
   positionToOffset,
   type EncodedTextPosition,
+  type LineEnding,
   type TextFileDocument,
 } from '../../packages/document/src/index';
 import { RopeDocument } from '../../packages/document/src/rope';
@@ -297,7 +298,7 @@ function checkPersistentMixedEndingMetadata(): void {
   const document = editable(new TextEncoder().encode(originalBytesText));
   const originalSnapshot = document.snapshot();
   let expectedText = originalBytesText.replace(/\r\n?/gu, '\n');
-  let expectedEndings = [...originalEndings];
+  let expectedEndings: LineEnding[] = [...originalEndings];
   let state = 0x5011;
   const random = (): number => {
     state ^= state << 13;
@@ -359,6 +360,18 @@ function checkRopeRejectsUnnormalizedLineEndings(): void {
   console.log('T010-ROPE-EOL-01 passed: raw ropes reject CR while the text-file boundary normalizes it.');
 }
 
+function checkConfiguredDefaultLineEndings(): void {
+  for (const [ending, bytes] of [['lf', '\n'], ['crlf', '\r\n'], ['cr', '\r'], ['ff', '\f'], ['nel', '\u0085']] as const) {
+    const opened = openTextDocument(documentId, new Uint8Array(), 41027, { defaultLineEnding: ending });
+    assert.equal(opened.kind, 'editable', `T010-DEFAULT-EOL-01 ${ending} opens an editable new buffer`);
+    if (opened.kind !== 'editable') continue;
+    const applied = opened.document.apply({ start: offset(0), end: offset(0), text: '\n' }, opened.document.version);
+    assert.equal(applied.ok, true, `T010-DEFAULT-EOL-02 ${ending} inserts a normalized line break`);
+    assert.deepEqual(opened.document.serialize(), { ok: true, value: new TextEncoder().encode(bytes) }, `T010-DEFAULT-EOL-03 ${ending} serializes through its configured ending`);
+  }
+  console.log('T010-DEFAULT-EOL-01 passed: LF, CRLF, CR, FF and NEL defaults serialize new line breaks exactly.');
+}
+
 function editable(bytes: Uint8Array): TextFileDocument {
   const opened = openTextDocument(documentId, bytes);
   if (opened.kind !== 'editable') throw new Error(`expected-editable-document:${opened.document.reason}`);
@@ -388,7 +401,7 @@ function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
   return output;
 }
 
-function encodeWithEndings(text: string, endings: readonly ('lf' | 'crlf' | 'cr')[]): Uint8Array {
+function encodeWithEndings(text: string, endings: readonly ('lf' | 'crlf' | 'cr' | 'ff' | 'nel')[]): Uint8Array {
   let output = '';
   let endingIndex = 0;
   let segmentStart = 0;
@@ -397,7 +410,7 @@ function encodeWithEndings(text: string, endings: readonly ('lf' | 'crlf' | 'cr'
     output += text.slice(segmentStart, index);
     const ending = endings[endingIndex];
     if (ending === undefined) throw new Error('missing-reference-line-ending');
-    output += ending === 'crlf' ? '\r\n' : ending === 'cr' ? '\r' : '\n';
+    output += ending === 'crlf' ? '\r\n' : ending === 'cr' ? '\r' : ending === 'ff' ? '\f' : ending === 'nel' ? '\u0085' : '\n';
     segmentStart = index + 1;
     endingIndex += 1;
   }
@@ -419,3 +432,4 @@ checkLosslessTextOpenAndSave();
 checkLineEndingEditsAndReadOnlyBytes();
 checkPersistentMixedEndingMetadata();
 checkRopeRejectsUnnormalizedLineEndings();
+checkConfiguredDefaultLineEndings();

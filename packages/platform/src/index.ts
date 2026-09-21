@@ -2,7 +2,7 @@ import type { DisposableScope } from '../../primitives/src/index.ts';
 import type { PlatformPorts } from '../../contracts/src/index.ts';
 
 export { NodeFilesystemPort } from './filesystem';
-export type { WorkspaceDirectoryEntry, WorkspaceDirectoryWatchEvent, WorkspaceFileEntry, WorkspaceFileEnumerationOptions } from './filesystem';
+export type { WorkspaceDirectoryEntry, WorkspaceDirectoryEnumerationOptions, WorkspaceDirectoryWatchEvent, WorkspaceFileEntry, WorkspaceFileEnumerationOptions, WorkspaceIgnoreOptions } from './filesystem';
 export { NodeProcessPort } from './process';
 export { createNodeClock } from './clock';
 export { installJobControl } from './job-control';

@@ -24,7 +24,7 @@ const commands = new WorkbenchHostCommands({
   workspaceRoot: '/workspace', workspacePathFromUri: () => undefined,
   ensureHostNavigation: async () => {}, readHostNavigation: () => undefined,
   workspaceEdits: { renameCurrent: async () => {}, requestCodeActions: async () => false },
-  problems: { runConfiguredTask: async () => {}, listConfiguredTasks: async () => {}, cancelTask: async () => {} },
+  problems: { runConfiguredTask: async () => {}, runShellCommand: async () => {}, listConfiguredTasks: async () => {}, cancelTask: async () => {} },
   saveCoordinator: { requestSave: async () => false, formatView: async () => false },
   directoryDrafts: { open: async () => {} },
 });

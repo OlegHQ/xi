@@ -62,4 +62,17 @@ assert.equal(router.hasDocument('d2'), false, 'closing releases language admissi
 await assert.rejects(router.request('textDocument/hover', { textDocument: { uri: 'file:///b.py' } }), /no language server/, 'ROUTER-09 closed uri no longer routes');
 await router.dispose();
 assert.deepEqual(created.slice(2).sort(), ['dispose:pyright', 'dispose:typescript'], 'ROUTER-10 dispose reaches every session');
+
+const splitCreated: string[] = [];
+const splitRouter = new LanguageServerRouter({
+  resolveServer: () => servers.typescript,
+  sessionKey: (_config, document) => document.uri.includes('/client/') ? 'typescript\u0000client' : 'typescript\u0000workspace',
+  createSession: (_config, document) => { splitCreated.push(document?.uri ?? 'missing'); return fakeSession(`split-${splitCreated.length}`); },
+});
+assert.ok(splitRouter.openDocument({ uri: 'file:///workspace/client/main.ts', documentId: 'client', languageId: 'typescript', version: 1, text: '' }).ok);
+assert.ok(splitRouter.openDocument({ uri: 'file:///workspace/server/main.ts', documentId: 'server', languageId: 'typescript', version: 1, text: '' }).ok);
+assert.equal(splitRouter.size, 2, 'ROUTER-11 one configured server can own one session per workspace root');
+assert.equal(splitRouter.sessionFor('file:///workspace/client/main.ts'), splitRouter.sessions()[0], 'ROUTER-12 client URI routes to its split session');
+assert.notEqual(splitRouter.sessionFor('file:///workspace/client/main.ts'), splitRouter.sessionFor('file:///workspace/server/main.ts'), 'ROUTER-12 different roots do not share a session');
+await splitRouter.dispose();
 console.log('T-LSP-ROUTER passed: per-server sessions, uri routing, resolve follow-up, change/close routing, readiness, dispose');

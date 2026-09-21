@@ -60,6 +60,8 @@ export interface VirtualAnnotation {
   readonly lineIndex: LineIndex;
   readonly offset: Utf16Offset;
   readonly text: string;
+  /** Optional validated six-digit RGB background used by visual annotations such as LSP swatches. */
+  readonly background?: string;
 }
 
 /** A non-document row inserted before `beforeLine` for side-by-side alignment. */
@@ -79,14 +81,32 @@ export interface CellWidthPolicy {
   readonly widthOfCluster: (cluster: string) => number;
 }
 
+/** Helix gutter components accepted by both the scalar and table config forms. */
+export type GutterType = 'diagnostics' | 'spacer' | 'line-numbers' | 'diff' | 'code-action-hint';
+
+export const DEFAULT_GUTTER_LAYOUT: readonly GutterType[] = Object.freeze(['diagnostics', 'spacer', 'line-numbers', 'spacer', 'diff']);
+
 export interface LayoutOptions {
   readonly wrap?: boolean;
+  /** Optional wrap width in content cells; the viewport still owns the full paint width. */
+  readonly wrapWidth?: number;
+  /** Text placed before continuation rows of wrapped logical lines. */
+  readonly wrapIndicator?: string;
+  /** Maximum word width that is carried intact to the next soft-wrapped row. */
+  readonly maxWrap?: number;
+  /** Maximum leading indentation copied to soft-wrapped continuation rows. */
+  readonly maxIndentRetain?: number;
   readonly tabSize?: number;
   readonly horizontalScrollCells?: number;
   readonly widthPolicy?: CellWidthPolicy;
   readonly foldGeneration?: number;
   readonly folds?: readonly FoldRegion[];
   readonly gutterWidthCells?: number;
+  readonly gutterLayout?: readonly GutterType[];
+  readonly gutterLineNumberWidth?: number;
+  readonly lineNumberMode?: 'absolute' | 'relative';
+  /** Zero-based primary cursor line for focused relative numbering; omitted uses absolute labels. */
+  readonly relativeLineNumberCursor?: number;
   readonly virtualAnnotations?: readonly VirtualAnnotation[];
   readonly diffFillerRows?: readonly DiffFillerRow[];
 }
@@ -183,6 +203,7 @@ export interface ScreenCell {
   readonly text: string;
   readonly role: 'glyph' | 'wide-continuation' | 'tab-fill' | 'clipped-glyph' | 'fold-marker' | 'padding' | 'filler'
     | 'gutter' | 'virtual-annotation' | 'virtual-annotation-continuation' | 'diff-filler';
+  readonly background?: string;
   readonly target: CellHitTarget | null;
 }
 
@@ -303,6 +324,7 @@ export interface RelativeAnnotationCell {
   readonly annotationId: string;
   readonly annotationCellIndex: number;
   readonly annotationCellPart: VirtualAnnotationHitTarget['cellPart'];
+  readonly background?: string;
 }
 
 export type RelativeCell = RelativeTextCell | RelativeAnnotationCell;
@@ -311,6 +333,7 @@ export interface RelativeAnnotation {
   readonly id: string;
   readonly offset: number;
   readonly text: string;
+  readonly background?: string;
 }
 
 export interface RelativeRow {
@@ -344,6 +367,7 @@ export interface RelativeMaterializedCell {
   readonly cellPart: TextHitTarget['cellPart'] | VirtualAnnotationHitTarget['cellPart'];
   readonly annotationId: string | null;
   readonly annotationCellIndex: number;
+  readonly background?: string;
 }
 
 export interface RelativeMaterializedRow {

@@ -15,7 +15,7 @@ const commandLine = new ExCommandLineSession({ registry: new CommandRegistry({ n
 const names = ['selected', 'normal', 'inactive'];
 export const themeScenes: Record<string, { readonly options: Omit<OpenTuiWorkbenchOptions, 'dispatchKey'>; readonly marker: string }> = {
   files: { marker: 'selected.ts', options: { explorer: { isOpen: open, read: read({
-    contractVersion: 1, generation: 1, roots: [], selectedId: 'selected', filter: '', includeHidden: true, includeIgnored: true, focused: true, state: 'ready', message: undefined,
+    contractVersion: 1, generation: 1, roots: [], selectedId: 'selected', filter: '', includeHidden: true, includeIgnored: true, followSymlinks: false, flattenDirs: true, focused: true, state: 'ready', message: undefined,
     nodes: names.map(name => ({ id: name, rootId: 'workspace', parentId: undefined, name: `${name}.ts`, relativePath: `${name}.ts`, path: `/workspace/${name}.ts`, kind: 'file', depth: 0, expanded: false, hidden: false, ignored: name === 'inactive', loadState: 'ready', children: [], stableIdentity: name, sizeBytes: 10, modifiedMilliseconds: 0, permissions: undefined, symlinkTarget: undefined, git: undefined, message: undefined })),
     visibleRows: names.map(name => ({ nodeId: name, depth: 0, kind: 'file', selected: name === 'selected' })),
   }) } } },

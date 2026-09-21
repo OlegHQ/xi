@@ -135,7 +135,7 @@ export type {
   WorkbenchTaskOutputSnapshot,
   WorkbenchTaskSpec,
 } from '../../problems';
-export { buildNavigationRequest, CompletionSnippetController, LanguageOverlayController, languageIdForPath, nonOverlappingDocumentEdits, planCompletionEdits, WorkspaceEditsController } from '../../language';
+export { buildNavigationRequest, CompletionSnippetController, createWordCompletionProvider, LanguageOverlayController, languageIdForPath, nonOverlappingDocumentEdits, pathCompletionToken, planCompletionEdits, WorkspaceEditsController } from '../../language';
 export type {
   AppliedWorkspaceEditProposal,
   CompletionControllerPort,
@@ -143,6 +143,7 @@ export type {
   CompletionModelRead,
   CompletionProviderPort,
   CompletionSnippetControllerOptions,
+  WordCompletionDocumentSource,
   ExecuteLanguageCodeActionFn,
   ExpandSnippetFn,
   HoverOverlayModel,

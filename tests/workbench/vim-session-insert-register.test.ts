@@ -142,6 +142,40 @@ async function main(): Promise<void> {
     assert.equal(s.text(), 'hi hiXhiX', 'INSERT-REGISTER-10 dot-repeat replays the pasted register text plus the typed suffix');
   }
 
+  // 8. Helix's default-yank-register controls implicit yanks and pastes while an explicit
+  // register prefix remains authoritative.
+  {
+    const s = session('ab', { defaultYankRegister: 'a' });
+    await type(s, keys('ylA<C-r>a<Esc>'));
+    assert.equal(s.text(), 'aba', 'INSERT-REGISTER-11 configured default-yank-register supplies <C-r>a after an implicit yank');
+  }
+  {
+    const s = session('ab', { defaultYankRegister: 'a' });
+    await type(s, keys('"bylA<C-r>a<Esc>'));
+    assert.equal(s.text(), 'ab', 'INSERT-REGISTER-12 an explicit yank register does not populate the configured default register');
+  }
+  {
+    const s = session('ab', { defaultYankRegister: 'a' });
+    await type(s, keys('"bylp'));
+    assert.equal(s.text(), 'ab', 'INSERT-REGISTER-13 paste uses the configured default register rather than the unnamed register');
+  }
+
+  // 9. A completed production pointer selection uses editor.mouse-yank-register.
+  {
+    const s = session('alpha beta', { mouseYankRegister: 'a' });
+    const target = (offset: number) => ({ lineIndex: 0, offset, displayCellColumn: offset, virtualCell: offset, cellPart: 'glyph' as const });
+    assert.equal(s.vim.placePointer({
+      kind: 'drag',
+      viewId: 'vim-session-insert-register-view',
+      anchor: { row: 0, column: 0, target: target(0) },
+      head: { row: 0, column: 4, target: target(4) },
+      modifiers: { shift: false, alt: false, ctrl: false, meta: false },
+      completed: true,
+    }), true, 'T036-MOUSE-YANK-REGISTER-UNIT-01 completed pointer selection is accepted');
+    await type(s, keys('<Esc>"ap'));
+    assert.equal(s.text(), 'alphaalpha beta', 'T036-MOUSE-YANK-REGISTER-UNIT-02 completed pointer selection is stored in the configured register');
+  }
+
   console.log('vim-session-insert-register: all fixtures passed');
 }
 

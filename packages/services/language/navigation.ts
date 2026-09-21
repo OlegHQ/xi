@@ -7,6 +7,7 @@ export interface NavigationRequest { readonly documentId: string; readonly docum
 export type NavigationFailure = { readonly kind: 'stale' | 'unavailable' | 'cancelled' | 'external-uri'; readonly message: string };
 export interface NavigationProvider {
   definition(request: NavigationRequest): Promise<Result<readonly LanguageLocation[], NavigationFailure>>;
+  references(request: NavigationRequest, includeDeclaration: boolean): Promise<Result<readonly LanguageLocation[], NavigationFailure>>;
   hover(request: NavigationRequest): Promise<Result<{ readonly markdown: string }, NavigationFailure>>;
   symbols(request: NavigationRequest): Promise<Result<readonly LanguageSymbol[], NavigationFailure>>;
 }
@@ -26,6 +27,21 @@ export class LanguageServerNavigationProvider implements NavigationProvider {
       const locations = response === null ? [] : Array.isArray(response) ? response : [response];
       const parsed = locations.map(parseLocation);
       if (parsed.some((location) => location === undefined)) return unavailable('language server returned an invalid definition location');
+      return { ok: true, value: Object.freeze(parsed as LanguageLocation[]) };
+    } catch (error: unknown) { return unavailable(errorMessage(error)); }
+  }
+
+  async references(request: NavigationRequest, includeDeclaration: boolean): Promise<Result<readonly LanguageLocation[], NavigationFailure>> {
+    if (request.uri === undefined) return unavailable('navigation request has no document URI');
+    if (!requestIsSupported(this.#session, 'textDocument/references', request.uri)) return unavailable('language server does not provide references');
+    try {
+      const response = await this.#session.request<unknown>('textDocument/references', {
+        ...lspPositionParams(request),
+        context: { includeDeclaration },
+      });
+      const locations = response === null ? [] : Array.isArray(response) ? response : [response];
+      const parsed = locations.map(parseLocation);
+      if (parsed.some((location) => location === undefined)) return unavailable('language server returned an invalid reference location');
       return { ok: true, value: Object.freeze(parsed as LanguageLocation[]) };
     } catch (error: unknown) { return unavailable(errorMessage(error)); }
   }
@@ -111,6 +127,17 @@ export class LanguageNavigationController implements Disposable {
     if (generation !== this.#generation || this.#disposed) return { ok: false, error: { kind: 'stale', message: 'definition response is stale' } };
     if (!result.ok) return result;
     for (const location of result.value) if (!location.uri.startsWith('file://')) return { ok: false, error: { kind: 'external-uri', message: 'navigation target is outside the workspace' } };
+    return result;
+  }
+
+  async references(request: NavigationRequest, includeDeclaration: boolean): Promise<Result<readonly LanguageLocation[], NavigationFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'cancelled', message: 'navigation controller disposed' } };
+    const generation = ++this.#generation;
+    this.#origin = request;
+    const result = await this.#provider.references(request, includeDeclaration);
+    if (generation !== this.#generation || this.#disposed) return { ok: false, error: { kind: 'stale', message: 'reference response is stale' } };
+    if (!result.ok) return result;
+    for (const location of result.value) if (!location.uri.startsWith('file://')) return { ok: false, error: { kind: 'external-uri', message: 'reference target is outside the workspace' } };
     return result;
   }
 

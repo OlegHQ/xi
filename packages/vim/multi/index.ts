@@ -552,6 +552,7 @@ export interface VimMultiOperatorInput {
   readonly motionCount?: number;
   readonly doubled?: boolean;
   readonly register?: string;
+  readonly defaultYankRegister?: string;
   readonly state?: VimOperatorSessionState;
   readonly failurePolicy?: VimMultiFailurePolicy;
   readonly cancellation?: CancellationToken;
@@ -613,6 +614,7 @@ export function prepareVimMultiOperator(
     if (input.motionCount !== undefined) (preparation as { motionCount: number }).motionCount = input.motionCount;
     if (input.doubled !== undefined) (preparation as { doubled: boolean }).doubled = input.doubled;
     if (input.register !== undefined) (preparation as { register: string }).register = input.register;
+    if (input.defaultYankRegister !== undefined) (preparation as { defaultYankRegister: string }).defaultYankRegister = input.defaultYankRegister;
     const prepared = prepareVimOperator(input.snapshot, preparation);
     if (!prepared.ok) return prepared.error.kind === 'invalid-operator' || prepared.error.kind === 'invalid-state' || prepared.error.kind === 'invalid-count'
       ? failure({ kind: prepared.error.kind === 'invalid-operator' ? 'invalid-operator' : prepared.error.kind === 'invalid-count' ? 'invalid-count' : 'invalid-selection' })

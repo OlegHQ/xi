@@ -5,15 +5,35 @@ export type CliAction =
   | { readonly kind: 'help'; readonly text: string }
   | { readonly kind: 'version'; readonly text: string }
   | { readonly kind: 'health'; readonly text: string }
-  | { readonly kind: 'launch'; readonly fileArgument: string | undefined };
+  | { readonly kind: 'launch'; readonly fileArgument: string | undefined; readonly configPath?: string }
+  | { readonly kind: 'error'; readonly text: string };
 
-const HELP_TEXT = 'Xi editor\n\nUsage: xi [options] [file[:line]]\n\nOptions:\n  --help       Show this help\n  --version    Show the version\n  --health     Check the local runtime\n';
+const HELP_TEXT = 'Xi editor\n\nUsage: xi [options] [file[:line]]\n\nOptions:\n  -c, --config PATH  Use an explicit config file\n  --help             Show this help\n  --version          Show the version\n  --health           Check the local runtime\n';
 
 export function parseCliArgs(argv: readonly string[], version: string): CliAction {
   if (argv.includes('--help') || argv.includes('-h')) return { kind: 'help', text: HELP_TEXT };
   if (argv.includes('--version') || argv.includes('-v')) return { kind: 'version', text: `xi ${version}\n` };
   if (argv.includes('--health')) return { kind: 'health', text: `xi ${version} health: OpenTUI workbench available\n` };
-  return { kind: 'launch', fileArgument: argv.find((arg) => !arg.startsWith('-')) };
+  let configPath: string | undefined;
+  let fileArgument: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === '-c' || argument === '--config') {
+      const value = argv[index + 1];
+      if (value === undefined || value.startsWith('-')) return { kind: 'error', text: `xi: ${argument} requires a path\n` };
+      configPath = value;
+      index += 1;
+      continue;
+    }
+    if (argument?.startsWith('--config=')) {
+      const value = argument.slice('--config='.length);
+      if (value.length === 0) return { kind: 'error', text: 'xi: --config requires a path\n' };
+      configPath = value;
+      continue;
+    }
+    if (argument !== undefined && !argument.startsWith('-') && fileArgument === undefined) fileArgument = argument;
+  }
+  return { kind: 'launch', fileArgument, ...(configPath === undefined ? {} : { configPath }) };
 }
 
 export interface ResolvedFileArgument {

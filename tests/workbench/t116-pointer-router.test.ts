@@ -168,6 +168,57 @@ const noopProblems: PointerProblemsPort = { model: { generation: 0, all: [] }, s
   router.dispose();
 }
 
+// T116-POINTER-05: the middle button is offered to the composition-root clipboard owner and
+// never becomes a Vim drag when that owner accepts it.
+{
+  const pointerCapture = new FakePointerCapture();
+  let middleClicks = 0;
+  let markers = 0;
+  const router = new WorkbenchPointerRouter({
+    session: new FakeSession() as never,
+    marker: (name) => { if (name === 'XI_MIDDLE_CLICK') markers += 1; },
+    clock: new FakeClock(),
+    pointerCapture: pointerCapture as never,
+    contextMenu: { openAt: () => {} },
+    onMiddleClick: () => { middleClicks += 1; return true; },
+    picker: noopPicker,
+    pickerModel: noopPickerModel,
+    explorer: noopExplorer,
+    search: noopSearch,
+    problems: noopProblems,
+  });
+  router.handlePointer({ phase: 'down', viewId: 'view-1', cell: { row: 2, column: 5 }, button: 1 });
+  assert.equal(middleClicks, 1, 'T116-POINTER-05a middle button reaches the clipboard callback');
+  assert.equal(markers, 1, 'T116-POINTER-05b middle button emits one production marker');
+  assert.equal(pointerCapture.dispatched.length, 0, 'T116-POINTER-05c accepted middle paste bypasses Vim pointer capture');
+  router.dispose();
+}
+
+// T116-POINTER-06: a configured Xi mouse modifier gates the shared pointer path while the
+// default `none` keeps ordinary clicks unchanged.
+{
+  const pointerCapture = new FakePointerCapture();
+  const router = new WorkbenchPointerRouter({
+    session: new FakeSession() as never,
+    marker: () => {},
+    clock: new FakeClock(),
+    mouseModifier: 'shift',
+    pointerCapture: pointerCapture as never,
+    contextMenu: { openAt: () => {} },
+    picker: noopPicker,
+    pickerModel: noopPickerModel,
+    explorer: noopExplorer,
+    search: noopSearch,
+    problems: noopProblems,
+  });
+  const click = { phase: 'down' as const, viewId: 'view-1', cell: { row: 1, column: 1 }, button: 0 };
+  assert.equal(router.handlePointer(click), false, 'T116-POINTER-06a unmodified pointer input is ignored when a modifier is configured');
+  assert.equal(pointerCapture.dispatched.length, 0);
+  assert.equal(router.handlePointer({ ...click, modifiers: { shift: true, alt: false, ctrl: false, meta: false } }), true, 'T116-POINTER-06b the configured modifier reaches the pointer owner');
+  assert.equal(pointerCapture.dispatched.length, 1);
+  router.dispose();
+}
+
 // T116-POINTER-04: theme-row hover only selects and previews; it must not activate/close the
 // picker as a click does.
 {

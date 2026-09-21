@@ -15,7 +15,9 @@ alignment, cursor, truncation and small viewports.
 For configuration parity, prove the pinned Helix reference accepts the fixture, Xi accepts
 the same shape, and launched Xi behavior changes. Test unknown keys, wrong types, invalid
 values, reload rollback and unsafe workspace executable settings. Parse-only acceptance is
-a failure of the parity claim.
+a failure of the parity claim. Run `bun run check:config-ledger` and verify each passing
+dimension names the test that proves it; never infer completion from another key in the
+same section.
 
 For filesystem, Git and LSP changes, inject stale versions, cancellation, malformed input,
 partial failure and crashes in disposable roots. Real language servers supplement rather

@@ -15,6 +15,7 @@ export type {
   DocumentReadPort,
 } from '../contracts';
 export type {
+  LineEnding,
   OpenTextDocumentOptions,
   OpenTextDocument,
   TextFileSnapshot,

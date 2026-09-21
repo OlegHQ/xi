@@ -112,6 +112,8 @@ export interface WorkspaceEditsControllerOptions {
   /** Lazily resolves (memoized) the services-owned `executeLanguageCodeAction`, or `undefined`
    * if optional services are still loading and it is not yet available. */
   readonly ensureCodeActionExecutor: () => Promise<ExecuteLanguageCodeActionFn | undefined>;
+  readonly codeActionHints?: boolean;
+  readonly notifySurfaceChange?: () => void;
 }
 
 /**
@@ -125,6 +127,8 @@ export class WorkspaceEditsController {
   #provider: WorkspaceEditProviderPort | undefined;
   #session: LanguageServerSessionPort | undefined;
   #operationNumber = 0;
+  #codeActionHint: { readonly documentId: string; readonly documentVersion: number; readonly count: number } | undefined;
+  #codeActionHintCancellation: CancellationSource | undefined;
   readonly #options: WorkspaceEditsControllerOptions;
 
   constructor(options: WorkspaceEditsControllerOptions) {
@@ -136,6 +140,44 @@ export class WorkspaceEditsController {
   attachLanguage(session: LanguageServerSessionPort, provider: WorkspaceEditProviderPort): void {
     this.#session = session;
     this.#provider = provider;
+    void this.refreshCodeActionHints();
+  }
+
+  async refreshCodeActionHints(): Promise<void> {
+    if (this.#options.codeActionHints !== true) return;
+    const request = this.currentNavigationRequest();
+    const provider = this.#provider;
+    const session = this.#session;
+    if (request === undefined || request.uri === undefined || provider === undefined || session === undefined) return;
+    const ready = await session.waitForReady();
+    if (!ready.ok || !session.supportsRequest('textDocument/codeAction', request.uri)) return;
+    this.#codeActionHintCancellation?.cancel();
+    const cancellation = new CancellationSource();
+    this.#codeActionHintCancellation = cancellation;
+    try {
+      const result = await provider.codeActions({
+        documentId: request.documentId,
+        uri: request.uri,
+        version: request.documentVersion,
+        position: request.position,
+        diagnostics: this.#options.readDiagnostics(),
+      });
+      if (cancellation.token.isCancelled) return;
+      if (!result.ok) return;
+      this.#codeActionHint = Object.freeze({ documentId: request.documentId, documentVersion: request.documentVersion, count: result.value.filter((action) => action.disabledReason === undefined).length });
+      this.#options.marker('XI_CODE_ACTION_HINT_STATE', { documentId: request.documentId, version: request.documentVersion, count: this.#codeActionHint.count });
+      this.#options.notifySurfaceChange?.();
+    } catch {
+      // Optional hints must not affect editing when a server withdraws or crashes.
+    } finally {
+      if (this.#codeActionHintCancellation === cancellation) this.#codeActionHintCancellation = undefined;
+      cancellation.dispose();
+    }
+  }
+
+  codeActionHint(documentId: string, documentVersion: number): number {
+    const hint = this.#codeActionHint;
+    return hint?.documentId === documentId && hint.documentVersion === documentVersion ? hint.count : 0;
   }
 
   currentNavigationRequest(): WorkbenchNavigationRequest | undefined {
@@ -285,6 +327,9 @@ export class WorkspaceEditsController {
   }
 
   dispose(): void {
+    this.#codeActionHintCancellation?.cancel();
+    this.#codeActionHintCancellation = undefined;
+    this.#codeActionHint = undefined;
     this.#provider = undefined;
     this.#session = undefined;
   }

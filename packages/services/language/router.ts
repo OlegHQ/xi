@@ -18,8 +18,10 @@ export type RoutedLanguageSession = Pick<LanguageServerSession,
 export interface LanguageServerRouterOptions {
   /** Which server (if any) serves a language id; undefined means "Xi only highlights it". */
   readonly resolveServer: (languageId: string) => LanguageServerConfig | undefined;
-  /** Constructs (and owns the platform wiring of) one session per distinct server config. */
-  readonly createSession: (config: LanguageServerConfig) => LanguageServerSession;
+  /** Optional key for splitting one server config into independent workspace-root sessions. */
+  readonly sessionKey?: (config: LanguageServerConfig, document: LanguageDocumentSnapshot) => string;
+  /** Constructs (and owns the platform wiring of) one session per distinct server config/root key. */
+  readonly createSession: (config: LanguageServerConfig, document?: LanguageDocumentSnapshot) => LanguageServerSession;
 }
 
 /**
@@ -93,10 +95,11 @@ export class LanguageServerRouter implements Disposable {
     if (this.#disposed) return { ok: false, error: { kind: 'unavailable', message: 'language server router is disposed' } };
     const config = this.#options.resolveServer(document.languageId);
     if (config === undefined) return { ok: false, error: { kind: 'unavailable', message: `no language server configured for ${document.languageId}` } };
-    let session = this.#sessions.get(config.name);
+    const sessionKey = this.#options.sessionKey?.(config, document) ?? config.name;
+    let session = this.#sessions.get(sessionKey);
     if (session === undefined) {
-      session = this.#options.createSession(config);
-      this.#sessions.set(config.name, session);
+      session = this.#options.createSession(config, document);
+      this.#sessions.set(sessionKey, session);
       const owned = session;
       this.#stateSubscriptions.push(owned.onStateChange((change) => { if (owned === this.#active) for (const listener of this.#stateListeners) listener(change); }));
     }

@@ -189,6 +189,7 @@ export interface GitDiffServiceOptions {
   readonly filesystem: FilesystemPort;
   readonly env?: Readonly<Record<string, string>>;
   readonly timeoutMilliseconds?: number;
+  readonly allowed?: boolean;
 }
 
 function looksBinary(bytes: Uint8Array): boolean {
@@ -211,15 +212,18 @@ export class GitDiffService {
   readonly #filesystem: FilesystemPort;
   readonly #env: Readonly<Record<string, string>>;
   readonly #timeoutMilliseconds: number;
+  readonly #allowed: boolean;
 
   constructor(options: GitDiffServiceOptions) {
     this.#process = options.process;
     this.#filesystem = options.filesystem;
     this.#env = options.env ?? {};
     this.#timeoutMilliseconds = options.timeoutMilliseconds ?? DEFAULT_TIMEOUT_MILLISECONDS;
+    this.#allowed = options.allowed !== false;
   }
 
   async load(options: GitDiffLoadOptions): Promise<Result<GitDiffResult, { readonly message: string }>> {
+    if (!this.#allowed) return { ok: false, error: { message: 'Git is disabled in this untrusted workspace' } };
     const cancellation = options.cancellation ?? new CancellationSource().token;
     const leftLabel = options.target === 'index' ? 'BASE' : 'INDEX';
     const rightLabel = options.target === 'index' ? 'INDEX' : 'WORKTREE';

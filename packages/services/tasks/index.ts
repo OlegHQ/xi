@@ -27,12 +27,15 @@ export function createSpawnTaskProcessFactory(process: ProcessPort, cancellation
       // A stream error here (e.g. the pipe torn down after termination) must not
       // become an unhandled rejection; the process's own exit result already
       // reports whether the run failed, so a pump failure is otherwise inert.
-      void pump(handle.stdout, stdoutListeners).catch(() => {});
-      void pump(handle.stderr, stderrListeners).catch(() => {});
+      const stdoutPump = pump(handle.stdout, stdoutListeners).catch(() => {});
+      const stderrPump = pump(handle.stderr, stderrListeners).catch(() => {});
       return {
         ok: true,
         value: {
-          exit: handle.exit.then((exit) => exit.ok ? exit : { ok: false, error: { kind: 'failed' as const, message: exit.error.message } }),
+          // The child can exit before its pipe readers have delivered the final bytes. Wait
+          // for both bounded pumps before publishing the terminal snapshot to consumers such
+          // as the task problem matcher.
+          exit: Promise.all([handle.exit, stdoutPump, stderrPump]).then(([exit]) => exit.ok ? exit : { ok: false, error: { kind: 'failed' as const, message: exit.error.message } }),
           onStdout(listener) { stdoutListeners.add(listener); return { dispose: () => { stdoutListeners.delete(listener); } }; },
           onStderr(listener) { stderrListeners.add(listener); return { dispose: () => { stderrListeners.delete(listener); } }; },
           async terminate() { await handle.terminate(250); },

@@ -58,11 +58,23 @@ function tab(doc: TextFileDocument, cursor: number, options: VimInsertOptions): 
   return text(applyPlan(doc, step.value.plan));
 }
 
+function newline(doc: TextFileDocument, cursor: number, options: VimInsertOptions): string {
+  const snapshot0 = doc.snapshot();
+  const entered = beginVimInsert(snapshot0, off(cursor), 'i', options);
+  assert.equal(entered.ok, true, 'enters insert for newline');
+  if (!entered.ok) throw new Error('unreachable');
+  const snapshot1 = applyPlan(doc, entered.value.plan);
+  const step = planVimInsertInput(snapshot1, entered.value.session, { kind: 'key', key: '<CR>' });
+  assert.equal(step.ok, true, '<CR> succeeds');
+  if (!step.ok || step.value.kind !== 'continued') throw new Error('unreachable');
+  return text(applyPlan(doc, step.value.plan));
+}
+
 // Start of line, 'smarttab' defaults on -> 'shiftwidth' (4), not 'tabstop' (8).
 {
   const doc = document('SMARTTAB-START', 'a\n');
   const result = tab(doc, 0, { expandtab: true, shiftwidth: 4, tabstop: 8 });
-  assert.equal(result, '    a\n', 'smarttab at start of line uses shiftwidth');
+  assert.equal(result, '    a\n', 'T036-SMART-TAB-UNIT-01 smarttab at start of line uses shiftwidth');
 }
 
 // Non-whitespace before cursor -> 'tabstop' (8), not 'shiftwidth' (4), even
@@ -78,6 +90,23 @@ function tab(doc: TextFileDocument, cursor: number, options: VimInsertOptions): 
   const doc = document('SMARTTAB-OFF', 'a\n');
   const result = tab(doc, 0, { expandtab: true, shiftwidth: 4, tabstop: 8, smarttab: false });
   assert.equal(result, '        a\n', 'smarttab off at start of line still uses tabstop');
+}
+
+{
+  const doc = document('CONTINUE-COMMENTS-ON', '// one\n');
+  const result = newline(doc, 6, {
+    commentContinuation: () => '// ',
+  });
+  assert.equal(result, '// one\n// \n', 'T036-CONTINUE-COMMENTS-UNIT-02 newline continues the cached comment prefix by default');
+}
+
+{
+  const doc = document('CONTINUE-COMMENTS-OFF', '// one\n');
+  const result = newline(doc, 6, {
+    continueComments: false,
+    commentContinuation: () => '// ',
+  });
+  assert.equal(result, '// one\n\n', 'T036-CONTINUE-COMMENTS-UNIT-03 false disables comment continuation');
 }
 
 console.log('insert-smarttab: all assertions passed');

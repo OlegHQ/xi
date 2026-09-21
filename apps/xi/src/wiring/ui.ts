@@ -1,6 +1,6 @@
 import type { ViewId } from '../../../../packages/primitives/src/entrypoints/launch';
 import type { DirectoryDraftReadPort, DirectoryDraftReadModel } from '../../../../packages/ui/src/entrypoints/launch';
-import { LIGHT_WORKBENCH_THEME } from '../../../../packages/ui/src/entrypoints/theme';
+import { LIGHT_WORKBENCH_THEME, type WorkbenchTheme } from '../../../../packages/ui/src/entrypoints/theme';
 import type { runOpenTuiWorkbench } from '../../../../packages/ui/src/entrypoints/launch';
 import type { PointerPanelEvent } from '../../../../packages/workbench/src/entrypoints/launch';
 import type { ThemeWiring } from './theme';
@@ -32,6 +32,17 @@ export interface WorkbenchUiOptionsDeps {
 // back to the type callers actually receive.
 type WorkbenchUiOptions = NonNullable<Parameters<typeof runOpenTuiWorkbench>[2]>;
 
+/** Resolve Helix's true-color override at the terminal boundary. The config only overrides
+ * a false capability detection; it does not turn a capable terminal off. */
+export function resolveEditorColorMode(forceTrueColor: boolean, environment: Readonly<Record<string, string | undefined>> = process.env): 'truecolor' | 'ansi256' | 'no-color' {
+  if (forceTrueColor) return 'truecolor';
+  const term = environment.TERM?.toLowerCase();
+  const colorTerm = environment.COLORTERM?.toLowerCase();
+  if (colorTerm === 'truecolor' || colorTerm === '24bit' || term?.endsWith('-truecolor') === true || term?.endsWith('-direct') === true) return 'truecolor';
+  if (term === undefined || term === 'dumb') return 'no-color';
+  return 'ansi256';
+}
+
 /** `explorer`/`search`/`output` are live getters (packages/ui/src/terminal.ts reads them on
  * every access, not once at construction) that must resolve to `undefined` until
  * `optionalServices.ensure()` finishes -- a genuine runtime "optional key, but the getter is
@@ -44,11 +55,29 @@ type RelaxedWorkbenchUiOptions = Omit<WorkbenchUiOptions, 'explorer' | 'search' 
   readonly output?: WorkbenchUiOptions['output'] | undefined;
 };
 
+function buildStatuslineCallbacks(workbench: Controllers['workbench'], controllers: Controllers): Pick<WorkbenchUiOptions, 'statuslineFileType' | 'statuslineLspActivity' | 'statuslineRegister' | 'statuslineCodeActionHints'> {
+  return {
+    statuslineFileType: () => {
+      const viewId = workbench.activeViewId;
+      const view = viewId === undefined ? undefined : workbench.readView(viewId);
+      const path = view === undefined ? undefined : workbench.buffer(view.document.id)?.path;
+      return controllers.languageWiring.resolveLanguageId(path) ?? 'text';
+    },
+    statuslineLspActivity: () => (controllers.languageWiring.session?.health.progress.length ?? 0) > 0,
+    statuslineRegister: () => controllers.startupConfig?.editor.defaultYankRegister ?? '"',
+    statuslineCodeActionHints: () => {
+      const viewId = workbench.activeViewId;
+      const view = viewId === undefined ? undefined : workbench.readView(viewId);
+      return view === undefined ? 0 : controllers.workspaceEditsFeature.codeActionHint(String(view.document.id), Number(view.document.version));
+    },
+  };
+}
+
 /** Workspace-search matches painted in the editor while the Search panel is open. The
  * controller memoizes its result per (generation, document, version), so the presentation
  * object identity only changes when the highlights actually change (the renderer
  * full-repaints on identity change, row-diffs otherwise). */
-function buildEditorPresentationPort(workbench: Controllers['workbench'], searchFeature: Controllers['searchFeature'], host: Controllers['host'], renderer: WorkbenchUiOptionsDeps['renderer']): NonNullable<WorkbenchUiOptions['presentation']> {
+function buildEditorPresentationPort(workbench: Controllers['workbench'], searchFeature: Controllers['searchFeature'], host: Controllers['host'], languageWiring: Controllers['languageWiring'], renderer: WorkbenchUiOptionsDeps['renderer']): NonNullable<WorkbenchUiOptions['presentation']> {
   const presentations = new Map<string, NonNullable<ReturnType<NonNullable<WorkbenchUiOptions['presentation']>['readPresentation']>>>();
   const closeSubscription = host.onViewClosed(viewId => { presentations.delete(String(viewId)); });
   const clearGhost = (): void => { host.activeSession()?.clearMotionGhost(); host.notifySurfaceChange(); };
@@ -61,15 +90,58 @@ function buildEditorPresentationPort(workbench: Controllers['workbench'], search
       const view = workbench.readView(viewId as ViewId);
       if (view === undefined) return undefined;
       const searchHighlight = searchFeature.readPresentation(String(view.document.id), view.document.version) ?? null;
+      const highlightRanges = languageWiring.documentHighlights(String(view.document.id), Number(view.document.version));
+      const documentHighlight = highlightRanges.length === 0 ? null : {
+        documentId: String(view.document.id),
+        documentVersion: Number(view.document.version),
+        ranges: highlightRanges.flatMap((range) => {
+          const start = view.document.lineStartOffset(range.startLine as Parameters<typeof view.document.lineStartOffset>[0]);
+          const end = view.document.lineStartOffset(range.endLine as Parameters<typeof view.document.lineStartOffset>[0]);
+          if (!start.ok || !end.ok) return [];
+          return [{ start: Number(start.value) + range.startUtf16, end: Number(end.value) + range.endUtf16 }];
+        }),
+      };
       const motionPreview = workbench.activeViewId === viewId ? host.sessions.get(viewId as ViewId)?.motionGhost?.preview ?? null : null;
-      if (searchHighlight === null && motionPreview === null) { presentations.delete(viewId); return undefined; }
+      if (searchHighlight === null && documentHighlight === null && motionPreview === null) { presentations.delete(viewId); return undefined; }
       const previous = presentations.get(viewId);
-      if (previous?.searchHighlight === searchHighlight && previous.motionPreview === motionPreview) return previous;
-      const presentation = Object.freeze({ searchHighlight, motionPreview, motionTrail: 'last-motion' as const });
+      if (previous?.searchHighlight === searchHighlight && previous?.documentHighlight === documentHighlight && previous.motionPreview === motionPreview) return previous;
+      const presentation = Object.freeze({ searchHighlight, documentHighlight, motionPreview, motionTrail: 'last-motion' as const });
       presentations.set(viewId, presentation);
       return presentation;
     },
   };
+}
+
+function resolveStartupColorMode(controllers: Controllers, marker: WorkbenchUiOptionsDeps['marker']): NonNullable<WorkbenchUiOptions['colorMode']> {
+  const colorMode = resolveEditorColorMode(controllers.startupConfig?.editor.trueColor ?? false);
+  if (process.env.XI_UI_TEST_MARKERS === '1') marker('XI_COLOR_MODE', { colorMode, trueColor: controllers.startupConfig?.editor.trueColor ?? false, undercurl: controllers.startupConfig?.editor.undercurl ?? false, term: process.env.TERM, colorTerm: process.env.COLORTERM });
+  return colorMode;
+}
+
+function resolveThemeVariants(controllers: Controllers, themeWiring: ThemeWiring): WorkbenchUiOptions['themeVariants'] {
+  const configured = controllers.startupConfig?.editor.themeVariants;
+  if (configured === undefined || themeWiring.persistedThemeId !== undefined) return undefined;
+  const variants: { dark?: { readonly id: string; readonly theme: WorkbenchTheme }; light?: { readonly id: string; readonly theme: WorkbenchTheme }; fallback?: { readonly id: string; readonly theme: WorkbenchTheme } } = {};
+  for (const mode of ['dark', 'light', 'fallback'] as const) {
+    const id = configured[mode];
+    const theme = id === undefined ? undefined : themeWiring.themeController.get(id);
+    if (id !== undefined && theme !== undefined) variants[mode] = { id, theme };
+  }
+  return Object.keys(variants).length === 0 ? undefined : variants;
+}
+
+function handleWorkbenchReady(controllers: Controllers, themeWiring: ThemeWiring, startupTrace: WorkbenchUiOptionsDeps['startupTrace']): void {
+  startupTrace('ready-callback');
+  void controllers.languageWiring.ensureLanguage().catch((error: unknown) => {
+    controllers.statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  void themeWiring.loadCustomThemes().finally(() => themeWiring.disposeStateCancellation());
+  controllers.fileIndexStarter.schedule();
+  if (controllers.sidebarController.visible) {
+    if (controllers.sidebarController.lastPanel === 'search') controllers.searchFeature.open();
+    else if (controllers.sidebarController.lastPanel === 'git') controllers.gitPanelFeature.open();
+    else controllers.explorerFeature.show();
+  }
 }
 
 /** Builds the (large) options object `runOpenTuiWorkbench` takes: frame callbacks, panel read
@@ -79,32 +151,38 @@ function buildEditorPresentationPort(workbench: Controllers['workbench'], search
 export function buildWorkbenchUiOptions(controllers: Controllers, deps: WorkbenchUiOptionsDeps): WorkbenchUiOptions {
   const {
     host, inputRouter, pointerRouter, sidebarController, contextMenuStore, syntaxTracker, optionalServices,
-    mouseMode, jobControlDisposables, workbench, picker, pickerModel, explorerFeature, searchFeature,
-    gitPanelFeature, gitDiffFeature, diagnostics, problemsFeature, taskWiring, directoryDraftController, overlayFeature, completionFeature,
+    mouseMode, jobControlDisposables, workbench, picker, pickerModel, explorerFeature, searchFeature, gitPanelFeature, gitDiffFeature, diagnostics, problemsFeature, taskWiring, directoryDraftController, overlayFeature, completionFeature,
     fileIndexStarter, pickerPreview, statusMessages,
   } = controllers;
   const { renderer, themeWiring, marker, startupTrace, installJobControl } = deps;
-  const perfTraceEnabled = process.env.XI_PERF_TRACE === '1';
-
-  const options: RelaxedWorkbenchUiOptions = {
+  const themeVariants = resolveThemeVariants(controllers, themeWiring); const colorMode = resolveStartupColorMode(controllers, marker); const options: RelaxedWorkbenchUiOptions = {
     renderer,
+    colorMode, undercurl: controllers.startupConfig?.editor.undercurl ?? false,
     theme: themeWiring.themeController.get(themeWiring.themeController.activeId) ?? LIGHT_WORKBENCH_THEME,
+    ...(themeVariants === undefined ? {} : { themeVariants, onThemeMode: (mode: 'dark' | 'light' | 'fallback', id: string) => { themeWiring.themeController.setActiveId(id); marker('XI_THEME_MODE', { mode, id }); } }),
+    mouseEnabled: controllers.startupConfig?.editor.mouse.enabled ?? true, kittyKeyboardProtocol: controllers.startupConfig?.editor.kittyKeyboardProtocol ?? 'auto',
     syntax: syntaxTracker,
     editorDiagnostics: controllers.editorDiagnostics,
-    presentation: buildEditorPresentationPort(workbench, searchFeature, host, renderer),
+    presentation: buildEditorPresentationPort(workbench, searchFeature, host, controllers.languageWiring, renderer),
+    virtualAnnotations: (documentId, documentVersion) => [
+      ...controllers.languageWiring.virtualAnnotations(documentId, documentVersion),
+      ...controllers.inputRouter.jumpLabelAnnotations(documentId, documentVersion),
+    ],
+    editorCodeActionHints: (documentId, documentVersion) => controllers.workspaceEditsFeature.codeActionHint(documentId, documentVersion),
     comparison: gitDiffFeature,
-    gitBranch: () => optionalServices.current?.gitStatusService.snapshot?.branch,
+    gitBranch: () => optionalServices.current?.gitStatusService.snapshot?.branch, workspaceRoot: process.cwd(),
+    ...buildStatuslineCallbacks(workbench, controllers),
     registerMouseToggle: mouseMode.registered,
     registerThemeSwitch: (setTheme) => { themeWiring.themeController.bindSetTheme(setTheme); },
     registerJobControl: (control: { suspend: () => void; resume: () => void }) => { jobControlDisposables.push(installJobControl(control)); },
     marker,
+    onFocusChange: (focused) => controllers.saveCoordinator.handleFocusChange(focused),
     subscribeSurfaceChanges: (listener) => host.onSurfaceChange(listener),
-    onViewportAnchorChange: (viewId, scrollTop, scrollLeft) => {
-      workbench.setViewScroll(viewId as ViewId, scrollTop, scrollLeft);
-    },
-    onViewportSizeChange: (viewId, heightCells) => {
-      workbench.setViewViewportHeight(viewId as ViewId, heightCells);
-    },
+    onViewportAnchorChange: (viewId, scrollTop, scrollLeft) => { marker('XI_VIEWPORT_ANCHOR', { viewId, scrollTop, scrollLeft, scrolloff: controllers.startupConfig?.editor.scrolloff ?? 0 }); workbench.setViewScroll(viewId as ViewId, scrollTop, scrollLeft); },
+    scrolloff: controllers.startupConfig?.editor.scrolloff ?? 0,
+    lineNumber: controllers.startupConfig?.editor.lineNumber ?? 'absolute', lineNumberMinWidth: controllers.startupConfig?.editor.lineNumberMinWidth ?? 3, gutters: controllers.startupConfig?.editor.gutters ?? ['diagnostics', 'spacer', 'line-numbers', 'spacer', 'diff'], indentGuides: controllers.startupConfig?.editor.indentGuides ?? { render: false, character: '│', skipLevels: 0 }, whitespace: controllers.startupConfig?.editor.whitespace ?? { render: { default: false, space: false, nbsp: false, nnbsp: false, tab: false, newline: false }, characters: { space: '·', nbsp: '⍽', nnbsp: '␣', tab: '→', tabpad: ' ', newline: '⏎' } }, statusline: controllers.startupConfig?.editor.statusline ?? { left: ['mode', 'spinner', 'file-name', 'read-only-indicator', 'file-modification-indicator'], center: [], right: ['diagnostics', 'selections', 'register', 'position', 'file-encoding'], separator: '│', mode: { normal: 'NOR', insert: 'INS', select: 'SEL' }, diagnostics: ['warning', 'error'], workspaceDiagnostics: ['warning', 'error'] }, workspaceDiagnostics: () => diagnostics.model.all,
+    wrap: controllers.startupConfig?.editor.wrap ?? false, ...(controllers.startupConfig?.editor.wrapAtTextWidth === true ? { wrapWidth: controllers.startupConfig.editor.textWidth } : {}), maxWrap: controllers.startupConfig?.editor.softWrapMaxWrap ?? 20, maxIndentRetain: controllers.startupConfig?.editor.softWrapMaxIndentRetain ?? 40, wrapIndicator: controllers.startupConfig?.editor.wrapIndicator ?? '↪ ', inlineDiagnosticsCursorLine: controllers.startupConfig?.editor.inlineDiagnosticsCursorLine ?? 'warning', inlineDiagnosticsOtherLines: controllers.startupConfig?.editor.inlineDiagnosticsOtherLines ?? 'disable', endOfLineDiagnostics: controllers.startupConfig?.editor.endOfLineDiagnostics ?? 'hint', inlineDiagnosticsPrefixLen: controllers.startupConfig?.editor.inlineDiagnosticsPrefixLen ?? 1, inlineDiagnosticsMaxWrap: controllers.startupConfig?.editor.inlineDiagnosticsMaxWrap ?? 20, inlineDiagnosticsMinDiagnosticWidth: controllers.startupConfig?.editor.inlineDiagnosticsMinDiagnosticWidth ?? 40, inlineDiagnosticsMaxDiagnostics: controllers.startupConfig?.editor.inlineDiagnosticsMaxDiagnostics ?? 10, cursorLine: controllers.startupConfig?.editor.cursorline ?? false, cursorColumn: controllers.startupConfig?.editor.cursorcolumn ?? false, colorModes: controllers.startupConfig?.editor.colorModes ?? false, bufferline: controllers.startupConfig?.editor.bufferline ?? 'never', popupBorder: controllers.startupConfig?.editor.popupBorder ?? 'none', rulers: controllers.startupConfig?.editor.rulers ?? [], cursorShape: controllers.startupConfig?.editor.cursorShape ?? { normal: 'block', insert: 'block', select: 'block' },
+    onViewportSizeChange: (viewId, heightCells) => { marker('XI_VIEWPORT_SIZE', { viewId, heightCells }); workbench.setViewViewportHeight(viewId as ViewId, heightCells); },
     onPointer: (event) => {
       if (event.phase === 'down') host.activeSession()?.clearMotionGhost();
       return pointerRouter.handlePointer(event);
@@ -113,7 +191,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     onPointerCancel: (reason) => pointerRouter.handlePointerCancel(reason),
     onFrame: () => {
       sidebarController.refreshOutline();
-      if (perfTraceEnabled) process.stderr.write(`XI_FRAME ${process.hrtime.bigint().toString()}\r\n`);
+      if (process.env.XI_PERF_TRACE === '1') process.stderr.write(`XI_FRAME ${process.hrtime.bigint().toString()}\r\n`);
     },
     sidebar: () => sidebarController.readModel(),
     tabs: viewId => workbench.readTabs(viewId as ViewId | undefined),
@@ -124,25 +202,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       isOpen: () => inputRouter.isCommandLineActive(),
     },
     statusMessage: { read: statusMessages },
-    onReady: () => {
-      startupTrace('ready-callback');
-      // Start configured language support after the first frame instead of waiting for the
-      // first hover/completion command. Initialization remains off the editable startup path.
-      void controllers.languageWiring.ensureLanguage().catch((error: unknown) => {
-        statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
-      });
-      void themeWiring.loadCustomThemes().finally(() => themeWiring.disposeStateCancellation());
-      // Directory enumeration, watching and picker indexing start in the background;
-      // with filesystem streams during the user's first interaction.
-      fileIndexStarter.schedule();
-      // The Files tree is visible by default; it loads in the background and never takes
-      // keyboard focus from the editor.
-      if (sidebarController.visible) {
-        if (sidebarController.lastPanel === 'search') searchFeature.open();
-        else if (sidebarController.lastPanel === 'git') gitPanelFeature.open();
-        else explorerFeature.show();
-      }
-    },
+    onReady: () => handleWorkbenchReady(controllers, themeWiring, startupTrace),
     // H1-7: the router owns the ordered overlay-focus stack (and its own fallthrough) as the
     // one and only per-key dispatch `processKeypress` calls; the overlay port objects below
     // (`picker`, `explorer`, ...) stay for their read models/`isOpen`/`onPointer`, which
@@ -223,6 +283,5 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       read: completionFeature.signatureRead,
       isOpen: () => completionFeature.isSignatureOpen,
     },
-  };
-  return options as WorkbenchUiOptions;
+  }; return options as WorkbenchUiOptions;
 }

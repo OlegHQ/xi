@@ -34,6 +34,7 @@ const testClock: ClockPort = {
 const noopCompletion: RouterCompletionPort = {
   isCompletionTrigger: () => false,
   isSignatureTrigger: () => false,
+  isAutoSignatureTrigger: () => false,
   isSnippetActive: false,
   openCompletion: () => true,
   openSignature: () => true,
@@ -66,10 +67,11 @@ class FakeVimSession {
   commandLineActive = false;
   prefixHelp = { pendingKeys: [] as string[] };
   handledKeys: RouterKeyEvent[] = [];
+  submittedCommands: string[] = [];
   handleKey(event: RouterKeyEvent): boolean { this.handledKeys.push(event); return true; }
   handlePaste(): void {}
   beginMacroRecording(): boolean { return true; }
-  async submitCommandLine(): Promise<'handled'> { return 'handled'; }
+  async submitCommandLine(source: string): Promise<'handled'> { this.submittedCommands.push(source); return 'handled'; }
   setCommandLineSource(): void {}
 }
 
@@ -81,7 +83,8 @@ class FakeHost {
 
 class FakeSession {
   activeViewId: string | undefined = 'view-1';
-  readView(): { readonly session: { readonly mode: string } } | undefined { return { session: { mode: 'normal' } }; }
+  mode = 'normal';
+  readView(): { readonly session: { readonly mode: string } } | undefined { return { session: { mode: this.mode } }; }
 }
 
 /** Enough of `WorkbenchSession`'s `readView`/`setViewScroll` surface for `scrollViewBy` (no
@@ -117,6 +120,9 @@ function makeRouter(
   session: FakeSession,
   bindings: readonly RouterBindingConfig[] = defaultBindings,
   git?: { readonly panel: { readonly isOpen: () => boolean; readonly onKeypress: (event: RouterKeyEvent) => boolean }; readonly diff: { readonly isOpen: () => boolean; readonly onKeypress: (event: RouterKeyEvent) => boolean } },
+  autoInfo = true,
+  idleTimeout = 250,
+  clock: ClockPort = testClock,
 ): WorkbenchInputRouter {
   return new WorkbenchInputRouter({
     host: host as never,
@@ -130,6 +136,8 @@ function makeRouter(
     problems: noopProblems,
     overlays: noopOverlays,
     completion: noopCompletion,
+    autoInfo,
+    idleTimeout,
     workspaceEdits: noopWorkspaceEdits,
     isExplorerServiceLoaded: () => true,
     isSearchServiceLoaded: () => true,
@@ -139,10 +147,44 @@ function makeRouter(
     bindings,
     scrollLines: 1,
     getViewportHeight: () => 10,
-    clock: testClock,
+    clock,
     overlayExplorer: { isOpen: () => explorer.isOpen, onKeypress: (event) => explorer.handleKeypress(event) },
     ...(git === undefined ? {} : { overlayGit: git.panel, overlayGitDiff: git.diff }),
   });
+}
+
+// T036-IDLE-TIMEOUT-UNIT-01: the Helix idle timeout reaches Xi's existing contextual help timer.
+{
+  const scheduled: number[] = [];
+  const clock: ClockPort = {
+    ...testClock,
+    schedule: (delayMilliseconds) => {
+      scheduled.push(delayMilliseconds);
+      return Object.freeze({ dispose: () => {} });
+    },
+  };
+  const router = makeRouter(new FakeExplorer(), new FakeSearch(), new FakeHost(), new FakeSession(), defaultBindings, undefined, true, 17, clock);
+  router.schedulePrefixHelp('view-1' as never, ['<Space>'], []);
+  assert.equal(scheduled[0], 17, 'T036-IDLE-TIMEOUT-UNIT-01 configured idle-timeout controls contextual help delay');
+  router.dispose();
+}
+
+// T036-XI-HINTS-UNIT-01: the canonical Xi hint delay uses the same owned contextual-help
+// timer, while the router still accepts the resolved delay as a scalar owner option.
+{
+  const configured = compileConfig([{ name: 'defaults', kind: 'defaults', source: DEFAULT_CONFIG_TOML }, { name: 'xi-hints', kind: 'user', source: '[xi.hints]\ndelay-ms = 17\n' }]);
+  assert.ok(configured.ok);
+  if (configured.ok) {
+    const scheduled: number[] = [];
+    const clock: ClockPort = {
+      ...testClock,
+      schedule: (delayMilliseconds) => { scheduled.push(delayMilliseconds); return Object.freeze({ dispose: () => {} }); },
+    };
+    const router = makeRouter(new FakeExplorer(), new FakeSearch(), new FakeHost(), new FakeSession(), defaultBindings, undefined, true, configured.value.editor.hintsDelayMs, clock);
+    router.schedulePrefixHelp('view-1' as never, ['<Space>'], []);
+    assert.equal(scheduled[0], 17, 'T036-XI-HINTS-UNIT-01 canonical xi.hints.delay-ms controls contextual help delay');
+    router.dispose();
+  }
 }
 
 // T116-ROUTER-01: leader (<Space>) then the panel-prefix 'v' then 'f' opens the explorer
@@ -168,6 +210,16 @@ function makeRouter(
   assert.equal(explorer.opened, true, 'T116-ROUTER-01 leader v f opened the explorer through the port');
   assert.equal(router.leaderPending, false, 'leader-pending state clears after the leader chord resolves');
 
+  router.dispose();
+}
+
+// T116-AUTO-INFO-01: editor.auto-info=false cancels contextual prefix help before its delay
+// can paint, while the default true path is exercised by the leader-help fixture below.
+{
+  const router = makeRouter(new FakeExplorer(), new FakeSearch(), new FakeHost(), new FakeSession(), defaultBindings, undefined, false);
+  router.schedulePrefixHelp('view-1' as never, ['<Space>'], []);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(router.prefixHelp.model, undefined, 'T116-AUTO-INFO-01 disabled auto-info keeps prefix help hidden');
   router.dispose();
 }
 
@@ -298,6 +350,23 @@ function makeRouter(
   router.dispose();
 }
 
+// T036-KEYS-FORMS-UNIT-01: Helix command sequences and @ macros execute through the same
+// production router path as single command bindings.
+{
+  const compiled = compileConfig([{ name: 'helix-key-forms', kind: 'user', source: '[keys.normal]\nret = [":write", ":write"]\nA-x = "@x<M-s>"\n' }]);
+  assert.ok(compiled.ok);
+  const host = new FakeHost();
+  const vim = new FakeVimSession();
+  host.session = vim;
+  host.sessions.set('view-1', vim);
+  const router = makeRouter(new FakeExplorer(), new FakeSearch(), host, new FakeSession(), compiled.value.bindings);
+  assert.equal(await router.dispatchKey(key('enter', '\r')), 'consumed');
+  assert.deepEqual(vim.submittedCommands, [':write', ':write'], 'T036-KEYS-FORMS-UNIT-01 command sequence preserves order');
+  assert.equal(await router.dispatchKey(key('x', 'x', { option: true })), 'consumed');
+  assert.deepEqual(vim.handledKeys.map((event) => event.name), ['x', 's'], 'T036-KEYS-FORMS-UNIT-02 @ macro emits its key sequence');
+  router.dispose();
+}
+
 console.log('T116 WorkbenchInputRouter passed leader-open-explorer, command-line-active, synchronous-fast-path and config-binding fixtures');
 
 // Arbitrary configured leader prefixes replace the previous hard-coded v chain.
@@ -330,4 +399,31 @@ console.log('T116 WorkbenchInputRouter passed leader-open-explorer, command-line
   assert.equal(search.isOpen, true);
   assert.equal(explorer.handledKeys.length, 0, 'mapped key does not also reach panel default handler');
   router.dispose();
+}
+
+// T036-KEYS-UNIT-01: a Helix typable command binding reaches the owned Ex submission path.
+{
+  const host = new FakeHost();
+  const vim = new FakeVimSession();
+  host.session = vim;
+  host.sessions.set('view-1', vim);
+  const router = makeRouter(new FakeExplorer(), new FakeSearch(), host, new FakeSession(), [
+    { mode: 'normal', keys: ['<C-s>'], commandId: 'ex:write' },
+  ]);
+  assert.equal(await router.dispatchKey(key('s', '\u0013', { ctrl: true })), 'consumed');
+  assert.deepEqual(vim.submittedCommands, [':write'], 'T036-KEYS-UNIT-01 Helix :write binding submits through Vim host ownership');
+  router.dispose();
+
+  const selectSession = new FakeSession();
+  selectSession.mode = 'visual';
+  const selectHost = new FakeHost();
+  const selectVim = new FakeVimSession();
+  selectHost.session = selectVim;
+  selectHost.sessions.set('view-1', selectVim);
+  const selectRouter = makeRouter(new FakeExplorer(), new FakeSearch(), selectHost, selectSession, [
+    { mode: 'select', keys: ['<C-s>'], commandId: 'ex:write' },
+  ]);
+  assert.equal(await selectRouter.dispatchKey(key('s', '\u0013', { ctrl: true })), 'consumed');
+  assert.deepEqual(selectVim.submittedCommands, [':write'], 'T036-KEYS-UNIT-01 [keys.select] reaches Xi visual modes');
+  selectRouter.dispose();
 }

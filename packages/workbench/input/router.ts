@@ -1,4 +1,5 @@
-import type { ClockPort, CommandId, Disposable, ViewId } from '../../contracts/src/index';
+import type { ClockPort, CommandId, Disposable, DocumentVersion, Utf16Offset, ViewId } from '../../contracts/src/index';
+import type { LineIndex } from '../../primitives/src/index';
 import type { BufferHost } from '../host';
 import type { WorkbenchSession } from '../session';
 import { CommandRegistry } from '../commands/registry';
@@ -35,7 +36,8 @@ function buildBindingMap(bindings: readonly RouterBindingConfig[]): ReadonlyMap<
   for (const binding of bindings) {
     if (binding.keys.length !== 1) continue;
     const token = normalizeConfigToken(binding.keys[0] as string);
-    map.set(`${binding.mode}\u0000${token}`, binding.commandId);
+    const modes = binding.mode === 'select' ? ['visual'] : [binding.mode];
+    for (const mode of modes) map.set(`${mode}\u0000${token}`, binding.commandId);
   }
   return map;
 }
@@ -73,10 +75,14 @@ export interface RouterOverlayPort {
 
 export interface RouterCompletionPort {
   isCompletionTrigger(event: OwnedVimKeyEvent, mode: string | undefined): boolean;
+  isAutoCompletionTrigger?(event: OwnedVimKeyEvent, mode: string | undefined): boolean;
+  isPathCompletionTrigger?(event: OwnedVimKeyEvent, mode: string | undefined): boolean;
   isSignatureTrigger(event: OwnedVimKeyEvent, mode: string | undefined): boolean;
+  isAutoSignatureTrigger(event: OwnedVimKeyEvent, mode: string | undefined): boolean;
   readonly isSnippetActive: boolean;
-  openCompletion(): boolean;
-  openSignature(): boolean;
+  openCompletion(trigger?: 'invoked' | 'character' | 'retrigger'): boolean;
+  openPathCompletion?(): boolean;
+  openSignature(automatic?: boolean): boolean;
   handleSnippetKeypress(event: OwnedVimKeyEvent): Promise<boolean | 'quit'>;
 }
 
@@ -127,6 +133,10 @@ export interface WorkbenchInputRouterOptions {
   readonly problems: RouterProblemsPort;
   readonly overlays: RouterOverlayPort;
   readonly completion: RouterCompletionPort;
+  /** Whether contextual prefix/info surfaces should be shown. */
+  readonly autoInfo?: boolean;
+  /** Delay before an idle contextual surface becomes visible. */
+  readonly idleTimeout?: number;
   readonly workspaceEdits: RouterWorkspaceEditsPort;
   /** Workbench-level Ex fallback used when no editable Vim session owns a command line. */
   readonly executeWorkbenchCommand?: (source: string, viewId: ViewId) => 'handled' | 'unhandled' | 'quit' | Promise<'handled' | 'unhandled' | 'quit'>;
@@ -141,8 +151,12 @@ export interface WorkbenchInputRouterOptions {
   /** Compiled config key bindings (`compileConfig(...).bindings`); `<C-Up>`/`<C-Down>` line
    * scroll are always available as defaults and config may override or add to them. */
   readonly bindings: readonly RouterBindingConfig[];
+  /** Helix's two-character `goto_word` label alphabet. */
+  readonly jumpLabelAlphabet?: readonly string[];
   /** Lines per `view.scroll-up`/`view.scroll-down` step; from `editor.mouse.scrollLines`. */
   readonly scrollLines: number;
+  /** Cursor margin used while a view-scroll command moves the viewport. */
+  readonly scrolloff?: number;
   readonly getViewportHeight: (viewId: ViewId) => number | undefined;
   /** Drives `PrefixHelpController`'s schedule/cancel timer through the shared platform port
    * instead of a raw `setTimeout`, so fake clocks can drive it in tests. */
@@ -175,7 +189,33 @@ export interface WorkbenchInputRouterOptions {
    * Composition-root work (path resolution, `GitDiffService`) this router never duplicates. */
   readonly openGitDiffForActiveBuffer?: () => Promise<void> | void;
   readonly openGitPanel?: () => Promise<void> | void;
+  /** Reloads and validates the user/workspace configuration, preserving the last good snapshot on failure. */
+  readonly reloadConfig?: () => Promise<boolean>;
 }
+
+export interface WorkbenchInputRouterConfig {
+  readonly bindings: readonly RouterBindingConfig[];
+  readonly autoInfo?: boolean;
+  readonly scrollLines: number;
+  readonly scrolloff?: number;
+  readonly jumpLabelAlphabet?: readonly string[];
+}
+
+interface JumpLabelTarget {
+  readonly line: number;
+  readonly utf16: number;
+}
+
+interface JumpLabelState {
+  readonly documentId: string;
+  readonly documentVersion: DocumentVersion;
+  readonly targets: ReadonlyMap<string, JumpLabelTarget>;
+  readonly annotations: readonly { readonly id: string; readonly documentVersion: DocumentVersion; readonly lineIndex: LineIndex; readonly offset: Utf16Offset; readonly text: string; readonly background: string }[];
+  pending: string;
+}
+
+const JUMP_WORD_CHARACTER = /^[\p{L}\p{N}_]$/u;
+const JUMP_LABEL_BACKGROUND = '#e5c07b';
 
 /**
  * Owns leader/macro-register pending state, prefix-help scheduling, the Ex command-line
@@ -188,10 +228,17 @@ export interface WorkbenchInputRouterOptions {
 export class WorkbenchInputRouter implements Disposable {
   readonly #options: WorkbenchInputRouterOptions;
   readonly #prefixHelp: PrefixHelpController;
-  readonly #bindings: ReadonlyMap<string, string>;
+  #bindings: ReadonlyMap<string, string>;
+  #configuredBindings: readonly RouterBindingConfig[];
+  #autoInfo: boolean | undefined;
+  #scrollLines: number;
+  #scrolloff: number | undefined;
+  #jumpLabelAlphabet: readonly string[];
+  #jumpLabels: JumpLabelState | undefined;
   #leaderPending = false;
   #leaderKeys: readonly string[] = Object.freeze([]);
   #macroRegisterPending = false;
+  #configuredMacroDepth = 0;
   #prefixGeneration = 0;
   // schedulePrefixHelp fires on every key via onPrefixStateChange. vim-session hands back
   // the same VimPrefixHelpState object (same pendingKeys/parserContinuations array
@@ -212,7 +259,12 @@ export class WorkbenchInputRouter implements Disposable {
 
   constructor(options: WorkbenchInputRouterOptions) {
     this.#options = options;
+    this.#configuredBindings = options.bindings;
     this.#bindings = buildBindingMap(options.bindings);
+    this.#autoInfo = options.autoInfo;
+    this.#scrollLines = options.scrollLines;
+    this.#scrolloff = options.scrolloff;
+    this.#jumpLabelAlphabet = options.jumpLabelAlphabet ?? Object.freeze([...('abcdefghijklmnopqrstuvwxyz')]);
     this.#prefixHelp = new PrefixHelpController({
       readGenerations: () => ({
         registryGeneration: options.commandRegistry.snapshot.generation,
@@ -233,6 +285,7 @@ export class WorkbenchInputRouter implements Disposable {
         })),
       }),
     }, {
+      ...(options.idleTimeout === undefined ? {} : { delayMilliseconds: options.idleTimeout }),
       clock: {
         setTimeout: (callback: () => void, milliseconds: number) => options.clock.schedule(milliseconds, callback),
         clearTimeout: (handle: unknown) => { (handle as Disposable).dispose(); },
@@ -242,6 +295,68 @@ export class WorkbenchInputRouter implements Disposable {
 
   get prefixHelp(): PrefixHelpController { return this.#prefixHelp; }
   get leaderPending(): boolean { return this.#leaderPending; }
+
+  jumpLabelAnnotations(documentId: string, documentVersion: number): readonly JumpLabelState['annotations'][number][] {
+    const labels = this.#jumpLabels;
+    return labels?.documentId === documentId && Number(labels.documentVersion) === documentVersion ? labels.annotations : [];
+  }
+
+  openJumpLabels(): boolean {
+    const viewId = this.#options.session.activeViewId;
+    const view = viewId === undefined ? undefined : this.#options.session.readView(viewId);
+    if (viewId === undefined || view === undefined) return false;
+    const alphabet = this.#jumpLabelAlphabet;
+    const targets = new Map<string, JumpLabelTarget>();
+    const annotations: JumpLabelState['annotations'][number][] = [];
+    const viewportHeight = Math.max(1, this.#options.getViewportHeight(viewId) ?? 24);
+    const topLine = Math.max(0, Math.min(view.document.lineCount - 1, Math.floor(view.scrollTop)));
+    const lastLine = Math.min(view.document.lineCount, topLine + viewportHeight + 1);
+    // ponytail: visible-window scan keeps goto-word bounded; add a full-document jump index only if workspace-wide labels are required.
+    let labelIndex = 0;
+    const labelCount = alphabet.length * alphabet.length;
+    for (let line = topLine; line < lastLine && labelIndex < labelCount; line += 1) {
+      const start = view.document.lineStartOffset(line as LineIndex);
+      const end = line + 1 < view.document.lineCount ? view.document.lineStartOffset((line + 1) as LineIndex) : { ok: true as const, value: view.document.lengthUtf16 as Utf16Offset };
+      if (!start.ok || !end.ok) continue;
+      const text = view.document.slice(start.value, end.value);
+      if (!text.ok) continue;
+      let inWord = false;
+      for (let index = 0; index < text.value.length && labelIndex < labelCount;) {
+        const codePoint = text.value.codePointAt(index);
+        if (codePoint === undefined) break;
+        const character = String.fromCodePoint(codePoint);
+        const word = JUMP_WORD_CHARACTER.test(character);
+        if (word && !inWord) {
+          const first = alphabet[Math.floor(labelIndex / alphabet.length)];
+          const second = alphabet[labelIndex % alphabet.length];
+          if (first === undefined || second === undefined) break;
+          const label = `${first}${second}`;
+          const offset = (Number(start.value) + index) as Utf16Offset;
+          targets.set(label, { line, utf16: Number(offset) });
+          annotations.push(Object.freeze({ id: `xi-jump-label-${String(view.document.id)}-${line}-${index}`, documentVersion: view.document.version, lineIndex: line as LineIndex, offset, text: label, background: JUMP_LABEL_BACKGROUND }));
+          labelIndex += 1;
+        }
+        inWord = word;
+        index += character.length;
+      }
+    }
+    this.#jumpLabels = { documentId: String(view.document.id), documentVersion: view.document.version, targets, annotations: Object.freeze(annotations), pending: '' };
+    this.#options.marker('XI_JUMP_LABELS', { count: targets.size, alphabet: alphabet.join(''), labels: [...targets.keys()] });
+    this.#options.host.notifySurfaceChange();
+    return true;
+  }
+
+  updateConfig(config: WorkbenchInputRouterConfig): void {
+    this.#configuredBindings = config.bindings;
+    this.#bindings = buildBindingMap(config.bindings);
+    this.#autoInfo = config.autoInfo;
+    this.#scrollLines = config.scrollLines;
+    this.#scrolloff = config.scrolloff;
+    this.#jumpLabelAlphabet = config.jumpLabelAlphabet ?? this.#jumpLabelAlphabet;
+    this.#jumpLabels = undefined;
+    this.#prefixGeneration += 1;
+    this.#prefixHelp.cancel();
+  }
 
   /** Structurally matches `packages/ui`'s `ExCommandLineReadPort`; declared here instead of
    * imported since workbench cannot import `packages/ui`. */
@@ -284,6 +399,10 @@ export class WorkbenchInputRouter implements Disposable {
 
   /** Called from `BufferHostOptions.onPrefixStateChange`. */
   schedulePrefixHelp(viewId: ViewId, pendingKeys: readonly string[], parserContinuations: VimPrefixHelpState['parserContinuations']): void {
+    if (this.#autoInfo === false) {
+      this.#prefixHelp.cancel();
+      return;
+    }
     if (this.#windowPrefixFromPanel && pendingKeys.length > 0) {
       this.#lastPrefixPendingKeys = pendingKeys;
       this.#lastPrefixContinuations = parserContinuations;
@@ -358,6 +477,7 @@ export class WorkbenchInputRouter implements Disposable {
     if ((event.raw === ' ' && activeMode === 'normal') || this.#leaderPending) return finishOverlay(this.handleKeypress(event));
     if (o.overlayContextMenu?.open === true) return finishOverlay(o.overlayContextMenu.handleKey(event));
     if (this.isCommandLineActive()) return finishOverlay(this.handleCommandLineKeypress(event));
+    if (this.#jumpLabels !== undefined) return finishOverlay(this.#handleJumpLabelKeypress(event));
     if (o.overlayCompletion?.isOpen() === true) return finishOverlay(o.overlayCompletion.onKeypress(event));
     if (o.overlayPicker?.isOpen() === true) return finishOverlay(o.overlayPicker.onKeypress(event));
     // Window commands belong to the Vim prefix parser. A sidebar must not consume the
@@ -461,9 +581,10 @@ export class WorkbenchInputRouter implements Disposable {
           getSession: (viewId) => host.sessions.get(viewId),
           viewId: activeViewId,
           viewportHeight: this.#options.getViewportHeight(activeViewId),
-          scrollLines: this.#options.scrollLines,
+          scrollLines: this.#scrollLines,
+          ...(this.#scrolloff === undefined ? {} : { scrolloff: this.#scrolloff }),
         });
-        if (handled) { this.#options.marker('XI_VIEW_COMMAND', { commandId, viewId: activeViewId }); return true; }
+        if (handled) { this.#options.marker('XI_VIEW_COMMAND', { commandId, viewId: activeViewId, scrollTop: session.readView(activeViewId)?.scrollTop }); return true; }
       }
     }
     const active = session.activeViewId === undefined ? undefined : host.sessions.get(session.activeViewId);
@@ -476,7 +597,19 @@ export class WorkbenchInputRouter implements Disposable {
       }
       return false;
     }
-    return active.handleKey(event);
+    const pathCompletion = completion.isPathCompletionTrigger?.(event, activeMode) === true;
+    const autoCompletion = !pathCompletion && completion.isAutoCompletionTrigger?.(event, activeMode) === true;
+    const autoSignature = completion.isAutoSignatureTrigger(event, activeMode);
+    const result = active.handleKey(event);
+    if (!autoSignature && !autoCompletion) return result;
+    return Promise.resolve(result).then((outcome) => {
+      if (outcome !== false && outcome !== 'quit') {
+        if (autoSignature) completion.openSignature(true);
+        if (autoCompletion) completion.openCompletion('character');
+        if (pathCompletion) completion.openPathCompletion?.();
+      }
+      return outcome;
+    });
   }
 
   /** Config-overridable mode+key -> commandId lookup, consulted before Vim's own key
@@ -502,7 +635,7 @@ export class WorkbenchInputRouter implements Disposable {
 
   focusEditor(): void { this.#gitPanelFocused = false; }
 
-  async handleLeaderKeypress(event: OwnedVimKeyEvent): Promise<boolean> {
+  async handleLeaderKeypress(event: OwnedVimKeyEvent): Promise<boolean | 'quit'> {
     const { host } = this.#options;
     this.#prefixHelp.cancel();
     this.#prefixGeneration += 1;
@@ -541,8 +674,40 @@ export class WorkbenchInputRouter implements Disposable {
     return true;
   }
 
-  async #executeWorkbenchCommandId(commandId: string): Promise<boolean> {
+  async #executeWorkbenchCommandId(commandId: string): Promise<boolean | 'quit'> {
     const { picker, explorer, search, problems, overlays, workspaceEdits } = this.#options;
+    if (commandId === 'noop') return true;
+    if (commandId.startsWith('sequence:')) {
+      const commands = decodeBindingPayload(commandId.slice('sequence:'.length));
+      if (commands === undefined) return false;
+      for (const command of commands) {
+        const result = await this.#executeWorkbenchCommandId(command);
+        if (result === 'quit') return result;
+      }
+      return true;
+    }
+    if (commandId.startsWith('macro:')) {
+      const keys = decodeBindingPayload(commandId.slice('macro:'.length));
+      if (keys === undefined || this.#configuredMacroDepth >= 32) return false;
+      this.#configuredMacroDepth += 1;
+      try {
+        for (const token of keys) {
+          const event = configuredMacroKeyEvent(token);
+          if (event === undefined) return false;
+          const result = await this.handleKeypress(event);
+          if (result === 'quit') return result;
+        }
+      } finally {
+        this.#configuredMacroDepth -= 1;
+      }
+      return true;
+    }
+    if (commandId.startsWith('ex:')) {
+      const active = this.#options.host.activeSession();
+      if (active === undefined) return false;
+      const result = await active.submitCommandLine(`:${commandId.slice(3)}`);
+      return result === 'quit' ? 'quit' : true;
+    }
     switch (commandId) {
       case 'macro.record': this.#macroRegisterPending = true; this.#leaderPending = true; return true;
       case 'files.pick': picker.open('file'); return true;
@@ -551,7 +716,13 @@ export class WorkbenchInputRouter implements Disposable {
       case 'command.pick': picker.open('command'); return true;
       case 'theme.pick': picker.open('theme'); return true;
       case 'config.open': picker.open('config'); return true;
-      case 'config.reload': this.#options.onError('xi: config reload is unavailable in this session\n'); return true;
+      case 'config.reload': {
+        if (this.#options.reloadConfig === undefined) {
+          this.#options.onError('xi: config reload is unavailable in this session\n');
+          return true;
+        }
+        return this.#options.reloadConfig().then(() => true);
+      }
       case 'search.workspace': search.open(); return true;
       case 'search.replace': search.startReplace(); return true;
       case 'panel.files.focus': explorer.open(); return true;
@@ -562,8 +733,18 @@ export class WorkbenchInputRouter implements Disposable {
       case 'git.diff': await this.#options.openGitDiffForActiveBuffer?.(); return true;
       case 'lsp.hover': overlays.openHover(); return true;
       case 'lsp.code-action': return workspaceEdits.requestCodeActions();
+      case 'lsp.references': {
+        const viewId = this.#options.session.activeViewId ?? this.#options.launchViewId;
+        await this.#options.executeWorkbenchCommand?.('xi references', viewId);
+        return true;
+      }
+      case 'editor.goto-word': this.openJumpLabels(); return true;
       case 'sidebar.toggle': this.#options.toggleSidebar?.(); return true;
-      case 'editor.mouse.toggle': this.#options.toggleMouseMode(); return true;
+      case 'editor.mouse.toggle': {
+        const enabled = this.#options.toggleMouseMode();
+        this.#options.marker('XI_MOUSE_MODE', { enabled });
+        return true;
+      }
       case 'panel.preview': return this.#dispatchPanelKey('l', 'l');
       case 'panel.open': return this.#dispatchPanelKey('enter', '\r');
       case 'panel.close': return this.#dispatchPanelKey('q', 'q');
@@ -579,9 +760,9 @@ export class WorkbenchInputRouter implements Disposable {
 
   #leaderBindings(): readonly RouterBindingConfig[] {
     const mode = this.#bindingMode();
-    const local = this.#options.bindings.filter(binding => binding.mode === mode);
+    const local = this.#configuredBindings.filter(binding => binding.mode === mode);
     if (mode === 'normal') return local;
-    const inherited = this.#options.bindings.filter(binding => binding.mode === 'normal' && !local.some(override => {
+    const inherited = this.#configuredBindings.filter(binding => binding.mode === 'normal' && !local.some(override => {
       const length = Math.min(binding.keys.length, override.keys.length);
       return binding.keys.slice(0, length).every((key, index) => normalizeConfigToken(key) === normalizeConfigToken(override.keys[index] ?? ''));
     }));
@@ -595,6 +776,36 @@ export class WorkbenchInputRouter implements Disposable {
     if (o.overlayGitDiff?.isOpen() === true && !this.#gitPanelFocused) return 'normal';
     if (o.overlayGit?.isOpen() === true) return 'git-panel';
     return 'normal';
+  }
+
+  #handleJumpLabelKeypress(event: OwnedVimKeyEvent): boolean {
+    const labels = this.#jumpLabels;
+    if (labels === undefined) return false;
+    if (event.name.toLowerCase() === 'escape' || event.raw === '\u001b') {
+      this.#jumpLabels = undefined;
+      this.#options.host.notifySurfaceChange();
+      return true;
+    }
+    if (event.ctrl || event.meta || event.option || [...event.raw].length !== 1) return true;
+    const next = `${labels.pending}${event.raw}`;
+    const target = labels.targets.get(next);
+    if (target !== undefined) {
+      const active = this.#options.host.activeSession();
+      const moved = active?.setCursorPosition(target.line, target.utf16) === true;
+      this.#jumpLabels = undefined;
+      this.#options.marker('XI_JUMP_LABEL_SELECTED', { label: next, line: target.line, utf16: target.utf16, moved });
+      this.#options.host.notifySurfaceChange();
+      return true;
+    }
+    if (labels.pending.length === 0 && this.#jumpLabelAlphabet.includes(event.raw)) {
+      labels.pending = event.raw;
+      this.#options.marker('XI_JUMP_LABEL_PENDING', { label: labels.pending });
+      return true;
+    }
+    this.#jumpLabels = undefined;
+    this.#options.marker('XI_JUMP_LABEL_CANCELLED', { input: next });
+    this.#options.host.notifySurfaceChange();
+    return true;
   }
 
   async #dispatchPanelKey(name: string, raw: string): Promise<boolean> {
@@ -634,8 +845,8 @@ export class WorkbenchInputRouter implements Disposable {
         else this.#closeStandaloneCommandLine();
         return this.#executeWorkbenchCommandId(String(result.execution.commandId));
       }
-      if (active !== undefined) return active.submitCommandLine(result.source);
       const source = result.source.startsWith(':') ? result.source.slice(1) : result.source;
+      if (active !== undefined) return active.submitCommandLine(result.source);
       this.#closeStandaloneCommandLine();
       const outcome = await this.#options.executeWorkbenchCommand?.(source, this.#options.launchViewId) ?? 'unhandled';
       if (outcome === 'quit') return 'quit';
@@ -673,6 +884,39 @@ export class WorkbenchInputRouter implements Disposable {
     this.#exCommandLineSession?.dispose();
     this.#commandLineListeners.clear();
   }
+}
+
+function decodeBindingPayload(value: string): readonly string[] | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((item): item is string => typeof item === 'string') ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function configuredMacroKeyEvent(token: string): OwnedVimKeyEvent | undefined {
+  const bracket = /^<(.+)>$/u.exec(token);
+  if (bracket === null) {
+    if ([...token].length !== 1) return undefined;
+    return { name: token, raw: token, shift: false, option: false, ctrl: false, meta: false };
+  }
+  const parts = bracket[1]!.split('-');
+  const key = parts.pop();
+  if (key === undefined || key.length === 0) return undefined;
+  const modifiers = new Set(parts.map((part) => part.toLowerCase()));
+  const ctrl = modifiers.has('c');
+  const shift = modifiers.has('s');
+  const option = modifiers.has('a');
+  const meta = modifiers.has('m');
+  if (parts.some((part) => !['c', 's', 'a', 'm'].includes(part.toLowerCase()))) return undefined;
+  const names: Record<string, string> = {
+    space: 'Space', esc: 'Escape', enter: 'Enter', ret: 'Enter', tab: 'Tab', bs: 'Backspace', del: 'Delete',
+    up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', home: 'Home', end: 'End', pageup: 'PageUp', pagedown: 'PageDown', insert: 'Insert',
+  };
+  const name = names[key.toLowerCase()] ?? key;
+  const raw = key.toLowerCase() === 'space' ? ' ' : key.length === 1 ? key : '';
+  return { name, raw, shift, option, ctrl, meta };
 }
 
 /** An overlay stack entry that reports itself open always consumes the key it's handed --

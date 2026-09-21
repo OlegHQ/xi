@@ -285,7 +285,7 @@ export function RowsSurface<T>(spec: RowsSurfaceSpec<T>): JSX.Element {
   });
 
   return (
-    <Show when={open()}>
+    <Show when={open()} fallback={() => null}>
     <box onMouse={onMouse} position="absolute" zIndex={spec.zIndex ?? 80}
       left={layout().left} top={layout().top} width={layout().width} height={layout().height}
       visible={open()} backgroundColor={theme().background}

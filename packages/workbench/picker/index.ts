@@ -31,9 +31,12 @@ export interface PickerControllerOptions<TEntry extends WorkbenchPickerEntry, TT
   readonly theme: ThemeController<TTheme>;
   readonly clock: ClockPort;
   readonly marker: (name: string, payload?: unknown) => void;
+  readonly bufferStartPosition?: 'current' | 'previous';
   readonly startFileIndexPopulation: () => Promise<void>;
   readonly toggleMouseMode: () => boolean;
   readonly openDiagnostic?: (id: string) => Promise<void>;
+  /** Opens the user's config.toml for the config picker/`:config-open` command. */
+  readonly openConfig?: () => Promise<void>;
   /** Opens a promoted buffer's file (commit) or a preview (no commit); returns the same
    * result shape as `BufferHost.openBufferAtPath` so preview/promote bookkeeping stays here. */
   readonly openFile: (path: string, preview: boolean) => ReturnType<BufferHost['openBufferAtPath']>;
@@ -176,6 +179,11 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
       void this.close(false);
       return;
     }
+    if (entry.mode === 'config') {
+      await this.close(false);
+      await this.#options.openConfig?.();
+      return;
+    }
     await this.close(false);
   }
 
@@ -217,7 +225,11 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
   }
 
   #runQuery(retainSelection = false): void {
-    const selectedId = retainSelection ? this.#options.model.model.selectedId : undefined;
+    const selectedId = retainSelection
+      ? this.#options.model.model.selectedId
+      : this.#mode === 'buffer' && this.#query.length === 0
+        ? this.#options.host.bufferPickerSelection(this.#options.bufferStartPosition ?? 'current')
+        : undefined;
     const generation = ++this.#generation;
     const query = this.#query;
     const mode = this.#mode;
@@ -239,6 +251,7 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
         ? result.value.entries.find((entry) => entry.value === this.#options.theme.activeId) ?? result.value.entries[0]
         : result.value.entries.find(entry => entry.id === selectedId) ?? result.value.entries[0];
       if (selected !== undefined) this.#options.model.select(selected.id);
+      if (selected !== undefined && mode === 'buffer') this.#options.marker('XI_BUFFER_PICKER', { startPosition: this.#options.bufferStartPosition ?? 'current', selectedId: selected.id });
       void this.#previewSelected(selected);
     });
   }
