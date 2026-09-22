@@ -46,13 +46,11 @@ async function main(): Promise<void> {
   // Keep CLI startup free of the optional service barrel. The small persistence
   // entrypoint, OpenTUI, Vim and the service graph can load concurrently.
   const persistenceModule = import('../../../packages/services/src/entrypoints/persistence');
-  const coreServicesModule = import('../../../packages/services/src/entrypoints/launch-core');
+  const coreServicesModule = import('../../../packages/services/src/entrypoints/launch-core').then(value => { startupTrace('core-services-loaded'); return value; });
   const platformModule = import('../../../packages/platform/src/entrypoints/launch');
   const documentModule = import('../../../packages/document/src/entrypoints/launch');
-  // Loading OpenTUI can briefly occupy the event loop while its native module
-  // is evaluated. For an explicit file, finish the small open first so that
-  // the launch read is not serialized behind native renderer startup.
-  const earlyUi = filePath?.path === undefined ? import('../../../packages/ui/src/entrypoints/launch') : undefined;
+  // Loading OpenTUI can occupy the event loop while its native module is evaluated.
+  // Let the launch document and config settle before loading the UI for either path.
   const vimSession = import('../../../packages/workbench/src/entrypoints/launch');
   const [{ PersistenceService }, { NodeFilesystemPort, NodeProcessPort, createNodeClock, installJobControl }, { openTextDocument, openTextDocumentChunks, TextFileDocument, positionToOffset }] = await Promise.all([persistenceModule, platformModule, documentModule]);
   startupTrace('base-modules');
@@ -77,13 +75,13 @@ async function main(): Promise<void> {
   // before it's first needed) do not add a second sequential round-trip on top of it.
   const configPath = action.configPath === undefined ? undefined : (action.configPath.startsWith('/') ? action.configPath : `${process.cwd()}/${action.configPath}`);
   const loadConfig = (): ReturnType<typeof loadStartupXiConfig> => loadStartupXiConfig(filesystem, themeStateDirectory(), configCancellation.token, VIEW_COMMAND_IDS, `${process.env.HOME ?? process.cwd()}/.xi.toml`, configPath, `${process.cwd()}/.helix/config.toml`, process.env, workspaceTrust);
-  const startupConfigPromise = loadConfig();
+  const startupConfigPromise = loadConfig().then(value => { startupTrace('config-loaded'); return value; });
   const editorConfigByPath = new Map<string, EditorConfigProperties>();
   // The document open and the theme-state read are independent IO: overlap them. Custom
   // theme files are only enumerated before the first frame when the persisted theme is not
   // builtin; otherwise they load after the first frame for the picker.
-  const themeWiringPromise = createThemeWiring(filesystem, statusMessages);
-  const documentPromise = openDocument(openTextDocument, persistence, filesystem, editorConfigByPath, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages, startupConfigPromise);
+  const themeWiringPromise = createThemeWiring(filesystem, statusMessages).then(value => { startupTrace('theme-wiring-ready'); return value; });
+  const documentPromise = openDocument(openTextDocument, persistence, filesystem, editorConfigByPath, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages, startupConfigPromise).then(value => { startupTrace('document-opened'); return value; });
   const themeWiring = await themeWiringPromise;
   const document = await documentPromise;
   if (document === undefined) {
@@ -95,7 +93,7 @@ async function main(): Promise<void> {
     return;
   }
   startupTrace('document');
-  const ui = earlyUi ?? import('../../../packages/ui/src/entrypoints/launch');
+  const ui = import('../../../packages/ui/src/entrypoints/launch');
   const renderer = ui.then(({ createOpenTuiRenderer }) => createOpenTuiRenderer());
   // A failure anywhere below is otherwise silent (the renderer promise settles with nobody
   // awaiting it) and leaves the terminal in raw mode. Swallow so this is never an unhandled

@@ -26,6 +26,7 @@ export interface OpenTuiWorkbenchOptions {
   readonly comparison?: import('../git/editor').ComparisonReadPort;
   /** Renderer creation may begin while the application composes its workbench. */
   readonly renderer?: Promise<CliRenderer>;
+  readonly startupTrace?: (label: string) => void;
   /** Called after the first frame starts; nonessential services may activate here. */
   readonly onReady?: () => void | Promise<void>;
   /** Terminal focus state forwarded from the renderer's focus reporting. */

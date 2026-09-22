@@ -136,7 +136,7 @@ def trial(name: str, command: list[str], root: Path, output: Path, index: int,
             until = time.monotonic() + 5
             while time.monotonic() < until:
                 read_once()
-                if visible_marker(captured[insertion_start:], "INS" if name == "helix" else "INSERT"):
+                if visible_marker(captured[insertion_start:], "INSERT" if name == "neovim" else "INS"):
                     first_insert_ms = (time.perf_counter_ns() - insertion_time) / 1e6
                     break
             else:
@@ -146,9 +146,9 @@ def trial(name: str, command: list[str], root: Path, output: Path, index: int,
             until = time.monotonic() + (0.1 if name == "neovim" else 5)
             while time.monotonic() < until:
                 read_once()
-                if name != "neovim" and visible_marker(captured[escape_start:], "NOR" if name == "helix" else "NORMAL"):
+                if name != "neovim" and visible_marker(captured[escape_start:], "NOR"):
                     break
-            if name != "neovim" and not visible_marker(captured[escape_start:], "NOR" if name == "helix" else "NORMAL"):
+            if name != "neovim" and not visible_marker(captured[escape_start:], "NOR"):
                 raise RuntimeError(f"{name}: Escape did not return to Normal")
             os.write(master, b":wq\r")
         deadline = time.monotonic() + 5

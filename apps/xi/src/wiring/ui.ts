@@ -161,6 +161,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
   const { renderer, themeWiring, marker, startupTrace, installJobControl } = deps;
   const themeVariants = resolveThemeVariants(controllers, themeWiring); const colorMode = resolveStartupColorMode(controllers, marker); const options: RelaxedWorkbenchUiOptions = {
     renderer,
+    startupTrace,
     colorMode, undercurl: controllers.startupConfig?.editor.undercurl ?? false,
     theme: themeWiring.themeController.get(themeWiring.themeController.activeId) ?? LIGHT_WORKBENCH_THEME,
     registerViewportConfig: (update) => controllers.registerUiReload(() => update({

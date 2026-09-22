@@ -1139,8 +1139,10 @@ export async function loadStartupXiConfig(
   }
   const commandCatalog = { ...DEFAULT_COMMAND_CATALOG, commandIds: [...DEFAULT_COMMAND_CATALOG.commandIds, ...extraCommandIds] };
   const workspaceDiagnostics: string[] = [];
+  let userConfig: ConfigCompileResult | undefined;
+  const userLayerCount = layers.length;
   if (workspaceConfigPath !== undefined) {
-    const userConfig = compileConfig(overrideLayer === undefined ? layers : [...layers, overrideLayer], { commandCatalog });
+    userConfig = compileConfig(overrideLayer === undefined ? layers : [...layers, overrideLayer], { commandCatalog });
     const trust = userConfig.ok ? userConfig.value.editor.workspaceTrust : defaultEditor.workspaceTrust;
     const workspaceRoot = workspaceRootFromConfigPath(workspaceConfigPath);
     const implicit = workspaceTrustAllows(workspaceRoot, trust, environment);
@@ -1161,6 +1163,9 @@ export async function loadStartupXiConfig(
   }
   const languagesToml = await filesystem.readFile(`${configDirectory}/languages.toml`, cancellation);
   if (languagesToml.ok) layers.push({ name: 'languages', kind: 'language', source: new TextDecoder('utf-8').decode(languagesToml.value), fileName: 'languages.toml' });
+  if (layers.length === userLayerCount && userConfig !== undefined) return userConfig.ok
+    ? { config: userConfig.value, diagnostics: Object.freeze(workspaceDiagnostics) }
+    : { config: undefined, diagnostics: userConfig.error.diagnostics.map((diagnostic) => diagnostic.message) };
   if (overrideLayer !== undefined) layers.push(overrideLayer);
   const compiled = compileConfig(layers, { commandCatalog });
   if (!compiled.ok) return { config: undefined, diagnostics: compiled.error.diagnostics.map((diagnostic) => diagnostic.message) };

@@ -231,6 +231,7 @@ export async function runOpenTuiWorkbench(
   let finish!: () => void;
   const done = new Promise<void>((resolveDone) => { finish = resolveDone; });
   const renderer = await (options.renderer ?? createConfiguredRenderer({ onDestroy: finish }));
+  options.startupTrace?.('renderer-ready');
   if (options.kittyKeyboardProtocol === 'disabled') renderer.disableKittyKeyboard();
   else if (options.kittyKeyboardProtocol === 'enabled') renderer.enableKittyKeyboard();
   const themeVariants = options.themeVariants;
@@ -239,6 +240,7 @@ export async function runOpenTuiWorkbench(
     return selected ?? themeVariants?.fallback ?? themeVariants?.dark ?? themeVariants?.light;
   };
   const initialVariant = themeVariants === undefined ? undefined : selectThemeVariant(await renderer.waitForThemeMode());
+  options.startupTrace?.('theme-ready');
   const initialTheme = initialVariant?.theme ?? options.theme;
   if (initialVariant !== undefined) options.onThemeMode?.(renderer.themeMode ?? 'fallback', initialVariant.id);
   renderer.on('destroy', finish);
@@ -320,6 +322,7 @@ export async function runOpenTuiWorkbench(
     ...(options.onViewportSizeChange === undefined ? {} : { onViewportSizeChange: options.onViewportSizeChange }),
   });
   renderer.root.add(viewport);
+  options.startupTrace?.('viewport-added');
   const solidTheme = createThemeBridge(viewport.theme);
   const applyThemeVariant = (mode: 'dark' | 'light'): void => {
     const variant = selectThemeVariant(mode);
@@ -366,6 +369,7 @@ export async function runOpenTuiWorkbench(
     themeBridge: solidTheme,
     requestFrame,
   })], viewport.forwardPointerEvent.bind(viewport));
+  options.startupTrace?.('shell-mounted');
   const surfaceWakeSubscription = options.subscribeSurfaceChanges?.(() => requestFrame());
 
   function drainKeys(): void {
@@ -449,6 +453,7 @@ export async function runOpenTuiWorkbench(
     options.onFrame?.();
     if (ready) return;
     ready = true;
+    options.startupTrace?.('first-frame');
     options.marker?.('XI_WORKBENCH_READY', { width: renderer.width, height: renderer.height });
     if (options.onReady !== undefined) setTimeout(() => {
       if (renderer.isDestroyed) return;
