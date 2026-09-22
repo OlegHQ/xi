@@ -984,6 +984,7 @@ function createCompletionAndWorkspaceEdits(
     fileUri,
     positionToOffset: deps.positionToOffset,
     ensureLanguage: () => forward.languageWiring.ensureLanguage(),
+    createLocalCompletion: async () => new (await import('../../../../packages/services/src/entrypoints/completion')).CompletionController(),
     ensureOptionalServices: async () => { await forward.optionalServices.ensure(); },
     getSnippetSupport: () => (forward.optionalServices.current === undefined ? undefined : { expandSnippet: forward.optionalServices.current.expandSnippet, SnippetSession: forward.optionalServices.current.SnippetSession }),
     autoCompletion: ctx.startupConfig?.editor.autoCompletion ?? true,

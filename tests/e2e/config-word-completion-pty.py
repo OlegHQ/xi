@@ -58,7 +58,16 @@ def run_case(enabled: bool) -> bool:
             read_for(master, captured, 8)
             if b"XI_WORKBENCH_READY" not in captured:
                 raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
-            os.write(master, b"ialp")
+            os.write(master, b"i")
+            read_for(master, captured, 0.2)
+            for version, key in enumerate(b"alp", 2):
+                os.write(master, bytes((key,)))
+                marker = f'XI_SYNTAX_STATE {{"documentId":"xi-launch-document","version":{version}'.encode()
+                deadline = time.monotonic() + 3
+                while marker not in captured and time.monotonic() < deadline:
+                    read_for(master, captured, 0.05)
+                if marker not in captured:
+                    raise SystemExit(f"typed character {chr(key)} did not reach the editor")
             read_for(master, captured, 4)
             states = [json.loads(match.group(1)) for match in STATE.finditer(captured)]
             ready = any(state.get("state") == "ready" and state.get("items", 0) > 0 for state in states)

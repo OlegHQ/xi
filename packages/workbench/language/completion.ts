@@ -202,6 +202,8 @@ export interface CompletionSnippetControllerOptions {
    * composition-root work, never duplicated here; a no-op (already-resolved) promise when no
    * language server applies to the current file. */
   readonly ensureLanguage: () => Promise<void>;
+  /** Build the shared completion model on first local path/word completion, without starting LSP. */
+  readonly createLocalCompletion?: () => Promise<CompletionControllerPort & Disposable>;
   /** Lazily constructs (memoized) the optional services (explorer/search/snippets) -- needed
    * here only for snippet expansion support. */
   readonly ensureOptionalServices: () => Promise<void>;
@@ -238,6 +240,7 @@ const NOOP_DISPOSABLE: Disposable = Object.freeze({ dispose: () => {} });
  */
 export class CompletionSnippetController {
   #completionOpen = false;
+  #disposed = false;
   #signatureOpen = false;
   #completionCancellation: CancellationSource | undefined;
   #completionDelayTimer: ReturnType<typeof setTimeout> | undefined;
@@ -245,6 +248,9 @@ export class CompletionSnippetController {
   #completionSerial = 0;
   #operationNumber = 0;
   #completion: CompletionControllerPort | undefined;
+  #localCompletion: (CompletionControllerPort & Disposable) | undefined;
+  #localCompletionLoading: Promise<void> | undefined;
+  #localCompletionSubscription: Disposable | undefined;
   #completionProvider: CompletionProviderPort | undefined;
   #signature: SignatureControllerPort | undefined;
   #session: LanguageServerSessionPort | undefined;
@@ -315,6 +321,12 @@ export class CompletionSnippetController {
    * open. Returns both subscriptions for `apps/xi/src/main.ts` to hold and dispose at the exact
    * two (adjacent) points the original teardown already disposed them. */
   attachLanguage(session: LanguageServerSessionPort, completion: CompletionControllerPort, completionProvider: CompletionProviderPort, signature: SignatureControllerPort): { readonly completionSubscription: Disposable; readonly signatureSubscription: Disposable } {
+    if (this.#localCompletion !== undefined || this.#localCompletionLoading !== undefined) this.closeCompletion();
+    this.#localCompletionSubscription?.dispose();
+    this.#localCompletion?.dispose();
+    this.#localCompletionSubscription = undefined;
+    this.#localCompletion = undefined;
+    this.#localCompletionLoading = undefined;
     this.#session = session;
     this.#completion = completion;
     this.#completionProvider = completionProvider;
@@ -446,6 +458,29 @@ export class CompletionSnippetController {
     const provider = path ? this.#options.pathCompletionProvider : this.#completionProvider;
     const wordProvider = path ? undefined : this.#options.wordCompletionProvider;
     const session = this.#session;
+    const createLocalCompletion = this.#options.createLocalCompletion;
+    if (request !== undefined && controller === undefined && createLocalCompletion !== undefined && (path || trigger === 'character' && wordProvider !== undefined || this.#completionEnsureRetried)) {
+      this.#completionOpen = true;
+      this.#localCompletionLoading ??= createLocalCompletion().then((local) => {
+        if (this.#disposed) local.dispose();
+        else if (this.#completion === undefined) {
+          this.#localCompletion = local;
+          this.#completion = local;
+          this.#localCompletionSubscription = local.subscribe((model) => {
+            if (this.#completionOpen) {
+              this.#options.host.notifySurfaceChange();
+              this.#options.marker('XI_COMPLETION_STATE', { state: model.state, items: model.items.length, selectedId: model.selectedId, documentation: model.documentation !== undefined, message: model.message });
+            }
+          });
+        } else local.dispose();
+      }).catch((error: unknown) => {
+        this.#localCompletionLoading = undefined;
+        this.#completionOpen = false;
+        this.#options.onError(`xi: local completion unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      void this.#localCompletionLoading.then(() => { if (this.#completionOpen) this.#openCompletion(trigger, path); });
+      return true;
+    }
     if (request === undefined || controller === undefined || path && provider === undefined || !path && provider === undefined && wordProvider === undefined || !path && provider !== undefined && session === undefined) {
       if (request !== undefined && !this.#completionEnsureRetried && !path && provider === undefined) {
         this.#completionEnsureRetried = true;
@@ -770,6 +805,7 @@ export class CompletionSnippetController {
   }
 
   async dispose(): Promise<void> {
+    this.#disposed = true;
     if (this.#completionDelayTimer !== undefined) {
       clearTimeout(this.#completionDelayTimer);
       this.#completionDelayTimer = undefined;
@@ -779,6 +815,11 @@ export class CompletionSnippetController {
     this.#signatureCancellation?.cancel();
     await this.#discardCompletionPreview();
     this.#finishSnippet();
+    this.#localCompletionSubscription?.dispose();
+    this.#localCompletion?.dispose();
+    this.#localCompletionSubscription = undefined;
+    this.#localCompletion = undefined;
+    this.#localCompletionLoading = undefined;
     this.#completion = undefined;
     this.#completionProvider = undefined;
     this.#signature = undefined;
