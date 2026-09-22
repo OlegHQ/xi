@@ -621,9 +621,9 @@ export class NodeFilesystemPort implements FilesystemPort {
           if (deduplicateLinks) visitedFiles.add(fileIdentity);
           batch.push(Object.freeze({ relativePath, absolutePath, hidden: relativePath.startsWith('.') || relativePath.includes('/.') }));
           total += 1;
-          if (batch.length >= 512) {
+          if (batch.length >= 128) {
             await onBatch(Object.freeze(batch.splice(0, batch.length)));
-            await Promise.resolve();
+            await new Promise<void>((done) => setImmediate(done));
           }
           if (total >= maxEntries) break;
         }

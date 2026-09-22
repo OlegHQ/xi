@@ -171,26 +171,40 @@ function createDeferredStart(delayMilliseconds: number, start: () => void): { re
   };
 }
 
-async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onError: (message: string) => void): Promise<void> {
+async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onUpdate: (entries: number, complete: boolean, elapsedMilliseconds: number) => void, onError: (message: string) => void): Promise<void> {
   const cancellation = new CancellationSource();
+  const started = performance.now();
+  // ponytail: publish the first partial batch immediately, then every 2,048 paths;
+  // lower the interval if measured first-match latency requires more frequent refreshes.
+  let lastPublishedEntries = 0;
+  let indexedEntries = 0;
+  let reportedIndexError = false;
   try {
     const result = await filesystem.enumerateFiles(root, cancellation.token, (entries) => {
       const indexed = entries.map((entry) => ({ rootId: 'workspace' as const, relativePath: entry.relativePath, absolutePath: entry.absolutePath, hidden: entry.hidden }));
-      index.addPaths('workspace', indexed);
+      const added = index.addPaths('workspace', indexed);
+      if (added.ok && added.value > 0 && (lastPublishedEntries === 0 || indexedEntries + added.value - lastPublishedEntries >= 2_048)) {
+        indexedEntries += added.value;
+        lastPublishedEntries = indexedEntries;
+        onUpdate(lastPublishedEntries, false, performance.now() - started);
+      }
+      else if (added.ok) indexedEntries += added.value;
+      else if (!reportedIndexError) { reportedIndexError = true; onError(`xi: file picker index incomplete: ${added.error.kind}`); }
     }, { maxEntries: 120_000, followSymlinks, deduplicateLinks, ...(maxDepth === undefined ? {} : { maxDepth }), ignore });
     if (!result.ok) onError(`xi: file picker index incomplete: ${result.error.message}`);
   } finally {
     index.markReady();
+    onUpdate(indexedEntries, true, performance.now() - started);
     cancellation.dispose();
   }
 }
 
 /** A single lazily-started, memoized population run -- replaces a bare `let ...Population`
  * closure with one owned handle. */
-function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onDone: () => void, onError: (message: string) => void): () => Promise<void> {
+function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onUpdate: (entries: number, complete: boolean, elapsedMilliseconds: number) => void, onError: (message: string) => void): () => Promise<void> {
   let population: Promise<void> | undefined;
   return () => {
-    population ??= populateFileIndex(fileIndex, filesystem, root, followSymlinks, deduplicateLinks, maxDepth, ignore, onError).then(onDone);
+    population ??= populateFileIndex(fileIndex, filesystem, root, followSymlinks, deduplicateLinks, maxDepth, ignore, onUpdate, onError);
     return population;
   };
 }
@@ -1436,7 +1450,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   }
 
   const filePicker = ctx.startupConfig?.editor.filePicker;
-  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd() }, () => host.notifySurfaceChange(), message => deps.statusMessages.publish(message));
+  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd() }, (entries, complete, elapsedMilliseconds) => { deps.marker('XI_FILE_INDEX', { entries, complete, elapsedMilliseconds }); if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
   forward.startFileIndexPopulation = startFileIndexPopulation;
   const fileIndexStarter = createDeferredStart(1000, () => { void startFileIndexPopulation(); });
   async function ensureGitAndOpenPicker(): Promise<void> {
