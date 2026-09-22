@@ -1,4 +1,5 @@
 import { CancellationSource } from '../../../../packages/primitives/src/entrypoints/launch';
+import { xiConfigDirectory } from '../../../../packages/platform/src/entrypoints/launch';
 import { ThemeController } from '../../../../packages/workbench/src/entrypoints/launch';
 import type { WorkbenchTheme } from '../../../../packages/ui/src/entrypoints/launch';
 import { BUILTIN_WORKBENCH_THEMES } from '../../../../packages/ui/src/entrypoints/theme';
@@ -10,7 +11,7 @@ import type { StatusMessageController } from '../../../../packages/workbench/src
 /** Legacy user config, custom themes and the read-only theme migration source live here.
  * New editor state is written to ~/.xi.toml. */
 export function themeStateDirectory(): string {
-  return `${process.env.HOME ?? process.cwd()}/.config/xi`;
+  return xiConfigDirectory(process.env);
 }
 export function themeStatePath(): string {
   return `${themeStateDirectory()}/state.json`;

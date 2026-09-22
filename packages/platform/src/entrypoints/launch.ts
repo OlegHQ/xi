@@ -1,5 +1,5 @@
 /** Small public platform surface used by the standalone launcher. */
-export { NodeFilesystemPort } from '../filesystem';
+export { NodeFilesystemPort, xiConfigDirectory } from '../filesystem';
 export { NodeProcessPort } from '../process';
 export { createConfiguredClipboardPort } from '../configured-clipboard';
 export { createNodeClock } from '../clock';

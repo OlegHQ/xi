@@ -1,5 +1,10 @@
 import { constants, promises as fs, watch as watchFile } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+
+export function xiConfigDirectory(environment: Readonly<Record<string, string | undefined>>): string {
+  const xdgConfigHome = environment.XDG_CONFIG_HOME;
+  return join(xdgConfigHome !== undefined && isAbsolute(xdgConfigHome) ? xdgConfigHome : join(environment.HOME ?? process.cwd(), '.config'), 'xi');
+}
 import type {
   CancellationToken,
   Disposable,
@@ -731,6 +736,19 @@ export class NodeFilesystemPort implements FilesystemPort {
       return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
     } catch (error: unknown) {
       return { ok: false, error: platformFailure(error, 'make-directory') };
+    }
+  }
+
+  /** Create a config file once without replacing an existing file or racing another process. */
+  async createFileIfMissing(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
+    if (cancellation.isCancelled) return cancelled();
+    try {
+      await fs.mkdir(dirname(path), { recursive: true });
+      const handle = await fs.open(path, 'wx');
+      await handle.close();
+      return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
+    } catch (error: unknown) {
+      return errorCode(error) === 'EEXIST' ? { ok: true, value: undefined } : { ok: false, error: platformFailure(error, 'create-file') };
     }
   }
 

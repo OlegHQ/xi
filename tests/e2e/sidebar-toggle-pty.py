@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix='xi-quit-buffer-') as temporary:
         assert child.returncode == 0
         state_path = Path(temporary) / '.xi.toml'
         state = tomllib.loads(state_path.read_text())
-        assert state['editor']['sidebar-visible'] is False, state
+        assert state['xi']['sidebar']['visible'] is False, state
         if '--remapped' in sys.argv:
             assert state['keys']['normal']['space']['g'] == 'sidebar.toggle'
         if '--restore-search' in sys.argv:
@@ -111,7 +111,7 @@ with tempfile.TemporaryDirectory(prefix='xi-quit-buffer-') as temporary:
             send(b'\x1b')
         send(b':qa\r')
         child.wait(timeout=5)
-        assert tomllib.loads(state_path.read_text())['editor']['sidebar-visible'] is True
+        assert tomllib.loads(state_path.read_text())['xi']['sidebar']['visible'] is True
     finally:
         if child.poll() is None:
             child.kill()

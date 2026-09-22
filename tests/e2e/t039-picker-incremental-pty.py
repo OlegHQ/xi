@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix="xi-picker-incremental-") as temporary:
     try:
         wait_for(master, output, b"XI_WORKBENCH_READY")
         os.write(master, b" f")
-        wait_for(master, output, b'XI_FILE_INDEX {"entries":128,"complete":false')
+        wait_for(master, output, b'XI_PICKER_PREVIEW {"viewId":')
         os.write(master, b"target_unique")
         wait_for(master, output, b'target_unique.txt"}')
         assert b"target_unique.txt" in output.split(b"XI_PICKER_PREVIEW")[-1], "late file was not previewed"

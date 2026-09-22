@@ -35,7 +35,7 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
 
 with tempfile.TemporaryDirectory(prefix="xi-scrolloff-pty-") as temporary:
     root = Path(temporary)
-    config = root / ".config" / "xi" / "config.toml"
+    config = root / "config" / "xi" / "config.toml"
     config.parent.mkdir(parents=True)
     config.write_text("schema-version = 1\n[editor]\nscrolloff = 3\n", encoding="utf-8")
     source = root / "scrolloff.txt"

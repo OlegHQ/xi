@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { CancellationSource } from '../../packages/primitives/src/index';
 import { loadStartupXiConfig, type StartupConfigFilesystemPort } from '../../packages/services/config/index';
+import { xiConfigDirectory } from '../../packages/platform/src/entrypoints/launch';
+
+assert.equal(xiConfigDirectory({ HOME: '/tmp/home', XDG_CONFIG_HOME: '/tmp/xdg' }), '/tmp/xdg/xi', 'T036-LOADING-USER-XDG-01 absolute XDG path wins');
+assert.equal(xiConfigDirectory({ HOME: '/tmp/home', XDG_CONFIG_HOME: 'relative' }), '/tmp/home/.config/xi', 'T036-LOADING-USER-XDG-02 relative XDG path falls back to HOME');
 
 const files = new Map<string, Uint8Array>([
   ['/tmp/xi-config/config.toml', new TextEncoder().encode('[editor]\nline-number = "relative"\n')],

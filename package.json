@@ -27,7 +27,7 @@
     "package:build": "bun run tools/package-build.ts",
     "xi:install": "bun run package:build && mkdir -p ~/.local/bin && cp dist/xi ~/.local/bin/xi && chmod 755 ~/.local/bin/xi && ~/.local/bin/xi --version",
     "package:release": "bun run ./tools/package-release.ts",
-    "package:smoke": "bun run package:audit && python3 tests/distribution/t064-compiled-pty.py && python3 tests/distribution/t064-ex-pty.py",
+    "package:smoke": "bun run package:audit && python3 tests/distribution/t064-compiled-pty.py && python3 tests/distribution/t064-ex-pty.py && bun test tests/distribution/t064-package.test.ts",
     "verify:release": "bun run check && bun run test:unit && bun run ./tools/verify-suite.ts vim --suite config && bun run test:vim -- --profile xi --suite multi-selection --seed 41027 && bun run test:services && bun run test:ui && bun run test:e2e -- --suite interaction && bun run bench -- --suite interaction",
     "check:lint": "bun run tools/lint/check.ts",
     "test:lint": "bun test --timeout 30000 tests/lint",

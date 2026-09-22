@@ -39,6 +39,10 @@ const isolatedHealth = spawnSync(executable, ['--health'], {
 });
 assert.equal(isolatedHealth.status, 0, 'T064-PACKAGE-RELEASE-09 staged binary runs without workspace dependencies');
 assert.match(isolatedHealth.stdout, /OpenTUI workbench available/u, 'T064-PACKAGE-RELEASE-10 staged binary health check works');
+const configPty = spawnSync('python3', ['tests/e2e/config-user-pty.py', '--binary', executable], {
+  cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, XDG_CONFIG_HOME: '' },
+});
+assert.equal(configPty.status, 0, `T064-PACKAGE-RELEASE-11 staged binary obeys XDG/HOME/CLI/workspace config paths: ${configPty.stdout ?? ''}${configPty.stderr ?? ''}`);
 
 console.log('T064 package audit/release passed target, native checksum, notice, isolated staging and missing-asset failure probes');
 

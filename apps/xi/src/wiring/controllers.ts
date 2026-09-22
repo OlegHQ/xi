@@ -151,6 +151,16 @@ export function id<T extends string>(value: string): T {
   return result.value;
 }
 
+async function ensureUserConfigDocument(deps: ControllersDeps, host: BufferHost): Promise<void> {
+  const cancellation = new CancellationSource();
+  try {
+    const created = await deps.filesystem.createFileIfMissing(deps.userConfigPath, cancellation.token);
+    if (!created.ok) { deps.statusMessages.publish(`xi: cannot create ${deps.userConfigPath}: ${created.error.message}`); return; }
+    const opened = await host.openBufferAtPath(deps.userConfigPath);
+    if (opened !== undefined) deps.marker('XI_CONFIG_OPEN', { path: deps.userConfigPath, viewId: opened.viewId });
+  } finally { cancellation.dispose(); }
+}
+
 /** Small mutable cell for the renderer's own mouse-toggle callback, which only exists once
  * `runOpenTuiWorkbench` registers it -- a tiny owned object instead of a `main()`-scoped `let`. */
 function createMouseModeToggle(): { readonly registered: (toggle: () => boolean) => void; readonly toggle: () => boolean } {
@@ -171,9 +181,8 @@ function createDeferredStart(delayMilliseconds: number, start: () => void): { re
   };
 }
 
-async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onUpdate: (entries: number, complete: boolean, elapsedMilliseconds: number) => void, onError: (message: string) => void): Promise<void> {
+async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onUpdate: () => void, onError: (message: string) => void): Promise<void> {
   const cancellation = new CancellationSource();
-  const started = performance.now();
   // ponytail: publish the first partial batch immediately, then every 2,048 paths;
   // lower the interval if measured first-match latency requires more frequent refreshes.
   let lastPublishedEntries = 0;
@@ -186,7 +195,7 @@ async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePat
       if (added.ok && added.value > 0 && (lastPublishedEntries === 0 || indexedEntries + added.value - lastPublishedEntries >= 2_048)) {
         indexedEntries += added.value;
         lastPublishedEntries = indexedEntries;
-        onUpdate(lastPublishedEntries, false, performance.now() - started);
+        onUpdate();
       }
       else if (added.ok) indexedEntries += added.value;
       else if (!reportedIndexError) { reportedIndexError = true; onError(`xi: file picker index incomplete: ${added.error.kind}`); }
@@ -194,14 +203,14 @@ async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePat
     if (!result.ok) onError(`xi: file picker index incomplete: ${result.error.message}`);
   } finally {
     index.markReady();
-    onUpdate(indexedEntries, true, performance.now() - started);
+    onUpdate();
     cancellation.dispose();
   }
 }
 
 /** A single lazily-started, memoized population run -- replaces a bare `let ...Population`
  * closure with one owned handle. */
-function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onUpdate: (entries: number, complete: boolean, elapsedMilliseconds: number) => void, onError: (message: string) => void): () => Promise<void> {
+function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onUpdate: () => void, onError: (message: string) => void): () => Promise<void> {
   let population: Promise<void> | undefined;
   return () => {
     population ??= populateFileIndex(fileIndex, filesystem, root, followSymlinks, deduplicateLinks, maxDepth, ignore, onUpdate, onError);
@@ -388,7 +397,7 @@ async function loadStartupSettings(deps: ControllersDeps): Promise<{ readonly st
       if (id !== undefined && !deps.themeWiring.themeController.has(id)) await deps.themeWiring.loadCustomTheme(id);
     }
   }
-  if (configuredTheme !== undefined && (deps.themeWiring.persistedThemeId === undefined || startupConfig?.provenance['editor.theme'] === 'state-overrides')) {
+  if (configuredTheme !== undefined) {
     if (!deps.themeWiring.themeController.has(configuredTheme)) await deps.themeWiring.loadCustomTheme(configuredTheme);
     if (deps.themeWiring.themeController.has(configuredTheme)) deps.themeWiring.themeController.setActiveId(configuredTheme);
     else deps.statusMessages.publish(`xi: configured theme ${configuredTheme} was not found; using ${deps.themeWiring.themeController.activeId}`);
@@ -711,10 +720,7 @@ function createOptionalServicesAndPicker(
     startFileIndexPopulation: () => forward.startFileIndexPopulation(),
     toggleMouseMode: mouseMode.toggle,
     openDiagnostic,
-    openConfig: async () => {
-      const opened = await host.openBufferAtPath(deps.userConfigPath);
-      if (opened !== undefined) marker('XI_CONFIG_OPEN', { path: deps.userConfigPath, viewId: opened.viewId });
-    },
+    openConfig: () => ensureUserConfigDocument(deps, host),
     openFile: async (path, preview) => {
       const opened = await host.openBufferAtPath(path, { preview });
       // The Files tree follows a picker commit (VS Code "reveal in explorer"); previews
@@ -1120,10 +1126,7 @@ function createSaveAndHostCommands(
     saveCoordinator,
     directoryDrafts: { open: (target, viewId) => forward.directoryDraftController.explore(target, viewId) },
     workspaceTrust: deps.workspaceTrust,
-    openConfig: async () => {
-      const opened = await host.openBufferAtPath(deps.userConfigPath);
-      if (opened !== undefined) marker('XI_CONFIG_OPEN', { path: deps.userConfigPath, viewId: opened.viewId });
-    },
+    openConfig: () => ensureUserConfigDocument(deps, host),
     lookupDefinition: async () => {
       await forward.languageWiring.ensureLanguage();
       const navigation = forward.languageWiring.navigationController;
@@ -1453,7 +1456,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   }
 
   const filePicker = ctx.startupConfig?.editor.filePicker;
-  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd() }, (entries, complete, elapsedMilliseconds) => { deps.marker('XI_FILE_INDEX', { entries, complete, elapsedMilliseconds }); if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
+  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd() }, () => { if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
   forward.startFileIndexPopulation = startFileIndexPopulation;
   const fileIndexStarter = createDeferredStart(1000, () => { void startFileIndexPopulation(); });
   async function ensureGitAndOpenPicker(): Promise<void> {

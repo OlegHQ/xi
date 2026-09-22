@@ -71,13 +71,20 @@ failed check.
 | Helix-compatible surface | Helix behavior | Xi at `ab211d5` | Target |
 | --- | --- | --- | --- |
 | `theme = "name"` | Top-level theme name | Effective; legacy `editor.theme` remains accepted | Root spelling feeds the existing theme consumer; legacy spelling remains a migration alias. |
-| `[theme] dark/light/fallback` | Master supports terminal light/dark selection | Effective | OpenTUI terminal theme-mode events select the configured theme live; fallback is used when the terminal has no declared preference, while persisted theme state retains precedence. |
+| `[theme] dark/light/fallback` | Master supports terminal light/dark selection | Effective | OpenTUI terminal theme-mode events select the configured theme live; fallback is used when the terminal has no declared preference. An explicit configured theme wins over persisted theme state. |
 | `[keys.normal]`, `[keys.insert]`, `[keys.select]` | Static commands, typable commands, command sequences and `@` macros | Incompatible: similar tables, `visual` naming and Xi command IDs | Accept Helix modes and value forms; keep Xi-only contexts under `[xi.keys]`. |
-| User `config.toml` | Platform config directory | Effective at `~/.config/xi/config.toml` | Keep the Xi directory but make file contents compatible. |
+| User `config.toml` | Platform config directory | Effective at `$XDG_CONFIG_HOME/xi/config.toml` when XDG_CONFIG_HOME is absolute, otherwise `~/.config/xi/config.toml` | Xi reads this path in source and release builds. |
 | Workspace `.helix/config.toml` merge | Built-in → user → workspace | Effective when no explicit `-c`/Xi config overrides it | Reads the optional `.helix/config.toml` workspace layer after defaults and user config, preserving explicit CLI precedence. |
-| `-c/--config` | Explicit config path | Effective | Loads the selected file as the highest user-facing config layer before persisted Xi state overrides. |
+| `-c/--config` | Explicit config path | Effective | Loads the selected file in place of the user config and above the legacy home state layer; trusted workspace config is skipped. |
 | `:config-open`, `:config-reload`, USR1 | Open/reload atomically | Partial live reload; invalid reloads retain the last-good behavior | Reload is serialized and validated before publication. Bindings, input, trust, line numbers, rulers and save policy update live; other settings require restart, which Xi reports. |
 | Unknown fields | Rejected by Helix schema | Rejected by Xi's hand-maintained list | Preserve strict rejection. A key enters the list only with a production consumer. |
+
+For this release, `~/.xi.toml` remains a lower-priority compatibility input and the
+persisted sidebar/theme state file. Move hand-written settings and keymaps to the canonical
+`config.toml`: defaults → `~/.xi.toml` → user or explicit `-c` config → trusted workspace
+config. A canonical value wins over the same saved/legacy value. `:config-open` creates
+the canonical file when absent and opens that path. Explicit `-c` skips workspace config;
+without it, workspace loading still follows the workspace-trust policy.
 
 ## `[editor]` scalar and union keys
 

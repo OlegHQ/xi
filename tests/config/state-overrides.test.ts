@@ -12,7 +12,7 @@ assert.deepEqual(loaded.diagnostics, []);
 assert.equal(loaded.config?.editor.sidebarVisible, false);
 assert.equal(loaded.config?.editor.sidebarWidth, 34);
 assert.equal(loaded.config?.editor.sidebarPanel, 'search');
-assert.equal(loaded.config?.editor.theme, 'xi-light', 'home overrides win over legacy user config');
+assert.equal(loaded.config?.editor.theme, 'xi-dark', 'canonical user config wins over legacy home state');
 assert.ok(loaded.config?.bindings.some(binding => binding.commandId === 'sidebar.toggle' && binding.keys.at(-1) === 'g'));
 files.set('/home/test/.xi.toml', '[editor]\nsidebar-visible = "no"\n');
 const invalid = await loadStartupXiConfig(filesystem, '/home/test/.config/xi', cancellation.token, [], '/home/test/.xi.toml');

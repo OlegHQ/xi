@@ -53,9 +53,18 @@ with tempfile.TemporaryDirectory(prefix="xi-auto-save-focus-pty-") as temporary:
             raise SystemExit(f"workbench did not start\n{captured[-3000:]!r}")
         os.write(master, b"\x1b[I")
         os.write(master, b"iA")
-        time.sleep(0.05)
+        deadline = time.monotonic() + 5
+        while b'"version":2' not in captured and time.monotonic() < deadline:
+            read_for(master, captured, 0.05)
+        if b'"version":2' not in captured:
+            raise SystemExit("inserted edit did not reach the editor")
+        before_escape = len(captured)
         os.write(master, b"\x1b")
-        time.sleep(0.05)
+        deadline = time.monotonic() + 5
+        while b"NOR" not in captured[before_escape:] and time.monotonic() < deadline:
+            read_for(master, captured, 0.05)
+        if b"NOR" not in captured[before_escape:]:
+            raise SystemExit("Escape did not return to Normal mode before focus loss")
         if source.read_text(encoding="utf-8") != "hello\n":
             raise SystemExit("edit unexpectedly saved before focus loss")
         os.write(master, b"\x1b[O")

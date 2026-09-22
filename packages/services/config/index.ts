@@ -1137,12 +1137,15 @@ export async function loadStartupXiConfig(
       catch { return { config: undefined, diagnostics: [`${overridesPath}: invalid UTF-8`] }; }
     }
   }
+  // The old home file remains a compatibility/state fallback; an explicit user or CLI
+  // config must win when both contain the same setting.
+  if (overrideLayer !== undefined) layers.splice(2, 0, overrideLayer);
   const commandCatalog = { ...DEFAULT_COMMAND_CATALOG, commandIds: [...DEFAULT_COMMAND_CATALOG.commandIds, ...extraCommandIds] };
   const workspaceDiagnostics: string[] = [];
   let userConfig: ConfigCompileResult | undefined;
   const userLayerCount = layers.length;
   if (workspaceConfigPath !== undefined) {
-    userConfig = compileConfig(overrideLayer === undefined ? layers : [...layers, overrideLayer], { commandCatalog });
+    userConfig = compileConfig(layers, { commandCatalog });
     const trust = userConfig.ok ? userConfig.value.editor.workspaceTrust : defaultEditor.workspaceTrust;
     const workspaceRoot = workspaceRootFromConfigPath(workspaceConfigPath);
     const implicit = workspaceTrustAllows(workspaceRoot, trust, environment);
@@ -1166,7 +1169,6 @@ export async function loadStartupXiConfig(
   if (layers.length === userLayerCount && userConfig !== undefined) return userConfig.ok
     ? { config: userConfig.value, diagnostics: Object.freeze(workspaceDiagnostics) }
     : { config: undefined, diagnostics: userConfig.error.diagnostics.map((diagnostic) => diagnostic.message) };
-  if (overrideLayer !== undefined) layers.push(overrideLayer);
   const compiled = compileConfig(layers, { commandCatalog });
   if (!compiled.ok) return { config: undefined, diagnostics: compiled.error.diagnostics.map((diagnostic) => diagnostic.message) };
   return { config: compiled.value, diagnostics: Object.freeze(workspaceDiagnostics) };

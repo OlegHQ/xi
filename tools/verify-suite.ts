@@ -166,7 +166,8 @@ async function collect(path: string, predicate: (name: string) => boolean, resul
 
 function run(command: string, args: readonly string[]): Promise<number> {
   return new Promise((resolveCode) => {
-    const child = spawn(command, args, { cwd: process.cwd(), stdio: 'inherit' });
+    // A developer's XDG path must not override PTY fixtures that isolate only HOME.
+    const child = spawn(command, args, { cwd: process.cwd(), stdio: 'inherit', env: { ...process.env, XDG_CONFIG_HOME: '' } });
     child.once('error', () => resolveCode(1));
     child.once('exit', (code) => resolveCode(code ?? 1));
   });

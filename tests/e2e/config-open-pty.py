@@ -26,13 +26,11 @@ def read_until(master: int, captured: bytearray, marker: bytes, seconds: float) 
 
 with tempfile.TemporaryDirectory(prefix="xi-config-open-pty-") as temporary:
     root = Path(temporary)
-    config = root / ".config" / "xi" / "config.toml"
-    config.parent.mkdir(parents=True)
-    config.write_text("[editor]\nline-number = \"relative\"\n", encoding="utf-8")
+    config = root / "xdg" / "xi" / "config.toml"
     (root / "main.txt").write_text("text\n", encoding="utf-8")
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": str(root / "xdg"), "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "main.txt"],
         cwd=root,
@@ -48,11 +46,15 @@ with tempfile.TemporaryDirectory(prefix="xi-config-open-pty-") as temporary:
         read_until(master, captured, b"XI_WORKBENCH_READY", 10)
         if b"XI_WORKBENCH_READY" not in captured:
             raise SystemExit(f"workbench did not start\n{captured[-3000:]!r}")
-        os.write(master, b":config-open\r")
+        os.write(master, b":config-open")
+        read_until(master, captured, b'"source":":config-open"', 5)
+        os.write(master, b"\r")
         expected = f'XI_CONFIG_OPEN {{"path":"{config}"'.encode()
         read_until(master, captured, expected, 5)
         if expected not in captured:
             raise SystemExit(f":config-open did not open the user config\n{captured[-4000:]!r}")
+        if not config.is_file() or config.read_bytes() != b"":
+            raise SystemExit(":config-open did not safely create the absent XDG config file")
         os.write(master, b":qa!\r")
         child.wait(timeout=5)
     finally:
