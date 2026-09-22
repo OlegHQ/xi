@@ -642,6 +642,9 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
     onBufferOpened: (buffer) => {
       syntaxTracker.openDocument({ documentId: buffer.documentId, languageId: languageIdForPath(buffer.path), snapshot: buffer.document.snapshot() });
       forward.languageWiring.admitBufferToLanguageSession(buffer.path, buffer.documentId, buffer.document);
+      if (forward.languageWiring.hasServerForPath(buffer.path)) void forward.languageWiring.ensureLanguage().catch((error: unknown) => {
+        deps.statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      });
     },
     onBufferClosed: (buffer) => {
       persistence.closeDocument(buffer.documentId);

@@ -136,9 +136,14 @@ function resolveThemeVariants(controllers: Controllers, themeWiring: ThemeWiring
 
 function handleWorkbenchReady(controllers: Controllers, themeWiring: ThemeWiring, startupTrace: WorkbenchUiOptionsDeps['startupTrace']): void {
   startupTrace('ready-callback');
-  void controllers.languageWiring.ensureLanguage().catch((error: unknown) => {
-    controllers.statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
-  });
+  const viewId = controllers.workbench.activeViewId;
+  const view = viewId === undefined ? undefined : controllers.workbench.readView(viewId);
+  const path = view === undefined ? undefined : controllers.workbench.buffer(view.document.id)?.path;
+  if (controllers.languageWiring.hasServerForPath(path)) {
+    void controllers.languageWiring.ensureLanguage().catch((error: unknown) => {
+      controllers.statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
   void themeWiring.loadCustomThemes().finally(() => themeWiring.disposeStateCancellation());
   controllers.fileIndexStarter.schedule();
   if (controllers.sidebarController.visible) {

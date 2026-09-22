@@ -65,7 +65,7 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
             return
 
 
-def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview: bool = True, cancel_preview: bool = False, supersede_menu: bool = False, focus_preview: bool = False) -> list[dict[str, object]]:
+def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview: bool = True, cancel_preview: bool = False, supersede_menu: bool = False, focus_preview: bool = False, launch_plain: bool = False) -> list[dict[str, object]]:
     with tempfile.TemporaryDirectory(prefix="xi-auto-completion-pty-") as temporary:
         workspace = Path(temporary)
         fake_bin = workspace / "bin"
@@ -77,18 +77,22 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
         config.parent.mkdir(parents=True)
         config.write_text(f"schema-version = 1\n[editor]\nauto-completion = {'true' if enabled else 'false'}\nauto-format = false\ncompletion-timeout = 250\ncompletion-trigger-len = 2\npreview-completion-insert = {'true' if preview else 'false'}\ncompletion-replace = {'true' if replace else 'false'}\n[editor.smart-tab]\nsupersede-menu = {'true' if supersede_menu else 'false'}\n" + ("[editor.auto-save]\nfocus-lost = true\n" if focus_preview else ""), encoding="utf-8")
         source = workspace / "main.ts"
+        plain = workspace / "notes.txt"
+        plain.write_text("notes\n", encoding="utf-8")
         (workspace / "package.json").write_text("{}\n", encoding="utf-8")
         source.write_text("x\n" if accept else "a\n", encoding="utf-8")
         master, slave = pty.openpty()
         environment = os.environ.copy()
         environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1", "PATH": f"{fake_bin}:{environment.get('PATH', '')}"})
-        child = subprocess.Popen(["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(source)], cwd=workspace, env=environment, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+        child = subprocess.Popen(["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(plain if launch_plain else source)], cwd=workspace, env=environment, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
         os.close(slave)
         captured = bytearray()
         try:
             read_for(master, captured, 10)
             if b"XI_WORKBENCH_READY" not in captured:
                 raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
+            if launch_plain:
+                os.write(master, b":e main.ts\r")
             read_for(master, captured, 3)
             if b"XI_LANGUAGE_STARTED" not in captured:
                 raise SystemExit(f"Xi did not start the TypeScript language server: {captured[-4000:]!r}")
@@ -135,7 +139,7 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
                 time.sleep(0.1)
                 os.write(master, b"\x1b")
                 time.sleep(0.1)
-                os.write(master, b":q!\r")
+                os.write(master, b":qa!\r" if launch_plain else b":q!\r")
             try:
                 child.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -157,6 +161,7 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
 
 
 enabled_matches = run_case(True)
+run_case(True, launch_plain=True)
 disabled_matches = run_case(False)
 run_case(True, replace=False, accept=True)
 run_case(True, replace=True, accept=True)
