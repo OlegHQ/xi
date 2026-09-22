@@ -62,12 +62,15 @@ with tempfile.TemporaryDirectory(prefix="xi-git-panel-") as temporary:
     git(repo, "add", "alpha.ts")
     (repo / "beta.ts").write_text("const beta = 2;\n", encoding="utf-8")
     (repo / "gamma.ts").write_text("const gamma = 1;\n", encoding="utf-8")
+    config = repo / ".config" / "xi" / "config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text('[editor.workspace-trust]\nlevel = "insecure"\n', encoding="utf-8")
 
     main_file = repo / "beta.ts"
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": "", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(main_file)],
         cwd=repo, env=environment, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
