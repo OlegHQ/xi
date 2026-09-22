@@ -149,7 +149,10 @@ function handleWorkbenchReady(controllers: Controllers, themeWiring: ThemeWiring
   if (controllers.sidebarController.visible) {
     if (controllers.sidebarController.lastPanel === 'search') controllers.searchFeature.open();
     else if (controllers.sidebarController.lastPanel === 'git') controllers.gitPanelFeature.open();
-    else controllers.explorerFeature.show();
+    else setTimeout(() => {
+      // Yield so queued startup input can paint before the default Explorer loads.
+      if (controllers.sidebarController.visible && controllers.sidebarController.lastPanel === 'files') controllers.explorerFeature.show();
+    }, 0);
   }
 }
 

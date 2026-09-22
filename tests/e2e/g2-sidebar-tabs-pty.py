@@ -138,10 +138,13 @@ with tempfile.TemporaryDirectory(prefix="xi-g2-sidebar-tabs-") as temporary:
     (workspace / "a.txt").write_text("alpha\n", encoding="utf-8")
     (workspace / "b.txt").write_text("bravo\n", encoding="utf-8")
     (workspace / "c.txt").write_text("charlie\n", encoding="utf-8")
+    config = workspace / ".config" / "xi" / "config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text('[editor]\nbufferline = "always"\n', encoding="utf-8")
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": "", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts")],
         cwd=str(workspace),
