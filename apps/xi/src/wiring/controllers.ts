@@ -692,6 +692,7 @@ function createOptionalServicesAndPicker(
       gitGlobal: ctx.startupConfig?.editor.fileExplorer.gitGlobal ?? false,
       gitExclude: ctx.startupConfig?.editor.fileExplorer.gitExclude ?? false,
       homeDirectory: process.env.HOME ?? process.cwd(),
+      ...(process.env.XDG_CONFIG_HOME === undefined ? {} : { xdgConfigHome: process.env.XDG_CONFIG_HOME }),
     },
     ProcessPort: deps.NodeProcessPort,
     workspaceRoot,
@@ -1457,7 +1458,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   }
 
   const filePicker = ctx.startupConfig?.editor.filePicker;
-  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd() }, () => { if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
+  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd(), ...(process.env.XDG_CONFIG_HOME === undefined ? {} : { xdgConfigHome: process.env.XDG_CONFIG_HOME }) }, () => { if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
   forward.startFileIndexPopulation = startFileIndexPopulation;
   const fileIndexStarter = createDeferredStart(1000, () => { void startFileIndexPopulation(); });
   async function ensureGitAndOpenPicker(): Promise<void> {

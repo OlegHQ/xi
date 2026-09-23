@@ -46,6 +46,7 @@ export interface WorkspaceIgnoreOptions {
   readonly gitGlobal?: boolean;
   readonly gitExclude?: boolean;
   readonly homeDirectory?: string;
+  readonly xdgConfigHome?: string;
 }
 
 /** One directory child returned by the native Explorer adapter. */
@@ -105,17 +106,20 @@ class WorkspaceIgnoreMatcher {
     catch (error: unknown) { return { ok: false, error: platformFailure(error, 'discover-git') }; }
     if (cancellation.isCancelled) return cancelled();
     const matcher = new WorkspaceIgnoreMatcher(root, selected, gitDirectory, cancellation);
-    if (selected.homeDirectory !== undefined && matcher.#options.ignore) {
-      const loaded = await matcher.readFile(join(selected.homeDirectory, '.config/helix/ignore'), root, 0);
+    const configHome = selected.xdgConfigHome !== undefined && isAbsolute(selected.xdgConfigHome)
+      ? selected.xdgConfigHome
+      : selected.homeDirectory === undefined ? undefined : join(selected.homeDirectory, '.config');
+    if (configHome !== undefined && matcher.#options.ignore) {
+      const loaded = await matcher.readFile(join(configHome, 'helix/ignore'), root, 0);
       if (!loaded.ok) return loaded;
     }
-    if (selected.homeDirectory !== undefined && matcher.#options.gitGlobal) {
-      const home = selected.homeDirectory;
-      for (const path of [join(home, '.config/git/ignore')]) {
+    if (configHome !== undefined && matcher.#options.gitGlobal) {
+      const home = selected.homeDirectory ?? configHome;
+      for (const path of [join(configHome, 'git/ignore')]) {
         const loaded = await matcher.readFile(path, root, 1);
         if (!loaded.ok) return loaded;
       }
-      for (const configPath of [join(home, '.config/git/config'), join(home, '.gitconfig')]) {
+      for (const configPath of [join(configHome, 'git/config'), ...(selected.homeDirectory === undefined ? [] : [join(selected.homeDirectory, '.gitconfig')])]) {
         let source: string;
         try {
           const info = await fs.stat(configPath);

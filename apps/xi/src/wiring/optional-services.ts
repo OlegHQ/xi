@@ -162,9 +162,11 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
         bufferSourceProvider: () => deps.getSearchFeature().readBuffers(),
         visibleBufferPaths: async (query, paths, cancellation) => {
           const homeDirectory = deps.processEnvironment().HOME;
+          const xdgConfigHome = deps.processEnvironment().XDG_CONFIG_HOME;
           const result = await deps.filesystem.visibleWorkspacePaths(query.rootPath, paths, {
             parents: true, ignore: true, gitIgnore: true, gitGlobal: true, gitExclude: true,
             ...(homeDirectory === undefined ? {} : { homeDirectory }),
+            ...(xdgConfigHome === undefined ? {} : { xdgConfigHome }),
           }, cancellation);
           return result.ok ? result : { ok: false, error: { kind: 'backend', message: result.error.message } };
         },

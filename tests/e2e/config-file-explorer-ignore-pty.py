@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix="xi-file-explorer-ignore-pty-") as tempo
 
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"HOME": temporary, "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"HOME": temporary, "XDG_CONFIG_HOME": str(root / ".config"), "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "visible.txt"],
         cwd=root,

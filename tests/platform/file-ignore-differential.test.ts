@@ -59,6 +59,16 @@ try {
   assert.equal(nestedBuffers.ok, true);
   if (nestedBuffers.ok) assert.deepEqual([...nestedBuffers.value], ['visible.txt'], 'F20-BUFFER-WORKTREE-01 linked gitdir and parent ignores also gate dirty buffers');
 
+  const xdgConfigHome = join(temporary, 'xdg');
+  await mkdir(join(xdgConfigHome, 'git'), { recursive: true });
+  await writeFile(join(xdgConfigHome, 'git', 'ignore'), 'global.txt\n');
+  await writeFile(join(linked, 'child', 'global.txt'), 'global');
+  const globalOptions = { ...enabled, gitGlobal: true, xdgConfigHome };
+  assert.equal((await collect(join(linked, 'child'), globalOptions)).has('global.txt'), false, 'F20-XDG-GLOBAL Git global ignore honors XDG_CONFIG_HOME without HOME');
+  const globalBuffers = await filesystem.visibleWorkspacePaths(join(linked, 'child'), ['global.txt'], globalOptions, new CancellationSource().token);
+  assert.equal(globalBuffers.ok, true);
+  if (globalBuffers.ok) assert.deepEqual([...globalBuffers.value], [], 'F20-XDG-BUFFER dirty buffers honor XDG Git global ignore');
+
   const bounded = join(temporary, 'bounded');
   await mkdir(bounded);
   await mkdir(join(bounded, '.git'));
