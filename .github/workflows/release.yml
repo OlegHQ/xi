@@ -1,0 +1,32 @@
+name: Draft release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - name: Check tag matches package version
+        run: test "${GITHUB_REF_NAME#v}" = "$(bun -e 'console.log((await Bun.file("package.json").json()).version)')"
+      - name: Build verified package and release assets
+        run: bun run tools/package-release.ts --output dist/stage/xi --release-directory dist/release
+      - name: Smoke test package
+        run: bun run package:smoke
+      - name: Prepare GitHub draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release create "$tag" dist/release/xi-*.tar.gz dist/release/SHA256SUMS dist/release/install.sh \
+            --draft --verify-tag --title "Xi $tag" \
+            --notes "Checksummed Linux ARM64 glibc preview. Draft only; review the platform qualification before publishing."

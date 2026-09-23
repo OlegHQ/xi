@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -20,31 +20,76 @@ assert.match(unsupported.stderr, /no OpenTUI native asset/u, 'T064-PACKAGE-AUDIT
 
 const releaseDirectory = mkdtempSync(join(tmpdir(), 'xi-t064-release-'));
 process.once('exit', () => { rmSync(releaseDirectory, { recursive: true, force: true }); });
-const release = spawnSync('bun', ['run', 'tools/package-release.ts', '--output', releaseDirectory], { encoding: 'utf8' });
+const stagedDirectory = join(releaseDirectory, 'stage');
+const assetsDirectory = join(releaseDirectory, 'assets');
+const release = spawnSync('bun', ['run', 'tools/package-release.ts', '--output', stagedDirectory, '--release-directory', assetsDirectory], { encoding: 'utf8' });
 assert.equal(release.status, 0, `T064-PACKAGE-RELEASE-01 staging command succeeds: ${release.stderr}`);
-const executable = join(releaseDirectory, 'xi');
-const manifestPath = join(releaseDirectory, 'manifest.json');
+const executable = join(stagedDirectory, 'xi');
+const manifestPath = join(stagedDirectory, 'manifest.json');
 assert.ok(existsSync(executable), 'T064-PACKAGE-RELEASE-02 staging includes the executable');
 assert.ok(existsSync(manifestPath), 'T064-PACKAGE-RELEASE-03 staging includes a manifest');
-assert.ok(existsSync(join(releaseDirectory, 'THIRD-PARTY-NOTICES.md')), 'T064-PACKAGE-RELEASE-04 staging includes dependency notices');
-assert.ok(existsSync(join(releaseDirectory, 'native-assets.sha256')), 'T064-PACKAGE-RELEASE-05 staging includes native checksums');
-assert.ok(existsSync(join(releaseDirectory, 'licenses', '@opentui__core', 'LICENSE')), 'T064-PACKAGE-RELEASE-06 staging includes license text');
+assert.ok(existsSync(join(stagedDirectory, 'THIRD-PARTY-NOTICES.md')), 'T064-PACKAGE-RELEASE-04 staging includes dependency notices');
+assert.ok(existsSync(join(stagedDirectory, 'native-assets.sha256')), 'T064-PACKAGE-RELEASE-05 staging includes native checksums');
+assert.ok(existsSync(join(stagedDirectory, 'licenses', '@opentui__core', 'LICENSE')), 'T064-PACKAGE-RELEASE-06 staging includes license text');
+const archiveName = 'xi-0.0.1-linux-arm64.tar.gz';
+const archivePath = join(assetsDirectory, archiveName);
+assert.ok(existsSync(archivePath), 'T064-PACKAGE-RELEASE-07 creates a versioned Linux ARM64 archive');
+assert.ok(existsSync(join(assetsDirectory, 'SHA256SUMS')), 'T064-PACKAGE-RELEASE-08 creates an archive checksum manifest');
+assert.ok(existsSync(join(assetsDirectory, 'install.sh')), 'T064-PACKAGE-RELEASE-09 stages the installer with release assets');
 const releaseManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { readonly target?: unknown; readonly binarySha256?: unknown; readonly openTui?: unknown };
-assert.equal(releaseManifest.target, 'linux-arm64', 'T064-PACKAGE-RELEASE-07 manifest records the target');
-assert.equal(typeof releaseManifest.binarySha256, 'string', 'T064-PACKAGE-RELEASE-08 manifest records binary checksum');
+assert.equal(releaseManifest.target, 'linux-arm64', 'T064-PACKAGE-RELEASE-10 manifest records the target');
+assert.equal(typeof releaseManifest.binarySha256, 'string', 'T064-PACKAGE-RELEASE-11 manifest records binary checksum');
 const isolatedHealth = spawnSync(executable, ['--health'], {
-  cwd: releaseDirectory,
+  cwd: stagedDirectory,
   encoding: 'utf8',
   env: { ...process.env, HOME: releaseDirectory, XDG_CONFIG_HOME: join(releaseDirectory, 'config'), PATH: join(releaseDirectory, 'empty-bin') },
 });
-assert.equal(isolatedHealth.status, 0, 'T064-PACKAGE-RELEASE-09 staged binary runs without workspace dependencies');
-assert.match(isolatedHealth.stdout, /OpenTUI workbench available/u, 'T064-PACKAGE-RELEASE-10 staged binary health check works');
+assert.equal(isolatedHealth.status, 0, 'T064-PACKAGE-RELEASE-12 staged binary runs without workspace dependencies');
+assert.match(isolatedHealth.stdout, /OpenTUI workbench available/u, 'T064-PACKAGE-RELEASE-13 staged binary health check works');
 const configPty = spawnSync('python3', ['tests/e2e/config-user-pty.py', '--binary', executable], {
   cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, XDG_CONFIG_HOME: '' },
 });
-assert.equal(configPty.status, 0, `T064-PACKAGE-RELEASE-11 staged binary obeys XDG/HOME/CLI/workspace config paths: ${configPty.stdout ?? ''}${configPty.stderr ?? ''}`);
+assert.equal(configPty.status, 0, `T064-PACKAGE-RELEASE-14 staged binary obeys XDG/HOME/CLI/workspace config paths: ${configPty.stdout ?? ''}${configPty.stderr ?? ''}`);
 
-console.log('T064 package audit/release passed target, native checksum, notice, isolated staging and missing-asset failure probes');
+const simulatedRelease = join(releaseDirectory, 'release', 'download', 'v0.0.1');
+mkdirSync(simulatedRelease, { recursive: true });
+copyFileSync(archivePath, join(simulatedRelease, archiveName));
+copyFileSync(join(assetsDirectory, 'SHA256SUMS'), join(simulatedRelease, 'SHA256SUMS'));
+const shimDirectory = join(releaseDirectory, 'shim');
+mkdirSync(shimDirectory);
+writeFileSync(join(shimDirectory, 'uname'), '#!/bin/sh\ncase "${1:-}" in -s) echo Linux ;; *) echo aarch64 ;; esac\n');
+chmodSync(join(shimDirectory, 'uname'), 0o755);
+const installer = join(process.cwd(), 'docs/installation/install.sh');
+const installDirectory = join(releaseDirectory, 'home', '.local', 'bin');
+const installerEnv = {
+  ...process.env,
+  PATH: `${shimDirectory}:/usr/bin:/bin`,
+  HOME: join(releaseDirectory, 'home'),
+  XI_VERSION: 'v0.0.1',
+  XI_RELEASE_URL: `file://${join(releaseDirectory, 'release')}`,
+  XI_INSTALL_DIR: installDirectory,
+};
+const installed = spawnSync('sh', [installer], { encoding: 'utf8', env: installerEnv });
+assert.equal(installed.status, 0, `T064-INSTALL-01 installs from verified release assets: ${installed.stderr}`);
+assert.ok(existsSync(join(installDirectory, 'xi')), 'T064-INSTALL-02 installs executable into the selected user directory');
+writeFileSync(join(installDirectory, 'xi'), 'existing working binary');
+writeFileSync(join(simulatedRelease, archiveName), 'corrupted archive');
+const corrupted = spawnSync('sh', [installer], { encoding: 'utf8', env: installerEnv });
+assert.notEqual(corrupted.status, 0, 'T064-INSTALL-03 rejects a corrupted archive');
+assert.equal(readFileSync(join(installDirectory, 'xi'), 'utf8'), 'existing working binary', 'T064-INSTALL-04 failed verification preserves installed executable');
+const unavailable = spawnSync('sh', [installer], { encoding: 'utf8', env: { ...installerEnv, XI_RELEASE_URL: `file://${join(releaseDirectory, 'missing-release')}` } });
+assert.notEqual(unavailable.status, 0, 'T064-INSTALL-05 reports an unavailable release');
+assert.match(unavailable.stderr, /Could not download Xi/u, 'T064-INSTALL-06 explains unavailable release assets');
+assert.equal(readFileSync(join(installDirectory, 'xi'), 'utf8'), 'existing working binary', 'T064-INSTALL-07 unavailable release preserves installed executable');
+const unsupportedShim = join(releaseDirectory, 'unsupported-shim');
+mkdirSync(unsupportedShim);
+writeFileSync(join(unsupportedShim, 'uname'), '#!/bin/sh\ncase "${1:-}" in -s) echo Linux ;; *) echo x86_64 ;; esac\n');
+chmodSync(join(unsupportedShim, 'uname'), 0o755);
+const unsupportedHost = spawnSync('sh', [installer], { encoding: 'utf8', env: { ...installerEnv, PATH: `${unsupportedShim}:/usr/bin:/bin` } });
+assert.notEqual(unsupportedHost.status, 0, 'T064-INSTALL-08 rejects unqualified platforms');
+assert.match(unsupportedHost.stderr, /supports Linux ARM64 only/u, 'T064-INSTALL-09 explains the unsupported host');
+
+console.log('T064 package audit/release passed checksummed archive, installer integrity, existing-binary preservation and Linux ARM64 package probes');
 
 function runAudit(args: readonly string[]): { readonly status: number | null; readonly stdout: string; readonly stderr: string } {
   const result = spawnSync('bun', ['run', 'tools/package-audit.ts', ...args], { encoding: 'utf8' });

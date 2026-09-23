@@ -30,6 +30,7 @@ if (product !== 'xi' || version === undefined) fail('package.json must define xi
 
 const audit = runAudit();
 if (audit.assets.length === 0) fail(`no OpenTUI native asset was found for ${audit.target}`);
+if (audit.target !== 'linux-arm64') fail(`release archives are qualified only for linux-arm64 (glibc), not ${audit.target}`);
 
 mkdirSync(output, { recursive: true });
 const executable = join(output, 'xi');
@@ -63,7 +64,21 @@ const manifest = {
   licensesDirectory: 'licenses',
 };
 writeFileSync(join(output, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-process.stdout.write(`${JSON.stringify({ output, manifest }, null, 2)}\n`);
+
+const releaseDirectory = resolve(readOption('--release-directory') ?? join(output, '..'));
+mkdirSync(releaseDirectory, { recursive: true });
+const archiveName = `xi-${version}-${audit.target}.tar.gz`;
+const archivePath = join(releaseDirectory, archiveName);
+const archive = spawnSync('tar', [
+  '--sort=name', '--mtime=@0', '--owner=0', '--group=0', '--numeric-owner',
+  '-czf', archivePath, '-C', output, '.',
+], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+if (archive.status !== 0) fail(`archive creation failed: ${archive.stderr ?? ''}`);
+const sumsPath = join(releaseDirectory, 'SHA256SUMS');
+const installerPath = join(releaseDirectory, 'install.sh');
+cpSync(join(root, 'docs', 'installation', 'install.sh'), installerPath);
+writeFileSync(sumsPath, `${sha256(archivePath)}  ${archiveName}\n${sha256(installerPath)}  install.sh\n`, 'utf8');
+process.stdout.write(`${JSON.stringify({ output, archivePath, checksumsPath: sumsPath, manifest }, null, 2)}\n`);
 
 function runAudit(): PackageAuditOutput {
   const result = spawnSync('bun', ['run', 'tools/package-audit.ts', '--check'], {

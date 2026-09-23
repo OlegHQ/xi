@@ -1,11 +1,40 @@
 # Installing Xi
 
-Xi is currently distributed as a self-contained Bun executable for **Linux
-ARM64**. The target is the glibc build on the reference host; the musl asset is
-recorded separately and is not advertised as a supported runtime until it has
-been exercised on a musl host. macOS and Windows packages are not advertised
-yet because their OpenTUI native assets have not been exercised in this
-repository.
+Xi release packages currently support **Linux ARM64 with glibc**. The release
+workflow creates a draft GitHub release with a versioned archive, `SHA256SUMS`
+and installer. The musl asset is not advertised until it has been exercised on
+a musl host. macOS and Windows are not supported until their OpenTUI native
+assets have been qualified.
+
+To install the latest published release, download and inspect the installer,
+then run it:
+
+```sh
+curl -fLO https://github.com/OlegHQ/xi/releases/latest/download/install.sh
+less install.sh
+sh install.sh
+```
+
+The installer checks the host before downloading, verifies the archive against
+the release `SHA256SUMS`, extracts into a temporary directory and replaces
+`~/.local/bin/xi` only after verification succeeds. It requires `curl` or
+`wget`, `tar`, and `sha256sum` or `shasum`. Set `XI_INSTALL_DIR` to choose a
+different user-writable destination, `XI_VERSION` to install a specific tag
+(for example `v0.0.1`), or `XI_REPO` to use another GitHub repository. The
+installer consumes published releases; draft releases are available only for
+review in GitHub.
+
+The release currently has **no cryptographic signature or provenance
+attestation**. `SHA256SUMS` detects corrupted downloads when obtained from the
+same GitHub release, but does not independently authenticate the release
+publisher. Review the repository, tag and draft assets before publication;
+do not present the checksums as a signing substitute.
+
+For a manual install, download the `xi-<version>-linux-arm64.tar.gz` archive
+and `SHA256SUMS` from the same published release, verify the archive with
+`sha256sum -c SHA256SUMS`, extract it, and copy `xi` to a directory on your
+`PATH`. The archive contains the executable, package manifest, dependency
+notices, native asset checksums and dependency license texts.
 
 The reproducible local packaging command is:
 
