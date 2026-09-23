@@ -68,12 +68,12 @@ bun run package:smoke
 bun run test:startup
 ```
 
-`bun run package:build` and `bun run package:release` compile ESM bytecode with
-`--compile --bytecode --format=esm`. Explicit ESM is required on Bun 1.3.13 because
-Xi and its dependencies use top-level await. Run `./dist/xi [file]` after a build;
-`bun run apps/xi/src/main.ts [file]` remains the source development command.
-Bytecode reduces runtime parsing at the cost of a larger executable. Rebuild
-after source or dependency changes.
+`bun run package:build` and `bun run package:release` compile an ESM executable.
+Explicit ESM is required because Xi and its dependencies use top-level await.
+Bytecode is disabled: with Bun 1.4.2 it increased the file-picker result p95
+from 75 ms to over 200 ms on the same host and fixture. Run `./dist/xi [file]`
+after a build; `bun run apps/xi/src/main.ts [file]` remains the source development
+command. Rebuild after source or dependency changes.
 
 Both distribution builds and the cached development build use
 `tools/solid-build-plugin.ts`: TSX is transformed at build time and the source

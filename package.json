@@ -19,6 +19,7 @@
     "test:ui": "bun run ./tools/verify-suite.ts ui \"$@\"",
     "test:e2e": "bun run ./tools/verify-suite.ts e2e \"$@\"",
     "bench": "bun run ./tools/verify-suite.ts bench \"$@\"",
+    "perf-gates": "python3 tools/perf-gates.py",
     "xi": "bun run tools/xi-dev.ts",
     "xi:dev:build": "bun run tools/xi-dev.ts --build-only",
     "xi:dev": "bun run dist/dev/main.js",

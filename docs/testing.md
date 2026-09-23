@@ -55,6 +55,17 @@ Performance checks follow [performance.md](performance.md). A clean component be
 cannot certify the production CLI, and a noisy or missing measurement is unproven rather
 than passed.
 
+Run `bun run perf-gates` after every product feature or behavior change. It takes 20
+post-warmup samples per case, rebuilds the executable, and measures both the ordinary
+source command and packaged CLI in real PTYs. It guards no-file and small-file startup,
+plus file-picker prompt, first result and cancellation in a 5,002-file workspace. The
+fixed regression limits are in `tools/perf-gates.py`; they use medians to catch sustained
+slowdowns and p95 caps to catch large tails. The script reports stricter contract misses
+separately and never calls them contract passes. Raw runs and both attempts on a
+miss remain under `.artifacts/perf-gates/`. A failing case gets one sequential retry to
+separate a noisy host from a repeatable regression. A pass guards against regression;
+the full [performance contract](performance.md) still needs its own validation.
+
 For startup work, measure the ordinary source command and packaged executable separately
 through a responsive PTY:
 
@@ -75,5 +86,7 @@ prove first-frame speed, and a profiler changes timing; use the PTY measurements
 release claims. Bun's runtime transpiler cache stores transformed source, but [ESM
 bytecode that skips parsing requires compilation](https://bun.com/docs/bundler/bytecode#esm-bytecode),
 so it cannot stand in for the ordinary source-run check.
-For picker latency after Explorer has populated, add `--settle-ms 500`; the PTY is
-drained during that interval so queued terminal output does not inflate the key timing.
+
+For picker latency after Explorer has populated, add `--settle-ms 500 --enforce`;
+the PTY is drained during that interval so queued terminal output does not inflate
+the key timing, and the command fails if the first-result or cancellation budget misses.

@@ -53,6 +53,12 @@ No input debounce, blocking service work, unbounded copying or growing input bac
 Background work is bounded and cancellable. Missing or noisy measurements remain
 unproven; never weaken a budget or disable a feature to claim success.
 
+Run `bun run perf-gates` after every product feature or behavior change before committing.
+It builds the package and checks ordinary source and packaged startup and file-picker
+latency through real PTYs against fixed regression limits. Investigate a miss; never
+raise a limit or treat a noisy run as a pass. This fast gate does not replace the full
+performance contract or affected release checks.
+
 ### Open audit: loaded CLI latency
 
 `.artifacts/config-audit/AUDIT.md` is not fully closed. Its remaining release gate is the

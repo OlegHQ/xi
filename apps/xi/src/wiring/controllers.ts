@@ -176,7 +176,7 @@ function createDeferredStart(delayMilliseconds: number, start: () => void): { re
   };
 }
 
-async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onUpdate: () => void, onError: (message: string) => void): Promise<void> {
+async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, shouldPublishEarly: (entries: readonly { readonly relativePath: string }[]) => boolean, onUpdate: () => void, onError: (message: string) => void): Promise<void> {
   const cancellation = new CancellationSource();
   // ponytail: publish the first partial batch immediately, then every 2,048 paths;
   // lower the interval if measured first-match latency requires more frequent refreshes.
@@ -187,7 +187,7 @@ async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePat
     const result = await filesystem.enumerateFiles(root, cancellation.token, (entries) => {
       const indexed = entries.map((entry) => ({ rootId: 'workspace' as const, relativePath: entry.relativePath, absolutePath: entry.absolutePath, hidden: entry.hidden }));
       const added = index.addPaths('workspace', indexed);
-      if (added.ok && added.value > 0 && (lastPublishedEntries === 0 || indexedEntries + added.value - lastPublishedEntries >= 2_048)) {
+      if (added.ok && added.value > 0 && (lastPublishedEntries === 0 || indexedEntries + added.value - lastPublishedEntries >= 2_048 || shouldPublishEarly(entries))) {
         indexedEntries += added.value;
         lastPublishedEntries = indexedEntries;
         onUpdate();
@@ -205,12 +205,19 @@ async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePat
 
 /** A single lazily-started, memoized population run -- replaces a bare `let ...Population`
  * closure with one owned handle. */
-function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, onUpdate: () => void, onError: (message: string) => void): () => Promise<void> {
+function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, shouldPublishEarly: (entries: readonly { readonly relativePath: string }[]) => boolean, onUpdate: () => void, onError: (message: string) => void): () => Promise<void> {
   let population: Promise<void> | undefined;
   return () => {
-    population ??= populateFileIndex(fileIndex, filesystem, root, followSymlinks, deduplicateLinks, maxDepth, ignore, onUpdate, onError);
+    population ??= populateFileIndex(fileIndex, filesystem, root, followSymlinks, deduplicateLinks, maxDepth, ignore, shouldPublishEarly, onUpdate, onError);
     return population;
   };
+}
+
+function hasNewLiteralMatch(query: string, entries: readonly { readonly relativePath: string }[]): boolean {
+  if (query.length < 2) return false;
+  // ponytail: fuzzy-only matches still arrive at the regular 2,048-path publication.
+  const needle = query.toLowerCase();
+  return entries.some((entry) => entry.relativePath.toLowerCase().includes(needle));
 }
 
 function readDocumentText(document: TextFileDocument): string | undefined {
@@ -1458,7 +1465,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   }
 
   const filePicker = ctx.startupConfig?.editor.filePicker;
-  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd(), ...(process.env.XDG_CONFIG_HOME === undefined ? {} : { xdgConfigHome: process.env.XDG_CONFIG_HOME }) }, () => { if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
+  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd(), ...(process.env.XDG_CONFIG_HOME === undefined ? {} : { xdgConfigHome: process.env.XDG_CONFIG_HOME }) }, entries => picker.isOpen && picker.mode === 'file' && pickerModel.model.entries.length === 0 && hasNewLiteralMatch(pickerModel.model.query, entries), () => { if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
   forward.startFileIndexPopulation = startFileIndexPopulation;
   const fileIndexStarter = createDeferredStart(1000, () => { void startFileIndexPopulation(); });
   async function ensureGitAndOpenPicker(): Promise<void> {

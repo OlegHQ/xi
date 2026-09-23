@@ -1,4 +1,4 @@
-/** Compile with the production ESM/bytecode flags to check the installed fork patch. */
+/** Compile with the production ESM flags to check the installed fork patch. */
 import assert from 'node:assert/strict';
 import { MarkdownRenderable, RGBA, SyntaxStyle } from '@opentui/core';
 import { createTestRenderer, MockTreeSitterClient } from '@opentui/core/testing';

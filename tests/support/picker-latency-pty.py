@@ -108,6 +108,7 @@ def main() -> None:
     parser.add_argument("--binary", type=Path, default=ROOT / "dist/xi")
     parser.add_argument("--samples", type=int, default=20)
     parser.add_argument("--settle-ms", type=int, default=0, help="drain background terminal output before opening the picker")
+    parser.add_argument("--enforce", action="store_true", help="fail when result p95 exceeds 100 ms or cancellation p95 exceeds 50 ms")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.samples < 1 or args.settle_ms < 0:
@@ -130,6 +131,8 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
+    if args.enforce and (summary["result_ms"]["p95"] > 100 or summary["cancel_ms"]["p95"] > 50):
+        raise SystemExit("picker latency exceeded the 100 ms result or 50 ms cancellation p95 budget")
 
 
 if __name__ == "__main__":
