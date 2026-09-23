@@ -29,7 +29,7 @@ const requests: string[] = [];
 const server = new LanguageServerCompletionProvider({
   async request<Response>(method: string): Promise<Response> {
     requests.push(method);
-    if (method === 'textDocument/completion') return { isIncomplete: true, items: [{ label: 'map', detail: 'method', documentation: { kind: 'markdown', value: 'map docs' }, insertText: 'map' }, { label: 'filter', textEdit: { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, newText: 'filter' }, additionalTextEdits: [{ range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } }, newText: 'import x from "x";\n' }] }, { label: 'insert-replace', textEdit: { insert: { start: { line: 0, character: 2 }, end: { line: 0, character: 3 } }, replace: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, newText: 'whole' } }] } as Response;
+    if (method === 'textDocument/completion') return { isIncomplete: true, items: [{ label: 'map', kind: 2, filterText: 'mapAlias', sortText: '0001', preselect: true, detail: 'method', documentation: { kind: 'markdown', value: 'map docs' }, insertText: 'map' }, { label: 'filter', textEdit: { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, newText: 'filter' }, additionalTextEdits: [{ range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } }, newText: 'import x from "x";\n' }] }, { label: 'insert-replace', textEdit: { insert: { start: { line: 0, character: 2 }, end: { line: 0, character: 3 } }, replace: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, newText: 'whole' } }] } as Response;
     return { label: 'map', documentation: 'resolved docs' } as Response;
   },
 });
@@ -38,6 +38,10 @@ assert.equal(list.ok, true, 'T051-LSP-01 completion request decodes native list'
 if (list.ok) {
   assert.equal(list.value.isIncomplete, true);
   assert.equal(list.value.items[0]?.documentation, 'map docs');
+  assert.equal(list.value.items[0]?.kind, 2, 'T051-LSP-KIND completion kind survives protocol decoding for the menu icon');
+  assert.equal(list.value.items[0]?.filterText, 'mapAlias', 'T051-LSP-FILTER server filter text survives decoding');
+  assert.equal(list.value.items[0]?.sortText, '0001', 'T051-LSP-SORT server sort text survives decoding');
+  assert.equal(list.value.items[0]?.preselect, true, 'T051-LSP-PRESELECT server preselection survives decoding');
   assert.equal(list.value.items[0]?.textEdit?.newText, 'map');
   assert.deepEqual(list.value.items[2]?.textEdit, { start: { line: 0, utf16: 2 }, end: { line: 0, utf16: 3 }, newText: 'whole' }, 'T051-LSP-04 InsertReplaceEdit uses its insert range by default');
   assert.deepEqual(list.value.items[2]?.textEditReplace, { start: { line: 0, utf16: 0 }, end: { line: 0, utf16: 3 }, newText: 'whole' }, 'T051-LSP-05 InsertReplaceEdit preserves its replace range for editor.completion-replace');

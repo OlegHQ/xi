@@ -11,6 +11,7 @@ import type { LanguageWorkbenchSessionPort } from '../../packages/workbench/lang
 import {
   CompletionSnippetController,
   createWordCompletionProvider,
+  filterCompletionItems,
   nonOverlappingDocumentEdits,
   planCompletionEdits,
   type CompletionControllerPort,
@@ -48,6 +49,13 @@ function key(name: string, raw: string): { readonly name: string; readonly raw: 
 }
 
 const throwingExpandSnippet: ExpandSnippetFn = () => { throw new Error('T116-completion: expandSnippet must not be called for a plain-format item'); };
+assert.deepEqual(filterCompletionItems([
+  { id: 'unrelated', label: 'buildWorkbenchUiOptions' },
+  { id: 'fuzzy', label: 'xMiddleIndex' },
+  { id: 'version', label: 'XI_VERSION', sortText: 'b' },
+  { id: 'value', label: 'XI_VALUE', sortText: 'a' },
+  { id: 'alias', label: 'display', filterText: 'XI_alias' },
+], 'XI').map(item => item.id), ['value', 'alias', 'version', 'fuzzy'], 'T116-FILTER prefix matches lead, LSP sort text breaks ties, filterText matches, and unrelated globals disappear');
 
 // -- T116-COMPLETION-01: planCompletionEdits (a pure helper kept in this module) rejects
 // overlapping additional edits instead of silently applying an incoherent replacement. --
@@ -107,6 +115,9 @@ const throwingExpandSnippet: ExpandSnippetFn = () => { throw new Error('T116-com
   const replaceSelections = replaceSession.readView(replaceViewId)!.selections;
   const replaceRequest: WorkbenchCompletionRequest = { documentId: String(replaceDocumentId), documentVersion: replaceDocument.version as unknown as number, selectionGeneration: replaceSelections.selectionGeneration as number, position: { line: 0, utf16: 2 }, trigger: 'invoked' };
   const fallbackEdit = { start: { line: 0, utf16: 2 }, end: { line: 0, utf16: 2 }, newText: 'beta' };
+  const inserted = planCompletionEdits(replaceDocument.snapshot(), replaceSelections, replaceRequest, { id: 'item-3', label: 'beta', textEdit: fallbackEdit, textEditIsFallback: true }, [fallbackEdit], positionToOffset, throwingExpandSnippet, false, false);
+  assert.equal(inserted.ok, true);
+  if (inserted.ok) assert.deepEqual(inserted.value.proposalEdits.map((edit) => [Number(edit.start), Number(edit.end), edit.text]), [[0, 2, 'beta']], 'default completion replaces the typed prefix but keeps the word suffix');
   const replaced = planCompletionEdits(replaceDocument.snapshot(), replaceSelections, replaceRequest, { id: 'item-3', label: 'beta', textEdit: fallbackEdit, textEditIsFallback: true }, [fallbackEdit], positionToOffset, throwingExpandSnippet, false, true);
   assert.equal(replaced.ok, true, `T116-COMPLETION-REPLACE-03 completion-replace plans a full-word replacement: ${replaced.ok ? 'ok' : replaced.error}`);
   if (replaced.ok) assert.deepEqual(replaced.value.proposalEdits.map((edit) => [Number(edit.start), Number(edit.end)]), [[0, 5]], 'T116-COMPLETION-REPLACE-03-PART2 full-word range includes the suffix after the cursor');
@@ -428,7 +439,16 @@ const surfaceController = new CompletionSnippetController({
 });
 const surfaceCompletion = new FakeCompletionController();
 const surfaceSignature = new FakeSignatureController();
+const completionStates: string[] = [];
+const earlyCompletionRead = surfaceController.completionRead.subscribe(model => { completionStates.push(model.state); });
+surfaceController.openCompletion();
+assert.equal(surfaceController.completionRead.model.state, 'loading', 'T116-LATE-COMPLETION-00 lazy language initialization is shown as loading');
 surfaceController.attachLanguage(new ReadyLanguageSession(), surfaceCompletion, new DeferredCompletionProvider(), surfaceSignature);
+assert.equal(completionStates.at(-1), 'idle', 'T116-LATE-COMPLETION-01 a subscriber installed before lazy language initialization receives the attached controller');
+surfaceCompletion.emit();
+assert.equal(completionStates.at(-1), surfaceCompletion.model.state, 'T116-LATE-COMPLETION-02 later completion states reach the original subscriber');
+surfaceController.closeCompletion();
+earlyCompletionRead.dispose();
 await new Promise<void>((resolve) => setImmediate(resolve));
 let surfaceWakes = 0;
 const wakeSubscription = host.onSurfaceChange(() => { surfaceWakes += 1; });
@@ -448,5 +468,17 @@ assert.equal(surfaceWakes, 2, 'T116-CLOSED-OVERLAYS-03 an open signature still w
 surfaceController.closeSignature();
 wakeSubscription.dispose();
 await surfaceController.dispose();
+
+const delayedMenu = new CompletionSnippetController({
+  host, session, marker: () => {}, onError: () => {}, fileUri: path => `file://${path}`,
+  positionToOffset, ensureLanguage: async () => {}, ensureOptionalServices: async () => {},
+  getSnippetSupport: () => undefined, completionTimeoutMs: 20,
+});
+delayedMenu.openCompletion('character');
+assert.equal(delayedMenu.isCompletionOpen, false, 'T116-AUTO-DELAY-01 a pending trigger does not capture editor input as an open menu');
+delayedMenu.cancelPendingCompletion();
+await new Promise(resolve => setTimeout(resolve, 30));
+assert.equal(delayedMenu.isCompletionOpen, false, 'T116-AUTO-DELAY-02 a following key cancels the obsolete trigger');
+await delayedMenu.dispose();
 
 console.log('T116 CompletionSnippetController passed plan-overlap-rejection, stale-response-drop and escape-close fixtures');

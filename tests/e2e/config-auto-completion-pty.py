@@ -46,7 +46,7 @@ while True:
     elif method == "textDocument/completion":
         position = message["params"]["position"]
         line, character = int(position["line"]), int(position["character"])
-        send({"jsonrpc":"2.0", "id":message["id"], "result":{"isIncomplete":False, "items":[{"label":"candidate", "insertText":"beta"}]}})
+        send({"jsonrpc":"2.0", "id":message["id"], "result":{"isIncomplete":False, "items":[{"label":"candidate", "filterText":"ab", "insertText":"beta"}]}})
     elif method == "exit":
         break
     elif "id" in message:
@@ -65,7 +65,7 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
             return
 
 
-def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview: bool = True, cancel_preview: bool = False, supersede_menu: bool = False, focus_preview: bool = False, launch_plain: bool = False) -> list[dict[str, object]]:
+def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview: bool = True, cancel_preview: bool = False, supersede_menu: bool = False, focus_preview: bool = False, launch_plain: bool = False, line_below: bool = False) -> list[dict[str, object]]:
     with tempfile.TemporaryDirectory(prefix="xi-auto-completion-pty-") as temporary:
         workspace = Path(temporary)
         fake_bin = workspace / "bin"
@@ -83,7 +83,7 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
         source.write_text("x\n" if accept else "a\n", encoding="utf-8")
         master, slave = pty.openpty()
         environment = os.environ.copy()
-        environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1", "PATH": f"{fake_bin}:{environment.get('PATH', '')}"})
+        environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": str(workspace / ".config"), "XI_UI_TEST_MARKERS": "1", "PATH": f"{fake_bin}:{environment.get('PATH', '')}"})
         child = subprocess.Popen(["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(plain if launch_plain else source)], cwd=workspace, env=environment, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
         os.close(slave)
         captured = bytearray()
@@ -96,7 +96,17 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
             read_for(master, captured, 3)
             if b"XI_LANGUAGE_STARTED" not in captured:
                 raise SystemExit(f"Xi did not start the TypeScript language server: {captured[-4000:]!r}")
-            os.write(master, b"iab")
+            if line_below:
+                os.write(master, b"Go")
+                read_for(master, captured, 0.1)
+            else:
+                os.write(master, b"i")
+            if line_below:
+                for letter in b"abcd":
+                    os.write(master, bytes([letter]))
+                    read_for(master, captured, 0.07)
+            else:
+                os.write(master, b"ab")
             read_for(master, captured, 0.05)
             early_matches = [match.group(1) for match in OPEN.finditer(captured)]
             if enabled and any(b'"trigger":"character"' in value for value in early_matches):
@@ -105,6 +115,8 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
             matches = [match.group(1) for match in OPEN.finditer(captured)]
             if enabled and not any(b'"trigger":"character"' in value for value in matches):
                 raise SystemExit(f"automatic completion did not open at the configured trigger length: {captured[-4000:]!r}")
+            if line_below and b"No language server available" in captured:
+                raise SystemExit("typing an identifier showed a stale no-server completion popup")
             if not enabled and matches:
                 raise SystemExit(f"disabled automatic completion opened unexpectedly: {captured[-4000:]!r}")
             if cancel_preview:
@@ -152,7 +164,7 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
         if child.returncode != 0:
             raise SystemExit(f"Xi exited {child.returncode}: {captured[-4000:]!r}")
         if accept:
-            expected = "ab\tx\n" if supersede_menu else ("beta\n" if replace else "abbetax\n")
+            expected = "ab\tx\n" if supersede_menu else ("beta\n" if replace else "betax\n")
             if source.read_text(encoding="utf-8") != expected:
                 raise SystemExit(f"completion-replace={replace} produced unexpected text: {source.read_text(encoding='utf-8')!r}")
         if cancel_preview and source.read_text(encoding="utf-8") != "aba\n":
@@ -161,6 +173,7 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
 
 
 enabled_matches = run_case(True)
+run_case(True, line_below=True)
 run_case(True, launch_plain=True)
 disabled_matches = run_case(False)
 run_case(True, replace=False, accept=True)

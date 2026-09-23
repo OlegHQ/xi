@@ -876,7 +876,16 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         maxRows: 10,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(60, width - 2)), height: 10 }, 'below', options.sidebar?.().width, options.sidebar?.().visible !== false),
+        bounds: (width, height) => {
+          const model = options.completion!.read.model;
+          const border = popupBorderVisible(options.popupBorder, 'menu') ? 2 : 0;
+          const rows = formatCompletionLines(model, 60, 10);
+          const contentWidth = Math.max(16, ...rows.map(row => [...row].length + 2));
+          return popupBoundsInEditor(width, height, props.viewport.cursorCell, {
+            width: Math.min(60, contentWidth + border),
+            height: Math.min(10, Math.max(1, model.items.length + 1)) + border,
+          }, 'below', options.sidebar?.().width, options.sidebar?.().visible !== false);
+        },
         rowIds: model => [undefined, ...model.items.map(item => item.id)],
         headerRows: 1,
         totalRows: model => model.items.length,

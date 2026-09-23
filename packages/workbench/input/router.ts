@@ -77,6 +77,7 @@ export interface RouterCompletionPort {
   isSignatureTrigger(event: OwnedVimKeyEvent, mode: string | undefined): boolean;
   isAutoSignatureTrigger(event: OwnedVimKeyEvent, mode: string | undefined): boolean;
   readonly isSnippetActive: boolean;
+  cancelPendingCompletion?(): void;
   openCompletion(trigger?: 'invoked' | 'character' | 'retrigger'): boolean;
   openPathCompletion?(): boolean;
   openSignature(automatic?: boolean): boolean;
@@ -472,6 +473,7 @@ export class WorkbenchInputRouter implements Disposable {
    */
   dispatchKey(event: OwnedVimKeyEvent): RouterDispatchOutcome | Promise<RouterDispatchOutcome> {
     const o = this.#options;
+    o.completion.cancelPendingCompletion?.();
     if (event.raw !== 'v' || event.ctrl || event.meta || event.option) o.host.activeSession()?.clearMotionGhost();
     // The leader key is global even while a navigational panel is focused: it is how users
     // reach terminal controls such as mouse-mode toggle without first dismissing the panel.

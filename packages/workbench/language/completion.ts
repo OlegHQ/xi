@@ -14,6 +14,10 @@ export interface WorkbenchCompletionTextEdit { readonly start: WorkbenchCompleti
 export interface WorkbenchCompletionItem {
   readonly id: string;
   readonly label: string;
+  readonly kind?: number;
+  readonly filterText?: string;
+  readonly sortText?: string;
+  readonly preselect?: boolean;
   readonly detail?: string;
   readonly documentation?: string;
   readonly textEdit?: WorkbenchCompletionTextEdit;
@@ -27,6 +31,39 @@ export interface WorkbenchCompletionItem {
 }
 export interface WorkbenchCompletionRequest extends WorkbenchNavigationRequest { readonly trigger: 'invoked' | 'character' | 'retrigger'; }
 export interface WorkbenchCompletionList { readonly isIncomplete: boolean; readonly items: readonly WorkbenchCompletionItem[]; }
+/** Match Helix's useful ordering: hide impossible matches and prefer the typed prefix. */
+export function filterCompletionItems(items: readonly WorkbenchCompletionItem[], fragment: string): readonly WorkbenchCompletionItem[] {
+  if (fragment.length === 0) return items;
+  const needle = fragment.toLowerCase();
+  const ranked: Array<{ readonly item: WorkbenchCompletionItem; readonly index: number; readonly score: number }> = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (item === undefined) continue;
+    const text = (item.filterText ?? item.label).toLowerCase();
+    let score: number;
+    if (text.startsWith(needle)) score = Math.min(99, text.length - needle.length);
+    else {
+      let cursor = 0;
+      let first = -1;
+      let gaps = 0;
+      for (const character of needle) {
+        const at = text.indexOf(character, cursor);
+        if (at < 0) { cursor = -1; break; }
+        if (first < 0) first = at;
+        else gaps += at - cursor;
+        cursor = at + character.length;
+      }
+      if (cursor < 0) continue;
+      score = 100 + first * 4 + gaps * 2 + text.length - needle.length;
+    }
+    ranked.push({ item, index, score });
+  }
+  ranked.sort((left, right) => left.score - right.score
+    || Number(right.item.preselect === true) - Number(left.item.preselect === true)
+    || (left.item.sortText ?? left.item.label).localeCompare(right.item.sortText ?? right.item.label)
+    || left.index - right.index);
+  return ranked.map(({ item }) => item);
+}
 export type WorkbenchCompletionFailure = { readonly kind: 'stale' | 'invalid-edit' | 'overlap' | 'disposed' | 'unavailable'; readonly message: string };
 export type WorkbenchCompletionAction =
   | { readonly kind: 'newline' }
@@ -227,6 +264,7 @@ export interface CompletionSnippetControllerOptions {
 }
 
 const UNAVAILABLE_COMPLETION_MODEL: CompletionModelRead['model'] = Object.freeze({ state: 'error', items: Object.freeze([]), selectedId: undefined, documentation: undefined, documentationOffset: 0, message: 'No language server available' });
+const LOADING_COMPLETION_MODEL: CompletionModelRead['model'] = Object.freeze({ state: 'loading', items: Object.freeze([]), selectedId: undefined, documentation: undefined, documentationOffset: 0, message: undefined });
 const UNAVAILABLE_SIGNATURE_MODEL: SignatureModelRead['model'] = Object.freeze({ state: 'error', label: undefined, documentation: undefined, activeParameter: undefined, message: 'No language server available' });
 const NOOP_DISPOSABLE: Disposable = Object.freeze({ dispose: () => {} });
 
@@ -240,6 +278,7 @@ const NOOP_DISPOSABLE: Disposable = Object.freeze({ dispose: () => {} });
  */
 export class CompletionSnippetController {
   #completionOpen = false;
+  #completionUnavailable = false;
   #disposed = false;
   #signatureOpen = false;
   #completionCancellation: CancellationSource | undefined;
@@ -266,6 +305,7 @@ export class CompletionSnippetController {
   readonly #unrevertedPreviews = new Map<string, { base: DocumentSnapshot['revisionId']; preview?: DocumentSnapshot['revisionId']; active: boolean }>();
   #previewOperation = 0;
   #completionRead: CompletionModelRead | undefined;
+  readonly #completionReadListeners = new Set<(model: CompletionModelRead['model']) => void>();
   #signatureRead: SignatureModelRead | undefined;
   /** Guards against an infinite `ensureLanguage().then(() => openCompletion/openSignature())`
    * microtask loop when no language applies to the current file: `ensureLanguage` is a memoized,
@@ -282,7 +322,11 @@ export class CompletionSnippetController {
     this.#options = options;
   }
 
-  get isCompletionOpen(): boolean { return this.#completionOpen || this.#completionDelayTimer !== undefined; }
+  get isCompletionOpen(): boolean { return this.#completionOpen; }
+  cancelPendingCompletion(): void {
+    if (this.#completionDelayTimer !== undefined) clearTimeout(this.#completionDelayTimer);
+    this.#completionDelayTimer = undefined;
+  }
   isCompletionPreviewActiveFor(documentId: DocumentId): boolean { return this.#previewApplyingDocumentId === String(documentId) || this.#previewRestoringDocumentId === String(documentId) || this.#completionPreview?.request.documentId === String(documentId) || this.#unrevertedPreviews.get(String(documentId))?.active === true; }
   get isSignatureOpen(): boolean { return this.#signatureOpen; }
   /** An active snippet session intercepts every keypress until Tab exhausts its placeholders,
@@ -294,9 +338,9 @@ export class CompletionSnippetController {
     this.#completionRead ??= {
       get model() {
         const model = self.#completion?.model;
-        return model === undefined ? UNAVAILABLE_COMPLETION_MODEL : Object.freeze({ state: model.state, items: model.items, selectedId: model.selectedId, documentation: model.documentation, documentationOffset: model.documentationOffset, message: model.message });
+        return model === undefined ? self.#completionOpen && !self.#completionUnavailable ? LOADING_COMPLETION_MODEL : UNAVAILABLE_COMPLETION_MODEL : Object.freeze({ state: model.state, items: model.items, selectedId: model.selectedId, documentation: model.documentation, documentationOffset: model.documentationOffset, message: model.message });
       },
-      subscribe: (listener) => self.#completion?.subscribe(() => listener(self.completionRead.model)) ?? NOOP_DISPOSABLE,
+      subscribe: (listener) => { self.#completionReadListeners.add(listener); return { dispose: () => { self.#completionReadListeners.delete(listener); } }; },
     };
     return this.#completionRead;
   }
@@ -333,10 +377,12 @@ export class CompletionSnippetController {
     this.#signature = signature;
     const completionSubscription = completion.subscribe((model) => {
       if (this.#completionOpen) {
+        for (const listener of this.#completionReadListeners) listener(this.completionRead.model);
         this.#options.host.notifySurfaceChange();
         this.#options.marker('XI_COMPLETION_STATE', { state: model.state, items: model.items.length, selectedId: model.selectedId, documentation: model.documentation !== undefined, message: model.message });
       }
     });
+    if (this.#completionOpen) for (const listener of this.#completionReadListeners) listener(this.completionRead.model);
     const signatureSubscription = signature.subscribe((model) => {
       if (this.#signatureOpen) {
         this.#options.host.notifySurfaceChange();
@@ -375,7 +421,8 @@ export class CompletionSnippetController {
     if (!line.ok) return false;
     const start = view.document.lineStartOffset(line.value);
     if (!start.ok) return false;
-    const prefix = view.document.slice(start.value, member.head.at.offset);
+    const from = Math.max(Number(start.value), Number(member.head.at.offset) - 256) as Utf16Offset;
+    const prefix = view.document.slice(from, member.head.at.offset);
     if (!prefix.ok) return false;
     const word = /[\p{L}\p{N}_$]+$/u.exec(prefix.value)?.[0] ?? '';
     return [...word, event.raw].length >= (this.#options.completionTriggerLen ?? 2);
@@ -423,14 +470,15 @@ export class CompletionSnippetController {
   }
 
   openCompletion(trigger: 'invoked' | 'retrigger' | 'character' = 'invoked'): boolean {
+    this.cancelPendingCompletion();
+    this.#completionUnavailable = false;
     const timeout = this.#options.completionTimeoutMs ?? 0;
     if (trigger === 'character' && timeout > 0) {
-      if (this.#completionDelayTimer !== undefined) clearTimeout(this.#completionDelayTimer);
       this.#completionOpen = false;
       this.#completionCancellation?.cancel();
       this.#completionDelayTimer = setTimeout(() => {
         this.#completionDelayTimer = undefined;
-        this.#openCompletion(trigger, false);
+        if (this.isInsertMode(this.#activeMode())) this.#openCompletion(trigger, false);
       }, timeout);
       return true;
     }
@@ -438,14 +486,15 @@ export class CompletionSnippetController {
   }
 
   openPathCompletion(): boolean {
+    this.cancelPendingCompletion();
+    this.#completionUnavailable = false;
     const timeout = this.#options.completionTimeoutMs ?? 0;
     if (timeout > 0) {
-      if (this.#completionDelayTimer !== undefined) clearTimeout(this.#completionDelayTimer);
       this.#completionOpen = false;
       this.#completionCancellation?.cancel();
       this.#completionDelayTimer = setTimeout(() => {
         this.#completionDelayTimer = undefined;
-        this.#openCompletion('character', true);
+        if (this.isInsertMode(this.#activeMode())) this.#openCompletion('character', true);
       }, timeout);
       return true;
     }
@@ -468,10 +517,12 @@ export class CompletionSnippetController {
           this.#completion = local;
           this.#localCompletionSubscription = local.subscribe((model) => {
             if (this.#completionOpen) {
+              for (const listener of this.#completionReadListeners) listener(this.completionRead.model);
               this.#options.host.notifySurfaceChange();
               this.#options.marker('XI_COMPLETION_STATE', { state: model.state, items: model.items.length, selectedId: model.selectedId, documentation: model.documentation !== undefined, message: model.message });
             }
           });
+          if (this.#completionOpen) for (const listener of this.#completionReadListeners) listener(this.completionRead.model);
         } else local.dispose();
       }).catch((error: unknown) => {
         this.#localCompletionLoading = undefined;
@@ -489,10 +540,13 @@ export class CompletionSnippetController {
         return true;
       }
       this.#completionEnsureRetried = false;
+      this.#completionUnavailable = true;
+      for (const listener of this.#completionReadListeners) listener(this.completionRead.model);
       this.#options.marker('XI_COMPLETION_STATE', { state: 'unavailable', items: 0 });
       return true;
     }
     this.#completionEnsureRetried = false;
+    this.#completionUnavailable = false;
     this.#signatureOpen = false;
     this.#completionOpen = true;
     this.#completionCancellation?.cancel();
@@ -522,6 +576,8 @@ export class CompletionSnippetController {
         list = this.#options.snippets === false
           ? { ...list, items: list.items.filter((item) => item.insertTextFormat !== 'snippet') }
           : list;
+        if (!path) list = { ...list, items: filterCompletionItems(list.items, this.#completionFragment(request)) };
+        if (trigger === 'character' && list.items.length === 0) { this.closeCompletion(); return; }
         controller.publish(this.#completionSerial, request, list);
       } else if (wordProvider !== undefined && this.#options.wordCompletion !== false) {
         const words = await wordProvider.complete(request, cancellation.token);
@@ -579,11 +635,9 @@ export class CompletionSnippetController {
   }
 
   closeCompletion(cancel = true): void {
-    if (this.#completionDelayTimer !== undefined) {
-      clearTimeout(this.#completionDelayTimer);
-      this.#completionDelayTimer = undefined;
-    }
+    this.cancelPendingCompletion();
     this.#completionOpen = false;
+    this.#completionUnavailable = false;
     this.#completionEnsureRetried = false;
     this.#completionCancellation?.cancel();
     this.#completionCancellation = undefined;
@@ -806,10 +860,8 @@ export class CompletionSnippetController {
 
   async dispose(): Promise<void> {
     this.#disposed = true;
-    if (this.#completionDelayTimer !== undefined) {
-      clearTimeout(this.#completionDelayTimer);
-      this.#completionDelayTimer = undefined;
-    }
+    this.cancelPendingCompletion();
+    this.#completionReadListeners.clear();
     this.#previewOperation += 1;
     this.#completionCancellation?.cancel();
     this.#signatureCancellation?.cancel();
@@ -834,6 +886,21 @@ export class CompletionSnippetController {
   #currentCompletionRequest(trigger: 'invoked' | 'retrigger' | 'character' = 'invoked'): WorkbenchCompletionRequest | undefined {
     const request = buildNavigationRequest(this.#options.session, this.#options.fileUri);
     return request === undefined ? undefined : { ...request, trigger };
+  }
+
+  #completionFragment(request: WorkbenchCompletionRequest): string {
+    const viewId = this.#options.session.activeViewId;
+    const view = viewId === undefined ? undefined : this.#options.session.readView(viewId);
+    if (view === undefined || String(view.document.id) !== request.documentId || Number(view.document.version) !== request.documentVersion) return '';
+    const line = asLineIndex(request.position.line);
+    if (!line.ok) return '';
+    const start = view.document.lineStartOffset(line.value);
+    if (!start.ok) return '';
+    const cursor = this.#options.positionToOffset(view.document, { version: view.document.version, line: line.value, encoding: 'utf-16', character: request.position.utf16 as never });
+    if (!cursor.ok) return '';
+    const from = Math.max(Number(start.value), Number(cursor.value) - 256);
+    const prefix = view.document.slice(from as Utf16Offset, cursor.value);
+    return prefix.ok ? /[\p{L}\p{N}_$]+$/u.exec(prefix.value)?.[0] ?? '' : '';
   }
 
   #currentSignatureRequest(): WorkbenchNavigationRequest | undefined {
@@ -1070,6 +1137,7 @@ function completionWordRange(
   snapshot: DocumentSnapshot,
   request: WorkbenchCompletionRequest,
   positionToOffset: typeof import('../../document/src/index').positionToOffset,
+  replaceEntireWord: boolean,
 ): { readonly start: WorkbenchCompletionPosition; readonly end: WorkbenchCompletionPosition } | undefined {
   const cursor = positionToOffset(snapshot, { version: snapshot.version, line: request.position.line as never, encoding: 'utf-16', character: request.position.utf16 as never });
   if (!cursor.ok) return undefined;
@@ -1081,11 +1149,16 @@ function completionWordRange(
     ? snapshot.lineStartOffset(((line.value as number) + 1) as never)
     : { ok: true as const, value: snapshot.lengthUtf16 };
   if (!lineEnd.ok) return undefined;
-  const prefix = snapshot.slice(lineStart.value, cursor.value);
-  const suffix = snapshot.slice(cursor.value, lineEnd.value as never);
+  const prefixStart = Math.max(Number(lineStart.value), Number(cursor.value) - 256);
+  const suffixEnd = replaceEntireWord ? Math.min(Number(lineEnd.value), Number(cursor.value) + 256) : Number(cursor.value);
+  const prefix = snapshot.slice(prefixStart as Utf16Offset, cursor.value);
+  const suffix = snapshot.slice(cursor.value, suffixEnd as Utf16Offset);
   if (!prefix.ok || !suffix.ok) return undefined;
   const before = /[\p{L}\p{N}_$]+$/u.exec(prefix.value)?.[0] ?? '';
   const after = /^[\p{L}\p{N}_$]+/u.exec(suffix.value)?.[0] ?? '';
+  // ponytail: words beyond 256 UTF-16 units keep the server's insertion edit; an indexed word boundary is needed to replace them safely.
+  if ((prefixStart > Number(lineStart.value) && before.length === prefix.value.length)
+    || (replaceEntireWord && suffixEnd < Number(lineEnd.value) && after.length === suffix.value.length)) return undefined;
   if (before.length === 0 && after.length === 0) return undefined;
   const start = offsetToPosition(snapshot, ((cursor.value as number) - before.length) as never, 'utf-16');
   const end = offsetToPosition(snapshot, ((cursor.value as number) + after.length) as never, 'utf-16');
@@ -1122,8 +1195,8 @@ export function planCompletionEdits(
   const selectedPrimary = replaceEntireWord && item.textEditReplace !== undefined ? item.textEditReplace : item.textEdit;
   for (const source of edits) {
     let candidate = source === item.textEdit && selectedPrimary !== undefined ? selectedPrimary : source;
-    if (replaceEntireWord && item.textEditIsFallback === true && source === item.textEdit) {
-      const word = completionWordRange(snapshot, request, positionToOffset);
+    if (item.textEditIsFallback === true && source === item.textEdit && (replaceEntireWord || item.textEditIsWordSuffix !== true)) {
+      const word = completionWordRange(snapshot, request, positionToOffset, replaceEntireWord);
       if (word !== undefined) candidate = { ...source, start: word.start, end: word.end, newText: item.textEditIsWordSuffix === true ? item.label : source.newText };
     }
     if (item.insertTextFormat === 'snippet' && item.textEdit !== undefined && source === item.textEdit) {
