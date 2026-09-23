@@ -43,12 +43,7 @@ import {
   DirectoryDraftController,
 } from '../../../../packages/workbench/src/entrypoints/launch';
 import { DirectoryDraft, JournaledFilesystemOperations, type DirectoryOperationPlan } from '../../../../packages/services/src/entrypoints/files';
-// Routed through the git entrypoint (not a direct packages/services/git/decorations import)
-// so apps/xi only ever imports services via packages/services/src/entrypoints/* -- see H2-7's
-// import-graph rule. Both functions are pure/cheap module-level code (no process/filesystem
-// work at import time), so statically loading this entrypoint costs a module evaluation, not
-// the async round trip optional-services.ts's lazy `import('.../entrypoints/git')` avoids.
-import { toExplorerGitDecoration, createGitDecorationPort } from '../../../../packages/services/src/entrypoints/git';
+import { toExplorerGitDecoration, createGitDecorationPort } from '../../../../packages/services/src/entrypoints/git-decorations';
 import { resolveFormatOnSave, resolveFormatterSelection } from '../../../../packages/services/src/entrypoints/config';
 import type { CompiledConfig, EditorConfigProperties, LanguageConfig, LanguageServerConfig, loadStartupXiConfig } from '../../../../packages/services/src/entrypoints/config';
 import { SyntaxDocumentTracker } from '../../../../packages/services/src/entrypoints/syntax';
