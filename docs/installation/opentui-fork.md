@@ -30,8 +30,11 @@ bun run prepare:zig
 zig build -j2 -Dall -Doptimize=ReleaseFast
 ```
 
-The release workflow strips distribution copies, checks their hashes against
-the pinned manifest, and smoke-tests compiled Xi on each target. The published
+The release workflow strips distribution copies, checks for the fork's native
+underline symbols, records their exact hashes in each release manifest, and
+smoke-tests compiled Xi on each target. Native build IDs change between clean
+builds, so the committed checksum inventory records a qualified build rather
+than serving as a byte-for-byte pin for subsequent builds. The published
 OpenTUI 0.5.11 binaries predate the fork's native underline symbols, so they
 cannot replace the pinned fork assets. `bun run package:audit` checks the
 installed asset against the manifest.

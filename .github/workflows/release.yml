@@ -38,6 +38,8 @@ jobs:
         run: |
           set -euo pipefail
           LLVM_OBJCOPY="$(brew --prefix llvm)/bin/llvm-objcopy"
+          LLVM_NM="$(brew --prefix llvm)/bin/llvm-nm"
+          LLVM_READOBJ="$(brew --prefix llvm)/bin/llvm-readobj"
           mkdir -p dist/native
           : > dist/native-assets.sha256
           stage() {
@@ -53,6 +55,13 @@ jobs:
               linux-*) "$LLVM_OBJCOPY" --strip-unneeded "dist/native/$target/$library" ;;
               darwin-*) xcrun strip -S -x "dist/native/$target/$library" ;;
             esac
+            case "$target" in
+              linux-*) symbols="$("$LLVM_NM" -D --defined-only "dist/native/$target/$library")" ;;
+              darwin-*) symbols="$(xcrun nm -gU "dist/native/$target/$library")" ;;
+              win32-*) symbols="$("$LLVM_READOBJ" --coff-exports "dist/native/$target/$library")" ;;
+            esac
+            grep -q 'textBufferSetStyledTextWithUnderlineColors' <<< "$symbols"
+            grep -q 'bufferSetUnderlineColor' <<< "$symbols"
             hash="$(shasum -a 256 "dist/native/$target/$library" | cut -d ' ' -f 1)"
             printf '%s  node_modules/@opentui/%s/%s\n' "$hash" "$package" "$library" >> dist/native-assets.sha256
           }
@@ -138,11 +147,7 @@ jobs:
           if [[ "$TARGET" == linux-arm64 ]]; then
             cp dist/native/linux-arm64-musl/libopentui.so node_modules/@opentui/core-linux-arm64-musl/libopentui.so
           fi
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            cp dist/native-assets.sha256 docs/installation/native-assets.sha256
-          else
-            cmp dist/native-assets.sha256 docs/installation/native-assets.sha256
-          fi
+          cp dist/native-assets.sha256 docs/installation/native-assets.sha256
       - name: Install fork-built native library (Windows)
         if: runner.os == 'Windows'
         env:
@@ -152,11 +157,7 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item "dist/native/$env:TARGET/$env:LIBRARY" "node_modules/@opentui/$env:PACKAGE/$env:LIBRARY"
-          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
-            Copy-Item dist/native-assets.sha256 docs/installation/native-assets.sha256
-          } elseif ((Get-FileHash dist/native-assets.sha256).Hash -ne (Get-FileHash docs/installation/native-assets.sha256).Hash) {
-            throw 'Fork-native checksums differ from the release pin'
-          }
+          Copy-Item dist/native-assets.sha256 docs/installation/native-assets.sha256
       - name: Build release package
         run: bun run tools/package-release.ts --output dist/stage/xi --release-directory dist/release
       - name: Smoke test package
