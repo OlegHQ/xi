@@ -54,3 +54,24 @@ file is selected by a release suite.
 Performance checks follow [performance.md](performance.md). A clean component benchmark
 cannot certify the production CLI, and a noisy or missing measurement is unproven rather
 than passed.
+
+For startup work, measure the ordinary source command and packaged executable separately
+through a responsive PTY:
+
+```sh
+python3 tests/support/startup-ready-pty.py --source --samples 30 --output .artifacts/source-startup.json
+python3 tests/support/startup-ready-pty.py --binary dist/xi --samples 30 --output .artifacts/package-startup.json
+python3 tests/support/picker-latency-pty.py --source --samples 20 --output .artifacts/picker-source.json
+python3 tests/support/lsp-ready-pty.py --source --samples 20 --output .artifacts/lsp-source.json
+```
+
+Run timing jobs sequentially on the same host; concurrent profiles and checks can move
+these tails by tens of milliseconds. The harnesses warm their fixture/cache once and
+record the real command, corpus and per-run values. `XI_STARTUP_TRACE` provides stage
+times, while [Bun's CPU profiler](https://bun.com/docs/project/benchmarking#cpu-profiling)
+helps locate source import costs. `bun --cpu-prof-md --cpu-prof-dir=.artifacts run apps/xi/src/main.ts --help`
+isolates pre-`main()` loading. A `--help` profile cannot
+prove first-frame speed, and a profiler changes timing; use the PTY measurements for
+release claims. Bun's runtime transpiler cache stores transformed source, but [ESM
+bytecode that skips parsing requires compilation](https://bun.com/docs/bundler/bytecode#esm-bytecode),
+so it cannot stand in for the ordinary source-run check.
