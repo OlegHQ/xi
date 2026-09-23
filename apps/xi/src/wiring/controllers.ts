@@ -582,7 +582,7 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
     selectionLimit: ctx.startupConfig?.editor.selection.limit ?? 10_000,
     selectionHistoryLimit: ctx.startupConfig?.editor.selection.historyLimit ?? 100,
     hintsDelayMs: ctx.startupConfig?.editor.hintsDelayMs ?? 250,
-    searchDebounceMs: ctx.startupConfig?.search.debounceMs ?? 40,
+    searchDebounceMs: ctx.startupConfig?.search.debounceMs ?? 5,
     searchMaxVisibleResults: ctx.startupConfig?.search.maxVisibleResults ?? 10_000,
   });
   // Xi has no syntax-tree indentation queries yet; Helix's documented fallback is simple.

@@ -279,6 +279,7 @@ assert.equal(initial.value.editor.cursorShape.insert, 'block', 'T036-CURSOR-SHAP
 assert.equal(initial.value.editor.cursorShape.select, 'block', 'T036-CURSOR-SHAPE-01-PART3 select cursor-shape default is retained');
 assert.equal(initial.value.editor.mouse.scrollLines, 3, 'T036-CONFIG-11 Helix scroll-lines default reaches the mouse-compatible runtime field');
 assert.equal(initial.value.editor.kittyKeyboardProtocol, 'auto', 'T036-KITTY-KEYBOARD-DEFAULT-01 Helix master kitty-keyboard-protocol defaults to auto');
+assert.equal(initial.value.search.debounceMs, 5, 'T036-XI-SEARCH-DEFAULT-01 Xi search uses the fast default debounce');
 assert.equal(initial.value.provenance['editor.theme'], 'defaults', 'T036-CONFIG-08 effective values retain layer provenance');
 assert.equal(resolveFormatOnSave({}, true, false), false, 'T036-AUTO-FORMAT-05 global auto-format false gates language auto-format');
 assert.equal(resolveFormatOnSave({}, true, true), true, 'T036-AUTO-FORMAT-06 global auto-format true preserves language auto-format');

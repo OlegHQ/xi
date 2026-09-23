@@ -157,7 +157,7 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
       explorerTree = nextExplorer;
       const nextSearch = new RealtimeSearchService({
         backend: new RipgrepSearchBackend({ process: new deps.ProcessPort(), environment: deps.processEnvironment() }),
-        debounceMilliseconds: deps.searchDebounceMilliseconds ?? 40,
+        debounceMilliseconds: deps.searchDebounceMilliseconds ?? 5,
         defaultLimit: deps.searchDefaultLimit ?? 10_000,
         bufferSourceProvider: () => deps.getSearchFeature().readBuffers(),
       });

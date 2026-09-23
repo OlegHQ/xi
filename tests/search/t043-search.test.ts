@@ -121,6 +121,27 @@ async function cancelledDebounceResolves(): Promise<void> {
   service.dispose();
 }
 
+async function idleSearchStartsBeforeReplacementDebounce(): Promise<void> {
+  const backend = new DelayedBackend();
+  const service = new RealtimeSearchService({ backend, debounceMilliseconds: 1_000 });
+  const first = service.query(query('first'));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.requests.length, 1, 'an idle query starts without waiting for the debounce window');
+  backend.requests[0]?.resolve({ ok: true, value: Object.freeze([]) });
+  assert.equal((await first).ok, true);
+  const second = service.query(query('second'));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.requests.length, 2, 'the next idle query also starts promptly');
+  const replacement = service.query(query('replacement'));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.requests.length, 2, 'a rapid replacement remains debounced');
+  service.cancel();
+  backend.requests[1]?.resolve({ ok: true, value: Object.freeze([]) });
+  assert.equal((await second).ok, false);
+  assert.equal((await replacement).ok, false);
+  service.dispose();
+}
+
 class LateOutputProcessPort implements ProcessPort {
   readonly releases: Array<() => void> = [];
 
@@ -260,6 +281,7 @@ await staleGenerationIsRejected();
 await invalidRegexKeepsPriorResults();
 await productionRipgrepPath();
 await cancelledDebounceResolves();
+await idleSearchStartsBeforeReplacementDebounce();
 await processExitRaceRejectsLateOutput();
 await streamedBatchesScanBuffersOnceAndMergeCorrectly();
 await ripgrepStopsAtMaxResults();

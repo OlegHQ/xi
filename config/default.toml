@@ -18,7 +18,7 @@ history-limit = 100
 delay-ms = 250
 
 [xi.search]
-debounce-ms = 40
+debounce-ms = 5
 max-visible-results = 10000
 
 [editor]

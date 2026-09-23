@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t036-xi-metadata-pty-") as temporary
     config.write_text("[xi]\nschema-version = 1\nprofile = \"xi\"\nmotion-trail = \"off\"\n[xi.sidebar]\nvisible = false\nwidth = 34\npanel = \"search\"\n[xi.mouse]\nmodifier = \"shift\"\n[xi.selection]\nlimit = 20\nhistory-limit = 3\n[xi.hints]\ndelay-ms = 17\n[xi.search]\ndebounce-ms = 7\nmax-visible-results = 25\n[xi.aliases]\nxi-test = \"config.reload\"\n[xi.keys.search-panel.space]\nz = \"sidebar.toggle\"\n[keys.normal]\nC-s = \":write\"\nx = \":write\"\n[keys.insert]\nC-s = \":write\"\ny = \":write\"\n[keys.select]\nC-s = \":write\"\nz = \":write\"\n", encoding="utf-8")
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": "", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "main.txt"],
         cwd=workspace,

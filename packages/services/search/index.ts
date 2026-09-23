@@ -67,7 +67,7 @@ export interface SearchServiceOptions {
   readonly debounceMilliseconds?: number;
   readonly defaultLimit?: number;
   readonly backend?: SearchBackend;
-  /** Read current dirty buffers after debounce, outside the keypress handler. */
+  /** Read current dirty buffers on the scheduled search turn, outside the keypress handler. */
   readonly bufferSourceProvider?: () => readonly SearchBufferSource[];
 }
 
@@ -92,8 +92,9 @@ const EMPTY_MODEL: SearchReadModel = Object.freeze({
 });
 
 /**
- * Realtime search owner. It debounces requests, cancels the previous backend
- * operation and only publishes a result when its generation is still current.
+ * Realtime search owner. Idle requests start on the next event-loop turn;
+ * replacement requests debounce and cancel the previous backend operation.
+ * It only publishes a result when its generation is still current.
  * Disk search and open-buffer search are merged before publication.
  */
 export class RealtimeSearchService implements Disposable {
@@ -112,7 +113,7 @@ export class RealtimeSearchService implements Disposable {
 
   constructor(options: SearchServiceOptions = {}) {
     this.#backend = options.backend ?? new EmptySearchBackend();
-    this.#debounceMilliseconds = bounded(options.debounceMilliseconds ?? 40, 0, 2_000);
+    this.#debounceMilliseconds = bounded(options.debounceMilliseconds ?? 5, 0, 2_000);
     this.#defaultLimit = bounded(options.defaultLimit ?? 10_000, 1, 100_000);
     this.#bufferSourceProvider = options.bufferSourceProvider;
   }
@@ -132,6 +133,7 @@ export class RealtimeSearchService implements Disposable {
 
   query(query: SearchQuery): Promise<Result<SearchReadModel, SearchFailure>> {
     if (this.#disposed) return Promise.resolve({ ok: false, error: { kind: 'backend', message: 'search service is disposed' } });
+    const replacingPendingQuery = this.#pendingResolve !== undefined;
     const previousResolve = this.#pendingResolve;
     this.#pendingResolve = undefined;
     previousResolve?.({ ok: false, error: { kind: 'stale', generation: this.#generation } });
@@ -160,9 +162,11 @@ export class RealtimeSearchService implements Disposable {
     });
     return new Promise((resolve) => {
       this.#pendingResolve = resolve;
+      // An idle search has nothing to coalesce. Keep the configured delay for
+      // rapid replacement queries, and keep both paths outside the input turn.
       this.#timer = setTimeout(() => {
         this.#run(normalized, generation, cancellation, resolve);
-      }, this.#debounceMilliseconds);
+      }, replacingPendingQuery ? this.#debounceMilliseconds : 0);
     });
   }
 

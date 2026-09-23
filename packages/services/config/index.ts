@@ -370,7 +370,7 @@ const defaultEditor: EditorConfig = Object.freeze({
   bufferPicker: Object.freeze({ startPosition: 'current' }),
   lsp: Object.freeze({ enable: true, displayInlayHints: false, inlayHintsLengthLimit: undefined, inlayHints: false, displayColorSwatches: true, autoDocumentHighlight: false, gotoReferenceIncludeDeclaration: true, snippets: true, displayMessages: true, displayProgressMessages: false, autoSignatureHelp: true, displaySignatureHelpDocs: true }),
 });
-const defaultSearch: SearchConfig = Object.freeze({ debounceMs: 40, maxVisibleResults: 10_000, hidden: true, followSymlinks: false });
+const defaultSearch: SearchConfig = Object.freeze({ debounceMs: 5, maxVisibleResults: 10_000, hidden: true, followSymlinks: false });
 
 /** Parse the TOML subset used by Xi config, language and theme files. */
 export function parseToml(source: string, fileName = 'config.toml'): Result<ParsedToml, TomlParseFailure> {
@@ -1224,7 +1224,7 @@ history-limit = 100
 delay-ms = 250
 
 [xi.search]
-debounce-ms = 40
+debounce-ms = 5
 max-visible-results = 10000
 
 [editor]
@@ -1829,8 +1829,8 @@ function validateMerged(
   const lspConfig = { enable: booleanField(lsp ?? Object.create(null), 'enable') ?? true, displayInlayHints, inlayHintsLengthLimit, inlayHints: displayInlayHints, displayColorSwatches: booleanField(lsp ?? Object.create(null), 'display-color-swatches') ?? true, autoDocumentHighlight: booleanField(lsp ?? Object.create(null), 'auto-document-highlight') ?? false, gotoReferenceIncludeDeclaration: booleanField(lsp ?? Object.create(null), 'goto-reference-include-declaration') ?? true, snippets: booleanField(lsp ?? Object.create(null), 'snippets') ?? true, displayMessages: booleanField(lsp ?? Object.create(null), 'display-messages') ?? true, displayProgressMessages: booleanField(lsp ?? Object.create(null), 'display-progress-messages') ?? false, autoSignatureHelp: booleanField(lsp ?? Object.create(null), 'auto-signature-help') ?? true, displaySignatureHelpDocs: booleanField(lsp ?? Object.create(null), 'display-signature-help-docs') ?? true };
   const searchConfig: SearchConfig = Object.freeze({
     debounceMs: xiSearch?.['debounce-ms'] === undefined
-      ? boundedInteger(search, 'debounce-ms', 0, 60_000, 40, diagnostics, locations, 'search.debounce-ms')
-      : boundedInteger({ 'debounce-ms': xiSearch['debounce-ms'] }, 'debounce-ms', 0, 60_000, 40, diagnostics, locations, 'xi.search.debounce-ms'),
+      ? boundedInteger(search, 'debounce-ms', 0, 60_000, 5, diagnostics, locations, 'search.debounce-ms')
+      : boundedInteger({ 'debounce-ms': xiSearch['debounce-ms'] }, 'debounce-ms', 0, 60_000, 5, diagnostics, locations, 'xi.search.debounce-ms'),
     maxVisibleResults: xiSearch?.['max-visible-results'] === undefined
       ? boundedInteger(search, 'max-visible-results', 1, 1_000_000, 10_000, diagnostics, locations, 'search.max-visible-results')
       : boundedInteger({ 'max-visible-results': xiSearch['max-visible-results'] }, 'max-visible-results', 1, 1_000_000, 10_000, diagnostics, locations, 'xi.search.max-visible-results'),

@@ -22,7 +22,7 @@ const environment: Record<string, string> = {};
 for (const [key, value] of Object.entries(process.env)) if (value !== undefined) environment[key] = value;
 const service = new RealtimeSearchService({
   backend: new RipgrepSearchBackend({ process: new NodeProcessPort(), environment }),
-  debounceMilliseconds: 40,
+  debounceMilliseconds: 5,
   defaultLimit: 10_000,
 });
 const request = (query: string) => ({ rootId: 'workspace', rootPath: root, query, includeHidden: true, maxResults: 10_000 });
@@ -84,7 +84,7 @@ const report = {
   ticket: 'T043',
   fixture: 'T043-PRODUCTION-SEARCH-01',
   environment: { platform: process.platform, architecture: process.arch, bun: Bun.version, rg: 'argv/ripgrep-json', cpuAffinity: process.env.XI_BENCH_CPU_AFFINITY ?? 'uncontrolled' },
-  workload: { root, files: 240, matchingFilesPerQuery: 1, measuredSamples: samples, debounceMilliseconds: 40 },
+  workload: { root, files: 240, matchingFilesPerQuery: 1, measuredSamples: samples, debounceMilliseconds: 5 },
   firstResultMilliseconds: { p50: percentile(firstResultSamples, 0.5), p95: percentile(firstResultSamples, 0.95), p99: percentile(firstResultSamples, 0.99), max: Math.max(...firstResultSamples), samples: firstResultSamples },
   cancellationMilliseconds: { p50: percentile(cancellationSamples, 0.5), p95: percentile(cancellationSamples, 0.95), p99: percentile(cancellationSamples, 0.99), max: Math.max(...cancellationSamples) },
   parentCpuMilliseconds: { p50: percentile(cpuSamples, 0.5), p95: percentile(cpuSamples, 0.95), max: Math.max(...cpuSamples) },
