@@ -44,6 +44,10 @@ const build = spawnSync('bun', ['run', 'tools/package-build.ts', executable], {
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 if (build.status !== 0) fail(`bun compile failed: ${build.stdout ?? ''}${build.stderr ?? ''}`);
+const versionCheck = spawnSync(executable, ['--version'], { cwd: output, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+if (versionCheck.status !== 0 || versionCheck.stdout !== `xi ${version}\n`) {
+  fail(`compiled executable reports the wrong version: ${versionCheck.stdout ?? ''}${versionCheck.stderr ?? ''}`);
+}
 
 const noticesSource = join(root, 'docs', 'installation', 'THIRD-PARTY-NOTICES.md');
 const checksumSource = join(root, 'docs', 'installation', 'native-assets.sha256');

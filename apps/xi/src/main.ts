@@ -13,8 +13,9 @@ import { createThemeWiring, themeStateDirectory } from './wiring/theme';
 import { createControllers, id, type Controllers } from './wiring/controllers';
 import { wireControllerPanels } from './wiring/pointer';
 import { buildWorkbenchUiOptions } from './wiring/ui';
+import packageJson from '../../../package.json' with { type: 'json' };
 
-const XI_VERSION = '0.0.1';
+const XI_VERSION = packageJson.version;
 
 // Parsed once at the process boundary: every PTY-visible test marker below funnels
 // through this instead of re-reading `process.env` per call site. `marker()` is a
