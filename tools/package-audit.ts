@@ -9,7 +9,8 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 interface PackageManifest {
   readonly name?: unknown;
@@ -34,7 +35,7 @@ interface AuditResult {
   readonly noticesPath: string;
 }
 
-const root = resolve(dirname(new URL(import.meta.url).pathname), '..');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const requestedTarget = readOption('--target') ?? `${process.platform}-${process.arch}`;
 const [targetPlatform, targetArch, ...targetSuffix] = requestedTarget.split('-');
 if (targetPlatform === undefined || targetArch === undefined || targetSuffix.length > 1) {
@@ -98,7 +99,7 @@ function nativeAssets(platform: string, arch: string, libc: string | undefined):
     return [{ packageName: `core-darwin-${arch}`, fileName: 'libopentui.dylib' }];
   }
   if (platform === 'win32') {
-    return [{ packageName: `core-win32-${arch}`, fileName: 'libopentui.dll' }];
+    return [{ packageName: `core-win32-${arch}`, fileName: 'opentui.dll' }];
   }
   return [];
 }
@@ -143,8 +144,7 @@ function sha256(path: string): string {
 }
 
 function relativeToRoot(path: string): string {
-  const absolute = resolve(path);
-  return absolute.startsWith(`${root}/`) ? absolute.slice(root.length + 1) : absolute;
+  return relative(root, resolve(path)).replaceAll('\\', '/');
 }
 
 function fail(message: string): never {

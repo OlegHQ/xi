@@ -9,8 +9,13 @@ text in its installer notice.
 | Package | Version | License | Notice source |
 |---|---:|---|---|
 | `@opentui/core` | 0.5.11 | MIT | `@opentui/core/LICENSE` |
+| `@opentui/core-linux-x64` | 0.5.11 | MIT | `@opentui/core-linux-x64/LICENSE` |
 | `@opentui/core-linux-arm64` | 0.5.11 | MIT | `@opentui/core-linux-arm64/LICENSE` |
 | `@opentui/core-linux-arm64-musl` | 0.5.11 | MIT | `@opentui/core-linux-arm64-musl/LICENSE` |
+| `@opentui/core-darwin-x64` | 0.5.11 | MIT | `@opentui/core-darwin-x64/LICENSE` |
+| `@opentui/core-darwin-arm64` | 0.5.11 | MIT | `@opentui/core-darwin-arm64/LICENSE` |
+| `@opentui/core-win32-x64` | 0.5.11 | MIT | `@opentui/core-win32-x64/LICENSE` |
+| `@opentui/core-win32-arm64` | 0.5.11 | MIT | `@opentui/core-win32-arm64/LICENSE` |
 | `bun-ffi-structs` | 0.3.1 | MIT | `bun-ffi-structs/LICENSE` |
 | `diff` | 9.0.0 | BSD-3-Clause | `diff/LICENSE` |
 | `marked` | 17.0.1 | MIT | `marked/LICENSE.md` |

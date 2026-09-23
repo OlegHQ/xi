@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,7 +32,7 @@ assert.ok(existsSync(manifestPath), 'T064-PACKAGE-RELEASE-03 staging includes a 
 assert.ok(existsSync(join(stagedDirectory, 'THIRD-PARTY-NOTICES.md')), 'T064-PACKAGE-RELEASE-04 staging includes dependency notices');
 assert.ok(existsSync(join(stagedDirectory, 'native-assets.sha256')), 'T064-PACKAGE-RELEASE-05 staging includes native checksums');
 assert.ok(existsSync(join(stagedDirectory, 'licenses', '@opentui__core', 'LICENSE')), 'T064-PACKAGE-RELEASE-06 staging includes license text');
-const archiveName = 'xi-0.0.1-linux-arm64.tar.gz';
+const archiveName = 'xi-0.0.2-linux-arm64.tar.gz';
 const archivePath = join(assetsDirectory, archiveName);
 assert.ok(existsSync(archivePath), 'T064-PACKAGE-RELEASE-07 creates a versioned Linux ARM64 archive');
 assert.ok(existsSync(join(assetsDirectory, 'SHA256SUMS')), 'T064-PACKAGE-RELEASE-08 creates an archive checksum manifest');
@@ -51,45 +52,60 @@ const configPty = spawnSync('python3', ['tests/e2e/config-user-pty.py', '--binar
 });
 assert.equal(configPty.status, 0, `T064-PACKAGE-RELEASE-14 staged binary obeys XDG/HOME/CLI/workspace config paths: ${configPty.stdout ?? ''}${configPty.stderr ?? ''}`);
 
-const simulatedRelease = join(releaseDirectory, 'release', 'download', 'v0.0.1');
+const simulatedRelease = join(releaseDirectory, 'release', 'download', 'v0.0.2');
 mkdirSync(simulatedRelease, { recursive: true });
-copyFileSync(archivePath, join(simulatedRelease, archiveName));
-copyFileSync(join(assetsDirectory, 'SHA256SUMS'), join(simulatedRelease, 'SHA256SUMS'));
-const shimDirectory = join(releaseDirectory, 'shim');
-mkdirSync(shimDirectory);
-writeFileSync(join(shimDirectory, 'uname'), '#!/bin/sh\ncase "${1:-}" in -s) echo Linux ;; *) echo aarch64 ;; esac\n');
-chmodSync(join(shimDirectory, 'uname'), 0o755);
+const targets = [
+  { os: 'Linux', arch: 'x86_64', target: 'linux-x64' },
+  { os: 'Linux', arch: 'aarch64', target: 'linux-arm64' },
+  { os: 'Darwin', arch: 'x86_64', target: 'darwin-x64' },
+  { os: 'Darwin', arch: 'arm64', target: 'darwin-arm64' },
+];
+const sums: string[] = [];
+for (const { target } of targets) {
+  const name = `xi-0.0.2-${target}.tar.gz`;
+  const destination = join(simulatedRelease, name);
+  copyFileSync(archivePath, destination);
+  sums.push(`${createHash('sha256').update(readFileSync(destination)).digest('hex')}  ${name}`);
+}
+writeFileSync(join(simulatedRelease, 'SHA256SUMS'), `${sums.join('\n')}\n`);
 const installer = join(process.cwd(), 'docs/installation/install.sh');
 const installDirectory = join(releaseDirectory, 'home', '.local', 'bin');
 const installerEnv = {
   ...process.env,
-  PATH: `${shimDirectory}:/usr/bin:/bin`,
+  PATH: `/usr/bin:/bin`,
   HOME: join(releaseDirectory, 'home'),
-  XI_VERSION: 'v0.0.1',
+  XI_VERSION: 'v0.0.2',
   XI_RELEASE_URL: `file://${join(releaseDirectory, 'release')}`,
   XI_INSTALL_DIR: installDirectory,
 };
-const installed = spawnSync('sh', [installer], { encoding: 'utf8', env: installerEnv });
-assert.equal(installed.status, 0, `T064-INSTALL-01 installs from verified release assets: ${installed.stderr}`);
+for (const { os, arch, target } of targets) {
+  const shimDirectory = join(releaseDirectory, `shim-${target}`);
+  mkdirSync(shimDirectory);
+  writeFileSync(join(shimDirectory, 'uname'), `#!/bin/sh\ncase "\${1:-}" in -s) echo ${os} ;; *) echo ${arch} ;; esac\n`);
+  chmodSync(join(shimDirectory, 'uname'), 0o755);
+  const installed = spawnSync('sh', [installer], { encoding: 'utf8', env: { ...installerEnv, PATH: `${shimDirectory}:/usr/bin:/bin` } });
+  assert.equal(installed.status, 0, `T064-INSTALL-${target} installs from verified assets: ${installed.stderr}`);
+}
 assert.ok(existsSync(join(installDirectory, 'xi')), 'T064-INSTALL-02 installs executable into the selected user directory');
 writeFileSync(join(installDirectory, 'xi'), 'existing working binary');
-writeFileSync(join(simulatedRelease, archiveName), 'corrupted archive');
-const corrupted = spawnSync('sh', [installer], { encoding: 'utf8', env: installerEnv });
+writeFileSync(join(simulatedRelease, 'xi-0.0.2-linux-arm64.tar.gz'), 'corrupted archive');
+const arm64Shim = join(releaseDirectory, 'shim-linux-arm64');
+const corrupted = spawnSync('sh', [installer], { encoding: 'utf8', env: { ...installerEnv, PATH: `${arm64Shim}:/usr/bin:/bin` } });
 assert.notEqual(corrupted.status, 0, 'T064-INSTALL-03 rejects a corrupted archive');
 assert.equal(readFileSync(join(installDirectory, 'xi'), 'utf8'), 'existing working binary', 'T064-INSTALL-04 failed verification preserves installed executable');
-const unavailable = spawnSync('sh', [installer], { encoding: 'utf8', env: { ...installerEnv, XI_RELEASE_URL: `file://${join(releaseDirectory, 'missing-release')}` } });
+const unavailable = spawnSync('sh', [installer], { encoding: 'utf8', env: { ...installerEnv, PATH: `${arm64Shim}:/usr/bin:/bin`, XI_RELEASE_URL: `file://${join(releaseDirectory, 'missing-release')}` } });
 assert.notEqual(unavailable.status, 0, 'T064-INSTALL-05 reports an unavailable release');
 assert.match(unavailable.stderr, /Could not download Xi/u, 'T064-INSTALL-06 explains unavailable release assets');
 assert.equal(readFileSync(join(installDirectory, 'xi'), 'utf8'), 'existing working binary', 'T064-INSTALL-07 unavailable release preserves installed executable');
 const unsupportedShim = join(releaseDirectory, 'unsupported-shim');
 mkdirSync(unsupportedShim);
-writeFileSync(join(unsupportedShim, 'uname'), '#!/bin/sh\ncase "${1:-}" in -s) echo Linux ;; *) echo x86_64 ;; esac\n');
+writeFileSync(join(unsupportedShim, 'uname'), '#!/bin/sh\ncase "${1:-}" in -s) echo FreeBSD ;; *) echo x86_64 ;; esac\n');
 chmodSync(join(unsupportedShim, 'uname'), 0o755);
 const unsupportedHost = spawnSync('sh', [installer], { encoding: 'utf8', env: { ...installerEnv, PATH: `${unsupportedShim}:/usr/bin:/bin` } });
 assert.notEqual(unsupportedHost.status, 0, 'T064-INSTALL-08 rejects unqualified platforms');
-assert.match(unsupportedHost.stderr, /supports Linux ARM64 only/u, 'T064-INSTALL-09 explains the unsupported host');
+assert.match(unsupportedHost.stderr, /supports Linux and macOS on x64 or ARM64/u, 'T064-INSTALL-09 explains the unsupported host');
 
-console.log('T064 package audit/release passed checksummed archive, installer integrity, existing-binary preservation and Linux ARM64 package probes');
+console.log('T064 package audit/release passed checksummed archive, installer integrity, existing-binary preservation and four Unix target probes');
 
 function runAudit(args: readonly string[]): { readonly status: number | null; readonly stdout: string; readonly stderr: string } {
   const result = spawnSync('bun', ['run', 'tools/package-audit.ts', ...args], { encoding: 'utf8' });

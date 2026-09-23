@@ -7,11 +7,14 @@ base_url=${XI_RELEASE_URL:-https://github.com/$repo/releases}
 
 os=$(uname -s)
 arch=$(uname -m)
-if [ "$os" != Linux ] || { [ "$arch" != aarch64 ] && [ "$arch" != arm64 ]; }; then
-  echo "Xi installer supports Linux ARM64 only; detected $os/$arch" >&2
-  exit 1
-fi
-if ! command -v getconf >/dev/null 2>&1 || ! getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+case "$os:$arch" in
+  Linux:x86_64|Linux:amd64) target=linux-x64 ;;
+  Linux:aarch64|Linux:arm64) target=linux-arm64 ;;
+  Darwin:x86_64|Darwin:amd64) target=darwin-x64 ;;
+  Darwin:arm64|Darwin:aarch64) target=darwin-arm64 ;;
+  *) echo "Xi installer supports Linux and macOS on x64 or ARM64; detected $os/$arch" >&2; exit 1 ;;
+esac
+if [ "$os" = Linux ] && { ! command -v getconf >/dev/null 2>&1 || ! getconf GNU_LIBC_VERSION >/dev/null 2>&1; }; then
   echo "Xi installer supports glibc; this host does not report GNU libc" >&2
   exit 1
 fi
@@ -54,7 +57,7 @@ case "$version" in *[!A-Za-z0-9._+-]*|'') echo "Invalid Xi version: $tag" >&2; e
 work=$(mktemp -d)
 candidate=
 trap 'rm -rf "$work"; [ -z "$candidate" ] || rm -f "$candidate"' EXIT HUP INT TERM
-archive="xi-$version-linux-arm64.tar.gz"
+archive="xi-$version-$target.tar.gz"
 release_url="$base_url/download/$tag"
 if ! download "$release_url/SHA256SUMS" "$work/SHA256SUMS" ||
    ! download "$release_url/$archive" "$work/$archive"; then

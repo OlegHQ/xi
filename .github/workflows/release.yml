@@ -3,13 +3,14 @@ name: Draft release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  linux-arm64:
-    runs-on: ubuntu-24.04-arm
+  native-assets:
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -17,18 +18,170 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+          use-cache: false
+      - name: Build OpenTUI native libraries for all targets
+        run: bun run prepare:zig && zig build -j2 -Dall -Doptimize=ReleaseFast
+        working-directory: vendor/opentui/packages/native
+      - name: Stage native libraries and checksum inventory
+        run: |
+          set -euo pipefail
+          mkdir -p dist/native
+          : > dist/native-assets.sha256
+          stage() {
+            target="$1"
+            source_dir="$2"
+            package="$3"
+            library="$4"
+            source="vendor/opentui/packages/native/lib/$source_dir/$library"
+            test -s "$source"
+            mkdir -p "dist/native/$target"
+            cp "$source" "dist/native/$target/$library"
+            hash="$(shasum -a 256 "$source" | cut -d ' ' -f 1)"
+            printf '%s  node_modules/@opentui/%s/%s\n' "$hash" "$package" "$library" >> dist/native-assets.sha256
+          }
+          stage linux-x64 x86_64-linux core-linux-x64 libopentui.so
+          stage linux-arm64 aarch64-linux core-linux-arm64 libopentui.so
+          stage linux-x64-musl x86_64-linux-musl core-linux-x64-musl libopentui.so
+          stage linux-arm64-musl aarch64-linux-musl core-linux-arm64-musl libopentui.so
+          stage darwin-x64 x86_64-macos core-darwin-x64 libopentui.dylib
+          stage darwin-arm64 aarch64-macos core-darwin-arm64 libopentui.dylib
+          stage win32-x64 x86_64-windows core-win32-x64 opentui.dll
+          stage win32-arm64 aarch64-windows core-win32-arm64 opentui.dll
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opentui-native
+          path: |
+            dist/native
+            dist/native-assets.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    needs: native-assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+            package: core-linux-x64
+            library: libopentui.so
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            package: core-linux-arm64
+            library: libopentui.so
+          - target: darwin-x64
+            runner: macos-15-intel
+            package: core-darwin-x64
+            library: libopentui.dylib
+          - target: darwin-arm64
+            runner: macos-15
+            package: core-darwin-arm64
+            library: libopentui.dylib
+          - target: win32-x64
+            runner: windows-2025
+            package: core-win32-x64
+            library: opentui.dll
+          - target: win32-arm64
+            runner: windows-11-arm
+            package: core-win32-arm64
+            library: opentui.dll
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
       - run: bun install --frozen-lockfile
       - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
         run: test "${GITHUB_REF_NAME#v}" = "$(bun -e 'console.log((await Bun.file("package.json").json()).version)')"
-      - name: Build verified package and release assets
+        shell: bash
+      - uses: actions/download-artifact@v4
+        with:
+          name: opentui-native
+          path: dist
+      - name: Install fork-built native library (Unix)
+        if: runner.os != 'Windows'
+        env:
+          PACKAGE: ${{ matrix.package }}
+          LIBRARY: ${{ matrix.library }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          cp "dist/native/$TARGET/$LIBRARY" "node_modules/@opentui/$PACKAGE/$LIBRARY"
+          cp dist/native-assets.sha256 docs/installation/native-assets.sha256
+      - name: Install fork-built native library (Windows)
+        if: runner.os == 'Windows'
+        env:
+          PACKAGE: ${{ matrix.package }}
+          LIBRARY: ${{ matrix.library }}
+          TARGET: ${{ matrix.target }}
+        shell: pwsh
+        run: |
+          Copy-Item "dist/native/$env:TARGET/$env:LIBRARY" "node_modules/@opentui/$env:PACKAGE/$env:LIBRARY"
+          Copy-Item dist/native-assets.sha256 docs/installation/native-assets.sha256
+      - name: Build release package
         run: bun run tools/package-release.ts --output dist/stage/xi --release-directory dist/release
       - name: Smoke test package
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=dist/stage/xi/xi
+          "$binary" --health
+          "$binary" --version
+      - name: Smoke test package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          [scriptblock]::Create((Get-Content -Raw docs/installation/install.ps1)) | Out-Null
+          & dist/stage/xi/xi.exe --health
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & dist/stage/xi/xi.exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Smoke test compiled terminal on Unix
+        if: runner.os != 'Windows'
+        run: python3 tests/distribution/t064-compiled-pty.py
+      - name: Run full package smoke on Linux ARM64
+        if: matrix.target == 'linux-arm64'
         run: bun run package:smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/release/xi-*
+          if-no-files-found: error
+          retention-days: 7
+
+  draft:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist/release
+      - name: Add platform installers and checksums
+        run: |
+          set -euo pipefail
+          cp docs/installation/install.sh docs/installation/install.ps1 dist/release/
+          (cd dist/release && sha256sum xi-* install.sh install.ps1 > SHA256SUMS)
       - name: Prepare GitHub draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF_NAME}"
-          gh release create "$tag" dist/release/xi-*.tar.gz dist/release/SHA256SUMS dist/release/install.sh \
+          gh release create "$tag" dist/release/xi-* dist/release/SHA256SUMS dist/release/install.sh dist/release/install.ps1 \
             --draft --verify-tag --title "Xi $tag" \
-            --notes "Linux ARM64 glibc editor preview. Install the latest published release: curl -fsSL https://github.com/OlegHQ/xi/releases/latest/download/install.sh | sh"
+            --notes "Install on macOS or Linux: curl -fsSL https://github.com/OlegHQ/xi/releases/latest/download/install.sh | sh\nWindows PowerShell: irm https://github.com/OlegHQ/xi/releases/latest/download/install.ps1 | iex"

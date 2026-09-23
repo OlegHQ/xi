@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, cpSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 interface PackageAuditOutput {
   readonly target: string;
@@ -21,7 +22,7 @@ interface RootPackageJson {
   readonly version?: unknown;
 }
 
-const root = resolve(new URL('.', import.meta.url).pathname, '..');
+const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 const output = resolve(readOption('--output') ?? join(root, 'dist', `xi-${process.platform}-${process.arch}`));
 const packageJson = readObject(join(root, 'package.json')) as RootPackageJson;
 const product = typeof packageJson.name === 'string' ? packageJson.name : undefined;
@@ -30,10 +31,13 @@ if (product !== 'xi' || version === undefined) fail('package.json must define xi
 
 const audit = runAudit();
 if (audit.assets.length === 0) fail(`no OpenTUI native asset was found for ${audit.target}`);
-if (audit.target !== 'linux-arm64') fail(`release archives are qualified only for linux-arm64 (glibc), not ${audit.target}`);
+if (!['linux-x64', 'linux-arm64', 'darwin-x64', 'darwin-arm64', 'win32-x64', 'win32-arm64'].includes(audit.target)) {
+  fail(`unsupported release target: ${audit.target}`);
+}
 
 mkdirSync(output, { recursive: true });
-const executable = join(output, 'xi');
+const executableName = process.platform === 'win32' ? 'xi.exe' : 'xi';
+const executable = join(output, executableName);
 const build = spawnSync('bun', ['run', 'tools/package-build.ts', executable], {
   cwd: root,
   encoding: 'utf8',
@@ -53,7 +57,7 @@ const manifest = {
   product,
   version,
   target: audit.target,
-  executable: 'xi',
+  executable: executableName,
   binarySha256: binaryHash,
   openTui: {
     version: audit.openTuiVersion,
@@ -67,17 +71,18 @@ writeFileSync(join(output, 'manifest.json'), `${JSON.stringify(manifest, null, 2
 
 const releaseDirectory = resolve(readOption('--release-directory') ?? join(output, '..'));
 mkdirSync(releaseDirectory, { recursive: true });
-const archiveName = `xi-${version}-${audit.target}.tar.gz`;
+const archiveName = `xi-${version}-${audit.target}.${process.platform === 'win32' ? 'zip' : 'tar.gz'}`;
 const archivePath = join(releaseDirectory, archiveName);
-const archive = spawnSync('tar', [
-  '--sort=name', '--mtime=@0', '--owner=0', '--group=0', '--numeric-owner',
-  '-czf', archivePath, '-C', output, '.',
+const archive = spawnSync(process.platform === 'win32' ? 'python' : 'python3', [
+  join(root, 'tools', 'package-archive.py'), output, archivePath,
 ], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-if (archive.status !== 0) fail(`archive creation failed: ${archive.stderr ?? ''}`);
+if (archive.status !== 0) fail(`archive creation failed: ${archive.error?.message ?? archive.stderr ?? ''}`);
 const sumsPath = join(releaseDirectory, 'SHA256SUMS');
 const installerPath = join(releaseDirectory, 'install.sh');
 cpSync(join(root, 'docs', 'installation', 'install.sh'), installerPath);
-writeFileSync(sumsPath, `${sha256(archivePath)}  ${archiveName}\n${sha256(installerPath)}  install.sh\n`, 'utf8');
+const powershellInstallerPath = join(releaseDirectory, 'install.ps1');
+cpSync(join(root, 'docs', 'installation', 'install.ps1'), powershellInstallerPath);
+writeFileSync(sumsPath, `${sha256(archivePath)}  ${archiveName}\n${sha256(installerPath)}  install.sh\n${sha256(powershellInstallerPath)}  install.ps1\n`, 'utf8');
 process.stdout.write(`${JSON.stringify({ output, archivePath, checksumsPath: sumsPath, manifest }, null, 2)}\n`);
 
 function runAudit(): PackageAuditOutput {
