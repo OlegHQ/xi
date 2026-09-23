@@ -6,13 +6,10 @@ and installer. The musl asset is not advertised until it has been exercised on
 a musl host. macOS and Windows are not supported until their OpenTUI native
 assets have been qualified.
 
-To install the latest published release, download and inspect the installer,
-then run it:
+Install the latest published release:
 
 ```sh
-curl -fLO https://github.com/OlegHQ/xi/releases/latest/download/install.sh
-less install.sh
-sh install.sh
+curl -fsSL https://github.com/OlegHQ/xi/releases/latest/download/install.sh | sh
 ```
 
 The installer checks the host before downloading, verifies the archive against

@@ -31,4 +31,4 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           gh release create "$tag" dist/release/xi-*.tar.gz dist/release/SHA256SUMS dist/release/install.sh \
             --draft --verify-tag --title "Xi $tag" \
-            --notes "Checksummed Linux ARM64 glibc preview. Draft only; review the platform qualification before publishing."
+            --notes "Linux ARM64 glibc editor preview. Install the latest published release: curl -fsSL https://github.com/OlegHQ/xi/releases/latest/download/install.sh | sh"
