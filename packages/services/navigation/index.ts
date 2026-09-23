@@ -661,7 +661,7 @@ function boundedLimit(value: number | undefined): number {
 }
 function normalizeForSearch(value: string): string { return value.normalize('NFKC').toLocaleLowerCase('en-US'); }
 function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+  return new Promise((resolve) => setImmediate(resolve));
 }
 function scoreFuzzy(query: string, candidate: string): number | undefined {
   return scoreFuzzyNormalized(normalizeForSearch(query), normalizeForSearch(candidate));

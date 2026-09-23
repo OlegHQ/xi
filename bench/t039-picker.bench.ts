@@ -19,4 +19,5 @@ for (let sample = 0; sample < 20; sample += 1) {
 samples.sort((left, right) => left - right);
 const p95 = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.95))] ?? 0;
 console.log(JSON.stringify({ fixture: 'T039-FILE-PICKER-100K', entries: index.snapshot.entries, firstUsefulMilliseconds: samples[0], p95Milliseconds: p95 }));
+if (p95 > 100) throw new Error(`T039-FILE-PICKER-100K p95 ${p95.toFixed(2)}ms exceeds 100ms`);
 index.dispose();

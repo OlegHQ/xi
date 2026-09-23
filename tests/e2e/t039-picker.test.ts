@@ -112,6 +112,8 @@ const largeCancelled = await largeCancelPending;
 assert.equal(largeCancelled.ok, false, 'T039-LARGE-INDEX-03 a query matching most of a 250k-entry index yields at least once, so an immediate cancel lands before completion');
 if (!largeCancelled.ok) assert.equal(largeCancelled.error.kind, 'cancelled', 'T039-LARGE-INDEX-04 cancellation is typed');
 
+let timerFired = false;
+setTimeout(() => { timerFired = true; }, 0);
 const largeStart = performance.now();
 const largeResult = await largeIndex.queryAsync('file', { limit: 40 });
 const largeMilliseconds = performance.now() - largeStart;
@@ -121,12 +123,10 @@ if (largeResult.ok) {
   assert.equal(largeResult.value.entries.length, 40, 'T039-LARGE-INDEX-07 results are bounded by limit despite the large candidate pool');
   assert.equal(largeResult.value.truncated, true, 'T039-LARGE-INDEX-08 truncation is reported');
 }
-// 250k entries at a 2k-entry chunk size is ~125 yields; each yield's
-// setTimeout(0) costs more than the ~4ms scoring slice it bounds, so total
-// wall time is yield-overhead-dominated, not a measure of the per-slice fix.
-// The bound here only proves the whole query still finishes promptly, not
-// hangs or scans unbounded.
-assert.ok(largeMilliseconds < 3_000, `T039-LARGE-INDEX-09 a 250k-entry, mostly-matching query completes in bounded total time across its slices (${largeMilliseconds.toFixed(2)}ms)`);
+assert.equal(timerFired, true, 'T039-LARGE-INDEX-09 time-sliced scoring lets ordinary timers run before the query finishes');
+// This bound catches an accidentally unbounded or stalled scan; the 100k
+// benchmark separately guards the user-visible query latency.
+assert.ok(largeMilliseconds < 3_000, `T039-LARGE-INDEX-10 a 250k-entry, mostly-matching query completes in bounded total time across its slices (${largeMilliseconds.toFixed(2)}ms)`);
 largeIndex.dispose();
 
 const notReady = new FilePathIndex();
