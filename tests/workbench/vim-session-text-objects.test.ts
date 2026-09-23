@@ -42,6 +42,16 @@ async function run(initial: string, keys: string): Promise<Outcome> {
 function parseKeys(source: string): OwnedVimKeyEvent[] {
   const out: OwnedVimKeyEvent[] = [];
   for (let index = 0; index < source.length; index += 1) {
+    if (source.startsWith('<CR>', index)) {
+      out.push({ name: 'Enter', raw: '\r', shift: false, option: false, ctrl: false, meta: false });
+      index += 3;
+      continue;
+    }
+    if (source.startsWith('<C-v>', index)) {
+      out.push({ name: 'v', raw: '\u0016', shift: false, option: false, ctrl: true, meta: false });
+      index += 4;
+      continue;
+    }
     if (source.startsWith('<Esc>', index)) {
       out.push({ name: 'Esc', raw: '', shift: false, option: false, ctrl: false, meta: false });
       index += 4;
@@ -102,4 +112,30 @@ for (const item of cases) {
   assert.equal(outcome.text, 'Xabc', 'TXTOBJ-S17 Normal-mode i still enters Insert');
 }
 
-console.log(`vim-session-text-objects: ${cases.length + 4} checks passed`);
+// Bare G addresses the last line in every Visual kind; a typed count addresses that line.
+for (const visual of ['v', 'V', '<C-v>'] as const) {
+  const end = await run('one\ntwo\nthree', `${visual}G`);
+  assert.equal(end.mode, visual === 'V' ? 'visual-line' : visual === 'v' ? 'visual-character' : 'visual-block', `${visual}G stays Visual`);
+  assert.equal(end.head, 8, `${visual}G reaches the last line`);
+  const counted = await run('one\ntwo\nthree', `j${visual}3G`);
+  assert.equal(counted.head, 8, `${visual}3G reaches the counted line`);
+  const firstCounted = await run('one\ntwo\nthree', `j${visual}1G`);
+  assert.equal(firstCounted.head, 0, `${visual}1G differs from bare G`);
+  const first = await run('one\ntwo\nthree', `j${visual}gg`);
+  assert.equal(first.head, 0, `${visual}gg reaches the first line`);
+}
+{
+  const matched = await run('(x)\nlast', 'v%');
+  assert.equal(matched.head, 2, 'Visual % extends to the matching delimiter');
+  const paragraph = await run('one\n\ntwo', 'v}');
+  assert.equal(paragraph.mode, 'visual-character', 'Visual paragraph motion keeps its mode');
+  assert.notEqual(paragraph.head, paragraph.anchor, 'Visual paragraph motion extends selection');
+  const find = await run('abcabc', 'vfb;');
+  assert.equal(find.head, 4, 'Visual f and ; extend through repeated character finds');
+  const search = await run('one two one', 'v/one<CR>');
+  assert.equal(search.head, 8, 'Visual search reaches the next match');
+  const repeat = await run('one two one', 'v/one<CR>n');
+  assert.equal(repeat.head, 0, 'Visual n repeats the search while retaining the selection');
+}
+
+console.log(`vim-session-text-objects: ${cases.length + 23} checks passed`);

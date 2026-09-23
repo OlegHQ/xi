@@ -21,11 +21,13 @@ import type { SelectionId } from '../../selections/src/index';
 import {
   createVimMotionCursor,
   resolveVimMotion,
+  resolveVimStructuralMotion,
   type VimMotionCursor,
   type VimMotionFailure,
   type VimMotionInvocation,
   type VimMotionOptions,
   type VimMotionOutcome,
+  type VimStructuralMotionInvocation,
 } from '../motions/index';
 import {
   resolveVimWordMotion,
@@ -66,7 +68,7 @@ export type VimMultiFailurePolicy = 'retain-failed' | 'reject-command';
 
 /** o_v/o_V/o_CTRL-V: forces an otherwise linewise/characterwise motion to the given wise-ness. */
 export type VimOperatorForce = 'v' | 'V' | '<C-v>';
-export type VimMultiMotionInvocation = VimMotionInvocation | VimWordMotionInvocation | VimTextObjectInvocation;
+export type VimMultiMotionInvocation = VimMotionInvocation | VimWordMotionInvocation | VimTextObjectInvocation | VimStructuralMotionInvocation;
 export type VimMultiMotionOptions = VimMotionOptions & VimTextObjectOptions;
 
 export type VimMultiMotionFailure =
@@ -741,6 +743,12 @@ function resolveMultiMotion(
   invocation: VimMultiMotionInvocation,
   options?: VimMultiMotionOptions,
 ): Result<VimMotionOutcome, VimMotionFailure> {
+  if (invocation.key === '%' || invocation.key === '(' || invocation.key === ')' || invocation.key === '{' || invocation.key === '}'
+    || invocation.key === '[[' || invocation.key === ']]' || invocation.key === '[]' || invocation.key === ']['
+    || invocation.key === '[(' || invocation.key === '[{' || invocation.key === '])' || invocation.key === ']}') {
+    const outcome = resolveVimStructuralMotion(snapshot, cursor, invocation as VimStructuralMotionInvocation);
+    return outcome.ok ? outcome : { ok: false, error: { kind: outcome.error.kind === 'unmatched-structure' || outcome.error.kind === 'scan-limit' ? 'invalid-option' : outcome.error.kind } };
+  }
   if (isTextObjectKey(invocation.key)) {
     const motion = textObjectMotion(snapshot, cursor, invocation.key, invocation.count, options);
     if (!motion.ok) return motion;

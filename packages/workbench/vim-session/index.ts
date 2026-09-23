@@ -65,6 +65,7 @@ import {
   type VimSearchMatch,
   type VimSearchOffset,
   type VimSearchState,
+  type VimStructuralMotionKey,
 } from '../../vim/src/index';
 import {
   beginVimMacroRecording,
@@ -289,16 +290,26 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     message(pattern !== null && pattern.length > 0 ? `xi: E486: Pattern not found: ${pattern}\n` : 'xi: E35: No previous regular expression\n');
   }
   async function runSearchCommand(command: VimSearchCommand, count: number): Promise<boolean> {
-    if (motionCursor === undefined) return false;
-    const view = { cursor: motionCursor.offset, desiredDisplayColumn: 0, scrollTop: 0, scrollLeft: 0 };
+    const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
+    const origin = isVisualMode(mode) ? primary === undefined ? undefined : selectionOffset(primary) : motionCursor?.offset;
+    if (origin === undefined) return false;
+    const view = { cursor: origin, desiredDisplayColumn: 0, scrollTop: 0, scrollLeft: 0 };
     const result = await runInteractiveVimSearch(document.snapshot(), view, { command, count });
     if (result === undefined) return false;
     if (!result.ok) return false;
     searchState = result.value.state;
     reportSearchOutcome(result.value.outcome);
     if (result.value.outcome.kind !== 'found') return false;
-    selections = makeNormalSelection(document.snapshot(), result.value.outcome.match.cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
-    motionCursor = makeMotionCursor(document.snapshot(), selections);
+    if (isVisualMode(mode)) {
+      const cursor = visualCursorAt(document.snapshot(), result.value.outcome.match.cursor);
+      if (cursor === undefined) return false;
+      const extended = extendVimVisualSelection(document.snapshot(), selections, selections.members.map((member) => ({ id: member.id, cursor })));
+      if (!extended.ok) return false;
+      selections = extended.value;
+    } else {
+      selections = makeNormalSelection(document.snapshot(), result.value.outcome.match.cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
+      motionCursor = makeMotionCursor(document.snapshot(), selections);
+    }
     parser = makeParser(mode, selections);
     return true;
   }
@@ -518,8 +529,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       && !(event.ctrl && (key === 's' || key === 'S'))
       && !(mode === 'normal' && key === 'q')
       && !(mode === 'normal' && event.ctrl && (key === 'c' || key === 'C'))
-      && !(mode === 'normal' && isSearchTriggerKey(key))
-      && !(isVisualMode(mode) && (key === '*' || key === '#'))
+      && !((mode === 'normal' || isVisualMode(mode)) && isSearchTriggerKey(key))
       && !(parser.pending.kind === 'command-prefix' && parser.pending.prefix === 'g' && (key === '*' || key === '#'));
   }
 
@@ -1474,8 +1484,17 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         return;
       }
       if (command.kind === 'single-key' && isVisualMode(mode) && isMotionLike(command.key)) {
-        const invocation = motionInvocation(command.key, command.count.value);
+        const invocation = motionInvocation(command.key, command.count.explicit ? command.count.value : undefined);
         if (invocation === null) return;
+        const motionOptions = (command.key === 'H' || command.key === 'M' || command.key === 'L') ? viewportMotionOptions() : undefined;
+        const moved = resolveVimMultiVisualMotion({ snapshot: document.snapshot(), selections, invocation, failurePolicy: 'reject-command', ...(motionOptions ? { options: motionOptions } : {}) });
+        if (!moved.ok) return;
+        selections = moved.value.selection;
+        parser = makeParser(mode, selections);
+        return;
+      }
+      if (command.kind === 'single-key' && isVisualMode(mode) && ['%', '(', ')', '{', '}'].includes(command.key)) {
+        const invocation = { key: command.key as VimStructuralMotionKey, ...(command.count.explicit ? { count: command.count.value } : {}) };
         const moved = resolveVimMultiVisualMotion({ snapshot: document.snapshot(), selections, invocation, failurePolicy: 'reject-command' });
         if (!moved.ok) return;
         selections = moved.value.selection;
@@ -1547,8 +1566,8 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         parser = makeParser(mode, selections);
         return;
       }
-      if (command.kind === 'single-key' && mode === 'normal'
-        && (command.key === '*' || command.key === '#' || command.key === 'n' || command.key === 'N')) {
+      if (command.kind === 'single-key' && (mode === 'normal' || isVisualMode(mode))
+        && (command.key === 'n' || command.key === 'N' || (mode === 'normal' && (command.key === '*' || command.key === '#')))) {
         const searchCommand: VimSearchCommand = command.key === '*' ? 'star' : command.key === '#' ? 'hash' : command.key === 'n' ? 'next' : 'previous';
         return runSearchCommand(searchCommand, command.count.value).then(() => undefined);
       }
@@ -2060,6 +2079,17 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
     function executeLiteral(command: Extract<VimCommandIntent, { readonly kind: 'literal-command' }>): void {
       const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
+      if (isVisualMode(mode) && (command.command === 'find-forward' || command.command === 'find-backward'
+        || command.command === 'till-forward' || command.command === 'till-backward')) {
+        const key = command.command === 'find-forward' ? 'f' : command.command === 'find-backward' ? 'F' : command.command === 'till-forward' ? 't' : 'T';
+        const found = resolveVimMultiVisualFind({ snapshot: document.snapshot(), selections,
+          invocation: { key, target: command.argument, count: command.count.value }, lastFind, failurePolicy: 'retain-failed' });
+        if (!found.ok) return;
+        lastFind = found.value.lastFind;
+        selections = found.value.selection;
+        parser = makeParser(mode, selections);
+        return;
+      }
       if (primary === undefined || primary.kind !== 'normal-cursor') return;
       if (command.command === 'record-macro') {
         // Unreachable through the keyboard today (bare 'q' is intercepted earlier for
@@ -2120,6 +2150,28 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
     function executePrefixed(command: Extract<VimCommandIntent, { readonly kind: 'prefixed-key' }>): void | Promise<void> {
       const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
+      if (isVisualMode(mode) && (command.prefix === 'left-bracket' || command.prefix === 'right-bracket')
+        && ['[', ']', '(', ')', '{', '}'].includes(command.key)) {
+        const key = `${command.prefix === 'left-bracket' ? '[' : ']'}${command.key}` as VimStructuralMotionKey;
+        const invocation = { key, ...(command.count.explicit ? { count: command.count.value } : {}) };
+        const moved = resolveVimMultiVisualMotion({ snapshot: document.snapshot(), selections, invocation, failurePolicy: 'reject-command' });
+        if (moved.ok) {
+          selections = moved.value.selection;
+          parser = makeParser(mode, selections);
+        }
+        return;
+      }
+      if (isVisualMode(mode) && command.prefix === 'g') {
+        const invocation = motionInvocation(`g${command.key}`, command.count.explicit ? command.count.value : undefined);
+        if (invocation !== null) {
+          const moved = resolveVimMultiVisualMotion({ snapshot: document.snapshot(), selections, invocation, failurePolicy: 'reject-command' });
+          if (moved.ok) {
+            selections = moved.value.selection;
+            parser = makeParser(mode, selections);
+          }
+          return;
+        }
+      }
       if (mode === 'normal' && command.prefix === 'g' && (command.key === ']' || command.key === '<C-]>')) {
         const target = hostTarget(document.snapshot(), primary);
         if (target !== undefined) emitHostCommand({ kind: 'open-tag', name: target.target, split: false, selection: 'select' });

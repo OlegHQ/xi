@@ -20,6 +20,7 @@ const sequences = [
   ['<C-v>', 'iw', '<Esc>', 'iZ<Esc>'],
   ['<C-v>', 'iw', 'd', 'u', 'iZ<Esc>'],
   ...['v', 'V', '<C-v>'].map(mode => [mode, '<C-d>', '<C-u>', 'j', 'o', '<Esc>']),
+  ...['v', 'V', '<C-v>'].flatMap(mode => [[mode, 'G'], ['j', mode, 'gg'], ['j', mode, '3G']]),
 ];
 for (const [index, keys] of sequences.entries()) {
   const result = await runOracleFixture({ id: `visual-recovery-${index}`, title: 'Visual transition and recovery', purpose: 'Compare production session state after every key barrier', modes: ['normal', 'visual', 'insert'], lines, options: { scroll: 5 }, steps: keys.map((key, index) => ({ label: `${index}:${key}`, keys: key })) }, oracle.binaryPath);

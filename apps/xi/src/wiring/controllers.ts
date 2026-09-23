@@ -1184,8 +1184,10 @@ function createSaveAndHostCommands(
       if (request === undefined) return { ok: false, message: 'no active buffer' };
       // The server for this buffer's language may still be initializing on the first `gd`;
       // wait (bounded) for its readiness, not for whichever server was opened last.
-      const ready = await Promise.race([languageSession.waitForReady(request.uri), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8000))]);
-      if (ready !== undefined && !ready.ok) return { ok: false, message: ready.error.message };
+      if (request.uri === undefined || languageSession.sessionFor(request.uri)?.state !== 'ready') {
+        const ready = await Promise.race([languageSession.waitForReady(request.uri), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8000))]);
+        if (ready !== undefined && !ready.ok) return { ok: false, message: ready.error.message };
+      }
       const result = await navigation.definition(request);
       if (!result.ok) return { ok: false, message: result.error.message };
       // Servers may list the local import alias first; prefer the declaration in another file.
@@ -1200,8 +1202,10 @@ function createSaveAndHostCommands(
       if (navigation === undefined || languageSession === undefined) return { ok: false, message: 'no language server for this file' };
       const request = buildNavigationRequest(workbench, ctx.deps.coreServices.fileUri);
       if (request === undefined) return { ok: false, message: 'no active buffer' };
-      const ready = await Promise.race([languageSession.waitForReady(request.uri), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8000))]);
-      if (ready !== undefined && !ready.ok) return { ok: false, message: ready.error.message };
+      if (request.uri === undefined || languageSession.sessionFor(request.uri)?.state !== 'ready') {
+        const ready = await Promise.race([languageSession.waitForReady(request.uri), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8000))]);
+        if (ready !== undefined && !ready.ok) return { ok: false, message: ready.error.message };
+      }
       const includeDeclaration = ctx.startupConfig?.editor.lsp.gotoReferenceIncludeDeclaration ?? true;
       const result = await navigation.references(request, includeDeclaration);
       marker('XI_REFERENCES_REQUEST', { includeDeclaration, count: result.ok ? result.value.length : 0 });
