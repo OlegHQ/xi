@@ -25,9 +25,12 @@ jobs:
       - name: Build OpenTUI native libraries for all targets
         run: bun run prepare:zig && zig build -j2 -Dall -Doptimize=ReleaseFast
         working-directory: vendor/opentui/packages/native
+      - name: Install cross-platform strip tool
+        run: brew list llvm >/dev/null 2>&1 || brew install llvm
       - name: Stage native libraries and checksum inventory
         run: |
           set -euo pipefail
+          LLVM_OBJCOPY="$(brew --prefix llvm)/bin/llvm-objcopy"
           mkdir -p dist/native
           : > dist/native-assets.sha256
           stage() {
@@ -39,7 +42,11 @@ jobs:
             test -s "$source"
             mkdir -p "dist/native/$target"
             cp "$source" "dist/native/$target/$library"
-            hash="$(shasum -a 256 "$source" | cut -d ' ' -f 1)"
+            case "$target" in
+              linux-*) "$LLVM_OBJCOPY" --strip-unneeded "dist/native/$target/$library" ;;
+              darwin-*) xcrun strip -S -x "dist/native/$target/$library" ;;
+            esac
+            hash="$(shasum -a 256 "dist/native/$target/$library" | cut -d ' ' -f 1)"
             printf '%s  node_modules/@opentui/%s/%s\n' "$hash" "$package" "$library" >> dist/native-assets.sha256
           }
           stage linux-x64 x86_64-linux core-linux-x64 libopentui.so
@@ -118,7 +125,14 @@ jobs:
         run: |
           set -euo pipefail
           cp "dist/native/$TARGET/$LIBRARY" "node_modules/@opentui/$PACKAGE/$LIBRARY"
-          cp dist/native-assets.sha256 docs/installation/native-assets.sha256
+          if [[ "$TARGET" == linux-arm64 ]]; then
+            cp dist/native/linux-arm64-musl/libopentui.so node_modules/@opentui/core-linux-arm64-musl/libopentui.so
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            cp dist/native-assets.sha256 docs/installation/native-assets.sha256
+          else
+            cmp dist/native-assets.sha256 docs/installation/native-assets.sha256
+          fi
       - name: Install fork-built native library (Windows)
         if: runner.os == 'Windows'
         env:
@@ -128,7 +142,11 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item "dist/native/$env:TARGET/$env:LIBRARY" "node_modules/@opentui/$env:PACKAGE/$env:LIBRARY"
-          Copy-Item dist/native-assets.sha256 docs/installation/native-assets.sha256
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            Copy-Item dist/native-assets.sha256 docs/installation/native-assets.sha256
+          } elseif ((Get-FileHash dist/native-assets.sha256).Hash -ne (Get-FileHash docs/installation/native-assets.sha256).Hash) {
+            throw 'Fork-native checksums differ from the release pin'
+          }
       - name: Build release package
         run: bun run tools/package-release.ts --output dist/stage/xi --release-directory dist/release
       - name: Smoke test package

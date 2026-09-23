@@ -1,2 +1,8 @@
-4cedc1bc049c2e498923f2647280c1f5c0a370feac9de87675a689f6dfa57c23  node_modules/@opentui/core-linux-arm64/libopentui.so
-7ed9c2f74948e55da08aefa2f0a6aa05503000a164e9d165431854d06a49737d  node_modules/@opentui/core-linux-arm64-musl/libopentui.so
+3bdbf2a562e388c75c2dddcb08d586daabb75e35bcb7fb4a8d4105f1dbb2d45e  node_modules/@opentui/core-linux-x64/libopentui.so
+8b71a7c3550d3876823667b248116f1d5724841113f0bc8a399b08017af5cee9  node_modules/@opentui/core-linux-arm64/libopentui.so
+0349f082d04b3c117439de81ace6c79711b5d117e18a729fadf93ca1e9f9dee3  node_modules/@opentui/core-linux-x64-musl/libopentui.so
+ff12c08e98a69a0bd8fc42ee822da53f58657d819664516759552431f82aa35d  node_modules/@opentui/core-linux-arm64-musl/libopentui.so
+c09ecc90c58c783dcc2eadbd8b82f4c46fb75b87be72a6e95d2b07223e67be6b  node_modules/@opentui/core-darwin-x64/libopentui.dylib
+6271495f70ff8bd0d3e471a7e613c012052dc4b1a86a40d32be42f16d625e748  node_modules/@opentui/core-darwin-arm64/libopentui.dylib
+8e922ebd65660b202554475217ca5ecad3ba0017f01b332fd851f5a7ef0f265b  node_modules/@opentui/core-win32-x64/opentui.dll
+e319fe5dc02405417b47a84ee500157cc9ac677ba57b0bf8897906e06bb7529d  node_modules/@opentui/core-win32-arm64/opentui.dll

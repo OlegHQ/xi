@@ -102,7 +102,7 @@ def main() -> None:
             # The line:2 cursor paints over the first glyph, so the raw PTY
             # transcript may contain `econd` instead of the full word.
             if source.name.encode("utf-8") not in captured or not (b"second" in captured or b"econd" in captured):
-                raise SystemExit(f"T064 compiled PTY {label} run did not render file:line content")
+                raise SystemExit(f"T064 compiled PTY {label} run did not render file:line content: {captured[-1024:]!r}")
             if b"\x1b[?1049l" not in captured or b"\x1b[?25h" not in captured:
                 raise SystemExit(f"T064 compiled PTY {label} run did not restore alternate screen/cursor")
         print(f"T064 compiled PTY passed isolated no-Neovim launch, q/:q shutdown, resize and terminal restoration; q_bytes={len(quit_capture)} ex_quit_bytes={len(ex_quit_capture)} resize_bytes={len(resized_capture)}")
@@ -125,6 +125,12 @@ def launch(binary: Path, source: Path, environment: dict[str, str], key: bytes, 
         captured = read_until(master, b"XI_WORKBENCH_READY", time.monotonic() + 15)
         if b"XI_WORKBENCH_READY" not in captured:
             raise SystemExit(f"T064 compiled PTY did not become ready: bytes={len(captured)}")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (
+            source.name.encode("utf-8") not in captured
+            or not (b"second" in captured or b"econd" in captured)
+        ):
+            captured.extend(read_until(master, b"second", min(deadline, time.monotonic() + 0.1)))
         for width, height in resizes:
             resize(master, width, height)
             time.sleep(0.15)
