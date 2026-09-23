@@ -313,6 +313,10 @@ function checkCustomWidthAndEmptyLinePolicies(): void {
     assert.equal(hit.ok, true);
     if (hit.ok) assert.equal(hit.value.target.offset, 2);
   }
+  const middleBlank = project(new ViewportLayout(), editable('first\n\nthird'), 20, 3, selectionAt(editable('first\n\nthird')), {
+    gutterWidthCells: 7, gutterLineNumberWidth: 3,
+  });
+  assert.equal(middleBlank.rows[1]?.text.startsWith('    2  '), true, 'T014-EMPTY-MIDDLE-01 blank logical lines retain their line number');
   console.log('T014-WIDTH-POLICY-01 and T014-EMPTY-EOF-01 passed: terminal width policy is injectable and trailing empty lines remain addressable.');
 }
 

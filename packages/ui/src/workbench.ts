@@ -1201,7 +1201,7 @@ export class WorkbenchRenderable extends Renderable {
       let lastContent = -1;
       for (let column = 0; column < screen.cells.length; column += 1) {
         const role = screen.cells[column]?.role;
-        if (role !== 'padding' && role !== 'gutter' && role !== 'filler') lastContent = column;
+        if (role !== 'padding' && role !== 'filler') lastContent = column;
       }
       const start = Math.max(0, lastContent + 1);
       if (start < frame.widthCells) buffer.fillRect(x + start, y + row, frame.widthCells - start, 1, this.#background);

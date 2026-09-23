@@ -104,6 +104,10 @@ async function renderFixture(
   const chars = setup.captureCharFrame();
   const stats = viewport.lastPaintStats;
   const frame = viewport.lastFrame?.frame;
+  if (fixture === 'E16-empty-line') {
+    assert.match(frame?.rows[1]?.text ?? '', /2/u, 'the projected blank line has its gutter label');
+    assert.match(chars.split('\n')[2] ?? '', /2/u, 'the production paint retains the blank line number');
+  }
   const spans = setup.captureSpans().lines.flatMap((line) => line.spans.map((span) => span.attributes));
   const result: RenderedFixture = {
     fixture,
