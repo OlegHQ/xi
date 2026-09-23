@@ -71,7 +71,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e03-") as temporary:
     workspace = Path(temporary)
     (workspace / "src").mkdir()
     (workspace / "src" / "nested.txt").write_text("nested\n", encoding="utf-8")
-    (workspace / "other.txt").write_text("other\n", encoding="utf-8")
+    (workspace / "other" / "deep").mkdir(parents=True)
+    (workspace / "other" / "deep" / "deep.txt").write_text("deep\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
     master, slave = pty.openpty()
     environment = os.environ.copy()
     environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
@@ -97,6 +99,19 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e03-") as temporary:
         full_row_count = revealed["visibleRowCount"]
         if not isinstance(full_row_count, int) or full_row_count < 2:
             raise SystemExit(f"reveal did not expand the parent directory into view: {revealed!r}")
+
+        # Space-e expands every discovered directory, and Space-g/Space-f switch focus
+        # between Git and Files while the sidebar owns input.
+        after_open_count = len(refreshes(captured))
+        os.write(master, b" e")
+        expanded = wait_for_refresh(master, captured, lambda item: "deep.txt" in item.get("visibleLabels", []), 5, after_open_count)
+        if expanded is None:
+            raise SystemExit("Files Space-e did not expand the nested directory")
+        full_row_count = expanded["visibleRowCount"]
+        os.write(master, b" g")
+        wait_for(master, captured, b"XI_GIT_PANEL_OPEN", 5)
+        os.write(master, b" f")
+        wait_for(master, captured, b"XI_EXPLORER_OPEN", 5)
 
         # 2. Filtering must narrow the visible rows; clearing it must restore the full count.
         after_reveal_count = len(refreshes(captured))

@@ -70,16 +70,18 @@ class FakeExplorer implements RouterExplorerPort {
   opened = false;
   isOpen = false;
   handledKeys: RouterKeyEvent[] = [];
+  expandAllCalls = 0;
   open(): void { this.opened = true; this.isOpen = true; }
   close(): void { this.isOpen = false; }
   handleKeypress(event: RouterKeyEvent): boolean { this.handledKeys.push(event); return true; }
+  async expandAll(): Promise<void> { this.expandAllCalls += 1; }
 }
 
 class FakeSearch implements RouterSearchPort {
   isOpen = false;
   open(): void { this.isOpen = true; }
   close(): void { this.isOpen = false; }
-  handleKeypress(): boolean { return true; }
+  handleKeypress(_event: RouterKeyEvent): boolean { return true; }
   startReplace(): void {}
 }
 
@@ -145,6 +147,7 @@ function makeRouter(
   autoInfo = true,
   idleTimeout = 250,
   clock: ClockPort = testClock,
+  openGitPanel?: () => void,
 ): WorkbenchInputRouter {
   return new WorkbenchInputRouter({
     host: host as never,
@@ -167,10 +170,12 @@ function makeRouter(
     toggleMouseMode: () => true,
     launchViewId: 'view-1' as never,
     bindings,
+    ...(openGitPanel === undefined ? {} : { openGitPanel }),
     scrollLines: 1,
     getViewportHeight: () => 10,
     clock,
     overlayExplorer: { isOpen: () => explorer.isOpen, onKeypress: (event) => explorer.handleKeypress(event) },
+    overlaySearch: { isOpen: () => search.isOpen, onKeypress: (event) => search.handleKeypress(event) },
     ...(git === undefined ? {} : { overlayGit: git.panel, overlayGitDiff: git.diff }),
   });
 }
@@ -374,6 +379,35 @@ function makeRouter(
   assert.equal(explorer.handledKeys.at(-1)?.name, 'l', 'T116-ROUTER-05b configurable preview dispatches to the focused panel');
   assert.equal(explorer.isOpen, true, 'T116-ROUTER-05c preview keeps panel focus');
 
+  router.dispose();
+}
+
+// DEF-1118: Files Space-e runs bounded expand-all through the active panel binding.
+{
+  const explorer = new FakeExplorer();
+  const router = makeRouter(explorer, new FakeSearch(), new FakeHost(), new FakeSession());
+  explorer.open();
+  assert.equal(await router.dispatchKey(key('space', ' ')), 'consumed');
+  assert.equal(await router.dispatchKey(key('e', 'e')), 'consumed');
+  assert.equal(explorer.expandAllCalls, 1, 'DEF-1118 Files Space-e expands the tree');
+  router.dispose();
+}
+
+// DEF-1118: Search Space-f/g switch to Files/Git while editor Space-f remains its picker binding.
+{
+  const explorer = new FakeExplorer();
+  const search = new FakeSearch();
+  search.open();
+  let gitOpened = false;
+  const router = makeRouter(explorer, search, new FakeHost(), new FakeSession(), defaultBindings, undefined, true, 250, testClock, () => { gitOpened = true; });
+  assert.equal(await router.dispatchKey(key('space', ' ')), 'consumed');
+  assert.equal(await router.dispatchKey(key('f', 'f')), 'consumed');
+  assert.equal(explorer.opened, true, 'DEF-1118 Search Space-f opens Files');
+  explorer.close();
+  search.open();
+  assert.equal(await router.dispatchKey(key('space', ' ')), 'consumed');
+  assert.equal(await router.dispatchKey(key('g', 'g')), 'consumed');
+  assert.equal(gitOpened, true, 'DEF-1118 Search Space-g opens Git');
   router.dispose();
 }
 

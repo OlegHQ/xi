@@ -16,6 +16,8 @@ export interface ExplorerTreeNode {
   readonly path: string;
   readonly relativePath: string;
   readonly expanded: boolean;
+  readonly children?: readonly string[];
+  readonly parentId?: string | undefined;
 }
 
 export interface ExplorerTreeModel {
@@ -23,6 +25,8 @@ export interface ExplorerTreeModel {
   readonly roots: readonly string[];
   readonly selectedId: string | undefined;
   readonly filter: string;
+  readonly includeHidden?: boolean;
+  readonly includeIgnored?: boolean;
   readonly state: string;
   readonly visibleRows: readonly unknown[];
 }
@@ -35,6 +39,8 @@ export interface ExplorerTreePort {
   focus(): void;
   blur(): void;
   setFilter(filter: string): void;
+  setIncludeHidden?(include: boolean): void;
+  setIncludeIgnored?(include: boolean): void;
   expand(nodeId: string, force: boolean, cancellation: CancellationToken): Promise<unknown>;
   watchRoot(rootId: string, cancellation: CancellationToken): Promise<unknown>;
   reveal(rootId: string, relativePath: string, cancellation: CancellationToken): Promise<unknown>;
@@ -69,6 +75,8 @@ export interface ExplorerFileOperationsPort {
   removePath(path: string, recursive: boolean, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
   makeDirectory(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
   writeFileAtomic(path: string, contents: Uint8Array, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
+  createFileExclusive(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
+  isWithinRealWorkspace(root: string, path: string, cancellation: CancellationToken): Promise<Result<boolean, PlatformFailure>>;
 }
 
 /** Mirrors `packages/services/files/directory-draft`'s `DirectoryOperation`/`DirectoryOperationPlan`
@@ -110,6 +118,7 @@ export interface ExplorerControllerOptions {
   readonly ensureServices: () => Promise<void>;
   /** Runs once the tree is bound and the panel is opening (e.g. expand the sidebar's Files section). */
   readonly onOpen?: () => void;
+  readonly isPanelSelected?: () => boolean;
   /** `zc` on the tree: collapse the sidebar's Files section (focus returns to the editor). */
   readonly onCollapse?: () => void;
   /** Tab on the tree: move keyboard focus to the Outline section. */
@@ -119,6 +128,7 @@ export interface ExplorerControllerOptions {
 interface ExplorerDraft {
   readonly nodeId: string;
   readonly text: string;
+  readonly generation: number;
 }
 
 /**
@@ -132,16 +142,18 @@ interface ExplorerDraft {
 export class ExplorerController {
   #open = false;
   #visible = false;
+  #loadError: string | undefined;
   #filtering = false;
   #pendingG = false;
   #pendingGTimer: Disposable | undefined;
   #openGeneration = 0;
   #renameDraft: ExplorerDraft | undefined;
   #copyDraft: ExplorerDraft | undefined;
-  #createDraft: { readonly parentPath: string; readonly text: string } | undefined;
+  #createDraft: { readonly parentPath: string; readonly text: string; readonly generation: number; readonly directory: boolean } | undefined;
+  #moveDraft: ExplorerDraft | undefined;
   #pendingCtrlW = false;
   #pendingZ = false;
-  #deleteConfirm: { readonly nodeId: string } | undefined;
+  #deleteConfirm: { readonly nodeId: string; readonly generation: number } | undefined;
   readonly #undoJournal: { readonly kind: 'rename' | 'copy' | 'delete'; readonly from: string; readonly to: string; readonly journal: unknown }[] = [];
   #tree: ExplorerTreePort | undefined;
   #navigation: ExplorerNavigationPort | undefined;
@@ -154,13 +166,17 @@ export class ExplorerController {
 
   get isOpen(): boolean { return this.#open; }
   get isVisible(): boolean { return this.#visible; }
+  toggleIncludeHidden(): void { if (this.#tree?.setIncludeHidden !== undefined) this.#tree.setIncludeHidden(!(this.#tree.model.includeHidden ?? false)); }
+  toggleIncludeIgnored(): void { if (this.#tree?.setIncludeIgnored !== undefined) this.#tree.setIncludeIgnored(!(this.#tree.model.includeIgnored ?? false)); }
+  get loadError(): string | undefined { return this.#loadError; }
   /** True while a filter/rename/copy/delete prompt owns typed characters, so `:` must stay here. */
-  get capturesTextInput(): boolean { return this.#filtering || this.#renameDraft !== undefined || this.#copyDraft !== undefined || this.#createDraft !== undefined || this.#deleteConfirm !== undefined; }
+  get capturesTextInput(): boolean { return this.#filtering || this.#renameDraft !== undefined || this.#copyDraft !== undefined || this.#moveDraft !== undefined || this.#createDraft !== undefined || this.#deleteConfirm !== undefined; }
   /** The in-progress rename/copy/create/delete prompt, painted on the panel's footer row. */
   get promptText(): string | undefined {
     if (this.#renameDraft !== undefined) return `Rename: ${this.#renameDraft.text}`;
-    if (this.#copyDraft !== undefined) return `Copy to: ${this.#copyDraft.text}`;
-    if (this.#createDraft !== undefined) return `New (dir: name/): ${this.#createDraft.text}`;
+    if (this.#copyDraft !== undefined) return `Copy as sibling name: ${this.#copyDraft.text}`;
+    if (this.#moveDraft !== undefined) return `Move to (workspace path): ${this.#moveDraft.text}`;
+    if (this.#createDraft !== undefined) return `New ${this.#createDraft.directory ? 'folder' : 'file'}: ${this.#createDraft.text}`;
     if (this.#deleteConfirm !== undefined) return `Move ${this.#tree?.readNode(this.#deleteConfirm.nodeId)?.name ?? 'entry'} to trash? y/n`;
     return undefined;
   }
@@ -177,22 +193,31 @@ export class ExplorerController {
       if (this.#open && model.generation > this.#openGeneration) {
         const selected = model.selectedId === undefined ? undefined : tree.readNode(model.selectedId);
         const explorerModel = model as ExplorerTreeModel & { readonly includeHidden?: boolean; readonly followSymlinks?: boolean; readonly flattenDirs?: boolean };
-        this.#options.marker('XI_EXPLORER_REFRESH', { generation: model.generation, selectedId: model.selectedId, selectedPath: selected?.relativePath, state: model.state, filter: model.filter, visibleRowCount: model.visibleRows.length, visibleLabels: model.visibleRows.map((rawRow) => { const row = rawRow as { readonly nodeId: string; readonly label?: string }; const node = tree.readNode(row.nodeId); return row.label ?? node?.name; }).filter((label): label is string => label !== undefined), ...(explorerModel.includeHidden === undefined ? {} : { includeHidden: explorerModel.includeHidden }), ...(explorerModel.followSymlinks === undefined ? {} : { followSymlinks: explorerModel.followSymlinks }), ...(explorerModel.flattenDirs === undefined ? {} : { flattenDirs: explorerModel.flattenDirs }) });
+        this.#options.marker('XI_EXPLORER_REFRESH', { generation: model.generation, selectedId: model.selectedId, selectedPath: selected?.relativePath, state: model.state, filter: model.filter, visibleRowCount: model.visibleRows.length, visibleLabels: model.visibleRows.map((rawRow) => { const row = rawRow as { readonly nodeId: string; readonly label?: string }; const node = tree.readNode(row.nodeId); return row.label ?? node?.name; }).filter((label): label is string => label !== undefined), ...(explorerModel.includeHidden === undefined ? {} : { includeHidden: explorerModel.includeHidden }), ...(explorerModel.includeIgnored === undefined ? {} : { includeIgnored: explorerModel.includeIgnored }), ...(explorerModel.followSymlinks === undefined ? {} : { followSymlinks: explorerModel.followSymlinks }), ...(explorerModel.flattenDirs === undefined ? {} : { flattenDirs: explorerModel.flattenDirs }) });
       }
     });
   }
 
   /** Loads and shows the tree in the sidebar without taking keyboard focus (startup default). */
   show(): void {
+    this.#visible = true;
+    this.#loadError = undefined;
+    this.#options.onOpen?.();
+    this.#options.host.notifySurfaceChange();
     if (this.#tree === undefined) {
-      void this.#options.ensureServices().then(() => { if (!this.#open) this.show(); }).catch((error: unknown) => {
-        this.#options.onError(`xi: explorer failed to load: ${error instanceof Error ? error.message : String(error)}\n`);
+      void this.#options.ensureServices().then(() => { if (this.#visible && !this.#open && this.#options.isPanelSelected?.() !== false) this.#showTree(); }).catch((error: unknown) => {
+        this.#loadError = `xi: explorer failed to load: ${error instanceof Error ? error.message : String(error)}`;
+        this.#options.onError(`${this.#loadError}\n`);
+        this.#options.host.notifySurfaceChange();
       });
       return;
     }
-    this.#visible = true;
-    this.#options.onOpen?.();
+    this.#showTree();
+  }
+
+  #showTree(): void {
     const tree = this.#tree;
+    if (tree === undefined) return;
     const rootId = tree.model.roots[0];
     const root = rootId === undefined ? undefined : tree.readNode(rootId);
     if (rootId !== undefined && root !== undefined && !root.expanded) {
@@ -269,8 +294,9 @@ export class ExplorerController {
     if (this.#deleteConfirm !== undefined) {
       const confirmed = key === 'y';
       const nodeId = this.#deleteConfirm.nodeId;
+      const generation = this.#deleteConfirm.generation;
       this.#deleteConfirm = undefined;
-      if (confirmed) await this.#applyDelete(nodeId);
+      if (confirmed) await this.#applyDelete(nodeId, generation);
       return true;
     }
     if (this.#createDraft !== undefined) {
@@ -278,37 +304,41 @@ export class ExplorerController {
       if (key === 'escape' || event.raw === '') { this.#createDraft = undefined; return true; }
       if (key === 'enter' || key === 'return' || event.raw === '\r' || event.raw === '\n') {
         this.#createDraft = undefined;
-        await this.#applyCreate(draft.parentPath, draft.text);
+        await this.#applyCreate(draft.parentPath, draft.text, draft.directory, draft.generation);
         return true;
       }
       if (key === 'backspace' || key === 'backspace2' || event.raw === '') { this.#createDraft = { ...draft, text: draft.text.slice(0, -1) }; return true; }
       if (!event.ctrl && !event.meta && !event.option && event.raw.length === 1 && event.raw >= ' ' && event.raw !== '') this.#createDraft = { ...draft, text: `${draft.text}${event.raw}` };
       return true;
     }
-    if (this.#renameDraft !== undefined || this.#copyDraft !== undefined) {
+    if (this.#renameDraft !== undefined || this.#copyDraft !== undefined || this.#moveDraft !== undefined) {
       const isCopy = this.#copyDraft !== undefined;
-      const draft = isCopy ? this.#copyDraft : this.#renameDraft;
+      const isMove = this.#moveDraft !== undefined;
+      const draft = isCopy ? this.#copyDraft : isMove ? this.#moveDraft : this.#renameDraft;
       if (draft === undefined) return true;
       if (key === 'escape' || event.raw === '') {
         this.#renameDraft = undefined;
         this.#copyDraft = undefined;
+        this.#moveDraft = undefined;
         return true;
       }
       if (key === 'enter' || key === 'return' || event.raw === '\r' || event.raw === '\n') {
         this.#renameDraft = undefined;
         this.#copyDraft = undefined;
-        if (isCopy) await this.#applyCopy(draft.nodeId, draft.text);
-        else await this.#applyRename(draft.nodeId, draft.text);
+        this.#moveDraft = undefined;
+        if (isCopy) await this.#applyCopy(draft.nodeId, draft.text, draft.generation);
+        else if (isMove) await this.#applyMove(draft.nodeId, draft.text, draft.generation);
+        else await this.#applyRename(draft.nodeId, draft.text, draft.generation);
         return true;
       }
       if (key === 'backspace' || key === 'backspace2' || event.raw === '') {
-        const next = { nodeId: draft.nodeId, text: draft.text.slice(0, -1) };
-        if (isCopy) this.#copyDraft = next; else this.#renameDraft = next;
+        const next = { ...draft, text: draft.text.slice(0, -1) };
+        if (isCopy) this.#copyDraft = next; else if (isMove) this.#moveDraft = next; else this.#renameDraft = next;
         return true;
       }
       if (!event.ctrl && !event.meta && !event.option && event.raw.length === 1 && event.raw >= ' ' && event.raw !== '') {
-        const next = { nodeId: draft.nodeId, text: `${draft.text}${event.raw}` };
-        if (isCopy) this.#copyDraft = next; else this.#renameDraft = next;
+        const next = { ...draft, text: `${draft.text}${event.raw}` };
+        if (isCopy) this.#copyDraft = next; else if (isMove) this.#moveDraft = next; else this.#renameDraft = next;
       }
       return true;
     }
@@ -379,22 +409,39 @@ export class ExplorerController {
       const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
       const rootId = tree.model.roots[0];
       const parentPath = node === undefined ? (rootId === undefined ? undefined : tree.readNode(rootId)?.path) : node.kind === 'file' ? node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '') : node.path;
-      if (parentPath !== undefined) this.#createDraft = { parentPath, text: '' };
+      if (parentPath !== undefined) this.#createDraft = { parentPath, text: '', generation: tree.model.generation, directory: false };
+      return true;
+    }
+    if (event.shift && key === 'a') {
+      const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
+      const rootId = tree.model.roots[0];
+      const parentPath = node === undefined ? (rootId === undefined ? undefined : tree.readNode(rootId)?.path) : node.kind === 'file' ? node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '') : node.path;
+      if (parentPath !== undefined) this.#createDraft = { parentPath, text: '', generation: tree.model.generation, directory: true };
       return true;
     }
     if (key === 'r' && !event.ctrl && !event.meta) {
       const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
-      if (node !== undefined && node.kind !== 'root') this.#renameDraft = { nodeId: node.id, text: node.name };
+      if (node !== undefined && node.kind !== 'root') this.#renameDraft = { nodeId: node.id, text: node.name, generation: tree.model.generation };
       return true;
     }
     if (key === 'y' && !event.ctrl && !event.meta) {
       const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
-      if (node !== undefined && node.kind !== 'root') this.#copyDraft = { nodeId: node.id, text: node.name };
+      if (node !== undefined && node.kind !== 'root') this.#copyDraft = { nodeId: node.id, text: node.name, generation: tree.model.generation };
+      return true;
+    }
+    if (key === 'm' && !event.ctrl && !event.meta) {
+      const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
+      if (node !== undefined && node.kind !== 'root' && node.kind !== 'symlink') this.#moveDraft = { nodeId: node.id, text: '', generation: tree.model.generation };
+      return true;
+    }
+    if (event.shift && key === 'd') {
+      const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
+      if (node !== undefined && node.kind !== 'root' && node.kind !== 'symlink') this.#copyDraft = { nodeId: node.id, text: `${node.name} copy`, generation: tree.model.generation };
       return true;
     }
     if (key === 'd' && !event.ctrl && !event.meta) {
       const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
-      if (node !== undefined && node.kind !== 'root') this.#deleteConfirm = { nodeId: node.id };
+      if (node !== undefined && node.kind !== 'root') this.#deleteConfirm = { nodeId: node.id, generation: tree.model.generation };
       return true;
     }
     if (key === 'u' && !event.ctrl && !event.meta) {
@@ -416,6 +463,28 @@ export class ExplorerController {
       : undefined;
     if (action !== undefined) await navigation.handle(action);
     return true;
+  }
+
+  /** Expands each discovered directory in sequence; filesystem reads stay cancellable and
+   * never fan out into unbounded concurrent directory scans. */
+  async expandAll(): Promise<void> {
+    if (this.#tree === undefined) {
+      await this.#options.ensureServices();
+      if (this.#tree === undefined) return;
+    }
+    const tree = this.#tree;
+    const stack: { readonly ids: readonly string[]; index: number }[] = [{ ids: tree.model.roots, index: 0 }];
+    while (stack.length > 0 && !this.#cancellation.token.isCancelled) {
+      const frame = stack.at(-1);
+      if (frame === undefined) break;
+      const id = frame.ids[frame.index++];
+      if (id === undefined) { stack.pop(); continue; }
+      const node = tree.readNode(id);
+      if (node === undefined || (node.kind !== 'root' && node.kind !== 'directory')) continue;
+      if (!node.expanded) await tree.expand(id, false, this.#cancellation.token);
+      const expanded = tree.readNode(id);
+      if (expanded !== undefined && expanded.children !== undefined) stack.push({ ids: expanded.children, index: 0 });
+    }
   }
 
   async openNode(node: ExplorerTreeNode): Promise<void> {
@@ -474,25 +543,37 @@ export class ExplorerController {
   /** Right-click equivalent of `handlePointerActivate`: resolves the target row (without
    * selecting it yet -- selection happens only once a menu item is actually chosen) for the
    * caller to build a context menu from. */
-  selectForContextMenu(itemId: string, generation: number): { readonly nodeId: string; readonly isContainer: boolean; readonly expanded: boolean } | undefined {
+  selectForContextMenu(itemId: string, generation: number): { readonly nodeId: string; readonly isContainer: boolean; readonly mutable: boolean; readonly expanded: boolean; readonly generation: number } | undefined {
     const tree = this.#tree;
     if (tree === undefined || tree.model.generation !== generation) return undefined;
     const node = tree.readNode(itemId);
     if (node === undefined || node.kind === 'state') return undefined;
-    return { nodeId: node.id, isContainer: node.kind === 'directory' || node.kind === 'root', expanded: node.expanded };
+    return { nodeId: node.id, isContainer: node.kind === 'directory' || node.kind === 'root', mutable: node.kind !== 'root' && node.kind !== 'symlink', expanded: node.expanded, generation };
   }
 
   /** `action` is the menu item chosen for `selectForContextMenu`'s target; `'toggle'` reuses
    * the navigation controller's own `'open'` action (which already toggles a directory/root),
    * matching the keyboard and pointer paths exactly. */
-  activateContextMenuAction(nodeId: string, action: 'open' | 'toggle'): void {
+  activateContextMenuAction(nodeId: string, action: 'open' | 'toggle' | 'new-file' | 'new-folder' | 'rename' | 'move' | 'copy' | 'duplicate' | 'trash' | 'undo', expectedGeneration?: number): void {
     const tree = this.#tree;
+    if (tree !== undefined && expectedGeneration !== undefined && tree.model.generation !== expectedGeneration) { this.#options.onError('xi: file operation cancelled: Files tree changed; open the menu again\n'); return; }
     if (tree === undefined || !tree.select(nodeId)) return;
+    const node = tree.readNode(nodeId);
     if (action === 'open') {
-      const node = tree.readNode(nodeId);
       if (node !== undefined) void this.openNode(node);
-    } else {
+    } else if (action === 'toggle') {
       void this.#navigation?.handle('open');
+    } else if (action === 'undo') {
+      void this.#restoreLast();
+    } else if (action === 'new-file' || action === 'new-folder') {
+      if (node === undefined || (node.kind !== 'root' && node.kind !== 'directory')) return;
+      this.#createDraft = { parentPath: node.path, text: '', generation: tree.model.generation, directory: action === 'new-folder' };
+    } else if (node !== undefined && node.kind !== 'root' && node.kind !== 'state') {
+      if (action === 'rename') this.#renameDraft = { nodeId, text: node.name, generation: tree.model.generation };
+      else if (action === 'move' && node.kind !== 'symlink') this.#moveDraft = { nodeId, text: '', generation: tree.model.generation };
+      else if (action === 'copy' && node.kind !== 'symlink') this.#copyDraft = { nodeId, text: node.name, generation: tree.model.generation };
+      else if (action === 'duplicate' && node.kind !== 'symlink') this.#copyDraft = { nodeId, text: `${node.name} copy`, generation: tree.model.generation };
+      else if (action === 'trash') this.#deleteConfirm = { nodeId, generation: tree.model.generation };
     }
   }
 
@@ -506,31 +587,67 @@ export class ExplorerController {
     if (this.#pendingGTimer !== undefined) { this.#pendingGTimer.dispose(); this.#pendingGTimer = undefined; }
   }
 
+  #operationNode(node: ExplorerTreeNode | undefined, generation: number): node is ExplorerTreeNode {
+    if (this.#tree === undefined || this.#tree.model.generation !== generation) {
+      this.#options.onError('xi: file operation cancelled: Files tree changed; start again\n');
+      return false;
+    }
+    if (node === undefined || node.kind === 'root' || node.kind === 'state') return false;
+    if (node.kind === 'symlink') { this.#options.onError(`xi: file operation refused: ${node.name} is a symbolic link\n`); return false; }
+    if (this.#options.workspaceRelativePath(node.path) === undefined) { this.#options.onError('xi: file operation refused: path is outside the workspace\n'); return false; }
+    return true;
+  }
+
+  async #confirmRealWorkspacePath(path: string, cancellation: CancellationToken, action: string): Promise<boolean> {
+    const tree = this.#tree;
+    const rootId = tree?.model.roots[0];
+    const root = rootId === undefined ? undefined : tree?.readNode(rootId);
+    if (root === undefined) { this.#options.onError(`xi: ${action} refused: workspace root is unavailable\n`); return false; }
+    const result = await this.#options.filesystem.isWithinRealWorkspace(root.path, path, cancellation);
+    if (result.ok && result.value) return true;
+    this.#options.onError(result.ok
+      ? `xi: ${action} refused: path resolves outside the workspace\n`
+      : `xi: ${action} refused: cannot verify path containment: ${result.error.message}\n`);
+    return false;
+  }
+
+  #isWorkspaceRoot(path: string): boolean {
+    const tree = this.#tree;
+    const rootId = tree?.model.roots[0];
+    return rootId !== undefined && tree?.readNode(rootId)?.path === path;
+  }
+
   /** Explorer file-management (T131): rename/copy/delete each go through an explicit draft
    * (pending text or pending confirmation) before any filesystem mutation, so a cancelled or
    * failed draft never touches disk. Every applied operation is journaled in-memory (session-
    * scoped, not persisted) so 'u' can reverse the most recent one. Trash lives under the
    * workspace root (`trashDirectory`) so a delete's rename onto the same filesystem stays
    * atomic and genuinely restorable, unlike a real permanent removal. */
-  /** `a`: create `<parent>/<name>` (a trailing `/` makes a directory; missing parents are created). */
-  async #applyCreate(parentPath: string, rawName: string): Promise<void> {
+  /** Create one entry in the selected directory; names cannot introduce path traversal. */
+  async #applyCreate(parentPath: string, rawName: string, directory: boolean, generation: number): Promise<void> {
     const name = rawName.trim();
-    if (name.length === 0 || name.includes('..') || name.startsWith('/')) return;
-    const isDirectory = name.endsWith('/');
-    const target = `${parentPath}/${name.replace(/\/+$/u, '')}`;
+    if (this.#tree === undefined || this.#tree.model.generation !== generation) { this.#options.onError('xi: create cancelled: Files tree changed; start again\n'); return; }
+    if (name.length === 0 || name === '.' || name === '..' || name.includes('/') || (this.#options.workspaceRelativePath(parentPath) === undefined && !this.#isWorkspaceRoot(parentPath))) { this.#options.onError('xi: create cancelled: enter one name inside the workspace\n'); return; }
+    const target = `${parentPath}/${name}`;
+    if (this.#options.workspaceRelativePath(target) === undefined) { this.#options.onError('xi: create cancelled: destination is outside the workspace\n'); return; }
     const cancellation = new CancellationSource();
     try {
-      if ((await this.#options.filesystem.stat(target, cancellation.token)).ok) { this.#options.onError(`xi: create failed: ${name} already exists\n`); return; }
-      const directory = isDirectory ? target : target.slice(0, target.lastIndexOf('/'));
-      if (directory.length > parentPath.length) {
-        const made = await this.#options.filesystem.makeDirectory(directory, cancellation.token);
+      if (!await this.#confirmRealWorkspacePath(parentPath, cancellation.token, 'create')) return;
+      const existing = await this.#options.filesystem.stat(target, cancellation.token);
+      if (existing.ok) { this.#options.onError(`xi: create failed: ${name} already exists\n`); return; }
+      if (existing.error.code !== 'ENOENT' && existing.error.code !== 'ENOTDIR') { this.#options.onError(`xi: create failed: ${existing.error.message}\n`); return; }
+      if (this.#tree?.model.generation !== generation) { this.#options.onError('xi: create cancelled: Files tree changed; start again\n'); return; }
+      if (directory) {
+        const made = await this.#options.filesystem.makeDirectory(target, cancellation.token);
         if (!made.ok) { this.#options.onError(`xi: create failed: ${made.error.message}\n`); return; }
+      } else {
+        const written = await this.#options.filesystem.createFileExclusive(target, cancellation.token);
+        if (!written.ok) {
+          this.#options.onError(written.error.code === 'EEXIST' ? `xi: create failed: ${name} already exists\n` : `xi: create failed: ${written.error.message}\n`);
+          return;
+        }
       }
-      if (!isDirectory) {
-        const written = await this.#options.filesystem.writeFileAtomic(target, new Uint8Array(), cancellation.token);
-        if (!written.ok) { this.#options.onError(`xi: create failed: ${written.error.message}\n`); return; }
-      }
-      this.#options.marker('XI_EXPLORER_CREATE_APPLIED', { path: target, directory: isDirectory });
+      this.#options.marker('XI_EXPLORER_CREATE_APPLIED', { path: target, directory });
       const relative = this.#options.workspaceRelativePath(target);
       if (relative !== undefined && this.#tree !== undefined) void this.#tree.reveal('workspace', relative, this.#cancellation.token);
     } finally {
@@ -538,19 +655,24 @@ export class ExplorerController {
     }
   }
 
-  async #applyRename(nodeId: string, newName: string): Promise<void> {
+  async #applyRename(nodeId: string, newName: string, generation: number): Promise<void> {
     const tree = this.#tree;
     if (tree === undefined) return;
     const node = tree.readNode(nodeId);
     const trimmed = newName.trim();
-    if (node === undefined || trimmed.length === 0 || trimmed === node.name || trimmed.includes('/')) return;
+    if (!this.#operationNode(node, generation) || trimmed.length === 0 || trimmed === node.name || trimmed === '.' || trimmed === '..' || trimmed.includes('/')) return;
     const parentPath = node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '');
     const to = `${parentPath}/${trimmed}`;
+    if (this.#options.workspaceRelativePath(to) === undefined) { this.#options.onError('xi: rename cancelled: destination is outside the workspace\n'); return; }
+    if (this.#options.session.buffers().some((buffer) => buffer.path === to)) { this.#options.onError(`xi: rename failed: ${trimmed} is open in a buffer\n`); return; }
     const cancellation = new CancellationSource();
     try {
+      if (!await this.#confirmRealWorkspacePath(node.path, cancellation.token, 'rename') || !await this.#confirmRealWorkspacePath(parentPath, cancellation.token, 'rename')) return;
       const existingTarget = await this.#options.filesystem.stat(to, cancellation.token);
       if (existingTarget.ok) { this.#options.onError(`xi: rename failed: ${trimmed} already exists\n`); return; }
-      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: parentPath, baseGeneration: 0, operations: [
+      if (existingTarget.error.code !== 'ENOENT' && existingTarget.error.code !== 'ENOTDIR') { this.#options.onError(`xi: rename failed: ${existingTarget.error.message}\n`); return; }
+      if (tree.model.generation !== generation) { this.#options.onError('xi: rename cancelled: Files tree changed; start again\n'); return; }
+      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: parentPath, baseGeneration: generation, operations: [
         { kind: 'rename', rowId: node.id, sourceId: node.id, from: node.name, to: trimmed, sourcePath: node.path, destinationPath: to },
       ] };
       const result = await this.#options.fileOperations.apply(plan, cancellation.token);
@@ -558,50 +680,98 @@ export class ExplorerController {
       this.#undoJournal.push({ kind: 'rename', from: node.path, to, journal: result.value.journal });
       this.#renameOpenBuffers(node.path, to);
       this.#options.marker('XI_EXPLORER_RENAME_APPLIED', { from: node.path, to });
+      const relative = this.#options.workspaceRelativePath(to);
+      if (relative !== undefined) void tree.reveal('workspace', relative, this.#cancellation.token);
     } finally {
       cancellation.dispose();
     }
   }
 
-  async #applyCopy(nodeId: string, newName: string): Promise<void> {
+  async #applyCopy(nodeId: string, newName: string, generation: number): Promise<void> {
     const tree = this.#tree;
     if (tree === undefined) return;
     const node = tree.readNode(nodeId);
     const trimmed = newName.trim();
-    if (node === undefined || trimmed.length === 0 || trimmed.includes('/')) return;
+    if (!this.#operationNode(node, generation) || node.kind === 'symlink' || trimmed.length === 0 || trimmed === '.' || trimmed === '..' || trimmed.includes('/')) return;
     const parentPath = node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '');
     const to = `${parentPath}/${trimmed}`;
+    if (this.#options.workspaceRelativePath(to) === undefined) { this.#options.onError('xi: copy cancelled: destination is outside the workspace\n'); return; }
     const cancellation = new CancellationSource();
     try {
-      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: parentPath, baseGeneration: 0, operations: [
+      if (!await this.#confirmRealWorkspacePath(node.path, cancellation.token, 'copy') || !await this.#confirmRealWorkspacePath(parentPath, cancellation.token, 'copy')) return;
+      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: parentPath, baseGeneration: generation, operations: [
         { kind: 'copy', rowId: node.id, sourceId: node.id, sourcePath: node.path, destinationPath: to },
       ] };
       const result = await this.#options.fileOperations.apply(plan, cancellation.token);
       if (!result.ok) { this.#options.onError(`xi: copy failed: ${result.error.message ?? result.error.kind}\n`); return; }
       this.#undoJournal.push({ kind: 'copy', from: node.path, to, journal: result.value.journal });
       this.#options.marker('XI_EXPLORER_COPY_APPLIED', { from: node.path, to });
+      const relative = this.#options.workspaceRelativePath(to);
+      if (relative !== undefined) void tree.reveal('workspace', relative, this.#cancellation.token);
     } finally {
       cancellation.dispose();
     }
   }
 
-  async #applyDelete(nodeId: string): Promise<void> {
+  /** Move into a workspace-relative destination path. Journal preflight rejects occupied
+   * destinations; the tree and open buffer labels update only after the journal applies. */
+  async #applyMove(nodeId: string, destination: string, generation: number): Promise<void> {
+    const tree = this.#tree;
+    const node = tree?.readNode(nodeId);
+    if (tree === undefined || !this.#operationNode(node, generation)) return;
+    const relative = destination.trim().replace(/^\/+|\/+$/gu, '');
+    if (relative.length === 0 || relative.split('/').some((part) => part === '.' || part === '..')) {
+      this.#options.onError('xi: move cancelled: enter a workspace-relative destination path\n');
+      return;
+    }
+    const root = tree.model.roots[0] === undefined ? undefined : tree.readNode(tree.model.roots[0]);
+    if (root === undefined) return;
+    const to = `${root.path}/${relative}`;
+    const parentPath = to.slice(0, to.lastIndexOf('/'));
+    if (this.#options.workspaceRelativePath(to) === undefined || (this.#options.workspaceRelativePath(parentPath) === undefined && !this.#isWorkspaceRoot(parentPath))) {
+      this.#options.onError('xi: move cancelled: destination is outside the workspace\n');
+      return;
+    }
+    if (this.#options.session.buffers().some((buffer) => buffer.path === to)) {
+      this.#options.onError('xi: move failed: destination is open in a buffer\n');
+      return;
+    }
+    const cancellation = new CancellationSource();
+    try {
+      if (!await this.#confirmRealWorkspacePath(node.path, cancellation.token, 'move') || !await this.#confirmRealWorkspacePath(parentPath, cancellation.token, 'move')) return;
+      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: root.path, baseGeneration: generation, operations: [
+        { kind: 'rename', rowId: node.id, sourceId: node.id, from: node.name, to: relative.slice(relative.lastIndexOf('/') + 1), sourcePath: node.path, destinationPath: to },
+      ] };
+      const result = await this.#options.fileOperations.apply(plan, cancellation.token);
+      if (!result.ok) { this.#options.onError(`xi: move failed: ${result.error.message ?? result.error.kind}\n`); return; }
+      this.#undoJournal.push({ kind: 'rename', from: node.path, to, journal: result.value.journal });
+      this.#renameOpenBuffers(node.path, to);
+      this.#options.marker('XI_EXPLORER_MOVE_APPLIED', { from: node.path, to });
+      const reveal = this.#options.workspaceRelativePath(to);
+      if (reveal !== undefined) void tree.reveal('workspace', reveal, this.#cancellation.token);
+    } finally { cancellation.dispose(); }
+  }
+
+  async #applyDelete(nodeId: string, generation: number): Promise<void> {
     const tree = this.#tree;
     if (tree === undefined) return;
     const node = tree.readNode(nodeId);
-    if (node === undefined) return;
+    if (!this.#operationNode(node, generation)) return;
     const dirtyUnder = this.#options.session.buffers().some((buffer) => buffer.dirty === true && buffer.path !== undefined && (buffer.path === node.path || buffer.path.startsWith(`${node.path}/`)));
     if (dirtyUnder) { this.#options.onError(`xi: cannot delete ${node.name}: it has unsaved open buffers\n`); return; }
     const parentPath = node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '');
     const cancellation = new CancellationSource();
     try {
-      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: parentPath, baseGeneration: 0, operations: [
+      if (!await this.#confirmRealWorkspacePath(node.path, cancellation.token, 'delete')) return;
+      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: parentPath, baseGeneration: generation, operations: [
         { kind: 'trash', rowId: node.id, sourceId: node.id, sourcePath: node.path },
       ] };
       const result = await this.#options.fileOperations.apply(plan, cancellation.token);
       if (!result.ok) { this.#options.onError(`xi: delete failed: ${result.error.message ?? result.error.kind}\n`); return; }
       this.#undoJournal.push({ kind: 'delete', from: node.path, to: node.path, journal: result.value.journal });
       this.#options.marker('XI_EXPLORER_DELETE_APPLIED', { from: node.path });
+      const parentRelative = this.#options.workspaceRelativePath(parentPath);
+      if (parentRelative !== undefined) void tree.reveal('workspace', parentRelative, this.#cancellation.token);
     } finally {
       cancellation.dispose();
     }
@@ -616,6 +786,8 @@ export class ExplorerController {
       if (!restored.ok) { this.#options.onError(`xi: restore failed: ${restored.error.message ?? restored.error.kind}\n`); this.#undoJournal.push(entry); return; }
       if (entry.kind === 'delete' || entry.kind === 'rename') this.#renameOpenBuffers(entry.to, entry.from);
       this.#options.marker('XI_EXPLORER_RESTORE_APPLIED', { kind: entry.kind, path: entry.from });
+      const relative = this.#options.workspaceRelativePath(entry.from);
+      if (relative !== undefined) void this.#tree?.reveal('workspace', relative, this.#cancellation.token);
     } finally {
       cancellation.dispose();
     }

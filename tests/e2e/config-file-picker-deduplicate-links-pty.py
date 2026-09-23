@@ -25,6 +25,14 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
             return
 
 
+def wait_for(master: int, captured: bytearray, marker: bytes, seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while marker not in captured and time.monotonic() < deadline:
+        read_for(master, captured, 0.05)
+    if marker not in captured:
+        raise SystemExit(f"Missing picker output {marker!r}: {captured[-4000:]!r}")
+
+
 with tempfile.TemporaryDirectory(prefix="xi-file-picker-dedupe-pty-") as temporary:
     root = Path(temporary)
     config = root / ".config" / "xi" / "config.toml"
@@ -38,20 +46,18 @@ with tempfile.TemporaryDirectory(prefix="xi-file-picker-dedupe-pty-") as tempora
     source.write_text("visible\n", encoding="utf-8")
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"HOME": temporary, "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"HOME": temporary, "XDG_CONFIG_HOME": str(root / ".config"), "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(source)], cwd=root, env=environment, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
     os.close(slave)
     captured = bytearray()
     try:
-        read_for(master, captured, 8)
-        if b"XI_WORKBENCH_READY" not in captured:
-            raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
+        wait_for(master, captured, b"XI_WORKBENCH_READY", 8)
         os.write(master, b" f")
-        read_for(master, captured, 1.5)
+        wait_for(master, captured, b"Files  >", 5)
         os.write(master, b"linked.txt")
-        read_for(master, captured, 1.5)
+        wait_for(master, captured, b"/target/linked.txt", 5)
         os.write(master, b"\x1b[B")
-        read_for(master, captured, 1.5)
+        wait_for(master, captured, b"/alias/linked.txt", 5)
         if b"XI_PICKER_PREVIEW" not in captured or b"/alias/linked.txt" not in captured or b"/target/linked.txt" not in captured:
             raise SystemExit(f"deduplicate-links=false did not retain both linked entries: {captured[-4000:]!r}")
         os.write(master, b"\x1bq")

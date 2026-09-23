@@ -22,13 +22,14 @@ import { ContributionRegistry } from '../../packages/workbench/contributions/ind
 const index = new FilePathIndex({ maxEntries: 120_000 });
 assert.equal(index.addRoot({ id: 'root-a', label: 'workspace-a', path: '/workspace/a' }).ok, true, 'T039-INDEX-ROOT-01 adds first root');
 assert.equal(index.addRoot({ id: 'root-b', label: 'workspace-b', path: '/workspace/b' }).ok, true, 'T039-INDEX-ROOT-02 adds second root');
-const generated: { rootId: string; relativePath: string; hidden?: boolean }[] = [];
+const generated: { rootId: string; relativePath: string; hidden?: boolean; ignored?: boolean }[] = [];
 for (let i = 0; i < 50_000; i += 1) {
   generated.push({ rootId: i % 2 === 0 ? 'root-a' : 'root-b', relativePath: `src/generated/file-${String(i).padStart(6, '0')}.ts` });
 }
 generated.push({ rootId: 'root-a', relativePath: 'src/shared.ts' });
 generated.push({ rootId: 'root-b', relativePath: 'src/shared.ts' });
 generated.push({ rootId: 'root-a', relativePath: '.hidden/settings.json', hidden: true });
+generated.push({ rootId: 'root-a', relativePath: 'build/settings.json', ignored: true });
 const added = index.addPaths('root-a', generated.filter((entry) => entry.rootId === 'root-a').map((entry) => ({ ...entry })));
 assert.equal(added.ok, true, 'T039-INDEX-ADD-01 incrementally adds root-a paths');
 const addedB = index.addPaths('root-b', generated.filter((entry) => entry.rootId === 'root-b').map((entry) => ({ ...entry })));
@@ -55,6 +56,12 @@ if (hidden.ok) assert.equal(hidden.value.totalMatches, 0, 'T039-HIDDEN-02 hidden
 const hiddenShown = await index.queryAsync('settings', { includeHidden: true });
 assert.equal(hiddenShown.ok, true, 'T039-HIDDEN-03 hidden paths can be selected');
 if (hiddenShown.ok) assert.equal(hiddenShown.value.totalMatches, 1, 'T039-HIDDEN-04 hidden result is retained when enabled');
+const ignoredHidden = await index.queryAsync('settings', { includeHidden: false, includeIgnored: false });
+assert.equal(ignoredHidden.ok, true, 'T039-IGNORE-01 default ignored query succeeds');
+if (ignoredHidden.ok) assert.equal(ignoredHidden.value.totalMatches, 0, 'T039-IGNORE-02 ignored paths stay filtered by default');
+const ignoredShown = await index.queryAsync('settings', { includeHidden: false, includeIgnored: true });
+assert.equal(ignoredShown.ok, true, 'T039-IGNORE-03 ignored query can be enabled');
+if (ignoredShown.ok) assert.deepEqual(ignoredShown.value.entries.map((entry) => entry.relativePath), ['build/settings.json'], 'T039-IGNORE-04 ignored paths become selectable when enabled');
 const hiddenByDefaultIndex = new FilePathIndex({ includeHidden: false });
 assert.equal(hiddenByDefaultIndex.addRoot({ id: 'config-root', label: 'config', path: '/workspace/config' }).ok, true, 'T039-HIDDEN-05 configured picker index registers its root');
 assert.equal(hiddenByDefaultIndex.addPaths('config-root', [{ rootId: 'config-root', relativePath: '.hidden/settings.json', hidden: true }, { rootId: 'config-root', relativePath: 'visible/settings.json' }]).ok, true, 'T039-HIDDEN-06 configured picker index accepts hidden and visible paths');

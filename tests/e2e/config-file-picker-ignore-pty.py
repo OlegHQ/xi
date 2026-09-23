@@ -25,6 +25,14 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
             return
 
 
+def wait_for(master: int, captured: bytearray, marker: bytes, seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while marker not in captured and time.monotonic() < deadline:
+        read_for(master, captured, 0.05)
+    if marker not in captured:
+        raise SystemExit(f"Missing picker output {marker!r}: {captured[-4000:]!r}")
+
+
 with tempfile.TemporaryDirectory(prefix="xi-file-picker-ignore-pty-") as outer:
     parent = Path(outer)
     root = parent / "workspace"
@@ -60,17 +68,19 @@ with tempfile.TemporaryDirectory(prefix="xi-file-picker-ignore-pty-") as outer:
     os.close(slave)
     captured = bytearray()
     try:
-        read_for(master, captured, 8)
-        if b"XI_WORKBENCH_READY" not in captured:
-            raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
+        wait_for(master, captured, b"XI_WORKBENCH_READY", 8)
         os.write(master, b" f")
-        read_for(master, captured, 1)
-        if b"Files  >" not in captured:
-            raise SystemExit(f"file picker did not open: {captured[-4000:]!r}")
-        os.write(master, b"ignored.txt")
+        wait_for(master, captured, b"Files  >", 5)
+        os.write(master, b"global.txt")
         read_for(master, captured, 0.4)
-        if re.search(rb"XI_PICKER_PREVIEW \{[^\r\n]*ignored\.txt", captured):
-            raise SystemExit("ignored.txt was previewed despite editor.file-picker.ignore=true")
+        if re.search(rb"XI_PICKER_PREVIEW \{[^\r\n]*global\.txt", captured):
+            raise SystemExit("globally ignored global.txt was previewed before the ignored toggle")
+        os.write(master, b" i")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not re.search(rb"XI_PICKER_PREVIEW \{[^\r\n]*global\.txt", captured):
+            read_for(master, captured, 0.05)
+        if not re.search(rb"XI_PICKER_PREVIEW \{[^\r\n]*global\.txt", captured):
+            raise SystemExit(f"file picker ignored toggle did not reveal global.txt: {captured[-4000:]!r}")
         os.write(master, b"\x1bq")
         child.wait(timeout=5)
     finally:

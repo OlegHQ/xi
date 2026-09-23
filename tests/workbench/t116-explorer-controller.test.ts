@@ -39,9 +39,15 @@ const err = (message: string): Result<never, PlatformFailure> => ({ ok: false, e
 class FakeFileOperations implements ExplorerFileOperationsPort {
   readonly existing = new Set<string>();
   readonly calls: string[] = [];
+  raceCreatePath: string | undefined;
   async stat(path: string, _cancellation: CancellationToken): Promise<Result<unknown, PlatformFailure>> {
     this.calls.push(`stat:${path}`);
-    return this.existing.has(path) ? ok({}) : err('missing');
+    if (path === this.raceCreatePath) {
+      this.raceCreatePath = undefined;
+      this.existing.add(path);
+      return { ok: false, error: { code: 'ENOENT', message: 'missing during preflight', retryable: false } };
+    }
+    return this.existing.has(path) ? ok({}) : { ok: false, error: { code: 'ENOENT', message: 'missing', retryable: false } };
   }
   async renamePath(from: string, to: string, _cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
     this.calls.push(`rename:${from}->${to}`);
@@ -68,6 +74,15 @@ class FakeFileOperations implements ExplorerFileOperationsPort {
     this.existing.add(path);
     return ok(undefined);
   }
+  async createFileExclusive(path: string, _cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
+    this.calls.push(`create-exclusive:${path}`);
+    if (this.existing.has(path)) return { ok: false, error: { code: 'EEXIST', message: 'already exists', retryable: false } };
+    this.existing.add(path);
+    return ok(undefined);
+  }
+  async isWithinRealWorkspace(_root: string, path: string, _cancellation: CancellationToken): Promise<Result<boolean, PlatformFailure>> {
+    return ok(path !== '/workspace/outside' && !path.startsWith('/workspace/outside/'));
+  }
 }
 
 // -- A fake tree: enough state to drive open()/handleKeypress() without the real ExplorerTree. --
@@ -75,6 +90,8 @@ class FakeTree implements ExplorerTreePort {
   #generation = 0;
   #selectedId: string | undefined;
   #filter = '';
+  #includeHidden = false;
+  #includeIgnored = false;
   readonly #listeners = new Set<(model: ExplorerTreeModel) => void>();
   readonly nodes: Map<string, ExplorerTreeNode>;
   readonly calls: string[] = [];
@@ -85,7 +102,7 @@ class FakeTree implements ExplorerTreePort {
   }
 
   get model(): ExplorerTreeModel {
-    return { generation: this.#generation, roots: ['root'], selectedId: this.#selectedId, filter: this.#filter, state: 'ready', visibleRows: [] };
+    return { generation: this.#generation, roots: [...this.nodes.values()].filter((node) => node.kind === 'root').map((node) => node.id), selectedId: this.#selectedId, filter: this.#filter, includeHidden: this.#includeHidden, includeIgnored: this.#includeIgnored, state: 'ready', visibleRows: [] };
   }
   subscribe(listener: (model: ExplorerTreeModel) => void) {
     this.#listeners.add(listener);
@@ -98,6 +115,8 @@ class FakeTree implements ExplorerTreePort {
   focus(): void { this.calls.push('focus'); }
   blur(): void { this.calls.push('blur'); }
   setFilter(filter: string): void { this.#filter = filter; this.calls.push(`filter:${filter}`); }
+  setIncludeHidden(include: boolean): void { this.#includeHidden = include; }
+  setIncludeIgnored(include: boolean): void { this.#includeIgnored = include; }
   async expand(nodeId: string, _force: boolean, _cancellation: CancellationToken): Promise<unknown> { this.calls.push(`expand:${nodeId}`); return undefined; }
   async watchRoot(rootId: string, _cancellation: CancellationToken): Promise<unknown> { this.calls.push(`watch:${rootId}`); return undefined; }
   async reveal(rootId: string, relativePath: string, _cancellation: CancellationToken): Promise<unknown> { this.calls.push(`reveal:${rootId}:${relativePath}`); return undefined; }
@@ -177,7 +196,7 @@ const launchViewId = id<ViewId>('T116-explorer-launch-view');
 session.openBuffer(launchDocument, { viewId: launchViewId });
 const host = new BufferHost(session, launchDocument, {
   openDocument: async () => undefined,
-  workspaceRelativePath: () => undefined,
+  workspaceRelativePath: (path) => path.startsWith('/workspace/') ? path.slice('/workspace/'.length) : undefined,
   marker: () => {},
   launchViewId,
 });
@@ -190,6 +209,22 @@ let ensureServicesCalls = 0;
 
 const fileOperations = new FakeJournaledOperations(filesystem, '/workspace/.xi-trash');
 
+let finishLoading: (() => void) | undefined;
+const deferredExplorer = new ExplorerController({
+  host, session, filesystem, fileOperations, clock: testClock, marker: () => {},
+  onError: () => {}, workspaceRelativePath: () => undefined,
+  trashDirectory: '/workspace/.xi-trash',
+  ensureServices: () => new Promise<void>(resolve => { finishLoading = resolve; }),
+});
+deferredExplorer.show();
+assert.equal(deferredExplorer.isVisible, true, 'T116-EXPLORER-STARTUP-01 Files is visible while services load');
+deferredExplorer.hide();
+deferredExplorer.attachTree(new FakeTree([]), new FakeNavigation());
+finishLoading?.();
+await Promise.resolve();
+assert.equal(deferredExplorer.isVisible, false, 'T116-EXPLORER-STARTUP-02 completion does not reopen a hidden panel');
+deferredExplorer.dispose();
+
 const controller = new ExplorerController({
   host,
   session,
@@ -198,13 +233,14 @@ const controller = new ExplorerController({
   clock: testClock,
   marker: (name, payload) => { markers.push({ name, payload }); },
   onError: (message) => { errors.push(message); },
-  workspaceRelativePath: () => undefined,
+  workspaceRelativePath: (path) => path.startsWith('/workspace/') ? path.slice('/workspace/'.length) : undefined,
   trashDirectory: '/workspace/.xi-trash',
   ensureServices: async () => { ensureServicesCalls += 1; },
 });
 
 const fileNode: ExplorerTreeNode = { id: 'file-a', kind: 'file', name: 'a.txt', path: '/workspace/a.txt', relativePath: 'a.txt', expanded: false };
-const tree = new FakeTree([fileNode], fileNode.id);
+const rootNode: ExplorerTreeNode = { id: 'root', kind: 'root', name: 'workspace', path: '/workspace', relativePath: '', expanded: true };
+const tree = new FakeTree([rootNode, fileNode], fileNode.id);
 const navigation = new FakeNavigation();
 filesystem.existing.add('/workspace/a.txt');
 
@@ -218,6 +254,49 @@ assert.equal(ensureServicesCalls, 0, 'T116-EXPLORER-01b a bound tree never trigg
 assert.ok(tree.calls.includes('focus'), 'T116-EXPLORER-01c open() focuses the tree');
 assert.ok(tree.calls.some((call) => call.startsWith('expand:')), 'T116-EXPLORER-01d open() expands the first root');
 assert.ok(tree.calls.some((call) => call.startsWith('watch:')), 'T116-EXPLORER-01e open() watches the first root');
+const directoryNode: ExplorerTreeNode = { id: 'dir', kind: 'directory', name: 'sub', path: '/workspace/sub', relativePath: 'sub', expanded: false };
+tree.nodes.set(directoryNode.id, directoryNode);
+assert.equal(controller.selectForContextMenu(directoryNode.id, tree.model.generation)?.mutable, true, 'DEF-1124-05 directory context menu enables file operations');
+assert.equal(controller.selectForContextMenu(rootNode.id, tree.model.generation)?.mutable, false, 'DEF-1124-06 root context menu cannot mutate the workspace');
+
+// DEF-1124: an entry created between the existence check and exclusive create must be
+// reported as a conflict and preserved byte-for-byte, never replaced by an atomic empty write.
+filesystem.calls.length = 0;
+filesystem.existing.add('/workspace/raced.txt');
+filesystem.raceCreatePath = '/workspace/raced.txt';
+tree.select(rootNode.id);
+await controller.handleKeypress(key('a', 'a'));
+for (const character of 'raced.txt') await controller.handleKeypress(key(character, character));
+await controller.handleKeypress(key('enter', '\r'));
+assert.ok(filesystem.calls.includes('create-exclusive:/workspace/raced.txt'), 'DEF-1124-07 create uses an exclusive filesystem operation');
+assert.equal(filesystem.calls.includes('write:/workspace/raced.txt'), false, 'DEF-1124-08 raced create never uses replacing atomic write');
+assert.match(errors.join(''), /raced\.txt already exists/u, 'DEF-1124-09 exclusive-create race has clear conflict feedback');
+filesystem.existing.delete('/workspace/raced.txt');
+tree.select(fileNode.id);
+
+// Followed symlink children retain their parent chain; mutations of an entry beneath a
+// symlink are refused even though its display path is lexically inside the workspace.
+const symlinkNode: ExplorerTreeNode = { id: 'outside-link', parentId: rootNode.id, kind: 'symlink', name: 'outside', path: '/workspace/outside', relativePath: 'outside', expanded: true, children: ['outside-file'] };
+const outsideFile: ExplorerTreeNode = { id: 'outside-file', parentId: symlinkNode.id, kind: 'file', name: 'secret.txt', path: '/workspace/outside/secret.txt', relativePath: 'outside/secret.txt', expanded: false };
+tree.nodes.set(rootNode.id, { ...rootNode, children: [symlinkNode.id] });
+tree.nodes.set(symlinkNode.id, symlinkNode);
+tree.nodes.set(outsideFile.id, outsideFile);
+filesystem.existing.add(outsideFile.path);
+tree.select(outsideFile.id);
+const symlinkMutationCount = filesystem.calls.length;
+await controller.handleKeypress(key('r', 'r'));
+for (const character of 'stolen.txt') await controller.handleKeypress(key(character, character));
+await controller.handleKeypress(key('enter', '\r'));
+assert.equal(filesystem.calls.length, symlinkMutationCount, 'DEF-1124-10 symlink child never reaches journaled mutation');
+assert.match(errors.join(''), /resolves outside the workspace/u, 'DEF-1124-11 symlink escape refusal is explained');
+assert.equal(filesystem.existing.has(outsideFile.path), true, 'DEF-1124-12 symlink target remains untouched');
+tree.select(fileNode.id);
+const symlinkDestinationCalls = filesystem.calls.length;
+controller.activateContextMenuAction(fileNode.id, 'move');
+for (const character of 'outside/moved.txt') await controller.handleKeypress(key(character, character));
+await controller.handleKeypress(key('enter', '\r'));
+assert.equal(filesystem.calls.length, symlinkDestinationCalls, 'DEF-1124-13 move destination beneath symlink never reaches journaled mutation');
+assert.match(errors.join(''), /path resolves outside the workspace/u, 'DEF-1124-14 symlink destination refusal is explained');
 
 // T116-EXPLORER-02: 'g' then 'g' within the pending window issues a 'first' navigation action;
 // a lone 'g' does not.
@@ -254,6 +333,20 @@ filesystem.calls.length = 0;
 await controller.handleKeypress(key('u', 'u'));
 assert.ok(filesystem.calls.some((call) => call.startsWith('rename:') && call.endsWith('->/workspace/b.txt')), 'T116-EXPLORER-05a restore renames the trashed path back');
 assert.ok(markers.some((entry) => entry.name === 'XI_EXPLORER_RESTORE_APPLIED'), 'T116-EXPLORER-05b a restore-applied marker was emitted');
+
+// DEF-1124: stale prompts do not mutate disk; the context menu routes Move through the same
+// workspace-relative prompt and journal path as keyboard actions.
+filesystem.calls.length = 0;
+await controller.handleKeypress(key('r', 'r'));
+tree.publish();
+await controller.handleKeypress(key('enter', '\r'));
+assert.equal(filesystem.calls.some((call) => call.startsWith('rename:')), false, 'DEF-1124-01 stale tree generation cancels a pending rename');
+assert.match(errors.join(''), /Files tree changed/u, 'DEF-1124-02 stale cancellation explains how to recover');
+controller.activateContextMenuAction(fileNode.id, 'move');
+for (const character of 'sub/b.txt') await controller.handleKeypress(key(character, character));
+await controller.handleKeypress(key('enter', '\r'));
+assert.ok(filesystem.calls.includes('rename:/workspace/b.txt->/workspace/sub/b.txt'), 'DEF-1124-03 context menu Move uses the journaled filesystem path');
+assert.ok(markers.some((entry) => entry.name === 'XI_EXPLORER_MOVE_APPLIED'), 'DEF-1124-04 successful Move emits its observable marker');
 
 // T116-EXPLORER-06: dispose() clears the pending-g timer without throwing, and close() blurs.
 controller.close();
@@ -316,6 +409,9 @@ controller.close();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(failingErrors.length > 0, true, 'F2-13: a rejected ensureServices() is surfaced via onError, not swallowed');
   assert.equal(failingController.isOpen, false, 'F2-13: the panel does not stay stuck open after ensureServices() fails');
+  failingController.show();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(failingController.loadError ?? '', /services unavailable/, 'T116-EXPLORER-STARTUP-03 failure is available to the Files surface');
 }
 
-console.log('T116 ExplorerController passed pending-g, rename-commit, delete-confirm, undo-restore, preview-open and ensureServices rejection handling (F2-13) fixtures');
+console.log('ExplorerController passed navigation, rename/delete/undo, stale-operation cancellation, context-menu move, preview-open and loading-failure fixtures');

@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(prefix="xi-auto-save-focus-pty-") as temporary:
     config.write_text("[editor]\nauto-save = true\n", encoding="utf-8")
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": str(workspace / ".config"), "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "main.txt"],
         cwd=workspace,

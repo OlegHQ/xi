@@ -246,6 +246,7 @@ export class WorkbenchHostCommands {
     const opened = await host.openBufferAtPath(path, { ...(split ? { split: sourceViewId } : {}), line: location.line });
     if (opened === undefined) return;
     host.sessions.get(opened.viewId)?.setCursorPosition(location.line, location.utf16);
+    host.notifySurfaceChange();
     marker('XI_NATIVE_JUMP', { path, line: location.line, split });
   }
 

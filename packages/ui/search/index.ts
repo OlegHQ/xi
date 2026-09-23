@@ -1,14 +1,14 @@
 import type { Disposable } from '../../contracts/src/index';
 
 export interface SearchRange { readonly startUtf16: number; readonly endUtf16: number; }
-export interface SearchQuery { readonly rootId: string; readonly rootPath: string; readonly query: string; readonly regex?: boolean; readonly caseSensitive?: boolean; readonly wholeWord?: boolean; readonly includeHidden?: boolean; readonly globs?: readonly string[]; readonly maxResults?: number; }
+export interface SearchQuery { readonly rootId: string; readonly rootPath: string; readonly query: string; readonly regex?: boolean; readonly caseSensitive?: boolean; readonly wholeWord?: boolean; readonly includeHidden?: boolean; readonly includeIgnored?: boolean; readonly globs?: readonly string[]; readonly maxResults?: number; }
 export interface SearchMatch { readonly id: string; readonly rootId: string; readonly path: string; readonly line: number; readonly range: SearchRange; readonly lineText: string; readonly snippet: string; readonly source: 'disk' | 'buffer'; readonly documentVersion?: number; readonly diskHash?: string; readonly generation: number; }
 export interface SearchReadModel { readonly contractVersion: 1; readonly query: SearchQuery; readonly generation: number; readonly state: 'idle' | 'loading' | 'ready' | 'empty' | 'stale' | 'error'; readonly matches: readonly SearchMatch[]; readonly totalMatches: number; readonly truncated: boolean; readonly message: string | undefined; }
 export interface SearchReadPort { readonly model: SearchReadModel; subscribe(listener: (model: SearchReadModel) => void): Disposable; }
 export type SearchPanelMode = 'insert' | 'replace' | 'normal';
-export interface SearchUiState { readonly mode: SearchPanelMode; readonly replaceInput: string; readonly collapsed: ReadonlySet<string>; }
+export interface SearchUiState { readonly mode: SearchPanelMode; readonly replaceInput: string; readonly collapsed: ReadonlySet<string>; readonly includeHidden: boolean; readonly includeIgnored: boolean; }
 
-const searchFlags = (query: SearchQuery): string => [query.regex === true ? 'regex' : 'literal', query.caseSensitive === true ? 'case' : 'ignore-case', query.wholeWord === true ? 'word' : 'no-word', query.includeHidden === true ? 'hidden' : 'no-hidden'].join(' ');
+const searchFlags = (query: SearchQuery): string => [query.regex === true ? 'regex' : 'literal', query.caseSensitive === true ? 'case' : 'ignore-case', query.wholeWord === true ? 'word' : 'no-word', query.includeHidden === true ? 'hidden' : 'no-hidden', query.includeIgnored === true ? 'ignored' : 'no-ignored'].join(' ');
 type SearchContentItem = { readonly kind: 'heading'; readonly path: string } | { readonly kind: 'match'; readonly match: SearchMatch };
 function expandSearchItems(matches: readonly SearchMatch[]): readonly SearchContentItem[] {
   const items: SearchContentItem[] = [];

@@ -23,6 +23,7 @@ export interface WorkbenchSearchQuery {
   readonly caseSensitive?: boolean;
   readonly wholeWord?: boolean;
   readonly includeHidden?: boolean;
+  readonly includeIgnored?: boolean;
   readonly maxResults?: number;
 }
 
@@ -191,6 +192,8 @@ export interface SearchUiState {
   readonly mode: SearchPanelMode;
   readonly replaceInput: string;
   readonly collapsed: ReadonlySet<string>;
+  readonly includeHidden: boolean;
+  readonly includeIgnored: boolean;
 }
 
 /** Absolute UTF-16 offset ranges of every current match in one open document, for the editor's
@@ -199,6 +202,7 @@ export interface SearchPresentation {
   readonly documentId: string;
   readonly documentVersion: number;
   readonly ranges: readonly { readonly start: number; readonly end: number }[];
+  readonly current?: { readonly start: number; readonly end: number };
 }
 
 export interface SearchControllerOptions {
@@ -234,6 +238,7 @@ export class SearchController {
   #caseSensitive = false;
   #wholeWord = false;
   #includeHidden = false;
+  #includeIgnored = false;
   #selectedIndex = 0;
   #replaceInput = '';
   #mode: SearchPanelMode = 'insert';
@@ -245,6 +250,7 @@ export class SearchController {
   // on, so a stale generation's ranges are never handed back for a newer one.
   readonly #presentationCache = new Map<string, SearchPresentation>();
   #presentationGeneration = -1;
+  #presentationSelectedId: string | undefined;
   #replaceOperationNumber = 0;
   #openGeneration = 0;
   #search: SearchServicePort | undefined;
@@ -269,6 +275,8 @@ export class SearchController {
   }
 
   get isOpen(): boolean { return this.#open; }
+  toggleIncludeHidden(): void { this.#includeHidden = !this.#includeHidden; this.#selectedIndex = 0; this.#runQuery(); this.#invalidateUiState(); }
+  toggleIncludeIgnored(): void { this.#includeIgnored = !this.#includeIgnored; this.#selectedIndex = 0; this.#runQuery(); this.#invalidateUiState(); }
   get selectedIndex(): number { return this.#selectedIndex; }
   get replaceInputActive(): boolean { return this.#mode === 'replace'; }
   get replaceInput(): string { return this.#replaceInput; }
@@ -281,7 +289,7 @@ export class SearchController {
    * object is returned across renders until mode/replaceInput/collapsed actually change. */
   get uiState(): SearchUiState {
     if (this.#uiStateDirty || this.#uiStateCache === undefined) {
-      this.#uiStateCache = Object.freeze({ mode: this.#mode, replaceInput: this.#replaceInput, collapsed: this.#collapsed });
+      this.#uiStateCache = Object.freeze({ mode: this.#mode, replaceInput: this.#replaceInput, collapsed: this.#collapsed, includeHidden: this.#includeHidden, includeIgnored: this.#includeIgnored });
       this.#uiStateDirty = false;
     }
     return this.#uiStateCache;
@@ -687,23 +695,28 @@ export class SearchController {
     if (relativePath === undefined) return undefined;
     const matches = model.matches.filter((match) => match.path === relativePath);
     if (matches.length === 0) return undefined;
-    if (this.#presentationGeneration !== model.generation) {
+    const selected = model.matches[this.#selectedIndex];
+    if (this.#presentationGeneration !== model.generation || this.#presentationSelectedId !== selected?.id) {
       this.#presentationCache.clear();
       this.#presentationGeneration = model.generation;
+      this.#presentationSelectedId = selected?.id;
     }
     const cacheKey = `${documentId}:${String(documentVersion)}`;
     const cached = this.#presentationCache.get(cacheKey);
     if (cached !== undefined) return cached;
     const ranges: { readonly start: number; readonly end: number }[] = [];
+    let current: { readonly start: number; readonly end: number } | undefined;
     for (const match of matches) {
       const lineIndex = asLineIndex(match.line);
       if (!lineIndex.ok) continue;
       const lineStart = snapshot.lineStartOffset(lineIndex.value);
       if (!lineStart.ok) continue;
-      ranges.push({ start: lineStart.value + match.range.startUtf16, end: lineStart.value + match.range.endUtf16 });
+      const range = { start: lineStart.value + match.range.startUtf16, end: lineStart.value + match.range.endUtf16 };
+      ranges.push(range);
+      if (match.id === selected?.id) current = range;
     }
     ranges.sort((left, right) => left.start - right.start);
-    const result: SearchPresentation = Object.freeze({ documentId, documentVersion, ranges: Object.freeze(ranges) });
+    const result: SearchPresentation = Object.freeze({ documentId, documentVersion, ranges: Object.freeze(ranges), ...(current === undefined ? {} : { current }) });
     this.#presentationCache.set(cacheKey, result);
     return result;
   }
@@ -802,6 +815,7 @@ export class SearchController {
       caseSensitive: this.#effectiveCaseSensitive(),
       wholeWord: this.#wholeWord,
       includeHidden: this.#includeHidden,
+      includeIgnored: this.#includeIgnored,
       maxResults: 10_000,
     });
   }

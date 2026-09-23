@@ -56,6 +56,7 @@ class FakeSearchService implements SearchServicePort {
   #generation = 0;
   readonly queries: string[] = [];
   readonly caseSensitive: boolean[] = [];
+  readonly visibility: Array<{ readonly hidden: boolean; readonly ignored: boolean }> = [];
   readonly cancels: number[] = [];
   readonly #listeners = new Set<(model: WorkbenchSearchModel) => void>();
   readonly #pending = new Map<number, () => void>();
@@ -65,9 +66,10 @@ class FakeSearchService implements SearchServicePort {
     this.#listeners.add(listener);
     return Object.freeze({ dispose: () => { this.#listeners.delete(listener); } });
   }
-  query(query: { readonly query: string; readonly caseSensitive?: boolean }): Promise<unknown> {
+  query(query: { readonly query: string; readonly caseSensitive?: boolean; readonly includeHidden?: boolean; readonly includeIgnored?: boolean }): Promise<unknown> {
     this.queries.push(query.query);
     this.caseSensitive.push(query.caseSensitive === true);
+    this.visibility.push({ hidden: query.includeHidden === true, ignored: query.includeIgnored === true });
     this.#generation += 1;
     const generation = this.#generation;
     return new Promise<void>((resolve) => { this.#pending.set(generation, resolve); });
@@ -168,6 +170,7 @@ const controller = new SearchController({
 
 const search = new FakeSearchService();
 controller.attachServices(search, new FakeReplaceService(), applyReplacementEditsFn);
+
 
 // T116-SEARCH-01: opening runs the empty query; each keystroke re-queries with the full text.
 // A stale generation's result must never override a newer one even when it resolves later.
@@ -291,6 +294,10 @@ const diskWriteIndex = filesystem.calls.findIndex((call) => call === 'write:/wor
 assert.ok(journalCallIndex >= 0, 'F2-3: a durable journal is written to .xi/replace before the disk mutation');
 assert.ok(journalCallIndex < diskWriteIndex, 'F2-3: the durable journal is written before the first disk mutation, not after');
 assert.equal(filesystem.contents.get('/workspace/disk.txt'), 'HELLO disk', 'sanity: the disk file was actually replaced');
+
+controller.toggleIncludeHidden();
+controller.toggleIncludeIgnored();
+assert.deepEqual(search.visibility.slice(-2), [{ hidden: true, ignored: false }, { hidden: true, ignored: true }], 'T116-SEARCH-VISIBILITY-01 hidden and ignored toggles rerun the query with the active visibility policy');
 
 controller.dispose();
 

@@ -146,12 +146,17 @@ if (chainId !== undefined) {
   const chainOneId = tree.model.nodes.find((node) => node.relativePath === 'chain/one')?.id;
   assert.ok(chainOneId !== undefined, 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-01 first child directory retains a stable identity');
   if (chainOneId === undefined) throw new Error('chain/one fixture missing');
-  assert.equal(tree.model.visibleRows.find((row) => row.nodeId === chainOneId)?.label, 'chain/one', 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-02 single child directory is flattened');
+  const compactRow = tree.model.visibleRows.find((row) => row.nodeId === chainOneId);
+  assert.equal(compactRow?.label, 'chain/one', 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-02 single child directory is flattened');
+  assert.equal(tree.readNode(compactRow?.nodeId ?? '')?.relativePath, 'chain/one', 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-02 compact row retains the real directory path');
+  assert.ok(formatExplorerLines(tree.model, 52, 20).some((line) => line.includes('chain/one')), 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-02 compact label reaches the Files renderer');
   await tree.expand(chainOneId);
   const chainTwoId = tree.model.nodes.find((node) => node.relativePath === 'chain/one/two')?.id;
   assert.ok(chainTwoId !== undefined, 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-03 second child directory retains a stable identity');
   if (chainTwoId === undefined) throw new Error('chain/one/two fixture missing');
-  assert.equal(tree.model.visibleRows.find((row) => row.nodeId === chainTwoId)?.label, 'chain/one/two', 'T036-FILE-EXPLORER-FLATTEN-DIRS-UNIT-03-PART2 consecutive single child directories are flattened');
+  assert.equal(tree.model.visibleRows.find((row) => row.nodeId === chainTwoId)?.label, 'chain/one/two', 'T036-FILE-EXPLORER-COMPACT-UNIT-04 consecutive single child directories are flattened');
+  await tree.expand(chainTwoId);
+  assert.ok(tree.model.visibleRows.some((row) => tree.readNode(row.nodeId)?.relativePath === 'chain/one/two/leaf.txt'), 'T036-FILE-EXPLORER-COMPACT-UNIT-05 expanding the compact row reveals its actual children');
 }
 const unflattenedTree = new ExplorerTree(filesystem, { includeHidden: false, includeIgnored: false, flattenDirs: false });
 const unflattenedRoot = unflattenedTree.addRoot({ id: 'unflattened-workspace', label: 'workspace', path: '/workspace' });

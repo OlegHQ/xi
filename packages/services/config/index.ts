@@ -59,7 +59,7 @@ export interface ConfigCommandCatalog {
 export const DEFAULT_COMMAND_CATALOG: ConfigCommandCatalog = Object.freeze({
   commandIds: Object.freeze([
     'files.pick', 'buffers.pick', 'diagnostics.pick', 'command.pick', 'search.workspace', 'search.replace', 'files.edit-directory', 'files.edit-buffer-directory', 'theme.pick',
-    'lsp.hover', 'lsp.code-action', 'lsp.references', 'lsp.rename', 'editor.goto-word', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'panel.problems.focus', 'panel.preview', 'panel.open', 'panel.close', 'git.diff', 'editor.mouse.toggle', 'sidebar.toggle', 'macro.record',
+    'lsp.hover', 'lsp.code-action', 'lsp.references', 'lsp.rename', 'editor.goto-word', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'panel.problems.focus', 'panel.preview', 'panel.open', 'panel.close', 'panel.expand-all', 'panel.include-hidden', 'panel.include-ignored', 'git.diff', 'editor.mouse.toggle', 'sidebar.toggle', 'macro.record',
     'selection.add-above', 'selection.add-below', 'selection.add-next-match', 'selection.skip-next-match',
     'selection.select-all-matches', 'selection.split-lines', 'selection.select-regex', 'selection.keep-matching',
     'selection.remove-primary', 'selection.keep-primary', 'selection.rotate-primary-next', 'selection.rotate-primary-previous',
@@ -368,7 +368,7 @@ const defaultEditor: EditorConfig = Object.freeze({
   workspaceLspRoots: Object.freeze([]),
   cursorShape: Object.freeze({ normal: 'block', insert: 'block', select: 'block' }),
   filePicker: Object.freeze({ hidden: true, followSymlinks: true, deduplicateLinks: true, parents: true, ignore: true, gitIgnore: true, gitGlobal: true, gitExclude: true, maxDepth: undefined }),
-  fileExplorer: Object.freeze({ hidden: false, followSymlinks: false, parents: false, ignore: false, gitIgnore: false, gitGlobal: false, gitExclude: false, flattenDirs: true }),
+  fileExplorer: Object.freeze({ hidden: true, followSymlinks: false, parents: true, ignore: true, gitIgnore: true, gitGlobal: true, gitExclude: true, flattenDirs: true }),
   bufferPicker: Object.freeze({ startPosition: 'current' }),
   lsp: Object.freeze({ enable: true, displayInlayHints: false, inlayHintsLengthLimit: undefined, inlayHints: false, displayColorSwatches: true, autoDocumentHighlight: false, gotoReferenceIncludeDeclaration: true, snippets: true, displayMessages: true, displayProgressMessages: false, autoSignatureHelp: true, displaySignatureHelpDocs: true }),
 });
@@ -1614,7 +1614,7 @@ function validateMerged(
     ? false
     : Object.freeze({ ...autoPairs === undefined ? { '(': ')', '{': '}', '[': ']', '"': '"', "'": "'", '`': '`' } : configuredAutoPairs });
   const filePickerConfig = { hidden: booleanField(filePicker ?? Object.create(null), 'hidden') ?? true, followSymlinks: booleanField(filePicker ?? Object.create(null), 'follow-symlinks') ?? true, deduplicateLinks: booleanField(filePicker ?? Object.create(null), 'deduplicate-links') ?? true, parents: booleanField(filePicker ?? Object.create(null), 'parents') ?? true, ignore: booleanField(filePicker ?? Object.create(null), 'ignore') ?? true, gitIgnore: booleanField(filePicker ?? Object.create(null), 'git-ignore') ?? true, gitGlobal: booleanField(filePicker ?? Object.create(null), 'git-global') ?? true, gitExclude: booleanField(filePicker ?? Object.create(null), 'git-exclude') ?? true, maxDepth: filePickerMaxDepth };
-  const fileExplorerConfig = { hidden: booleanField(fileExplorer ?? Object.create(null), 'hidden') ?? false, followSymlinks: booleanField(fileExplorer ?? Object.create(null), 'follow-symlinks') ?? false, parents: booleanField(fileExplorer ?? Object.create(null), 'parents') ?? false, ignore: booleanField(fileExplorer ?? Object.create(null), 'ignore') ?? false, gitIgnore: booleanField(fileExplorer ?? Object.create(null), 'git-ignore') ?? false, gitGlobal: booleanField(fileExplorer ?? Object.create(null), 'git-global') ?? false, gitExclude: booleanField(fileExplorer ?? Object.create(null), 'git-exclude') ?? false, flattenDirs: booleanField(fileExplorer ?? Object.create(null), 'flatten-dirs') ?? true };
+  const fileExplorerConfig = { hidden: booleanField(fileExplorer ?? Object.create(null), 'hidden') ?? true, followSymlinks: booleanField(fileExplorer ?? Object.create(null), 'follow-symlinks') ?? false, parents: booleanField(fileExplorer ?? Object.create(null), 'parents') ?? true, ignore: booleanField(fileExplorer ?? Object.create(null), 'ignore') ?? true, gitIgnore: booleanField(fileExplorer ?? Object.create(null), 'git-ignore') ?? true, gitGlobal: booleanField(fileExplorer ?? Object.create(null), 'git-global') ?? true, gitExclude: booleanField(fileExplorer ?? Object.create(null), 'git-exclude') ?? true, flattenDirs: booleanField(fileExplorer ?? Object.create(null), 'flatten-dirs') ?? true };
   const bufferPickerConfig = { startPosition: enumField(bufferPicker ?? Object.create(null), 'start-position', ['current', 'previous'] as const, 'current', diagnostics, locations, 'editor.buffer-picker.start-position') };
   const kittyKeyboardProtocol = enumField(editor, 'kitty-keyboard-protocol', ['auto', 'enabled', 'disabled'] as const, 'auto', diagnostics, locations, 'editor.kitty-keyboard-protocol');
   const jumpLabelAlphabet = typeof editor['jump-label-alphabet'] === 'string' && [...editor['jump-label-alphabet']].every((character, index, characters) => characters.indexOf(character) === index)
@@ -1638,7 +1638,7 @@ function compileBindings(value: TomlValue | undefined, profile: ConfigProfile, c
         if (commandId === undefined) { diagnostics.push(issue(commandPath, 'unknown-command', `unknown command ${child}`, locations)); continue; }
         const mode = path[0] ?? 'normal';
         if (profile === 'strict' && mode !== 'normal' && mode !== 'visual' && mode !== 'insert' && mode !== 'replace' && mode !== 'operator-pending' && mode !== 'command-line'
-          && mode !== 'select' && mode !== 'files-panel' && mode !== 'search-panel' && mode !== 'git-panel' && mode !== 'diff-panel') {
+          && mode !== 'select' && mode !== 'files-panel' && mode !== 'search-panel' && mode !== 'file-picker' && mode !== 'git-panel' && mode !== 'diff-panel') {
           diagnostics.push(issue(commandPath, 'invalid-value', `unknown mapping mode ${mode}`, locations));
         }
         const token = normalizeKeyToken(key);

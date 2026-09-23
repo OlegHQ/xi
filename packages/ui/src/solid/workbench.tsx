@@ -167,7 +167,7 @@ function clipSegments(segments: readonly SurfaceRowSegment[], width: number): re
   return clipped;
 }
 
-function pickerRows(model: PickerReadPort['model'], width: number, maxRows: number, offset: number, hoveredId: string | undefined, theme: WorkbenchTheme): readonly SurfaceRow[] {
+export function pickerRows(model: PickerReadPort['model'], width: number, maxRows: number, offset: number, hoveredId: string | undefined, theme: WorkbenchTheme): readonly SurfaceRow[] {
   const background = helixThemeColor(theme, 'ui.menu', 'bg', theme.surface);
   const selectedBackground = helixThemeColor(theme, 'ui.text.focus', 'bg', helixThemeColor(theme, 'ui.menu.selected', 'bg', theme.surfaceActive));
   const foreground = helixThemeColor(theme, 'ui.menu', 'fg', theme.foreground);
@@ -201,7 +201,11 @@ function pickerRows(model: PickerReadPort['model'], width: number, maxRows: numb
   }
   if (rows.length < maxRows) rows.push({
     top: maxRows - 1,
-    text: model.message ?? (model.mode === 'theme'
+    text: model.message ?? (model.mode === 'command'
+      ? width < 64
+        ? `${model.totalMatches}${model.truncated ? '+' : ''} commands · ↑↓ move · Enter run · Esc`
+        : `${model.totalMatches}${model.truncated ? '+' : ''} commands  ·  ↑↓/Ctrl-N/P move  ·  Enter run  ·  Esc cancel`
+      : model.mode === 'theme'
       ? width < 80
         ? `${model.totalMatches} themes · C-n/p C-u/d · Enter apply · Esc restore`
         : `${model.totalMatches}${model.truncated ? '+' : ''} themes · ↑↓/C-n/p move · C-u/d half page · Hover preview · Enter apply · Esc restore`
@@ -378,25 +382,47 @@ function commandLineRows(model: ExCommandLineReadModel | undefined, width: numbe
   return rows;
 }
 
-function prefixHelpRows(model: PrefixHelpReadPort['model'], width: number, maxRows: number, theme: WorkbenchTheme): readonly SurfaceRow[] {
+export function prefixHelpRows(model: PrefixHelpReadPort['model'], width: number, maxRows: number, theme: WorkbenchTheme): readonly SurfaceRow[] {
   if (model === undefined || width <= 0 || maxRows <= 0) return [];
   const background = helixThemeColor(theme, 'ui.popup.info', 'bg', theme.surface);
   const foreground = helixThemeColor(theme, 'ui.popup.info', 'fg', theme.foreground);
   const keyForeground = helixThemeColor(theme, 'ui.text.info', 'fg', theme.accent);
   const keyStyle = helixThemeStyle(theme, 'ui.text.info');
   const prefix = model.pendingKeys.length === 0 ? 'Prefix' : `Prefix ${model.pendingKeys.join(' ')}`;
-  if (width < 48 || maxRows === 1) return [{ text: (model.compactHint ?? `${prefix}: no legal continuation`).slice(0, width), foreground, background }];
+  if (maxRows === 1) return [{ text: (model.compactHint ?? `${prefix}: no legal continuation`).slice(0, width), foreground, background }];
+  if (width < 48) {
+    const rows: SurfaceRow[] = [{
+      segments: clipSegments([
+        { text: prefix, foreground: keyForeground, bold: true, ...(keyStyle === undefined ? {} : { style: keyStyle }) },
+        { text: ` · ${model.hints.length} hints`, foreground },
+      ], width),
+      background,
+    }];
+    const keyWidth = Math.min(12, Math.max(1, Math.floor(width / 3)));
+    for (const hint of model.hints) {
+      if (rows.length >= maxRows) break;
+      rows.push({
+        segments: clipSegments([
+          { text: `${hint.keyLabel.padEnd(keyWidth)} `, foreground: keyForeground, ...(keyStyle === undefined ? {} : { style: keyStyle }) },
+          { text: hint.available ? hint.title : `${hint.title} · ${hint.disabledReason ?? 'unavailable'}`, foreground: hint.available ? foreground : helixThemeColor(theme, 'error', 'fg', theme.error) },
+        ], width),
+        background,
+      });
+    }
+    return rows;
+  }
   const rows: SurfaceRow[] = [{
     segments: clipSegments([{ text: prefix, foreground: keyForeground, bold: true, ...(keyStyle === undefined ? {} : { style: keyStyle }) }, { text: `  (${model.hints.length} hints)`, foreground }], width),
     background,
   }];
+  const keyWidth = Math.min(18, Math.max(6, ...model.hints.map(hint => [...hint.keyLabel].length)));
   for (const hint of model.hints) {
     if (rows.length >= maxRows) break;
     const alias = hint.aliases.length === 0 ? '' : ` (${hint.aliases.join(', ')})`;
     const state = hint.available ? '' : ` [${hint.disabledReason ?? 'unavailable'}]`;
     rows.push({
       segments: clipSegments([
-        { text: `  ${hint.keyLabel}  `, foreground: keyForeground, ...(keyStyle === undefined ? {} : { style: keyStyle }) },
+        { text: `  ${hint.keyLabel.padEnd(keyWidth)}  `, foreground: keyForeground, ...(keyStyle === undefined ? {} : { style: keyStyle }) },
         { text: `${hint.title}${alias} — ${hint.description}`, foreground: hint.available ? foreground : theme.muted },
         ...(state.length === 0 ? [] : [{ text: state, foreground: helixThemeColor(theme, 'error', 'fg', theme.error) }]),
       ], width),
@@ -513,13 +539,15 @@ function searchRows(model: SearchReadPort['model'], width: number, maxRows: numb
     const location = `${match.id === selectedId ? '▸ ' : '  '}${match.path}:${match.line + 1}:${match.range.startUtf16 + 1} `;
     const query = model.query.query;
     const matchAt = query.length === 0 ? -1 : match.snippet.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
-    const highlightStyle = helixThemeStyle(theme, 'ui.highlight');
+    const current = match.id === selectedId;
+    const highlightStyle = helixThemeStyle(theme, current ? 'ui.highlight.current' : 'ui.highlight')
+      ?? (current ? { fg: String(readableTextColor(theme.foreground, theme.cursorOnSelection ?? theme.accent, theme.background)), bg: String(theme.cursorOnSelection ?? theme.accent) } : undefined);
     rows.push({
       segments: clipSegments([
         { text: location, foreground: theme.muted },
         ...(matchAt < 0 ? [{ text: match.snippet, foreground: theme.foreground }] : [
           { text: match.snippet.slice(0, matchAt), foreground: theme.foreground },
-          { text: match.snippet.slice(matchAt, matchAt + query.length), foreground: helixThemeColor(theme, 'ui.highlight', 'fg', theme.accent), bold: true, ...(highlightStyle === undefined ? {} : { style: highlightStyle }) },
+          { text: match.snippet.slice(matchAt, matchAt + query.length), foreground: helixThemeColor(theme, current ? 'ui.highlight.current' : 'ui.highlight', 'fg', theme.accent), bold: true, ...(highlightStyle === undefined ? {} : { style: highlightStyle }) },
           { text: match.snippet.slice(matchAt + query.length), foreground: theme.foreground },
         ]),
       ], width),

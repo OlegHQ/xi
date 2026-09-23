@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory(prefix="xi-editor-config-pty-") as temporary:
     (root / "main.txt").write_text("text\n", encoding="utf-8")
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": str(root / ".config"), "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "main.txt"],
         cwd=root,
@@ -63,7 +63,7 @@ for enabled in (True, False):
         root = Path(temporary)
         (root / ".config" / "xi").mkdir(parents=True)
         (root / ".config" / "xi" / "config.toml").write_text(
-            f'[editor]\neditor-config = {str(enabled).lower()}\nauto-format = false\n[editor.workspace-trust]\nlevel = "insecure"\n', encoding="utf-8"
+            f'[editor]\neditor-config = {str(enabled).lower()}\nauto-format = false\n[editor.lsp]\nenable = false\n[editor.workspace-trust]\nlevel = "insecure"\n', encoding="utf-8"
         )
         (root / ".editorconfig").write_text(
             'root = true\n[*.ts]\nindent_style = space\nindent_size = 4\nend_of_line = crlf\n', encoding="utf-8"
@@ -72,7 +72,7 @@ for enabled in (True, False):
         target.write_bytes(b"x\n")
         master, slave = pty.openpty()
         environment = os.environ.copy()
-        environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+        environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": str(root / ".config"), "XI_UI_TEST_MARKERS": "1"})
         child = subprocess.Popen(
             ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "main.ts"], cwd=root, env=environment,
             stdin=slave, stdout=slave, stderr=slave, close_fds=True,
@@ -101,6 +101,11 @@ for enabled in (True, False):
                         captured.extend(os.read(master, 65536))
                     except OSError:
                         break
+            if child.poll() is None and b'XI_TEARDOWN {"step":"done"}' in captured:
+                try:
+                    child.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
             if child.poll() is None:
                 raise SystemExit(f"EditorConfig save timed out: {captured[-4000:]!r}")
         finally:

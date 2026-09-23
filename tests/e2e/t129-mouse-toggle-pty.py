@@ -60,7 +60,7 @@ def spawn(workspace: Path):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": str(workspace), "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": str(workspace), "XDG_CONFIG_HOME": "", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(source)],
         cwd=str(workspace),
@@ -120,9 +120,13 @@ def run_keybinding_toggle() -> None:
             if not re.search(rb"\x1b\[\?100[026]h", bytes(captured[before:])):
                 raise SystemExit(f"mouse toggle on did not re-enable SGR mouse reporting modes: {captured[before:][-2000:]!r}")
             before = len(captured)
-            os.write(master, mouse(0, 15, 1))
-            os.write(master, mouse(0, 15, 1, True))
-            read_until_after(master, captured, before, b"XI_WORKBENCH_CONTROL", 5)
+            deadline = time.monotonic() + 5
+            while b"XI_WORKBENCH_CONTROL" not in captured[before:] and time.monotonic() < deadline:
+                os.write(master, mouse(0, 3, 1))
+                os.write(master, mouse(0, 3, 1, True))
+                read_for(master, captured, 0.1)
+            if b"XI_WORKBENCH_CONTROL" not in captured[before:]:
+                raise SystemExit(f"click did not reach the workbench after mouse mode was re-enabled: {captured[before:][-2000:]!r}")
         finally:
             close(master, child)
     print("T129-MOUSE-TOGGLE-PTY-01 pass: leader keybinding withdraws and restores SGR reporting, and clicks keep working once re-enabled")
@@ -147,7 +151,7 @@ def run_command_palette_toggle() -> None:
             # Filter to it and activate with Enter.
             before = len(captured)
             os.write(master, b"Toggle Mouse")
-            read_for(master, captured, 0.4)
+            read_until_after(master, captured, before, b"Toggle Mouse", 5)
             os.write(master, b"\r")
             read_until_after(master, captured, before, b"XI_MOUSE_MODE", 5)
             toggled = MOUSE_MODE.search(bytes(captured[before:]))
@@ -159,7 +163,7 @@ def run_command_palette_toggle() -> None:
             before = len(captured)
             os.write(master, b" ;")
             os.write(master, b"Toggle Mouse")
-            read_for(master, captured, 0.4)
+            read_until_after(master, captured, before, b"Toggle Mouse", 5)
             os.write(master, b"\r")
             read_until_after(master, captured, before, b"XI_MOUSE_MODE", 5)
             toggled_on = MOUSE_MODE.search(bytes(captured[before:]))

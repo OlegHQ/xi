@@ -34,10 +34,12 @@ class FakePickerModel<TEntry extends WorkbenchPickerEntry> implements PickerMode
   entries: readonly TEntry[] = [];
   selectedId: string | undefined;
   cancelled = 0;
+  readonly visibility: Array<{ readonly hidden: boolean | undefined; readonly ignored: boolean | undefined }> = [];
   get model(): { readonly entries: readonly TEntry[]; readonly selectedId: string | undefined } {
     return { entries: this.entries, selectedId: this.selectedId };
   }
-  async query(_mode: WorkbenchPickerMode, _query: string): Promise<Result<{ readonly entries: readonly TEntry[] }, WorkbenchPickerFailure>> {
+  async query(_mode: WorkbenchPickerMode, _query: string, options?: { readonly includeHidden?: boolean; readonly includeIgnored?: boolean }): Promise<Result<{ readonly entries: readonly TEntry[] }, WorkbenchPickerFailure>> {
+    this.visibility.push({ hidden: options?.includeHidden, ignored: options?.includeIgnored });
     this.selectedId = this.entries[0]?.id;
     return { ok: true, value: { entries: this.entries } };
   }
@@ -107,6 +109,12 @@ const picker = new PickerController<FixtureEntry, string>({
   openFile: (path, preview) => host.openBufferAtPath(path, { preview }),
   onSecondaryAction: (entry, key) => { secondaryActions.push({ entryId: entry.id, key }); },
 });
+
+picker.open('file');
+picker.toggleIncludeHidden();
+picker.toggleIncludeIgnored();
+assert.deepEqual(model.visibility.slice(-2), [{ hidden: true, ignored: false }, { hidden: true, ignored: true }], 'T116-PICKER-VISIBILITY-01 file-picker visibility toggles rerun with the active policy');
+await picker.close(true);
 
 // T116-PICKER-01: opening the theme picker begins a preview session on the applied theme;
 // navigating or pointer-hovering a different theme applies it live without persisting yet.

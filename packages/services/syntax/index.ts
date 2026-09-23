@@ -369,6 +369,7 @@ const CAPTURE_WINDOW_UNITS = 256;
 const CAPTURE_WINDOW_PAD = 64;
 const MAX_CACHED_WINDOWS = 128;
 const MAX_QUEUED_WINDOWS = 64;
+const MAX_CAPTURE_WINDOWS_PER_TICK = 4;
 
 /**
  * Owns an independent `tree.copy()` (never edited; the highlighter keeps editing its own
@@ -492,18 +493,22 @@ class LiveHighlightResult implements SyntaxHighlightResult {
   #processOneQueuedWindow(): void {
     this.#backgroundScheduled = false;
     if (this.#tree === null || this.#query === null) { this.#queuedWindows.length = 0; this.#queuedSet.clear(); return; }
-    const windowIndex = this.#queuedWindows.shift();
-    if (windowIndex === undefined) return;
-    this.#queuedSet.delete(windowIndex);
-    const started = performance.now();
-    const computed = this.#computeWindow(windowIndex);
-    this.#onWindowMeasured?.(performance.now() - started);
-    if (this.#windowCache.size >= MAX_CACHED_WINDOWS) {
-      const oldest = this.#windowCache.keys().next().value;
-      if (oldest !== undefined) this.#windowCache.delete(oldest);
+    let processed = 0;
+    while (processed < MAX_CAPTURE_WINDOWS_PER_TICK) {
+      const windowIndex = this.#queuedWindows.shift();
+      if (windowIndex === undefined) break;
+      this.#queuedSet.delete(windowIndex);
+      const started = performance.now();
+      const computed = this.#computeWindow(windowIndex);
+      this.#onWindowMeasured?.(performance.now() - started);
+      if (this.#windowCache.size >= MAX_CACHED_WINDOWS) {
+        const oldest = this.#windowCache.keys().next().value;
+        if (oldest !== undefined) this.#windowCache.delete(oldest);
+      }
+      this.#windowCache.set(windowIndex, computed);
+      processed += 1;
     }
-    this.#windowCache.set(windowIndex, computed);
-    this.#notifyWindowReady();
+    if (processed > 0) this.#notifyWindowReady();
     if (this.#queuedWindows.length > 0 && !this.#backgroundScheduled && this.#tree !== null) {
       this.#backgroundScheduled = true;
       this.#schedule(() => this.#processOneQueuedWindow());

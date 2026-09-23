@@ -767,8 +767,8 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
   private appendVisible(nodeId: string, rows: ExplorerVisibleRow[]): boolean {
     const node = this.#nodes.get(nodeId);
     if (node === undefined || !this.matchesPolicy(node)) return false;
-    const descendants = node.children.some((childId) => this.hasMatchingDescendant(childId));
     const matches = this.matchesFilter(node);
+    const descendants = this.#filter.length > 0 && node.children.some((childId) => this.hasMatchingDescendant(childId));
     if (this.#filter.length > 0 && !matches && !descendants) return false;
     const flattened = this.flattenedNode(node);
     rows.push(Object.freeze({ nodeId: flattened.node.id, depth: node.depth, kind: flattened.node.kind, selected: flattened.node.id === this.#selectedId, ...(flattened.label === flattened.node.name ? {} : { label: flattened.label }) }));

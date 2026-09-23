@@ -16,15 +16,17 @@ ROOT = Path(__file__).resolve().parents[2]
 STATE = re.compile(rb"XI_COMPLETION_STATE (\{[^\r\n]*\})")
 
 
-def read_for(master: int, output: bytearray, seconds: float) -> None:
+def read_until(master: int, output: bytearray, ready, seconds: float) -> bool:
     deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if not select.select([master], [], [], 0.05)[0]:
+    while not ready() and time.monotonic() < deadline:
+        readable, _, _ = select.select([master], [], [], min(0.05, max(0, deadline - time.monotonic())))
+        if not readable:
             continue
         try:
             output.extend(os.read(master, 65536))
         except OSError:
-            return
+            return ready()
+    return ready()
 
 
 def run_case(enabled: bool) -> bool:
@@ -55,28 +57,32 @@ def run_case(enabled: bool) -> bool:
         os.close(slave)
         captured = bytearray()
         try:
-            read_for(master, captured, 8)
-            if b"XI_WORKBENCH_READY" not in captured:
+            if not read_until(master, captured, lambda: b"XI_WORKBENCH_READY" in captured, 8):
                 raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
             os.write(master, b"i")
-            read_for(master, captured, 0.2)
             for version, key in enumerate(b"alp", 2):
                 os.write(master, bytes((key,)))
                 marker = f'XI_SYNTAX_STATE {{"documentId":"xi-launch-document","version":{version}'.encode()
-                deadline = time.monotonic() + 3
-                while marker not in captured and time.monotonic() < deadline:
-                    read_for(master, captured, 0.05)
-                if marker not in captured:
+                if not read_until(master, captured, lambda: marker in captured, 3):
                     raise SystemExit(f"typed character {chr(key)} did not reach the editor")
-            read_for(master, captured, 4)
+            # Enabled completion has a positive terminal state; disabled completion
+            # must remain absent for a short window to catch delayed requests.
+            if enabled:
+                read_until(master, captured, lambda: any(
+                    (state := json.loads(match.group(1))).get("state") == "ready"
+                    and state.get("items", 0) > 0
+                    for match in STATE.finditer(captured)
+                ), 4)
+            else:
+                read_until(master, captured, lambda: False, 0.5)
             states = [json.loads(match.group(1)) for match in STATE.finditer(captured)]
             ready = any(state.get("state") == "ready" and state.get("items", 0) > 0 for state in states)
             if ready != enabled:
                 markers = [match.group(0).decode("utf-8", "replace") for match in re.finditer(rb"XI_COMPLETION_(?:STATE|OPEN|CLOSED) [^\r\n]*", captured)]
                 raise SystemExit(f"word completion enabled={enabled} produced unexpected states: {states!r}; markers={markers!r}")
             os.write(master, b"\x1b:q!\r")
-            read_for(master, captured, 1)
-            child.wait(timeout=8)
+            if child.poll() is None:
+                child.wait(timeout=8)
         finally:
             if child.poll() is None:
                 child.kill()

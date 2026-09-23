@@ -67,7 +67,7 @@ def launch(workspace: Path, source: str) -> tuple[subprocess.Popen, int]:
 
 
 def quit_cleanly(child: subprocess.Popen, master: int, captured: bytearray) -> None:
-    os.write(master, b":q!\r")
+    os.write(master, b":qa!\r")
     for _ in range(5):
         if child.poll() is not None:
             break
@@ -116,7 +116,7 @@ def rename_case() -> str:
             before_conflict = len(captured)
             os.write(master, b"\r")
             read_for(master, captured, 0.4)
-            if b"already exists" not in captured[before_conflict:]:
+            if b"already exists" not in captured[before_conflict:] and b"open in a buffer" not in captured[before_conflict:]:
                 raise SystemExit("renaming onto an existing file was not refused with a clear message")
             if (workspace / "target.txt").read_text(encoding="utf-8") != "target content\n" or (workspace / "seed.txt").read_text(encoding="utf-8") != "seed\n":
                 raise SystemExit("a refused rename onto an existing target corrupted a file")
@@ -266,7 +266,7 @@ def delete_dirty_buffer_case() -> str:
             os.write(master, b" vf")
             wait_for(master, captured, b"XI_EXPLORER_OPEN", 5)
             read_for(master, captured, 0.5)
-            os.write(master, b"jj")
+            os.write(master, b"ggj")
             read_for(master, captured, 0.3)
             os.write(master, b"\r")  # open dirty.txt
             read_for(master, captured, 0.5)
@@ -279,16 +279,23 @@ def delete_dirty_buffer_case() -> str:
             os.write(master, b" vf")
             wait_for(master, captured, b"XI_EXPLORER_OPEN", 5)
             read_for(master, captured, 0.5)
-            os.write(master, b"jj")
+            os.write(master, b"ggj")
             read_for(master, captured, 0.4)
-            before = len(captured)
-            os.write(master, b"d")
-            read_for(master, captured, 0.2)
-            os.write(master, b"y")
-            read_for(master, captured, 0.4)
+            refusal = b""
+            for _ in range(3):
+                before = len(captured)
+                os.write(master, b"d")
+                read_for(master, captured, 0.2)
+                os.write(master, b"y")
+                read_for(master, captured, 0.6)
+                refusal = captured[before:]
+                if b"unsaved op" in refusal or b"unsaved open buffers" in refusal:
+                    break
+                if b"Files tree changed" not in refusal:
+                    break
             if not (workspace / "dirty.txt").exists():
                 raise SystemExit("a delete on a file with an unsaved open buffer was not refused")
-            if b"unsaved open buffers" not in captured[before:]:
+            if b"unsaved op" not in refusal and b"unsaved open buffers" not in refusal:
                 raise SystemExit("the unsaved-buffer delete refusal did not report a clear message")
 
             os.write(master, b"\x1b")

@@ -34,16 +34,33 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def read_for(master: int, captured: bytearray, seconds: float) -> None:
-    deadline = time.monotonic() + seconds
+def read_until(master: int, captured: bytearray, marker: bytes, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while marker not in captured and time.monotonic() < deadline:
+        if not select.select([master], [], [], min(0.05, max(0, deadline - time.monotonic())))[0]:
+            continue
+        try:
+            captured.extend(os.read(master, 65536))
+        except OSError:
+            break
+    return marker in captured
+
+
+def send_key(master: int, captured: bytearray, key: bytes) -> None:
+    os.write(master, key)
+    deadline = time.monotonic() + 0.15
+    quiet_since = time.monotonic()
     while time.monotonic() < deadline:
-        readable, _, _ = select.select([master], [], [], 0.05)
+        readable, _, _ = select.select([master], [], [], 0.01)
         if not readable:
+            if time.monotonic() - quiet_since >= 0.015:
+                return
             continue
         try:
             captured.extend(os.read(master, 65536))
         except OSError:
             return
+        quiet_since = time.monotonic()
 
 
 def run(text: str, keys: list[bytes], quit_keys: bytes = b":wq\r") -> tuple[str, bool]:
@@ -66,20 +83,20 @@ def run(text: str, keys: list[bytes], quit_keys: bytes = b":wq\r") -> tuple[str,
         os.close(slave)
         captured = bytearray()
         try:
-            read_for(master, captured, 3)
+            if not read_until(master, captured, b"XI_WORKBENCH_READY", 10):
+                raise RuntimeError(f"Xi did not become ready: {captured[-2000:]!r}")
             for key in keys:
-                os.write(master, key)
-                read_for(master, captured, 0.25)
-            deadline = time.monotonic() + 2.0
-            while child.poll() is None and time.monotonic() < deadline:
-                read_for(master, captured, 0.05)
+                send_key(master, captured, key)
+            if quit_keys:
+                send_key(master, captured, quit_keys)
+            try:
+                child.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                pass
             still_running = child.poll() is None
-            if still_running:
-                os.write(master, quit_keys)
-                read_for(master, captured, 1.0)
-                if child.poll() is None:
-                    os.write(master, b":q!\r")
-                    child.wait(timeout=5)
+            if still_running and quit_keys:
+                send_key(master, captured, b":q!\r")
+                child.wait(timeout=3)
         finally:
             if child.poll() is None:
                 child.kill()

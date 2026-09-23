@@ -18,6 +18,12 @@ const EMPTY_DIRECTORY_REVIEW_MODEL: DirectoryDraftReadModel = Object.freeze({
   error: undefined,
 });
 
+const LOADING_EXPLORER_MODEL = Object.freeze({
+  contractVersion: 1, generation: 0, roots: [], nodes: [], visibleRows: [], selectedId: undefined,
+  filter: '', includeHidden: false, includeIgnored: false, followSymlinks: false,
+  flattenDirs: true, focused: false, state: 'loading' as const, message: undefined,
+});
+
 export interface WorkbenchUiOptionsDeps {
   readonly renderer: ReturnType<typeof import('../../../../packages/ui/src/entrypoints/launch').createOpenTuiRenderer>;
   readonly themeWiring: ThemeWiring;
@@ -54,6 +60,16 @@ type RelaxedWorkbenchUiOptions = Omit<WorkbenchUiOptions, 'explorer' | 'search' 
   readonly search?: WorkbenchUiOptions['search'] | undefined;
   readonly output?: WorkbenchUiOptions['output'] | undefined;
 };
+
+function pendingExplorerRead(explorerFeature: Controllers['explorerFeature']): NonNullable<WorkbenchUiOptions['explorer']>['read'] {
+  return {
+    get model() {
+      const message = explorerFeature.loadError;
+      return message === undefined ? LOADING_EXPLORER_MODEL : { ...LOADING_EXPLORER_MODEL, state: 'error' as const, message };
+    },
+    subscribe: () => ({ dispose() {} }),
+  };
+}
 
 function buildStatuslineCallbacks(workbench: Controllers['workbench'], controllers: Controllers): Pick<WorkbenchUiOptions, 'statuslineFileType' | 'statuslineIndentStyle' | 'statuslineLspActivity' | 'statuslineRegister' | 'statuslineCodeActionHints'> {
   return {
@@ -167,6 +183,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     fileIndexStarter, pickerPreview, statusMessages,
   } = controllers;
   const { renderer, themeWiring, marker, startupTrace, installJobControl } = deps;
+  const loadingExplorer = pendingExplorerRead(explorerFeature);
   const themeVariants = resolveThemeVariants(controllers, themeWiring); const colorMode = resolveStartupColorMode(controllers, marker); const options: RelaxedWorkbenchUiOptions = {
     renderer,
     startupTrace,
@@ -242,8 +259,8 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     },
     get explorer() {
       const explorerTree = optionalServices.current?.explorerTree;
-      return explorerTree === undefined ? undefined : {
-        read: explorerTree,
+      return {
+        read: explorerTree ?? loadingExplorer,
         isOpen: () => explorerFeature.isVisible && sidebarController.readModel().panel === 'files',
         isFocused: () => explorerFeature.isOpen,
         onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),

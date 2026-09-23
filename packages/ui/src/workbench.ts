@@ -34,7 +34,7 @@ import {
 export { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, BUILTIN_WORKBENCH_THEMES, helixThemeStyle, type HelixThemeStyle, type ThemeColor, type WorkbenchTheme } from '../theme/workbench-themes';
 export { helixTextAttributes, helixThemeColor, themeColor } from '../theme/color-input';
 import { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, type WorkbenchTheme } from '../theme/workbench-themes';
-import { themeColor } from '../theme/color-input';
+import { helixThemeColor, themeColor } from '../theme/color-input';
 import { diagnosticColor, type Problem } from '../problems/index';
 import { endOfLineDiagnosticLines, inlineDiagnosticLines, type DiagnosticLine, type EndOfLineDiagnostic, type InlineDiagnosticsFilter } from '../problems/inline';
 
@@ -505,7 +505,7 @@ export class WorkbenchRenderable extends Renderable {
     this.#surface = resolvePaintColor(this.#theme.surface, this.#colorMode);
     this.#foreground = resolvePaintColor(this.#theme.foreground, this.#colorMode);
     this.#muted = resolvePaintColor(this.#theme.muted, this.#colorMode);
-    this.#border = resolvePaintColor(this.#theme.border, this.#colorMode);
+    this.#border = resolvePaintColor(helixThemeColor(this.#theme, 'ui.background.separator', 'fg', helixThemeColor(this.#theme, 'ui.window', 'fg', this.#theme.border)), this.#colorMode);
     this.#accent = resolvePaintColor(this.#theme.accent, this.#colorMode);
     this.#motionPaintTokens = resolveMotionPaintTokens(this.#theme);
     this.onMouse = (event: MouseEvent): void => {
@@ -678,7 +678,7 @@ export class WorkbenchRenderable extends Renderable {
     this.#surface = resolvePaintColor(theme.surface, this.#colorMode);
     this.#foreground = resolvePaintColor(theme.foreground, this.#colorMode);
     this.#muted = resolvePaintColor(theme.muted, this.#colorMode);
-    this.#border = resolvePaintColor(theme.border, this.#colorMode);
+    this.#border = resolvePaintColor(helixThemeColor(theme, 'ui.background.separator', 'fg', helixThemeColor(theme, 'ui.window', 'fg', theme.border)), this.#colorMode);
     this.#accent = resolvePaintColor(theme.accent, this.#colorMode);
     this.#motionPaintTokens = resolveMotionPaintTokens(theme);
     this.#lastViewportSize = undefined;
@@ -1190,6 +1190,15 @@ export class WorkbenchRenderable extends Renderable {
 
   private paintDiagnostics(buffer: OptimizedBuffer, frame: VisibleFrame, lines: readonly DiagnosticLine[], endOfLineLines: readonly EndOfLineDiagnostic[], x: number, y: number, diagnosticOffset: number): void {
     let diagnosticIndex = 0;
+    const cursorColumns = new Map<number, number[]>();
+    for (const selection of frame.selections) {
+      const point = selection.head.position;
+      if (point === null) continue;
+      const columns = cursorColumns.get(point.row) ?? [];
+      columns.push(point.column);
+      cursorColumns.set(point.row, columns);
+    }
+    for (const columns of cursorColumns.values()) columns.sort((left, right) => left - right);
     const lastRows = new Map<number, number>();
     for (let row = 0; row < frame.rows.length; row++) {
       const screen = frame.rows[row]!;
@@ -1204,7 +1213,15 @@ export class WorkbenchRenderable extends Renderable {
         if (role !== 'padding' && role !== 'filler') lastContent = column;
       }
       const start = Math.max(0, lastContent + 1);
-      if (start < frame.widthCells) buffer.fillRect(x + start, y + row, frame.widthCells - start, 1, this.#background);
+      if (start < frame.widthCells) {
+        let clearFrom = start;
+        for (const column of cursorColumns.get(row) ?? []) {
+          if (column < clearFrom || column >= frame.widthCells) continue;
+          if (column > clearFrom) buffer.fillRect(x + clearFrom, y + row, column - clearFrom, 1, this.#background);
+          clearFrom = column + 1;
+        }
+        if (clearFrom < frame.widthCells) buffer.fillRect(x + clearFrom, y + row, frame.widthCells - clearFrom, 1, this.#background);
+      }
       const line = endOfLineByLine.get(lineIndex);
       if (line !== undefined && start < frame.widthCells) {
         const color = resolvePaintColor(diagnosticColor(this.#theme, line.problem.severity), this.#colorMode);

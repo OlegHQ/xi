@@ -3,7 +3,7 @@ import { asIdentifier, asUtf16Offset, CancellationSource, type DocumentId, type 
 import type { ClipboardPort } from '../../../../packages/contracts/src/entrypoints/launch';
 import type { DocumentSnapshot, TextFileDocument } from '../../../../packages/document/src/entrypoints/launch';
 import { openTextDocument } from '../../../../packages/document/src/entrypoints/launch';
-import type { NodeFilesystemPort, NodeProcessPort, WorkspaceDirectoryEntry, WorkspaceDirectoryWatchEvent, WorkspaceIgnoreOptions, createNodeClock } from '../../../../packages/platform/src/entrypoints/launch';
+import type { NodeFilesystemPort, NodeProcessPort, WorkspaceDirectoryEntry, WorkspaceDirectoryWatchEvent, WorkspaceFileEntry, WorkspaceIgnoreOptions, createNodeClock } from '../../../../packages/platform/src/entrypoints/launch';
 import type { WorkbenchTheme } from '../../../../packages/ui/src/entrypoints/launch';
 import type {
   FilePathIndex,
@@ -213,6 +213,41 @@ function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['Fi
   };
 }
 
+function createIgnoredFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, startDefaultPopulation: () => Promise<void>, onUpdate: () => void, onError: (message: string) => void): () => Promise<void> {
+  let population: Promise<void> | undefined;
+  return () => {
+    population ??= (async () => {
+      await startDefaultPopulation();
+      if (![ignore.parents, ignore.ignore, ignore.gitIgnore, ignore.gitGlobal, ignore.gitExclude].some(Boolean)) return;
+      const cancellation = new CancellationSource();
+      const entries: WorkspaceFileEntry[] = [];
+      try {
+        const all = await filesystem.enumerateFiles(root, cancellation.token, batch => { entries.push(...batch); }, {
+          maxEntries: 120_000, maxVisitedEntries: 500_000, followSymlinks, deduplicateLinks,
+          ...(maxDepth === undefined ? {} : { maxDepth }),
+          ignore: { parents: false, ignore: false, gitIgnore: false, gitGlobal: false, gitExclude: false },
+        });
+        if (!all.ok) { onError(`xi: ignored file picker index incomplete: ${all.error.message}`); return; }
+        const visible = await filesystem.visibleWorkspacePaths(root, entries.map(entry => entry.relativePath), ignore, cancellation.token);
+        if (!visible.ok) { onError(`xi: ignored file picker index incomplete: ${visible.error.message}`); return; }
+        const ignored = entries.filter(entry => !visible.value.has(entry.relativePath)).map(entry => ({
+          rootId: 'workspace' as const, relativePath: entry.relativePath, absolutePath: entry.absolutePath, hidden: entry.hidden, ignored: true,
+        }));
+        for (let offset = 0; offset < ignored.length; offset += 512) {
+          if (cancellation.token.isCancelled) return;
+          const added = fileIndex.addPaths('workspace', ignored.slice(offset, offset + 512));
+          if (!added.ok) { onError(`xi: ignored file picker index incomplete: ${added.error.kind}`); return; }
+          if (added.value > 0) onUpdate();
+          await new Promise<void>(resolve => setImmediate(resolve));
+        }
+      } catch (error: unknown) {
+        onError(`xi: ignored file picker index incomplete: ${error instanceof Error ? error.message : String(error)}`);
+      } finally { cancellation.dispose(); }
+    })();
+    return population;
+  };
+}
+
 function hasNewLiteralMatch(query: string, entries: readonly { readonly relativePath: string }[]): boolean {
   if (query.length < 2) return false;
   // ponytail: fuzzy-only matches still arrive at the regular 2,048-path publication.
@@ -314,6 +349,7 @@ interface ForwardRefs {
   optionalServices: OptionalServicesWiring;
   directoryDraftController: DirectoryDraftController;
   startFileIndexPopulation: () => Promise<void>;
+  startIgnoredFileIndexPopulation: () => Promise<void>;
 }
 
 type StartupConfig = CompiledConfig | undefined;
@@ -720,7 +756,9 @@ function createOptionalServicesAndPicker(
     clock,
     marker,
     bufferStartPosition: ctx.startupConfig?.editor.bufferPicker.startPosition ?? 'current',
+    includeHiddenByDefault: ctx.startupConfig?.editor.filePicker.hidden ?? true,
     startFileIndexPopulation: () => forward.startFileIndexPopulation(),
+    startIgnoredFileIndexPopulation: () => forward.startIgnoredFileIndexPopulation(),
     toggleMouseMode: mouseMode.toggle,
     openDiagnostic,
     openConfig: () => ensureUserConfigDocument(deps, host),
@@ -779,6 +817,7 @@ function createExplorerAndDirectory(
     workspaceRelativePath: (path) => filesystem.workspaceRelativePath(workspaceRoot, path),
     trashDirectory: `${workspaceRoot}/.xi-trash`,
     ensureServices: async () => { await forward.optionalServices.ensure(); },
+    isPanelSelected: () => forward.sidebarController.visible && forward.sidebarController.lastPanel === 'files',
     onOpen: () => { forward.sidebarController.setPanel('files'); forward.sidebarController.setVisible(true); forward.sidebarController.expandSection('files'); },
     onCollapse: () => forward.sidebarController.collapseSection('files'),
     focusOutline: () => forward.overlayFeature.openOutline(),
@@ -1463,10 +1502,10 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
       void changed.then((ok) => { if (!ok) deps.statusMessages.publish('xi: workspace trust change failed'); host.notifySurfaceChange(); }).catch(() => deps.statusMessages.publish('xi: workspace trust change failed'));
     });
   }
-
   const filePicker = ctx.startupConfig?.editor.filePicker;
   const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd(), ...(process.env.XDG_CONFIG_HOME === undefined ? {} : { xdgConfigHome: process.env.XDG_CONFIG_HOME }) }, entries => picker.isOpen && picker.mode === 'file' && pickerModel.model.entries.length === 0 && hasNewLiteralMatch(pickerModel.model.query, entries), () => { if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
   forward.startFileIndexPopulation = startFileIndexPopulation;
+  forward.startIgnoredFileIndexPopulation = createIgnoredFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd(), ...(process.env.XDG_CONFIG_HOME === undefined ? {} : { xdgConfigHome: process.env.XDG_CONFIG_HOME }) }, startFileIndexPopulation, () => { if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
   const fileIndexStarter = createDeferredStart(1000, () => { void startFileIndexPopulation(); });
   async function ensureGitAndOpenPicker(): Promise<void> {
     const resolved = await optionalServices.ensure();

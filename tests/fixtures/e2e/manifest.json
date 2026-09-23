@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
   "suite": "e2e",
+  "maxConcurrency": 3,
   "fixtures": ["session", "picker", "explorer", "workbench", "distribution"]
 }

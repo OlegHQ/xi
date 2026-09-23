@@ -108,6 +108,19 @@ async function renderFixture(
     assert.match(frame?.rows[1]?.text ?? '', /2/u, 'the projected blank line has its gutter label');
     assert.match(chars.split('\n')[2] ?? '', /2/u, 'the production paint retains the blank line number');
   }
+  if (fixture === 'E16-empty-line' || fixture === 'E16-eof') {
+    const cursor = viewport.cursorCell;
+    assert.ok(cursor, 'T063-EMPTY-CURSOR-01 empty line has a terminal cursor cell');
+    const cursorRow = setup.captureSpans().lines[cursor.y];
+    let column = 0;
+    const cursorSpan = cursorRow?.spans.find((span) => {
+      const start = column;
+      column += [...span.text].length;
+      return start <= cursor.x && cursor.x < column;
+    });
+    assert.ok(cursorSpan && Math.abs(cursorSpan.bg.r - 0x14 / 255) < 0.01,
+      'T063-EMPTY-CURSOR-02 empty line paints the block cursor background');
+  }
   const spans = setup.captureSpans().lines.flatMap((line) => line.spans.map((span) => span.attributes));
   const result: RenderedFixture = {
     fixture,

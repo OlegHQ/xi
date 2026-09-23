@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the launched Explorer applies Helix's five ignore-source toggles."""
+"""Prove the launched Files tree hides ignored paths by default and can reveal them."""
 from __future__ import annotations
 
 import json
@@ -28,19 +28,10 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
 
 
 with tempfile.TemporaryDirectory(prefix="xi-file-explorer-ignore-pty-") as temporary:
-    root = Path(temporary)
+    root = Path(temporary) / "workspace"
+    root.mkdir()
     config = root / ".config" / "xi" / "config.toml"
     config.parent.mkdir(parents=True)
-    config.write_text(
-        "[editor.file-explorer]\n"
-        "hidden = true\n"
-        "parents = true\n"
-        "ignore = true\n"
-        "git-ignore = true\n"
-        "git-global = true\n"
-        "git-exclude = true\n",
-        encoding="utf-8",
-    )
     (root / "visible.txt").write_text("visible\n", encoding="utf-8")
     (root / "ignored-ignore.txt").write_text("ignored\n", encoding="utf-8")
     (root / "ignored-git.txt").write_text("ignored\n", encoding="utf-8")
@@ -84,7 +75,47 @@ with tempfile.TemporaryDirectory(prefix="xi-file-explorer-ignore-pty-") as tempo
             read_for(master, captured, 0.05)
         matches = [json.loads(match.group(1)) for match in REFRESH.finditer(captured)]
         if not any(item.get("state") == "ready" and item.get("includeHidden") is False and item.get("visibleRowCount") == 2 for item in matches):
-            raise SystemExit(f"file-explorer ignore sources did not leave only root and visible.txt: {matches!r}")
+            raise SystemExit(f"default Files ignore policy did not leave only root and visible.txt: {matches!r}")
+        before_toggle = len(matches)
+        os.write(master, b" i")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            matches = [json.loads(match.group(1)) for match in REFRESH.finditer(captured)]
+            if any(item.get("includeIgnored") is True and "ignored-git.txt" in item.get("visibleLabels", []) for item in matches[before_toggle:]):
+                break
+            read_for(master, captured, 0.05)
+        else:
+            raise SystemExit(f"Files Space-i did not reveal ignored paths: {matches!r}")
+        before_reset = len(matches)
+        os.write(master, b" i")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            matches = [json.loads(match.group(1)) for match in REFRESH.finditer(captured)]
+            if any(item.get("includeIgnored") is False and item.get("visibleRowCount") == 2 for item in matches[before_reset:]):
+                break
+            read_for(master, captured, 0.05)
+        else:
+            raise SystemExit(f"Files Space-i did not restore the default policy: {matches!r}")
+        before_hidden = len(matches)
+        os.write(master, b" h")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            matches = [json.loads(match.group(1)) for match in REFRESH.finditer(captured)]
+            if any(item.get("includeHidden") is True and ".git" in item.get("visibleLabels", []) and "ignored-git.txt" not in item.get("visibleLabels", []) for item in matches[before_hidden:]):
+                break
+            read_for(master, captured, 0.05)
+        else:
+            raise SystemExit(f"Files Space-h did not reveal dotfiles separately from ignored files: {matches!r}")
+        before_both = len(matches)
+        os.write(master, b" i")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            matches = [json.loads(match.group(1)) for match in REFRESH.finditer(captured)]
+            if any(item.get("includeHidden") is True and item.get("includeIgnored") is True and ".git" in item.get("visibleLabels", []) and "ignored-git.txt" in item.get("visibleLabels", []) for item in matches[before_both:]):
+                break
+            read_for(master, captured, 0.05)
+        else:
+            raise SystemExit(f"Files could not reveal .git after both visibility toggles: {matches!r}")
         os.write(master, b"\x1bq")
         child.wait(timeout=5)
     finally:
@@ -95,4 +126,4 @@ with tempfile.TemporaryDirectory(prefix="xi-file-explorer-ignore-pty-") as tempo
     if child.returncode != 0:
         raise SystemExit(f"Xi exited {child.returncode}: {captured[-4000:]!r}")
 
-print("Config file-explorer ignore PTY passed: parent, .ignore, .gitignore, global and git-exclude rules hid ignored entries.")
+print("Config file-explorer ignore PTY passed: default sources hid ignored entries, Space-i and Space-h independently revealed ignored paths and .git.")

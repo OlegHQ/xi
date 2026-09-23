@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix="xi-default-yank-register-") as temporar
 
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"HOME": temporary, "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"HOME": temporary, "XDG_CONFIG_HOME": str(workspace / ".config"), "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "main.txt"],
         cwd=workspace,
@@ -60,6 +60,11 @@ with tempfile.TemporaryDirectory(prefix="xi-default-yank-register-") as temporar
                 captured.extend(os.read(master, 65536))
             except OSError:
                 break
+        if child.poll() is None and b'XI_TEARDOWN {"step":"done"}' in captured:
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
         if child.poll() is None:
             raise SystemExit(f"Xi did not exit after :wq\n{captured[-3000:]!r}")
         if source.read_text(encoding="utf-8") != "ab\n":

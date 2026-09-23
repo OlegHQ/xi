@@ -40,6 +40,7 @@ export interface PickerQueryRequest {
   readonly query: string;
   readonly limit?: number;
   readonly includeHidden?: boolean;
+  readonly includeIgnored?: boolean;
   readonly generation?: number;
 }
 
@@ -75,6 +76,7 @@ export interface PickerQueryOptions {
   readonly cancellation?: CancellationToken;
   readonly limit?: number;
   readonly includeHidden?: boolean;
+  readonly includeIgnored?: boolean;
 }
 
 /**
@@ -313,7 +315,7 @@ export class FilePickerProvider implements PickerProvider {
 
   async query(request: PickerQueryRequest, cancellation: CancellationToken): Promise<Result<readonly PickerEntry[], PickerFailure>> {
     if (cancellation.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
-    const queryOptions: FilePickerQueryOptions = { cancellation, ...(request.limit === undefined ? {} : { limit: request.limit }), ...(request.includeHidden === undefined ? {} : { includeHidden: request.includeHidden }) };
+    const queryOptions: FilePickerQueryOptions = { cancellation, ...(request.limit === undefined ? {} : { limit: request.limit }), ...(request.includeHidden === undefined ? {} : { includeHidden: request.includeHidden }), ...(request.includeIgnored === undefined ? {} : { includeIgnored: request.includeIgnored }) };
     const result = await this.#index.queryAsync(request.query, queryOptions);
     if (!result.ok) return result;
     return { ok: true, value: result.value.entries };
@@ -473,7 +475,7 @@ export class BoundedPickerModel implements Disposable {
     const parent = options.cancellation?.onCancel(() => source.cancel());
     if (options.cancellation?.isCancelled === true) source.cancel();
     try {
-      const providerRequest: PickerQueryRequest = { mode, query, limit: Math.min(options.limit ?? this.#maxResults, this.#maxResults), ...(options.includeHidden === undefined ? {} : { includeHidden: options.includeHidden }) };
+      const providerRequest: PickerQueryRequest = { mode, query, limit: Math.min(options.limit ?? this.#maxResults, this.#maxResults), ...(options.includeHidden === undefined ? {} : { includeHidden: options.includeHidden }), ...(options.includeIgnored === undefined ? {} : { includeIgnored: options.includeIgnored }) };
       const cancellationRace = new Promise<Result<readonly PickerEntry[], PickerFailure>>((resolve) => {
         source.token.onCancel(() => resolve({ ok: false, error: { kind: 'cancelled' } }));
       });

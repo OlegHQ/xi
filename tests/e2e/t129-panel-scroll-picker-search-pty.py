@@ -46,7 +46,7 @@ def open_pty(cwd: Path, args: list[str]) -> tuple[int, subprocess.Popen[bytes]]:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": str(cwd), "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": str(cwd), "XDG_CONFIG_HOME": "", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", *args],
         cwd=str(cwd),
@@ -84,13 +84,13 @@ def run_picker() -> None:
             read_until(master, captured, b"XI_WORKBENCH_READY", 10)
             os.write(master, b" f")
             read_until(master, captured, b"Files  >", 5)
-            read_for(master, captured, 0.5)
             # The picker frame width is renderer/layout dependent; seeing a later result
             # after the wheel is stable evidence that its own bounded row window moved.
             before = len(captured)
-            for _ in range(40):
+            deadline = time.monotonic() + 5
+            while re.search(rb"p0(?:1[0-9]|2[0-9]|3[0-9])\.txt", bytes(captured[before:])) is None and time.monotonic() < deadline:
                 os.write(master, mouse(65, 30, 20))
-            read_for(master, captured, 0.6)
+                read_for(master, captured, 0.03)
             scrolled = re.search(rb"p0(?:1[0-9]|2[0-9]|3[0-9])\.txt", bytes(captured[before:])) is not None
             if not scrolled:
                 raise SystemExit(f"picker wheel scroll did not move its scrollbar thumb: {captured[before:][-4000:]!r}")
@@ -115,12 +115,12 @@ def run_search() -> None:
             read_until(master, captured, b"XI_SEARCH_OPEN", 5)
             os.write(master, b"needle")
             read_until(master, captured, b'"state":"ready"', 20)
-            read_for(master, captured, 0.5)
             before = len(captured)
-            for _ in range(40):
+            deadline = time.monotonic() + 5
+            while re.search(rb"f0(?:1[0-9]|2[0-9]|3[0-9])\.txt", bytes(captured[before:])) is None and time.monotonic() < deadline:
                 # Search is docked in the sidebar (x 1..28) under its tab; wheel inside that column.
                 os.write(master, mouse(65, 10, 20))
-            read_for(master, captured, 0.6)
+                read_for(master, captured, 0.03)
             # The full-height docked panel starts with f000.txt. Seeing a later file proves
             # its own bounded row window moved; the exact ANSI cursor sequence used to paint
             # the one-cell scrollbar is renderer-version-specific.

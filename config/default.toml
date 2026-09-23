@@ -151,13 +151,13 @@ git-global = true
 git-exclude = true
 
 [editor.file-explorer]
-hidden = false
+hidden = true
 follow-symlinks = false
-parents = false
-ignore = false
-git-ignore = false
-git-global = false
-git-exclude = false
+parents = true
+ignore = true
+git-ignore = true
+git-global = true
+git-exclude = true
 flatten-dirs = true
 
 [editor.buffer-picker]
@@ -218,18 +218,33 @@ o = "panel.outline.focus"
 d = "git.diff"
 
 [xi.keys.files-panel.space]
+h = "panel.include-hidden"
+i = "panel.include-ignored"
+f = "panel.files.focus"
+g = "panel.git.focus"
+e = "panel.expand-all"
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
 [xi.keys.search-panel.space]
+h = "panel.include-hidden"
+i = "panel.include-ignored"
+f = "panel.files.focus"
+g = "panel.git.focus"
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"
 q = "panel.close"
 
+[xi.keys.file-picker.space]
+h = "panel.include-hidden"
+i = "panel.include-ignored"
+
 [xi.keys.git-panel.space]
+f = "panel.files.focus"
+g = "panel.git.focus"
 s = "sidebar.toggle"
 l = "panel.preview"
 o = "panel.open"

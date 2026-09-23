@@ -40,10 +40,13 @@ function buildBindingMap(bindings: readonly RouterBindingConfig[]): ReadonlyMap<
 }
 
 /** Mirrors `packages/services/navigation`'s `PickerMode`; workbench cannot import services. */
-export type RouterPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'diagnostic';
+export type RouterPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git' | 'diagnostic';
 
 export interface RouterPickerPort {
   readonly isOpen: boolean;
+  readonly mode?: RouterPickerMode;
+  toggleIncludeHidden?(): void;
+  toggleIncludeIgnored?(): void;
   close(cancelPreview: boolean): Promise<void>;
   open(mode: RouterPickerMode): void;
 }
@@ -53,6 +56,9 @@ export interface RouterExplorerPort {
   open(): void;
   close(): void;
   handleKeypress(event: OwnedVimKeyEvent): Promise<boolean> | boolean;
+  toggleIncludeHidden?(): void;
+  toggleIncludeIgnored?(): void;
+  expandAll?(): Promise<void>;
 }
 
 export interface RouterSearchPort extends RouterExplorerPort {
@@ -752,6 +758,19 @@ export class WorkbenchInputRouter implements Disposable {
       case 'panel.preview': return this.#dispatchPanelKey('l', 'l');
       case 'panel.open': return this.#dispatchPanelKey('enter', '\r');
       case 'panel.close': return this.#dispatchPanelKey('q', 'q');
+      case 'panel.expand-all': if (this.#bindingMode() === 'files-panel') { await explorer.expandAll?.(); return true; } return false;
+      case 'panel.include-hidden':
+        if (this.#bindingMode() === 'files-panel') explorer.toggleIncludeHidden?.();
+        else if (this.#bindingMode() === 'search-panel') search.toggleIncludeHidden?.();
+        else if (this.#bindingMode() === 'file-picker') picker.toggleIncludeHidden?.();
+        else return false;
+        return true;
+      case 'panel.include-ignored':
+        if (this.#bindingMode() === 'files-panel') explorer.toggleIncludeIgnored?.();
+        else if (this.#bindingMode() === 'search-panel') search.toggleIncludeIgnored?.();
+        else if (this.#bindingMode() === 'file-picker') picker.toggleIncludeIgnored?.();
+        else return false;
+        return true;
       case 'files.edit-directory':
       case 'files.edit-buffer-directory': {
         const viewId = this.#options.session.activeViewId ?? this.#options.launchViewId;
@@ -777,6 +796,7 @@ export class WorkbenchInputRouter implements Disposable {
     const o = this.#options;
     if (o.overlayExplorer?.isOpen() === true) return 'files-panel';
     if (o.overlaySearch?.isOpen() === true) return 'search-panel';
+    if (o.picker.isOpen && o.picker.mode === 'file') return 'file-picker';
     if (o.overlayGitDiff?.isOpen() === true && !this.#gitPanelFocused) return 'normal';
     if (o.overlayGit?.isOpen() === true) return 'git-panel';
     return 'normal';

@@ -177,6 +177,10 @@ export interface FilesystemPort {
   /** Direct write for callers that explicitly opt out of atomic replacement. */
   writeFile?(path: string, contents: Uint8Array, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
   writeFileAtomic(path: string, contents: Uint8Array, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
+  /** Optional exclusive empty-file creation. Fails with EEXIST instead of replacing a raced target. */
+  createFileExclusive?(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
+  /** Optional real-path containment check; resolves symlink ancestors before comparing workspace membership. */
+  isWithinRealWorkspace?(root: string, path: string, cancellation: CancellationToken): Promise<Result<boolean, PlatformFailure>>;
   /** Optional bounded writer; implementations must retain atomic rename and cleanup semantics. */
   writeFileAtomicChunks?(path: string, contents: AsyncIterable<Uint8Array>, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
   stat(path: string, cancellation: CancellationToken): Promise<Result<FileInfo, PlatformFailure>>;

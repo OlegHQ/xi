@@ -115,11 +115,18 @@ const expectedNormalLeader = {
   e: 'panel.problems.focus', m: 'editor.mouse.toggle', r: 'search.replace',
 };
 const expectedPanelLeader = { s: 'sidebar.toggle', l: 'panel.preview', o: 'panel.open', q: 'panel.close' };
+const expectedFocusedPanelLeaders = {
+  'files-panel': { ...expectedPanelLeader, h: 'panel.include-hidden', i: 'panel.include-ignored', f: 'panel.files.focus', g: 'panel.git.focus', e: 'panel.expand-all' },
+  'search-panel': { ...expectedPanelLeader, h: 'panel.include-hidden', i: 'panel.include-ignored', f: 'panel.files.focus', g: 'panel.git.focus' },
+  'file-picker': { h: 'panel.include-hidden', i: 'panel.include-ignored' },
+  'git-panel': { ...expectedPanelLeader, f: 'panel.files.focus', g: 'panel.git.focus' },
+  'diff-panel': expectedPanelLeader,
+};
 const expectedBindings = [
   ...['normal', 'select'].flatMap(mode => Object.entries(expectedViewBindings).map(([key, command]) => [`${mode}:${key}`, command] as const)),
   ...Object.entries(expectedNormalLeader).map(([key, command]) => [`normal:<Space> ${key}`, command] as const),
   ...Object.entries({ p: 'panel.problems.focus', f: 'panel.files.focus', s: 'panel.search.focus', g: 'panel.git.focus', o: 'panel.outline.focus', d: 'git.diff' }).map(([key, command]) => [`normal:<Space> v ${key}`, command] as const),
-  ...['files-panel', 'search-panel', 'git-panel', 'diff-panel'].flatMap(mode => Object.entries(expectedPanelLeader).map(([key, command]) => [`${mode}:<Space> ${key}`, command] as const)),
+  ...Object.entries(expectedFocusedPanelLeaders).flatMap(([mode, panelBindings]) => Object.entries(panelBindings).map(([key, command]) => [`${mode}:<Space> ${key}`, command] as const)),
 ];
 const actualBindings = new Map(initial.value.bindings.map(binding => [`${binding.mode}:${binding.keys.join(' ')}`, binding.commandId]));
 for (const [context, command] of expectedBindings) assert.equal(actualBindings.get(context), command, `T036-CONFIG-DEFAULT-BINDING-01 ${context}`);
@@ -206,13 +213,13 @@ assert.equal(resolveEditorColorMode(true, { TERM: 'dumb' }), 'truecolor', 'T036-
 assert.equal(resolveEditorColorMode(false, { TERM: 'dumb' }), 'no-color', 'T036-TRUE-COLOR-UNIT-04 dumb terminals remain uncolored without the override');
 assert.equal(resolvePaintColor('#123456', 'ansi256').intent, 'indexed', 'T036-TRUE-COLOR-UNIT-05 reduced color mode retains indexed terminal intent');
 assert.equal(initial.value.editor.bufferline, 'never', 'T036-BUFFERLINE-01 Helix bufferline default is retained');
-assert.equal(initial.value.editor.fileExplorer.hidden, false, 'T036-FILE-EXPLORER-HIDDEN-DEFAULT-01 master file-explorer.hidden defaults to false');
+assert.equal(initial.value.editor.fileExplorer.hidden, true, 'T036-FILE-EXPLORER-HIDDEN-DEFAULT-01 Xi hides dotfiles in Files by default');
 assert.equal(initial.value.editor.fileExplorer.followSymlinks, false, 'T036-FILE-EXPLORER-SYMLINKS-DEFAULT-01 master file-explorer.follow-symlinks defaults to false');
-assert.equal(initial.value.editor.fileExplorer.parents, false, 'T036-FILE-EXPLORER-PARENTS-DEFAULT-01 master file-explorer.parents defaults to false');
-assert.equal(initial.value.editor.fileExplorer.ignore, false, 'T036-FILE-EXPLORER-IGNORE-DEFAULT-01 master file-explorer.ignore defaults to false');
-assert.equal(initial.value.editor.fileExplorer.gitIgnore, false, 'T036-FILE-EXPLORER-GIT-IGNORE-DEFAULT-01 master file-explorer.git-ignore defaults to false');
-assert.equal(initial.value.editor.fileExplorer.gitGlobal, false, 'T036-FILE-EXPLORER-GIT-GLOBAL-DEFAULT-01 master file-explorer.git-global defaults to false');
-assert.equal(initial.value.editor.fileExplorer.gitExclude, false, 'T036-FILE-EXPLORER-GIT-EXCLUDE-DEFAULT-01 master file-explorer.git-exclude defaults to false');
+assert.equal(initial.value.editor.fileExplorer.parents, true, 'T036-FILE-EXPLORER-PARENTS-DEFAULT-01 Xi reads parent ignore files by default');
+assert.equal(initial.value.editor.fileExplorer.ignore, true, 'T036-FILE-EXPLORER-IGNORE-DEFAULT-01 Xi reads .ignore by default');
+assert.equal(initial.value.editor.fileExplorer.gitIgnore, true, 'T036-FILE-EXPLORER-GIT-IGNORE-DEFAULT-01 Xi reads .gitignore by default');
+assert.equal(initial.value.editor.fileExplorer.gitGlobal, true, 'T036-FILE-EXPLORER-GIT-GLOBAL-DEFAULT-01 Xi reads global Git ignore by default');
+assert.equal(initial.value.editor.fileExplorer.gitExclude, true, 'T036-FILE-EXPLORER-GIT-EXCLUDE-DEFAULT-01 Xi reads Git exclude by default');
 assert.equal(initial.value.editor.fileExplorer.flattenDirs, true, 'T036-FILE-EXPLORER-FLATTEN-DIRS-DEFAULT-01 master file-explorer.flatten-dirs defaults to true');
 assert.equal(initial.value.editor.defaultLineEnding, 'native', 'T036-DEFAULT-LINE-ENDING-01 Helix default-line-ending default is retained');
 assert.equal(initial.value.editor.popupBorder, 'none', 'T036-POPUP-BORDER-01 Helix popup-border default is retained');

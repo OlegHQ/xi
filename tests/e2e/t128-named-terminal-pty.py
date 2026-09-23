@@ -76,6 +76,14 @@ def run_xterm() -> str:
                 raise SystemExit("xterm window never appeared under Xvfb")
             wait_for(stderr_path, 0, b"XI_WORKBENCH_READY", 10)
             subprocess.run(["xdotool", "windowfocus", window_id], env=environment, check=False)
+            focus_deadline = time.monotonic() + 5
+            while time.monotonic() < focus_deadline:
+                focused = subprocess.run(["xdotool", "getwindowfocus"], env=environment, capture_output=True, text=True).stdout.strip()
+                if focused.isdigit() and int(focused) == int(window_id):
+                    break
+                time.sleep(0.05)
+            else:
+                raise SystemExit("xterm did not receive focus before the mouse check")
             time.sleep(0.3)
 
             geometry = subprocess.run(["xdotool", "getwindowgeometry", "--shell", window_id], env=environment, capture_output=True, text=True).stdout
@@ -89,9 +97,19 @@ def run_xterm() -> str:
             # A real click through the real terminal must open the Files sidebar control.
             offset = stderr_path.stat().st_size
             x, y = cell(3, 1)
-            subprocess.run(["xdotool", "mousemove", "--window", window_id, str(x), str(y)], env=environment, check=True)
-            subprocess.run(["xdotool", "click", "1"], env=environment, check=True)
-            chunk = wait_for(stderr_path, offset, b"XI_WORKBENCH_CONTROL", 5)
+            for _ in range(3):
+                subprocess.run(["xdotool", "mousemove", "--window", window_id, str(x), str(y)], env=environment, check=True)
+                subprocess.run(["xdotool", "click", "1"], env=environment, check=True)
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    chunk = read_new(stderr_path, offset)
+                    if b"XI_WORKBENCH_CONTROL" in chunk:
+                        break
+                    time.sleep(0.1)
+                if b"XI_WORKBENCH_CONTROL" in chunk:
+                    break
+            else:
+                raise SystemExit(f"direct-terminal click was not delivered: {read_new(stderr_path, offset)[-2000:]!r}")
             if b'"activated":true' not in chunk:
                 raise SystemExit(f"direct-terminal click did not activate the Files control: {chunk!r}")
             subprocess.run(["xdotool", "key", "--window", window_id, "Escape"], env=environment, check=False)

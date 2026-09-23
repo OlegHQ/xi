@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import pty
 import re
 import select
+import struct
 import subprocess
 import tempfile
+import termios
 import time
 from pathlib import Path
+from terminal_screen import Screen
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -68,8 +72,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t040-explorer-") as temporary:
     (workspace / "src").mkdir()
     (workspace / "src" / "nested.txt").write_text("nested\n", encoding="utf-8")
     master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": "", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "seed.txt"],
         cwd=temporary,
@@ -83,6 +88,15 @@ with tempfile.TemporaryDirectory(prefix="xi-t040-explorer-") as temporary:
     captured = bytearray()
     try:
         wait_for(master, captured, b"XI_WORKBENCH_READY", 10)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            screen = Screen(40, 120)
+            screen.feed(captured)
+            if "Files" in screen.row_text(2) and any("seed.txt" in screen.row_text(row) for row in range(3, 8)):
+                break
+            read_for(master, captured, 0.05)
+        else:
+            raise SystemExit(f"startup Files tree did not show root rows before focus: {[screen.row_text(row) for row in range(2, 8)]!r}")
         os.write(master, b" vf")
         wait_for(master, captured, b"XI_EXPLORER_OPEN", 5)
         wait_for_refresh(master, captured, lambda item: item.get("state") == "ready", 5)
@@ -137,4 +151,4 @@ with tempfile.TemporaryDirectory(prefix="xi-t040-explorer-") as temporary:
     if child.returncode != 0:
         raise SystemExit(f"production Explorer exited {child.returncode}")
 
-print("T040 production PTY passed Explorer focus, non-focusing l preview, external insertion and stable rename selection")
+print("T040 production PTY passed startup Files rows, Explorer focus, non-focusing l preview, external insertion and stable rename selection")

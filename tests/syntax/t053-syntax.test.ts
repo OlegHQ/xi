@@ -405,6 +405,31 @@ async function rainbowBracketsUseContainingDepth(): Promise<void> {
   service.dispose();
 }
 
+async function firstViewportPublishesAsOneBatch(): Promise<void> {
+  const text = 'const value = 1;\n'.repeat(250);
+  const tasks: Array<() => void> = [];
+  const captureMs: number[] = [];
+  const service = new IncrementalSyntaxHighlighter({ grammars: grammarProvider, runtime: runtimeOptions, schedule: task => tasks.push(task), onCaptureWindowMeasured: elapsed => captureMs.push(elapsed) });
+  service.submit(request(1, text, { languageId: 'typescript' }));
+  for (let attempt = 0; attempt < 100 && service.latest() === undefined; attempt += 1) {
+    while (tasks.length > 0) tasks.shift()?.();
+    if (service.latest() === undefined) await new Promise<void>(resolve => setTimeout(resolve, 0));
+  }
+  const result = service.latest();
+  assert.ok(result, 'T053-VIEWPORT-01 small TypeScript file parses');
+  let updates = 0;
+  const subscription = service.onResult(() => { updates += 1; });
+  result.spansInRange(0, 768);
+  assert.equal(tasks.length, 1, 'T053-VIEWPORT-01 visible capture work is scheduled once');
+  tasks.shift()?.();
+  const visible = result.spansInRange(0, 768);
+  assert.ok(visible.filter(span => span.kind === 'keyword').length >= 40, 'T053-VIEWPORT-01 the first viewport capture batch covers its visible rows');
+  assert.equal(updates, 1, 'T053-VIEWPORT-01 viewport rows publish together without a capture wave');
+  console.log(`T053 first viewport capture batch ms: ${captureMs.reduce((sum, value) => sum + value, 0).toFixed(3)} windows: ${captureMs.length}`);
+  subscription.dispose();
+  service.dispose();
+}
+
 function clippedRowsAreBounded(): void {
   const spans = [
     { start: 12, end: 20, kind: 'keyword' as const },
@@ -432,4 +457,5 @@ await luaMatchTranslation();
 await utf16UnitsAreVerified();
 await treeCleanupOnCloseAndDispose();
 await rainbowBracketsUseContainingDepth();
+await firstViewportPublishesAsOneBatch();
 clippedRowsAreBounded();

@@ -7,7 +7,7 @@ import { asIdentifier, asUtf16Offset, type DocumentId, type SelectionId, type Vi
 import { openTextDocument, type DocumentReadPort, type DocumentSnapshot } from '../../packages/document/src/index';
 import { createSelectionSet } from '../../packages/selections/src/index';
 import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../../packages/workbench/src/index';
-import { WorkbenchRenderable, type EditorPresentationRead, type WorkbenchRenderableOptions } from '../../packages/ui/src/index';
+import { DARK_WORKBENCH_THEME, WorkbenchRenderable, type EditorPresentationRead, type WorkbenchRenderableOptions } from '../../packages/ui/src/index';
 
 const VIEW_ID = id<ViewId>('T087-view');
 const DOCUMENT_ID = id<DocumentId>('T087-document');
@@ -152,8 +152,27 @@ async function testStaleColorAndReducedMotion(): Promise<void> {
   narrow.setup.renderer.destroy();
 }
 
+async function testCurrentSearchContrast(): Promise<void> {
+  const fixture = makeFixture('normal');
+  const searchHighlight = { documentId: String(fixture.snapshot.id), documentVersion: Number(fixture.snapshot.version),
+    ranges: [{ start: 1, end: 3 }, { start: 9, end: 10 }], current: { start: 9, end: 10 } };
+  for (const [name, options] of [['light', {}], ['dark', { theme: DARK_WORKBENCH_THEME }]] as const) {
+    const rendered = await render(fixture, { colorMode: 'truecolor', searchHighlight }, options);
+    const spans = rendered.setup.captureSpans().lines.flatMap(line => line.spans);
+    const other = spans.find(span => span.text.includes('lp'));
+    const current = spans.find(span => span.text === 'b');
+    assert.ok(other && current && !other.bg.equals(current.bg), `T087-SEARCH-CURRENT-${name} current match contrasts with other matches`);
+    rendered.setup.renderer.destroy();
+  }
+  const monochrome = await render(fixture, { colorMode: 'no-color', searchHighlight });
+  const current = monochrome.setup.captureSpans().lines.flatMap(line => line.spans).find(span => span.text === 'b');
+  assert.ok(current && (current.attributes & TextAttributes.INVERSE) !== 0, 'T087-SEARCH-CURRENT-NOCOLOR current match uses reverse video');
+  monochrome.setup.renderer.destroy();
+}
+
 await testLayersAndLifecycle();
 await testStaleColorAndReducedMotion();
+await testCurrentSearchContrast();
 const artifactRoot = resolve(process.cwd(), '.artifacts/ui');
 await mkdir(artifactRoot, { recursive: true });
 await writeFile(resolve(artifactRoot, 't087-paint.json'), `${JSON.stringify({ fixtures: observations }, null, 2)}\n`, 'utf8');

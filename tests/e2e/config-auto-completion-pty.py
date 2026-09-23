@@ -65,6 +65,21 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
             return
 
 
+def read_until(master: int, captured: bytearray, marker: bytes, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while marker not in captured:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if not select.select([master], [], [], min(0.05, remaining))[0]:
+            continue
+        try:
+            captured.extend(os.read(master, 65536))
+        except OSError:
+            break
+    return marker in captured
+
+
 def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview: bool = True, cancel_preview: bool = False, supersede_menu: bool = False, focus_preview: bool = False, launch_plain: bool = False, line_below: bool = False) -> list[dict[str, object]]:
     with tempfile.TemporaryDirectory(prefix="xi-auto-completion-pty-") as temporary:
         workspace = Path(temporary)
@@ -88,30 +103,39 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
         os.close(slave)
         captured = bytearray()
         try:
-            read_for(master, captured, 10)
-            if b"XI_WORKBENCH_READY" not in captured:
+            if not read_until(master, captured, b"XI_WORKBENCH_READY", 30):
                 raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
             if launch_plain:
                 os.write(master, b":e main.ts\r")
-            read_for(master, captured, 3)
-            if b"XI_LANGUAGE_STARTED" not in captured:
+            if not read_until(master, captured, b"XI_LANGUAGE_STARTED", 15):
                 raise SystemExit(f"Xi did not start the TypeScript language server: {captured[-4000:]!r}")
+            if not read_until(master, captured, b"XI_LSP_READY", 15):
+                raise SystemExit(f"TypeScript language server did not become ready: {captured[-4000:]!r}")
             if line_below:
                 os.write(master, b"Go")
-                read_for(master, captured, 0.1)
+                read_for(master, captured, 0.01)
             else:
                 os.write(master, b"i")
             if line_below:
                 for letter in b"abcd":
                     os.write(master, bytes([letter]))
-                    read_for(master, captured, 0.07)
+                    read_for(master, captured, 0.01)
             else:
                 os.write(master, b"ab")
             read_for(master, captured, 0.05)
             early_matches = [match.group(1) for match in OPEN.finditer(captured)]
             if enabled and any(b'"trigger":"character"' in value for value in early_matches):
                 raise SystemExit(f"completion-timeout did not delay automatic completion: {captured[-4000:]!r}")
-            read_for(master, captured, 5)
+            if enabled:
+                if not read_until(master, captured, b'"trigger":"character"', 2):
+                    raise SystemExit(f"automatic completion did not open at the configured trigger length: {captured[-4000:]!r}")
+                if accept or cancel_preview:
+                    if not read_until(master, captured, b'XI_COMPLETION_STATE {"state":"ready"', 5):
+                        raise SystemExit(f"completion provider did not return its item before the input action: {captured[-4000:]!r}")
+            else:
+                # The disabled case has no positive marker to await. Let the configured
+                # 250 ms completion timeout plus a small scheduling margin elapse.
+                read_for(master, captured, 0.30)
             matches = [match.group(1) for match in OPEN.finditer(captured)]
             if enabled and not any(b'"trigger":"character"' in value for value in matches):
                 raise SystemExit(f"automatic completion did not open at the configured trigger length: {captured[-4000:]!r}")
@@ -121,40 +145,44 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
                 raise SystemExit(f"disabled automatic completion opened unexpectedly: {captured[-4000:]!r}")
             if cancel_preview:
                 os.write(master, b"\x0e")
-                read_for(master, captured, 1)
+                if preview:
+                    read_until(master, captured, b"XI_COMPLETION_PREVIEW", 2)
+                else:
+                    read_for(master, captured, 0.02)
                 if preview and not PREVIEW.search(captured):
                     raise SystemExit(f"completion preview did not apply on selection: {captured[-4000:]!r}")
                 if focus_preview:
                     os.write(master, b"\x1b[O")
-                    read_for(master, captured, 0.5)
+                    read_until(master, captured, b'XI_AUTO_SAVE_FOCUS {"focused":false,"enabled":true}', 2)
                     if b'XI_AUTO_SAVE_FOCUS {"focused":false,"enabled":true}' not in captured or source.read_text(encoding="utf-8") != "a\n":
                         raise SystemExit(f"focus-loss persisted tentative completion text: {source.read_text(encoding='utf-8')!r}; {captured[-4000:]!r}")
                 os.write(master, b"\x1b")
+                read_until(master, captured, b"XI_COMPLETION_CLOSED", 1)
                 read_for(master, captured, 0.5)
                 os.write(master, b"\x1b")
                 read_for(master, captured, 0.5)
                 os.write(master, b":wq\r")
-                read_for(master, captured, 1)
             elif accept:
                 os.write(master, b"\x0e\t" if supersede_menu else b"\x0e\r")
-                read_for(master, captured, 1)
+                read_until(master, captured, b"XI_COMPLETION_CLOSED" if supersede_menu else b"XI_COMPLETION_APPLIED", 2)
                 if supersede_menu and b"XI_COMPLETION_APPLIED" in captured:
                     raise SystemExit(f"smart-tab supersede-menu accepted a completion unexpectedly: {captured[-4000:]!r}")
                 os.write(master, b"\x1b")
+                read_until(master, captured, b"XI_COMPLETION_CLOSED", 1)
                 read_for(master, captured, 0.5)
                 os.write(master, b"\x1b")
                 read_for(master, captured, 0.5)
                 os.write(master, b":wq\r")
-                read_for(master, captured, 1)
             else:
                 os.write(master, b"\x1b")
-                time.sleep(0.1)
+                read_for(master, captured, 0.1)
                 os.write(master, b"\x1b")
-                time.sleep(0.1)
+                read_for(master, captured, 0.1)
                 os.write(master, b":qa!\r" if launch_plain else b":q!\r")
-            try:
-                child.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+            deadline = time.monotonic() + 5
+            while child.poll() is None and time.monotonic() < deadline:
+                read_for(master, captured, 0.05)
+            if child.poll() is None:
                 raise SystemExit(f"Xi did not quit after completion test: {captured[-4000:]!r}")
         finally:
             if child.poll() is None:

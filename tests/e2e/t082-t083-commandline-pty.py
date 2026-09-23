@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import pty
+import re
 import select
 import subprocess
 import tempfile
@@ -13,6 +14,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+ANSI = re.compile(rb"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+
+
+def visible_text(captured: bytearray) -> bytes:
+    """Read text across SGR/cursor controls without treating them as visible gaps."""
+    return re.sub(rb"\s+", b" ", ANSI.sub(b"", captured))
 
 
 def read_for(master: int, captured: bytearray, seconds: float) -> None:
@@ -29,10 +36,10 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
 
 def read_until(master: int, captured: bytearray, marker: bytes, seconds: float) -> None:
     deadline = time.monotonic() + seconds
-    while marker not in captured and time.monotonic() < deadline:
+    while marker not in captured and marker not in visible_text(captured) and time.monotonic() < deadline:
         read_for(master, captured, 0.05)
-    if marker not in captured:
-        raise SystemExit(f"missing PTY text {marker!r}: {captured[-4000:]!r}")
+    if marker not in captured and marker not in visible_text(captured):
+        raise SystemExit(f"missing visible PTY text {marker!r}: {visible_text(captured)[-4000:]!r}")
 
 
 def launch(source: Path, keys: tuple[bytes, ...], expected: tuple[bytes, ...], label: str, cleanup: tuple[bytes, ...] = ()) -> bytes:
@@ -77,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t082-t083-pty-") as temporary:
     tab_capture = launch(
         source,
         (b" ",),
-        (b"Prefix <Sp", b"  /  Search"),
+        (b"Prefix <Sp", b" / Search"),
         "T082 visible prefix-help surface",
         (b"\x1b", b"q"),
     )

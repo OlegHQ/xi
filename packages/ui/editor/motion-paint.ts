@@ -55,6 +55,7 @@ export interface SearchHighlightRead {
   readonly documentId: string;
   readonly documentVersion: number;
   readonly ranges: readonly { readonly start: number; readonly end: number }[];
+  readonly current?: { readonly start: number; readonly end: number };
 }
 
 export interface EditorPresentationRead {
@@ -460,6 +461,7 @@ const PAINT_TRAIL = 4;
 const PAINT_OPERATOR = 8;
 const PAINT_SEARCH = 16;
 const PAINT_DOCUMENT_HIGHLIGHT = 32;
+const PAINT_CURRENT_SEARCH = 64;
 
 /**
  * Paint one visible frame in strict layer order. All range work is bounded by
@@ -491,6 +493,7 @@ export function paintEditorFrame(
       ? undefined
       : resolveSyntaxStylesCached(options.syntaxColors, options.syntaxStyles, colorMode, options.undercurl ?? true);
   const searchStyle = styleForScope(syntaxStyles, "ui.highlight");
+  const currentSearchStyle = styleForScope(syntaxStyles, "ui.highlight.current");
   const primarySelectionStyle = styleForScope(syntaxStyles, "ui.selection.primary");
   const secondarySelectionStyle = styleForScope(syntaxStyles, "ui.selection");
   const colors = {
@@ -540,6 +543,7 @@ export function paintEditorFrame(
       const trail = (mask & PAINT_TRAIL) !== 0;
       const operator = (mask & PAINT_OPERATOR) !== 0;
       const search = (mask & PAINT_SEARCH) !== 0;
+      const currentSearch = (mask & PAINT_CURRENT_SEARCH) !== 0;
       const documentHighlight = (mask & PAINT_DOCUMENT_HIGHLIGHT) !== 0;
       if (primarySelection) selectedCells += 1;
       if (secondarySelection) secondarySelectedCells += 1;
@@ -571,6 +575,11 @@ export function paintEditorFrame(
         attributes |= searchStyle?.attributes ?? 0;
         underlineColor = searchStyle?.underlineColor ?? underlineColor;
       }
+      if (currentSearch) {
+        background = currentSearchStyle?.background ?? colors.cursorOnSelection;
+        foreground = currentSearchStyle?.foreground ?? pickCursorForeground(foreground, background, options.foreground, options.background);
+        attributes |= (currentSearchStyle?.attributes ?? 0) | TextAttributes.BOLD;
+      }
       if (operator) {
         background = colors.operator;
         attributes |= TextAttributes.UNDERLINE;
@@ -591,6 +600,7 @@ export function paintEditorFrame(
         background = options.background;
         if (trail) attributes |= TextAttributes.DIM;
         if (search) attributes |= TextAttributes.BOLD | TextAttributes.UNDERLINE;
+        if (currentSearch) attributes |= TextAttributes.INVERSE;
         if (operator) attributes |= TextAttributes.UNDERLINE;
         if (secondarySelection) attributes |= TextAttributes.UNDERLINE;
         if (primarySelection) attributes |= TextAttributes.INVERSE;
@@ -630,8 +640,8 @@ export function paintEditorFrame(
         }
       }
       buffer.fillRect(options.x + column, rowY, 1, 1, background);
-      if (cell.text.length > 0) {
-        buffer.setCell(options.x + column, rowY, cell.text, foreground, background, attributes);
+      if (cell.text.length > 0 || cursorInfo !== undefined) {
+        buffer.setCell(options.x + column, rowY, cell.text || " ", foreground, background, attributes);
         if (underlineColor !== undefined) buffer.setUnderlineColor(options.x + column, rowY, underlineColor);
       }
     }
@@ -764,7 +774,7 @@ function cursorCellStyle(
   const guide = cursorGuideForCell(syntaxStyles, rowIndex, column, cursors, cursorLine, cursorColumn, cursorlineBackground, cursorcolumnBackground, undefined, [], undefined);
   const underlineColor = guide?.underlineColor ?? style?.underlineColor;
   return {
-    glyph: cell.text,
+    glyph: cell.text || " ",
     foreground: cell.role === "gutter" ? muted : (guide?.foreground ?? style?.foreground ?? foreground),
     background: guide?.background ?? style?.background ?? background,
     attributes: (style?.attributes ?? 0) | (guide?.attributes ?? 0),
@@ -1037,6 +1047,8 @@ function buildPaintMasks(
         rowRange,
       );
     }
+    if (search.current !== undefined) paintOffsetRange(frame, search.current.start, search.current.end,
+      (row, column) => setMask(row, column, PAINT_CURRENT_SEARCH), rowRange);
   }
   const documentHighlight = presentation?.documentHighlight;
   if (

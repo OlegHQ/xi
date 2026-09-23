@@ -27,6 +27,14 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
             return
 
 
+def wait_for(master: int, captured: bytearray, marker: bytes, seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while marker not in captured and time.monotonic() < deadline:
+        read_for(master, captured, 0.05)
+    if marker not in captured:
+        raise SystemExit(f"Missing gutter output {marker!r}: {captured[-4000:]!r}")
+
+
 with tempfile.TemporaryDirectory(prefix="xi-gutter-min-width-pty-") as temporary:
     root = Path(temporary)
     config = root / ".config" / "xi" / "config.toml"
@@ -38,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix="xi-gutter-min-width-pty-") as temporary
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 14, 100, 0, 0))
     environment = os.environ.copy()
-    environment.update({"HOME": temporary, "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"HOME": temporary, "XDG_CONFIG_HOME": str(root / ".config"), "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", "apps/xi/src/main.ts", str(source)],
         cwd=ROOT,
@@ -51,12 +59,8 @@ with tempfile.TemporaryDirectory(prefix="xi-gutter-min-width-pty-") as temporary
     os.close(slave)
     captured = bytearray()
     try:
-        read_for(master, captured, 8)
-        if b"XI_WORKBENCH_READY" not in captured:
-            raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
-        read_for(master, captured, 0.5)
-        if b"    4" not in captured:
-            raise SystemExit(f"five-cell line-number gutter missing a rendered label: {captured[-4000:]!r}")
+        wait_for(master, captured, b"XI_WORKBENCH_READY", 8)
+        wait_for(master, captured, b"    4", 5)
         os.write(master, b"q")
         child.wait(timeout=5)
     finally:

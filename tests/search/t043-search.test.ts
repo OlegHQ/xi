@@ -119,6 +119,7 @@ async function dirtyBuffersRespectIgnoreRules(): Promise<void> {
   await writeFile(join(root, 'ignored.txt'), 'needle on disk\n');
   await writeFile(join(root, 'visible.txt'), 'needle on disk\n');
   await writeFile(join(root, '.hidden.txt'), 'needle on disk\n');
+  await writeFile(join(root, '.git', 'xi-test-config'), 'needle in git metadata\n');
   const filesystem = new NodeFilesystemPort();
   const environment = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
   const service = new RealtimeSearchService({
@@ -139,6 +140,12 @@ async function dirtyBuffersRespectIgnoreRules(): Promise<void> {
     assert.equal(result.ok, true);
     if (result.ok) assert.deepEqual(result.value.matches.map((match) => match.path), includeHidden ? ['.hidden.txt', 'visible.txt'] : ['visible.txt'], 'dirty buffers obey ignore and hidden settings while visible buffers replace disk matches');
   }
+  const ignoredShown = await service.query(query('needle', { rootPath: root, includeIgnored: true }));
+  assert.equal(ignoredShown.ok, true, 'T043-IGNORE-01 ignored content can be included on demand');
+  if (ignoredShown.ok) assert.deepEqual(ignoredShown.value.matches.map((match) => match.path), ['ignored.txt', 'visible.txt'], 'T043-IGNORE-02 disk and dirty ignored paths are both revealed without revealing hidden paths');
+  const gitShown = await service.query(query('needle', { rootPath: root, includeHidden: true, includeIgnored: true }));
+  assert.equal(gitShown.ok, true, 'T043-GIT-01 explicit hidden and ignored search succeeds');
+  if (gitShown.ok) assert.equal(gitShown.value.matches.some((match) => match.path === '.git/xi-test-config'), true, 'T043-GIT-02 .git paths are searchable only when both visibility toggles are enabled');
   service.dispose();
 }
 

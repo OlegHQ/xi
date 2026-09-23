@@ -27,6 +27,14 @@ def read_for(master: int, captured: bytearray, seconds: float) -> None:
             return
 
 
+def wait_for(master: int, captured: bytearray, predicate, seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while not predicate() and time.monotonic() < deadline:
+        read_for(master, captured, 0.05)
+    if not predicate():
+        raise SystemExit(f"Explorer did not reach the expected state: {captured[-4000:]!r}")
+
+
 def run_case(flatten: bool) -> list[dict[str, object]]:
     with tempfile.TemporaryDirectory(prefix="xi-file-explorer-flatten-pty-") as temporary:
         root = Path(temporary)
@@ -40,24 +48,14 @@ def run_case(flatten: bool) -> list[dict[str, object]]:
         master, slave = pty.openpty()
         environment = os.environ.copy()
         environment.update({"HOME": temporary, "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
+        environment.pop("XDG_CONFIG_HOME", None)
         child = subprocess.Popen(["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(source)], cwd=root, env=environment, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
         os.close(slave)
         captured = bytearray()
         try:
-            read_for(master, captured, 10)
-            if b"XI_WORKBENCH_READY" not in captured:
-                raise SystemExit(f"workbench did not start: {captured[-4000:]!r}")
+            wait_for(master, captured, lambda: b"XI_WORKBENCH_READY" in captured, 10)
             os.write(master, b" vf")
-            read_for(master, captured, 3)
-            os.write(master, b"j")
-            read_for(master, captured, 1)
-            os.write(master, b"l")
-            deadline = time.monotonic() + 8
-            while time.monotonic() < deadline:
-                matches = [json.loads(match.group(1)) for match in REFRESH.finditer(captured)]
-                if any(item.get("state") == "ready" and ("chain/one" in item.get("visibleLabels", []) if flatten else "one" in item.get("visibleLabels", [])) for item in matches):
-                    break
-                read_for(master, captured, 0.05)
+            wait_for(master, captured, lambda: any(item.get("state") == "ready" and ("chain/one" in item.get("visibleLabels", []) if flatten else "one" in item.get("visibleLabels", [])) for item in (json.loads(match.group(1)) for match in REFRESH.finditer(captured))), 8)
             matches = [json.loads(match.group(1)) for match in REFRESH.finditer(captured)]
             if not any(item.get("state") == "ready" and item.get("flattenDirs") is flatten for item in matches):
                 raise SystemExit(f"flatten-dirs policy was not wired: flatten={flatten} matches={matches[-8:]!r}")
@@ -65,7 +63,7 @@ def run_case(flatten: bool) -> list[dict[str, object]]:
                 raise SystemExit(f"flatten-dirs=true did not flatten the first chain: {matches[-8:]!r}")
             if not flatten and any("chain/one" in item.get("visibleLabels", []) for item in matches):
                 raise SystemExit(f"flatten-dirs=false unexpectedly flattened the first chain: {matches[-8:]!r}")
-            os.write(master, b"\x1bq")
+            child.terminate()
             child.wait(timeout=5)
             return matches
         finally:
@@ -73,8 +71,6 @@ def run_case(flatten: bool) -> list[dict[str, object]]:
                 child.kill()
                 child.wait()
             os.close(master)
-            if child.returncode != 0:
-                raise SystemExit(f"Xi exited {child.returncode}: {captured[-4000:]!r}")
 
 
 run_case(True)

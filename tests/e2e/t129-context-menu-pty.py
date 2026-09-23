@@ -4,6 +4,7 @@ rejects a disabled action, and its enabled action does what the equivalent click
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import pty
 import re
@@ -17,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PANEL_POINTER = re.compile(rb"XI_PANEL_POINTER (\{[^\r\n]*\})")
+EXPLORER_REFRESH = re.compile(rb"XI_EXPLORER_REFRESH (\{[^\r\n]*\})")
 
 
 def read_for(master: int, captured: bytearray, seconds: float) -> None:
@@ -39,6 +41,67 @@ def read_until(master: int, captured: bytearray, marker: bytes, seconds: float) 
         raise SystemExit(f"missing PTY marker {marker!r}: {captured[-5000:]!r}")
 
 
+def read_until_after(master: int, captured: bytearray, start: int, marker: bytes, seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while marker not in captured[start:] and time.monotonic() < deadline:
+        read_for(master, captured, 0.05)
+    if marker not in captured[start:]:
+        raise SystemExit(f"missing PTY marker {marker!r} after offset {start}: {captured[start:][-4000:]!r}")
+
+
+def wait_for_explorer(master: int, captured: bytearray, predicate, seconds: float = 10) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        entries = [json.loads(match.group(1)) for match in EXPLORER_REFRESH.finditer(captured)]
+        if entries and predicate(entries[-1]):
+            return
+        read_for(master, captured, 0.05)
+    raise SystemExit(f"explorer did not reach expected state: {captured[-4000:]!r}")
+
+
+def open_root_context(master: int, captured: bytearray) -> int:
+    wait_for_explorer(master, captured, lambda entry: entry.get("state") == "ready" and {"main.ts", "zztarget.txt"}.issubset(entry.get("visibleLabels", [])))
+    for _ in range(5):
+        start = len(captured)
+        os.write(master, mouse(2, 5, 3))
+        os.write(master, mouse(2, 5, 3, "m"))
+        try:
+            read_until_after(master, captured, start, b'"action":"context"', 5)
+        except SystemExit:
+            raise SystemExit(f"root context click produced no event; preceding output: {captured[-3000:]!r}")
+        pointer = next(match for match in PANEL_POINTER.finditer(captured[start:]) if b'"action":"context"' in match.group(0))
+        context = json.loads(pointer.group(1))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            pointer_end = start + pointer.end()
+            newer = [json.loads(match.group(1)) for match in EXPLORER_REFRESH.finditer(captured[pointer_end:])]
+            if newer and newer[-1].get("generation", 0) > context.get("generation", 0):
+                break
+            screen = captured[start:].decode("utf-8", errors="replace")
+            if "Expand" in screen or "Collapse" in screen:
+                # A ready row can still be followed by one last asynchronous tree
+                # generation. Require a quiet marker stream before relying on this menu.
+                quiet_since = time.monotonic()
+                while time.monotonic() - quiet_since < 0.1:
+                    previous_size = len(captured)
+                    read_for(master, captured, 0.025)
+                    if len(captured) != previous_size:
+                        quiet_since = time.monotonic()
+                    newer = [json.loads(match.group(1)) for match in EXPLORER_REFRESH.finditer(captured[pointer_end:])]
+                    if newer and newer[-1].get("generation", 0) > context.get("generation", 0):
+                        break
+                else:
+                    return start
+                break
+            read_for(master, captured, 0.05)
+        else:
+            raise SystemExit(f"context menu did not render its enabled item: {captured[start:][-2000:]!r}")
+        os.write(master, b"\x1b")
+        read_for(master, captured, 0.1)
+        wait_for_explorer(master, captured, lambda entry: entry.get("state") == "ready" and {"main.ts", "zztarget.txt"}.issubset(entry.get("visibleLabels", [])))
+    raise SystemExit(f"context menu kept getting invalidated by explorer refreshes: {captured[-4000:]!r}")
+
+
 def mouse(button: int, x: int, y: int, kind: str = "M") -> bytes:
     return f"\x1b[<{button};{x};{y}{kind}".encode("ascii")
 
@@ -52,7 +115,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": "", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(source)],
         cwd=str(workspace),
@@ -71,16 +134,13 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
         # tests/e2e/t040-explorer-pty.py uses to open it instead.
         os.write(master, b" vf")
         read_until(master, captured, b"XI_EXPLORER_OPEN", 5)
-        read_for(master, captured, 1.0)
+        wait_for_explorer(master, captured, lambda entry: entry.get("state") == "ready" and {"main.ts", "zztarget.txt"}.issubset(entry.get("visibleLabels", [])))
 
         # Right-click the root row (mouse row 3: row 1 is the sidebar's `▾ Files` header, row 2
         # is the Explorer panel's own "N items" line, row 3 is the expanded workspace root --
         # a directory-like container): the menu must show "Expand"/"Collapse" enabled and
         # "Open" disabled, and the disabled "Open" must not execute.
-        before = len(captured)
-        os.write(master, mouse(2, 5, 3))
-        os.write(master, mouse(2, 5, 3, "m"))
-        read_for(master, captured, 0.5)
+        before = open_root_context(master, captured)
         hit = next((m for m in (PANEL_POINTER.finditer(bytes(captured[before:]))) if b'"action":"context"' in m.group(0)), None)
         if hit is None:
             raise SystemExit(f"right-click did not produce a context action: {captured[before:][-4000:]!r}")
@@ -96,7 +156,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
         before_enter = len(captured)
         os.write(master, mouse(0, 5, 3))
         os.write(master, mouse(0, 5, 3, "m"))
-        read_for(master, captured, 0.4)
+        read_for(master, captured, 0.1)
         # Closing/repainting a Solid overlay can legitimately expose the underlying
         # `main.ts` label in the ANSI diff; only a semantic activation marker is evidence
         # that the disabled action ran.
@@ -106,7 +166,20 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
         # equivalent left-click (root toggles between expanded/collapsed).
         before_toggle = len(captured)
         os.write(master, b"\r")
-        read_for(master, captured, 0.5)
+        deadline = time.monotonic() + 5
+        while (b"XI_EXPLORER_REFRESH" not in captured[before_toggle:] and
+               b"Files tree changed; open the menu again" not in captured[before_toggle:] and
+               time.monotonic() < deadline):
+            read_for(master, captured, 0.05)
+        if b"Files tree changed; open the menu again" in captured[before_toggle:]:
+            # The asynchronous tree scan can invalidate a menu opened on the previous
+            # generation. Reopen it against the current generation and retry the same action.
+            os.write(master, mouse(2, 5, 3))
+            os.write(master, mouse(2, 5, 3, "m"))
+            read_until_after(master, captured, len(captured) - 1, b'"action":"context"', 5)
+            before_toggle = len(captured)
+            os.write(master, b"\r")
+            read_until_after(master, captured, before_toggle, b"XI_EXPLORER_REFRESH", 5)
         if b"XI_EXPLORER_REFRESH" not in bytes(captured[before_toggle:]):
             raise SystemExit(f"keyboard-activated context menu item did not toggle the root: {captured[before_toggle:][-2000:]!r}")
 
@@ -138,12 +211,11 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
         # through to whatever renderable is under the pointer. Explorer is already open and
         # expanded from the earlier ` vf` (clicking the `▾ Files` chevron again here would
         # collapse -- not reopen -- the already-expanded section).
+        os.write(master, b"\x1b")
+        read_for(master, captured, 0.2)
         os.write(master, b" vf")
-        read_for(master, captured, 0.4)
-        before_reopen = len(captured)
-        os.write(master, mouse(2, 5, 3))
-        os.write(master, mouse(2, 5, 3, "m"))
-        read_for(master, captured, 0.4)
+        read_for(master, captured, 0.2)
+        before_reopen = open_root_context(master, captured)
         if not any(b'"action":"context"' in m.group(0) for m in PANEL_POINTER.finditer(bytes(captured[before_reopen:]))):
             raise SystemExit(f"could not reopen a context menu for the dismiss-on-outside-click check: {captured[before_reopen:][-3000:]!r}")
         before_outside = len(captured)

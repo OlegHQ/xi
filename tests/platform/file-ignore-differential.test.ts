@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { CancellationSource } from '../../packages/contracts/src/index';
 import { NodeFilesystemPort } from '../../packages/platform/src/entrypoints/launch';
+import { FilePathIndex } from '../../packages/services/navigation/index';
 
 const run = promisify(execFile);
 const temporary = await mkdtemp(join(tmpdir(), 'xi-ignore-differential-'));
@@ -68,6 +69,26 @@ try {
   const globalBuffers = await filesystem.visibleWorkspacePaths(join(linked, 'child'), ['global.txt'], globalOptions, new CancellationSource().token);
   assert.equal(globalBuffers.ok, true);
   if (globalBuffers.ok) assert.deepEqual([...globalBuffers.value], [], 'F20-XDG-BUFFER dirty buffers honor XDG Git global ignore');
+
+  const discovered: { readonly rootId: string; readonly relativePath: string; readonly absolutePath: string; readonly hidden: boolean; readonly ignored: boolean }[] = [];
+  const allFiles = await filesystem.enumerateFiles(join(linked, 'child'), new CancellationSource().token, batch => {
+    discovered.push(...batch.map(entry => ({ rootId: 'picker', ...entry, ignored: false })));
+  }, { followSymlinks: false, ignore: { parents: false, ignore: false, gitIgnore: false, gitGlobal: false, gitExclude: false } });
+  assert.equal(allFiles.ok, true, 'F20-IGNORED-INDEX-01 on-demand enumeration sees globally ignored paths');
+  const visible = await filesystem.visibleWorkspacePaths(join(linked, 'child'), discovered.map(entry => entry.relativePath), globalOptions, new CancellationSource().token);
+  assert.equal(visible.ok, true, 'F20-IGNORED-INDEX-02 ignored path classification uses the configured policy');
+  if (visible.ok) {
+    const ignored = discovered.filter(entry => !visible.value.has(entry.relativePath)).map(entry => ({ ...entry, ignored: true }));
+    const index = new FilePathIndex({ maxEntries: 120_000 });
+    assert.equal(index.addRoot({ id: 'picker', label: 'picker', path: join(linked, 'child') }).ok, true);
+    assert.equal(index.addPaths('picker', ignored).ok, true, 'F20-IGNORED-INDEX-03 ignored paths can be added lazily');
+    index.markReady();
+    const hiddenByDefault = await index.queryAsync('global.txt', { includeIgnored: false });
+    const revealed = await index.queryAsync('global.txt', { includeIgnored: true });
+    assert.equal(hiddenByDefault.ok && hiddenByDefault.value.totalMatches, 0, 'F20-IGNORED-INDEX-04 ignored path stays hidden until toggled');
+    assert.equal(revealed.ok && revealed.value.entries[0]?.relativePath, 'global.txt', 'F20-IGNORED-INDEX-05 ignored path becomes selectable');
+    index.dispose();
+  }
 
   const bounded = join(temporary, 'bounded');
   await mkdir(bounded);

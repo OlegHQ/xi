@@ -30,6 +30,7 @@ export interface SearchQuery {
   readonly caseSensitive?: boolean;
   readonly wholeWord?: boolean;
   readonly includeHidden?: boolean;
+  readonly includeIgnored?: boolean;
   readonly globs?: readonly string[];
   readonly maxResults?: number;
 }
@@ -255,11 +256,12 @@ export class RealtimeSearchService implements Disposable {
     // once instead of on every ripgrep batch. Run concurrently with the disk search: the
     // buffer scan must never delay starting rg (previously `await`ed before spawning it).
     const bufferPromise = (async (): Promise<Result<{ readonly matches: readonly SearchMatch[]; readonly total: number; readonly ownedPaths: ReadonlySet<string> }, SearchFailure>> => {
-      const visible = this.#visibleBufferPaths === undefined || bufferSources.length === 0
+      const visible = query.includeIgnored === true || this.#visibleBufferPaths === undefined || bufferSources.length === 0
         ? undefined
         : await this.#visibleBufferPaths(query, bufferSources.map((buffer) => buffer.path), cancellation.token);
       if (visible !== undefined && !visible.ok) return visible;
-      const eligible = visible === undefined ? bufferSources : bufferSources.filter((buffer) => visible.value.has(buffer.path));
+      const eligible = (visible === undefined ? bufferSources : bufferSources.filter((buffer) => visible.value.has(buffer.path)))
+        .filter((buffer) => !buffer.path.split('/').some((segment) => (segment === '.git' && !(query.includeHidden === true && query.includeIgnored === true)) || (query.includeHidden !== true && segment.startsWith('.'))));
       const result = await computeBufferMatches(query, eligible, generation, limit, cancellation.token);
       if (!(this.#disposed || generation !== this.#generation || cancellation.token.isCancelled) && result.matches.length > 0) {
         for (const match of result.matches) combined.push(match);
@@ -395,7 +397,9 @@ export class RipgrepSearchBackend implements SearchBackend {
     // output-byte cap below exists to guard against.
     const args: string[] = [this.#executable, '--json', '--no-heading', '--color', 'never', '--line-number', '--max-columns', '4096'];
     if (query.includeHidden === true) args.push('--hidden');
-    args.push('--glob', '!.git/**', '--glob', '!node_modules/**');
+    if (query.includeIgnored === true) args.push('--no-ignore');
+    if (query.includeHidden !== true || query.includeIgnored !== true) args.push('--glob', '!.git/**');
+    if (query.includeIgnored !== true) args.push('--glob', '!node_modules/**');
     if (query.caseSensitive !== true) args.push('--ignore-case');
     if (query.wholeWord === true) args.push('--word-regexp');
     if (query.regex !== true) args.push('--fixed-strings');
@@ -608,6 +612,7 @@ function normalizeQuery(query: SearchQuery, defaultLimit: number): SearchQuery {
     caseSensitive: query.caseSensitive === true,
     wholeWord: query.wholeWord === true,
     includeHidden: query.includeHidden === true,
+    includeIgnored: query.includeIgnored === true,
     ...(query.globs === undefined ? {} : { globs: Object.freeze([...query.globs]) }),
     maxResults: bounded(query.maxResults ?? defaultLimit, 1, 100_000),
   });

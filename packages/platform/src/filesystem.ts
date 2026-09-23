@@ -237,8 +237,10 @@ async function visibleWorkspacePaths(
   const created = await WorkspaceIgnoreMatcher.create(rootPath, options, cancellation);
   if (!created.ok) return created;
   const visible = new Set<string>();
+  let checked = 0;
   for (const path of paths) {
     if (cancellation.isCancelled) return cancelled();
+    if (++checked % 256 === 0) await new Promise<void>((done) => setImmediate(done));
     const absolute = resolve(rootPath, path);
     const relativePath = relative(rootPath, absolute);
     if (path.length === 0 || path.includes('\0') || isAbsolute(path) || relativePath === '' || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) return { ok: false, error: { code: 'invalid-path', message: `path escapes workspace: ${path}`, retryable: false } };
@@ -325,6 +327,18 @@ export class NodeFilesystemPort implements FilesystemPort {
   /** Keep OS path policy behind the platform boundary used by the launcher. */
   resolvePath(base: string, path: string): string { return resolve(base, path); }
   directoryPath(path: string): string { return dirname(path); }
+
+  async isWithinRealWorkspace(root: string, path: string, cancellation: CancellationToken): Promise<Result<boolean, PlatformFailure>> {
+    if (cancellation.isCancelled) return cancelled();
+    try {
+      const [realRoot, realPath] = await Promise.all([fs.realpath(root), fs.realpath(path)]);
+      if (cancellation.isCancelled) return cancelled();
+      const fromRoot = relative(realRoot, realPath);
+      return { ok: true, value: fromRoot === '' || (fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot)) };
+    } catch (error: unknown) {
+      return { ok: false, error: platformFailure(error, 'realpath') };
+    }
+  }
 
   async readFile(path: string, cancellation: CancellationToken, options?: ReadFileOptions): Promise<Result<Uint8Array, PlatformFailure>> {
     if (cancellation.isCancelled) return cancelled();
@@ -770,6 +784,17 @@ export class NodeFilesystemPort implements FilesystemPort {
       return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
     } catch (error: unknown) {
       return { ok: false, error: platformFailure(error, 'make-directory') };
+    }
+  }
+
+  async createFileExclusive(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
+    if (cancellation.isCancelled) return cancelled();
+    try {
+      const handle = await fs.open(path, 'wx');
+      await handle.close();
+      return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
+    } catch (error: unknown) {
+      return { ok: false, error: platformFailure(error, 'create-file') };
     }
   }
 

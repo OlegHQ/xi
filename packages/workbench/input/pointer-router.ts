@@ -80,8 +80,8 @@ export interface PointerPickerPort {
 
 export interface PointerExplorerPort {
   handlePointerActivate(itemId: string, generation: number): boolean;
-  selectForContextMenu(itemId: string, generation: number): { readonly nodeId: string; readonly isContainer: boolean; readonly expanded: boolean } | undefined;
-  activateContextMenuAction(nodeId: string, action: 'open' | 'toggle'): void;
+  selectForContextMenu(itemId: string, generation: number): { readonly nodeId: string; readonly isContainer: boolean; readonly mutable: boolean; readonly expanded: boolean; readonly generation: number } | undefined;
+  activateContextMenuAction(nodeId: string, action: 'open' | 'toggle' | 'new-file' | 'new-folder' | 'rename' | 'move' | 'copy' | 'duplicate' | 'trash' | 'undo', expectedGeneration?: number): void;
 }
 
 export interface PointerSearchPort {
@@ -342,8 +342,16 @@ export class WorkbenchPointerRouter implements Disposable {
       this.#options.contextMenu.openAt(event.screenX, event.screenY, [
         { id: 'open', label: 'Open', enabled: !target.isContainer },
         { id: 'toggle', label: target.expanded ? 'Collapse' : 'Expand', enabled: target.isContainer },
+        { id: 'new-file', label: 'New file', enabled: target.isContainer },
+        { id: 'new-folder', label: 'New folder', enabled: target.isContainer },
+        { id: 'rename', label: 'Rename', enabled: target.mutable },
+        { id: 'move', label: 'Move…', enabled: target.mutable },
+        { id: 'copy', label: 'Copy…', enabled: target.mutable },
+        { id: 'duplicate', label: 'Duplicate', enabled: target.mutable },
+        { id: 'trash', label: 'Move to trash', enabled: target.mutable },
+        { id: 'undo', label: 'Undo last file operation', enabled: true },
       ], (id) => {
-        this.#options.explorer.activateContextMenuAction(target.nodeId, id === 'open' ? 'open' : 'toggle');
+        this.#options.explorer.activateContextMenuAction(target.nodeId, id as 'open' | 'toggle' | 'new-file' | 'new-folder' | 'rename' | 'move' | 'copy' | 'duplicate' | 'trash' | 'undo', target.generation);
       });
       return true;
     }

@@ -20,7 +20,7 @@ export type WorkbenchPickerFailure = { readonly kind: string };
  * actually drives. */
 export interface PickerModelPort<TEntry extends WorkbenchPickerEntry = WorkbenchPickerEntry> {
   readonly model: { readonly entries: readonly TEntry[]; readonly selectedId: string | undefined };
-  query(mode: WorkbenchPickerMode, query: string): Promise<Result<{ readonly entries: readonly TEntry[] }, WorkbenchPickerFailure>>;
+  query(mode: WorkbenchPickerMode, query: string, options?: { readonly includeHidden?: boolean; readonly includeIgnored?: boolean }): Promise<Result<{ readonly entries: readonly TEntry[] }, WorkbenchPickerFailure>>;
   select(id: string): boolean;
   cancel(): void;
 }
@@ -32,7 +32,10 @@ export interface PickerControllerOptions<TEntry extends WorkbenchPickerEntry, TT
   readonly clock: ClockPort;
   readonly marker: (name: string, payload?: unknown) => void;
   readonly bufferStartPosition?: 'current' | 'previous';
+  readonly includeHiddenByDefault?: boolean;
   readonly startFileIndexPopulation: () => Promise<void>;
+  /** Populates ignored file paths only after the user enables them in the picker. */
+  readonly startIgnoredFileIndexPopulation?: () => Promise<void>;
   readonly toggleMouseMode: () => boolean;
   readonly openDiagnostic?: (id: string) => Promise<void>;
   /** Opens the user's config.toml for the config picker/`:config-open` command. */
@@ -61,10 +64,13 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
   #query = '';
   #generation = 0;
   #visibleRows = 10;
+  #includeHidden: boolean;
+  #includeIgnored = false;
   readonly #options: PickerControllerOptions<TEntry, TTheme>;
 
   constructor(options: PickerControllerOptions<TEntry, TTheme>) {
     this.#options = options;
+    this.#includeHidden = options.includeHiddenByDefault === true;
   }
 
   /** Cancels any open picker so its underlying model query/preview state does not keep running
@@ -77,6 +83,16 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
   get isOpen(): boolean { return this.#open; }
   get isDisposed(): boolean { return this.#disposed; }
   get mode(): WorkbenchPickerMode { return this.#mode; }
+  toggleIncludeHidden(): void { if (this.#mode === 'file') { this.#includeHidden = !this.#includeHidden; this.#runQuery(); } }
+  toggleIncludeIgnored(): void {
+    if (this.#mode !== 'file') return;
+    this.#includeIgnored = !this.#includeIgnored;
+    this.#runQuery();
+    if (!this.#includeIgnored || this.#options.startIgnoredFileIndexPopulation === undefined) return;
+    void this.#options.startIgnoredFileIndexPopulation().then(() => {
+      if (this.#open && this.#mode === 'file' && this.#includeIgnored) this.#runQuery();
+    });
+  }
 
   setVisibleRows(rows: number): void { this.#visibleRows = Math.max(1, Math.trunc(rows)); }
 
@@ -239,7 +255,7 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
     const generation = ++this.#generation;
     const query = this.#query;
     const mode = this.#mode;
-    void this.#options.model.query(mode, query).then((result) => {
+    void this.#options.model.query(mode, query, { includeHidden: this.#includeHidden, includeIgnored: this.#includeIgnored }).then((result) => {
       if (generation !== this.#generation) return;
       this.#options.host.notifySurfaceChange();
       if (!result.ok) {
