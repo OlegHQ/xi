@@ -44,6 +44,7 @@ export interface PickerControllerOptions<TEntry extends WorkbenchPickerEntry, TT
    * `handleKeypress` below -- the key->action mapping is this controller's policy, not the
    * composition root's; the callback only receives the resolved semantic action. */
   readonly onSecondaryAction?: (entry: TEntry, action: 'stage' | 'unstage') => void;
+  readonly onClose?: () => void;
 }
 
 /**
@@ -55,6 +56,7 @@ export interface PickerControllerOptions<TEntry extends WorkbenchPickerEntry, TT
  */
 export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPickerEntry, TTheme = unknown> {
   #open = false;
+  #disposed = false;
   #mode: WorkbenchPickerMode = 'file';
   #query = '';
   #generation = 0;
@@ -68,10 +70,12 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
   /** Cancels any open picker so its underlying model query/preview state does not keep running
    * (or leave a stale preview view) after the composition root tears the workbench down. */
   dispose(): void {
+    this.#disposed = true;
     if (this.#open) void this.close(true);
   }
 
   get isOpen(): boolean { return this.#open; }
+  get isDisposed(): boolean { return this.#disposed; }
   get mode(): WorkbenchPickerMode { return this.#mode; }
 
   setVisibleRows(rows: number): void { this.#visibleRows = Math.max(1, Math.trunc(rows)); }
@@ -88,10 +92,12 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
   }
 
   async close(cancelPreview: boolean): Promise<void> {
+    const wasOpen = this.#open;
     this.#generation += 1;
     this.#open = false;
     this.#options.model.cancel();
     this.#options.theme.endPreview(!cancelPreview);
+    if (wasOpen && !this.#disposed) this.#options.onClose?.();
     if (!cancelPreview) return;
     const viewId = this.#options.host.previewViewId;
     if (viewId === undefined) return;

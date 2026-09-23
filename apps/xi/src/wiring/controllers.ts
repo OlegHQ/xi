@@ -736,6 +736,11 @@ function createOptionalServicesAndPicker(
         void status.refresh();
       });
     },
+    // The default Files load yields to queued startup picker input; resume it once the
+    // overlay closes, without starting a second directory scan under the picker.
+    onClose: () => setImmediate(() => {
+      if (!picker.isDisposed && !picker.isOpen && forward.sidebarController.visible && forward.sidebarController.lastPanel === 'files' && !forward.explorerFeature.isVisible) forward.explorerFeature.show();
+    }),
   });
   return { optionalServices, picker };
 }

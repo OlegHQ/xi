@@ -79,6 +79,9 @@ def sample(command: list[str], workspace: Path, home: Path) -> dict[str, float]:
         output.clear()
         os.write(master, b"\x1b")
         cancel = until(b"XI_PICKER_CANCELLED")
+        # Startup input can take priority over the default Explorer load; closing the
+        # picker must still populate the visible Files sidebar.
+        until(b"src01", timeout=5)
         return {"startup_ms": startup, "prompt_ms": prompt, "result_ms": result,
                 "preview_ms": preview, "cancel_ms": cancel, "cpu_ms": cpu_ms, "rss_kib": rss_kib}
     finally:
