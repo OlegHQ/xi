@@ -34,7 +34,7 @@ def run_case(root: Path, enabled: bool) -> None:
 
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": str(root), "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": str(root), "XDG_CONFIG_HOME": str(root / ".config"), "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "main.ts"],
         cwd=root,
