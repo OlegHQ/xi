@@ -56,6 +56,19 @@ assert.notEqual(selectedAttributes & TextAttributes.ITALIC, 0, 'T063-THEME-03 se
 assert.equal(themedFrame.lines[1]?.spans[0]?.bg.g, 1, 'T063-THEME-04 selected reverse state displays the retained semantic foreground');
 themedSetup.renderer.destroy();
 
+const sparseSetup = await testRender(() => createComponent(RowsSurface, {
+  read: new MutablePort({}), isOpen: () => true, format: () => [],
+  formatRows: () => [{ text: 'Files >' }, { text: 'No matches', top: 5 }],
+  maxRows: 6, background: '#123456', foreground: '#ffffff',
+  bounds: () => ({ width: 20, height: 6, left: 0, top: 0 }),
+}), { width: 20, height: 6, bufferedOutput: 'memory' });
+await sparseSetup.renderOnce();
+const sparseFrame = sparseSetup.captureCharFrame().split('\n');
+assert.match(sparseFrame[0] ?? '', /Files >/u, 'T063-SPARSE-01 picker header stays at the top');
+assert.match(sparseFrame[5] ?? '', /No matches/u, 'T063-SPARSE-02 picker footer stays at the bottom without blank row nodes');
+assert.equal(sparseSetup.captureSpans().lines[3]?.spans[0]?.bg.r, 0x12 / 255, 'T063-SPARSE-03 empty rows inherit the panel background');
+sparseSetup.renderer.destroy();
+
 const hover: HoverReadModel = { state: 'ready', hover: 'const value: number\nA useful value.', message: undefined };
 assert.deepEqual(formatHoverLines(hover, 40, 10), ['const value: number', 'A useful value.']);
 assert.deepEqual(measureHover(hover, 80, 12), { width: 23, height: 4 }, 'hover bounds include two-cell side padding and top/bottom chrome');

@@ -20,6 +20,8 @@ export interface SurfaceRowSegment {
 }
 
 export interface SurfaceRow {
+  /** Optional row position for a sparse surface over its background fill. */
+  readonly top?: number;
   readonly text?: string;
   readonly segments?: readonly SurfaceRowSegment[];
   readonly foreground?: UiColor;
@@ -292,7 +294,7 @@ export function RowsSurface<T>(spec: RowsSurfaceSpec<T>): JSX.Element {
       {...(spec.border !== true ? {} : { borderStyle: 'rounded' as const, borderColor: theme().accent })}>
       <box ref={node => { box = node; }} width={contentSize().width} height={contentSize().height} overflow="hidden">
       <Index each={rows()}>{(row, index) => (
-        <box position="absolute" left={0} top={index} width="100%" height={1}
+        <box position="absolute" left={0} top={row().top ?? index} width="100%" height={1}
           backgroundColor={surfaceColor(mergeSurfaceStyles(theme().style, row().style), 'bg', row().background ?? theme().background)}>
           <text fg={surfaceForeground(mergeSurfaceStyles(theme().style, row().style), row().foreground ?? theme().foreground, row().background ?? theme().background, theme().foreground)}>
             {row().segments === undefined

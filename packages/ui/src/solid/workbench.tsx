@@ -199,8 +199,8 @@ function pickerRows(model: PickerReadPort['model'], width: number, maxRows: numb
       background: selected ? selectedBackground : entry.id === hoveredId ? theme.selectionSecondary ?? selectedBackground : background,
     });
   }
-  while (rows.length < maxRows - 1) rows.push({ text: '', background });
   if (rows.length < maxRows) rows.push({
+    top: maxRows - 1,
     text: model.message ?? (model.mode === 'theme'
       ? width < 80
         ? `${model.totalMatches} themes · C-n/p C-u/d · Enter apply · Esc restore`
