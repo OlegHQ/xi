@@ -1126,12 +1126,14 @@ export async function loadStartupXiConfig(
     // merge); `[language-server.<name>]` tables merge by name.
     { name: 'default-languages', kind: 'language', source: DEFAULT_LANGUAGES_TOML, fileName: 'config/languages.toml' },
   ];
+  const overridePromise = overridesPath === undefined ? undefined : filesystem.readFile(overridesPath, cancellation);
+  const languagesPromise = filesystem.readFile(`${configDirectory}/languages.toml`, cancellation);
   const configToml = await filesystem.readFile(configPath ?? `${configDirectory}/config.toml`, cancellation);
   if (configToml.ok) layers.push({ name: configPath === undefined ? 'user' : 'cli', kind: configPath === undefined ? 'user' : 'cli', source: new TextDecoder('utf-8').decode(configToml.value), fileName: configPath ?? 'config.toml' });
   else if (configPath !== undefined) return { config: undefined, diagnostics: [`${configPath}: ${configToml.error.message}`] };
   let overrideLayer: ConfigLayer | undefined;
-  if (overridesPath !== undefined) {
-    const overrides = await filesystem.readFile(overridesPath, cancellation);
+  if (overridesPath !== undefined && overridePromise !== undefined) {
+    const overrides = await overridePromise;
     if (overrides.ok) {
       try { overrideLayer = { name: 'state-overrides', kind: 'user', source: new TextDecoder('utf-8', { fatal: true }).decode(overrides.value), fileName: overridesPath }; }
       catch { return { config: undefined, diagnostics: [`${overridesPath}: invalid UTF-8`] }; }
@@ -1153,9 +1155,11 @@ export async function loadStartupXiConfig(
       ? { workspaceConfigAllowed: implicit, serversAllowed: trust.level !== 'none' || implicit, gitAllowed: trust.level === 'insecure' || implicit, stale: false }
       : await workspaceTrustResolver.resolve(workspaceRoot, trust, cancellation);
     if (configPath === undefined) {
-      const workspaceToml = await filesystem.readFile(workspaceConfigPath, cancellation);
       const workspaceLanguagesPath = workspaceConfigPath.replace(/config\.toml$/u, 'languages.toml');
-      const workspaceLanguagesToml = await filesystem.readFile(workspaceLanguagesPath, cancellation);
+      const [workspaceToml, workspaceLanguagesToml] = await Promise.all([
+        filesystem.readFile(workspaceConfigPath, cancellation),
+        filesystem.readFile(workspaceLanguagesPath, cancellation),
+      ]);
       if (workspaceToml.ok || workspaceLanguagesToml.ok) {
         if (decision.workspaceConfigAllowed) {
           if (workspaceToml.ok) layers.push({ name: 'workspace', kind: 'workspace', trusted: true, source: new TextDecoder('utf-8').decode(workspaceToml.value), fileName: workspaceConfigPath });
@@ -1164,7 +1168,7 @@ export async function loadStartupXiConfig(
       }
     }
   }
-  const languagesToml = await filesystem.readFile(`${configDirectory}/languages.toml`, cancellation);
+  const languagesToml = await languagesPromise;
   if (languagesToml.ok) layers.push({ name: 'languages', kind: 'language', source: new TextDecoder('utf-8').decode(languagesToml.value), fileName: 'languages.toml' });
   if (layers.length === userLayerCount && userConfig !== undefined) return userConfig.ok
     ? { config: userConfig.value, diagnostics: Object.freeze(workspaceDiagnostics) }
