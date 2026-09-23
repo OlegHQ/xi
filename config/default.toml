@@ -22,7 +22,13 @@ debounce-ms = 5
 max-visible-results = 10000
 
 [editor]
+editor-config = true
 theme = "xi-light"
+mouse = true
+middle-click-paste = true
+mouse-yank-register = "*"
+kitty-keyboard-protocol = "auto"
+shell = ["sh", "-c"]
 line-number = "absolute"
 cursorline = false
 continue-comments = true
@@ -30,17 +36,26 @@ cursorcolumn = false
 rainbow-brackets = false
 rulers = []
 text-width = 80
+workspace-lsp-roots = []
 scrolloff = 5
+idle-timeout = 250
+scroll-lines = 3
 auto-completion = true
+auto-pairs = true
+path-completion = true
 completion-timeout = 250
 completion-trigger-len = 2
 preview-completion-insert = true
 auto-info = true
 completion-replace = false
+
 color-modes = false
 true-color = false
+undercurl = false
 bufferline = "never"
 default-line-ending = "native"
+atomic-save = true
+indent-heuristic = "hybrid"
 popup-border = "none"
 jump-label-alphabet = "abcdefghijklmnopqrstuvwxyz"
 wrap = false
@@ -49,6 +64,7 @@ default-yank-register = '"'
 insert-final-newline = true
 trim-final-newlines = false
 trim-trailing-whitespace = false
+end-of-line-diagnostics = "hint"
 
 [editor.word-completion]
 enable = true
@@ -75,8 +91,31 @@ mode.select = "SEL"
 diagnostics = ["warning", "error"]
 workspace-diagnostics = ["warning", "error"]
 
+[editor.gutters]
+layout = ["diagnostics", "spacer", "line-numbers", "spacer", "diff"]
+
 [editor.gutters.line-numbers]
 min-width = 3
+
+[editor.indent-guides]
+render = false
+character = "│"
+skip-levels = 0
+
+[editor.whitespace]
+render = "none"
+
+[editor.whitespace.characters]
+space = "·"
+nbsp = "⍽"
+nnbsp = "␣"
+tab = "→"
+tabpad = " "
+newline = "⏎"
+
+[editor.smart-tab]
+enable = true
+supersede-menu = false
 
 [editor.cursor-shape]
 normal = "block"
@@ -84,34 +123,73 @@ insert = "block"
 select = "block"
 
 [editor.soft-wrap]
+wrap-at-text-width = false
 max-wrap = 20
 max-indent-retain = 40
 wrap-indicator = "↪ "
+
+[editor.inline-diagnostics]
+cursor-line = "warning"
+other-lines = "disable"
+prefix-len = 1
+max-wrap = 20
+min-diagnostic-width = 40
+max-diagnostics = 10
+
+[editor.search]
+smart-case = true
+wrap-around = true
 
 [editor.file-picker]
 hidden = true
 follow-symlinks = true
 deduplicate-links = true
+parents = true
+ignore = true
+git-ignore = true
+git-global = true
+git-exclude = true
+
+[editor.file-explorer]
+hidden = false
+follow-symlinks = false
+parents = false
+ignore = false
+git-ignore = false
+git-global = false
+git-exclude = false
+flatten-dirs = true
+
+[editor.buffer-picker]
+start-position = "current"
 
 [editor.lsp]
 enable = true
+goto-reference-include-declaration = true
 display-inlay-hints = false
 display-color-swatches = true
 auto-document-highlight = false
-goto-reference-include-declaration = true
 snippets = true
 display-messages = true
 display-progress-messages = false
 auto-signature-help = true
 display-signature-help-docs = true
 
-[editor.mouse]
-enabled = true
-scroll-lines = 3
-
 [search]
 hidden = true
 follow-symlinks = false
+
+[keys.normal]
+"<C-Up>" = "view.scroll-up"
+"<C-Down>" = "view.scroll-down"
+"<C-d>" = "view.half-page-down"
+"<C-u>" = "view.half-page-up"
+
+[keys.select]
+"<C-Up>" = "view.scroll-up"
+"<C-Down>" = "view.scroll-down"
+"<C-d>" = "view.half-page-down"
+"<C-u>" = "view.half-page-up"
 
 [keys.normal.space]
 q = "macro.record"
@@ -126,7 +204,7 @@ O = "files.edit-buffer-directory"
 t = "theme.pick"
 k = "lsp.hover"
 a = "lsp.code-action"
-d = "panel.problems.focus"
+d = "diagnostics.pick"
 e = "panel.problems.focus"
 m = "editor.mouse.toggle"
 r = "search.replace"

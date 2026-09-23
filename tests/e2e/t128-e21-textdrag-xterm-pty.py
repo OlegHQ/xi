@@ -18,9 +18,9 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from xvfb_fixture import start_xvfb
 
 ROOT = Path(__file__).resolve().parents[2]
-DISPLAY = ":77"
 POINTER_STATE = re.compile(rb"XI_POINTER_STATE (\{[^\r\n]*\})")
 
 
@@ -59,10 +59,9 @@ def run() -> str:
         source.write_text("alpha beta gamma delta epsilon\nsecond line here\n", encoding="utf-8")
         stderr_path = workspace / "stderr.log"
         stderr_path.write_text("", encoding="utf-8")
-        xvfb = subprocess.Popen(["Xvfb", DISPLAY, "-screen", "0", "1280x800x24"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(1.2)
+        xvfb, display = start_xvfb()
         environment = os.environ.copy()
-        environment["DISPLAY"] = DISPLAY
+        environment["DISPLAY"] = display
         script = (
             f"cd {workspace} && HOME={workspace} XI_UI_TEST_MARKERS=1 "
             f"bun run {ROOT / 'apps/xi/src/main.ts'} words.txt 2>{stderr_path}"

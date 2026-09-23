@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import configurationLedger from '../../docs/configuration-ledger.json' with { type: 'json' };
 import {
   ConfigStore,
   DEFAULT_COMMAND_CATALOG,
@@ -18,6 +19,7 @@ import {
 import { resolveEditorColorMode } from '../../apps/xi/src/wiring/ui';
 import { resolvePaintColor } from '../../packages/ui/theme/motion-tokens';
 import { pathCompletionToken } from '../../packages/workbench/language/completion';
+import { VIEW_COMMAND_IDS } from '../../packages/workbench/input/view-commands';
 
 const defaults: ConfigLayer = { name: 'defaults', kind: 'defaults', fileName: 'config/default.toml', source: DEFAULT_CONFIG_TOML };
 const personal: ConfigLayer = { name: 'personal-migration', kind: 'profile', fileName: 'config/personal-migration.toml', source: PERSONAL_MIGRATION_TOML };
@@ -26,6 +28,13 @@ const parsed = parseToml(DEFAULT_CONFIG_TOML, 'config/default.toml');
 assert.equal(parsed.ok, true, 'T036-TOML-01 shipped example parses as TOML');
 if (!parsed.ok) throw new Error('default TOML did not parse');
 assert.ok(parsed.value.entries.some((entry) => entry.path.join('.') === 'keys.normal.space.f'), 'T036-TOML-02 dotted table entries retain their source path');
+const conditionalDefaults = new Set(['editor.clipboard-provider', 'editor.soft-wrap.enable', 'xi.motion-trail']);
+for (const item of configurationLedger.items) {
+  if (item.status !== 'effective' || item.default === null || item.path.startsWith('$') || item.path.includes('*') || item.path === 'keys.insert' || conditionalDefaults.has(item.path)) continue;
+  let declared: unknown = parsed.value.value;
+  for (const segment of item.path.split('.')) declared = typeof declared === 'object' && declared !== null && segment in declared ? (declared as Record<string, unknown>)[segment] : undefined;
+  assert.notEqual(declared, undefined, `T036-CONFIG-DEFAULT-PRESENCE-01 ${item.path} must be explicit in config/default.toml`);
+}
 const literal = parseToml("theme = 'a\\nb'\n'literal\\nkey' = 'c\\td'\n");
 assert.equal(literal.ok, true, 'TOML literal strings and keys parse');
 if (literal.ok) {
@@ -41,6 +50,11 @@ for (const source of ['editor = 1', 'keys = 1', '[keys.normal]\nx = 1', '[editor
 const initial = compileInitialConfig();
 assert.equal(initial.ok, true, 'T036-CONFIG-01 shipped example validates');
 if (!initial.ok) throw new Error('default config did not compile');
+const fallback = compileConfig([]);
+assert.equal(fallback.ok, true, 'T036-CONFIG-FALLBACK-01 compiler fallback validates');
+if (!fallback.ok) throw new Error('config fallback did not compile');
+assert.deepEqual(initial.value.editor, fallback.value.editor, 'T036-CONFIG-FALLBACK-02 canonical defaults and compiler fallback produce the same editor settings');
+assert.deepEqual(initial.value.search, fallback.value.search, 'T036-CONFIG-FALLBACK-03 canonical defaults and compiler fallback produce the same search settings');
 assert.equal(initial.value.schemaVersion, 1, 'T036-XI-SCHEMA-VERSION-DEFAULT-01 canonical xi.schema-version compiles to schema version 1');
 assert.equal(initial.value.profile, 'xi', 'T036-XI-PROFILE-DEFAULT-01 canonical xi.profile selects the Xi profile');
 assert.deepEqual({ visible: initial.value.editor.sidebarVisible, width: initial.value.editor.sidebarWidth, panel: initial.value.editor.sidebarPanel }, { visible: true, width: 28, panel: 'files' }, 'T036-XI-SIDEBAR-DEFAULT-01 canonical xi.sidebar defaults reach the compiled config');
@@ -93,7 +107,32 @@ assert.equal(xiKeyMap.ok, true, 'T036-XI-KEYS-SCHEMA-01 canonical xi.keys contex
 if (xiKeyMap.ok) assert.ok(xiKeyMap.value.bindings.some((binding) => binding.mode === 'files-panel' && binding.keys.join('.') === '<Space>.z' && binding.commandId === 'panel.open'), 'T036-XI-KEYS-RUNTIME-01 canonical xi.keys reaches the panel binding runtime');
 const invalidHelixKeyMap = compileConfig([{ name: 'invalid-helix-key-map', kind: 'user', fileName: 'invalid-helix-key-map.toml', source: '[keys.normal]\nC-s = "not_a_command"\n' }]);
 assert.equal(invalidHelixKeyMap.ok, false, 'T036-KEYS-INVALID-01 unknown key commands are rejected');
-assert.equal(initial.value.bindings.length, 38, 'T036-CONFIG-02 every shipped editor and panel key declaration compiles');
+const expectedViewBindings = { '<C-Up>': 'view.scroll-up', '<C-Down>': 'view.scroll-down', '<C-d>': 'view.half-page-down', '<C-u>': 'view.half-page-up' };
+const expectedNormalLeader = {
+  q: 'macro.record', c: 'config.open', s: 'sidebar.toggle', f: 'files.pick', b: 'buffers.pick',
+  ';': 'command.pick', '/': 'search.workspace', o: 'files.edit-directory', O: 'files.edit-buffer-directory',
+  t: 'theme.pick', k: 'lsp.hover', a: 'lsp.code-action', d: 'diagnostics.pick',
+  e: 'panel.problems.focus', m: 'editor.mouse.toggle', r: 'search.replace',
+};
+const expectedPanelLeader = { s: 'sidebar.toggle', l: 'panel.preview', o: 'panel.open', q: 'panel.close' };
+const expectedBindings = [
+  ...['normal', 'select'].flatMap(mode => Object.entries(expectedViewBindings).map(([key, command]) => [`${mode}:${key}`, command] as const)),
+  ...Object.entries(expectedNormalLeader).map(([key, command]) => [`normal:<Space> ${key}`, command] as const),
+  ...Object.entries({ p: 'panel.problems.focus', f: 'panel.files.focus', s: 'panel.search.focus', g: 'panel.git.focus', o: 'panel.outline.focus', d: 'git.diff' }).map(([key, command]) => [`normal:<Space> v ${key}`, command] as const),
+  ...['files-panel', 'search-panel', 'git-panel', 'diff-panel'].flatMap(mode => Object.entries(expectedPanelLeader).map(([key, command]) => [`${mode}:<Space> ${key}`, command] as const)),
+];
+const actualBindings = new Map(initial.value.bindings.map(binding => [`${binding.mode}:${binding.keys.join(' ')}`, binding.commandId]));
+for (const [context, command] of expectedBindings) assert.equal(actualBindings.get(context), command, `T036-CONFIG-DEFAULT-BINDING-01 ${context}`);
+assert.equal(actualBindings.size, expectedBindings.length, 'T036-CONFIG-DEFAULT-BINDING-02 no undeclared default bindings');
+for (const commandId of VIEW_COMMAND_IDS) assert.ok(DEFAULT_COMMAND_CATALOG.commandIds.includes(commandId), `T036-VIEW-CATALOG-01 ${commandId} is configurable`);
+const expectedAliases = {
+  files: 'files.pick', buffers: 'buffers.pick', commands: 'command.pick', 'buffer-next': 'buffer.next',
+  'buffer-previous': 'buffer.previous', theme: 'theme.pick', 'config-open': 'config.open',
+  'config-reload': 'config.reload', 'write-quit': 'write.quit', 'quit-all': 'quit.all', 'write-all': 'write.all',
+};
+const actualAliases = new Map(initial.value.aliases.map(alias => [alias.name, alias.commandId]));
+for (const [name, command] of Object.entries(expectedAliases)) assert.equal(actualAliases.get(name), command, `T036-CONFIG-DEFAULT-ALIAS-01 ${name}`);
+assert.equal(actualAliases.size, Object.keys(expectedAliases).length, 'T036-CONFIG-DEFAULT-ALIAS-02 no undeclared default aliases');
 assert.ok(initial.value.bindings.every((binding) => DEFAULT_COMMAND_CATALOG.commandIds.includes(binding.commandId)), 'T036-CONFIG-03 every binding command resolves in the catalog');
 assert.ok(DEFAULT_COMMAND_CATALOG.commandIds.includes('config.open'), 'T036-CONFIG-OPEN-SCHEMA-01 config.open is a registered command id');
 assert.ok(DEFAULT_COMMAND_CATALOG.commandIds.includes('config.reload'), 'T036-CONFIG-OPEN-DEFAULT-01 config command catalog retains the reload companion');

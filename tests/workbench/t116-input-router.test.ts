@@ -327,7 +327,7 @@ function makeRouter(
   router.dispose();
 }
 
-// T116-ROUTER-04: <C-Up>/<C-Down> line-scroll are on by default in Normal mode, resolved to
+// T116-ROUTER-04: <C-Up>/<C-Down> line-scroll come from the canonical defaults in Normal mode, resolved to
 // their `view.scroll-up`/`view.scroll-down` commands before Vim's own key handling ever sees
 // the key; a config binding for a plain key resolves the same way, alongside the defaults.
 {
@@ -336,6 +336,7 @@ function makeRouter(
   const host = new FakeHost();
   const session = new FakeScrollSession();
   const router = makeRouter(explorer, search, host, session as never, [
+    ...defaultBindings,
     { mode: 'normal', keys: ['g'], commandId: 'view.scroll-down' },
   ]);
 
@@ -346,6 +347,10 @@ function makeRouter(
   const configResult = router.handleKeypress(key('g', 'g'));
   assert.equal(configResult, true, 'T116-ROUTER-04c a config-bound plain key is also consumed');
   assert.deepEqual(session.setViewScrollCalls[1], { viewId: 'view-1', scrollTop: 5, scrollLeft: 0 }, 'T116-ROUTER-04d the config binding resolved to view.scroll-down');
+
+  session.mode = 'visual';
+  assert.equal(router.handleKeypress(key('down', '', { ctrl: true })), true, 'T116-ROUTER-04e canonical select binding applies in Visual mode');
+  assert.deepEqual(session.setViewScrollCalls[2], { viewId: 'view-1', scrollTop: 6, scrollLeft: 0 }, 'T116-ROUTER-04f Visual mode scrolls through the canonical binding');
 
   router.dispose();
 }

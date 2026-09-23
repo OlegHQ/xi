@@ -570,6 +570,8 @@ function isPublicEntryPoint(path: string, owner: Owner): boolean {
 }
 
 function validateExternal(owner: Owner, specifier: string, importer: string): string | undefined {
+  // The config owner embeds the repository's canonical defaults as text in source and package builds.
+  if (importer === 'packages/services/config/index.ts' && specifier === '../../../config/default.toml') return undefined;
   const normalized = specifier.startsWith('node:') ? specifier.slice('node:'.length) : specifier;
   if (specifier.startsWith('node:') || forbiddenNodeModules.has(specifier)) {
     return owner === 'platform' ? undefined : `${importer}: OS module ${specifier} is only allowed in packages/platform`;

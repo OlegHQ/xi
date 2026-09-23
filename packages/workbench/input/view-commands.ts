@@ -14,20 +14,6 @@ export function isViewCommandId(value: string): value is ViewCommandId {
   return (VIEW_COMMAND_IDS as readonly string[]).includes(value);
 }
 
-/** `<C-Up>`/`<C-Down>` line-scroll and Vim's `<C-d>`/`<C-u>` half-page scroll in Normal/Visual
- * are on by default; `bindings` (compiled from the user's config) is consulted first and can
- * override or add to this. */
-export const DEFAULT_VIEW_BINDINGS: readonly { readonly mode: string; readonly token: string; readonly commandId: ViewCommandId }[] = Object.freeze([
-  { mode: 'normal', token: '<c-up>', commandId: 'view.scroll-up' },
-  { mode: 'normal', token: '<c-down>', commandId: 'view.scroll-down' },
-  { mode: 'visual', token: '<c-up>', commandId: 'view.scroll-up' },
-  { mode: 'visual', token: '<c-down>', commandId: 'view.scroll-down' },
-  { mode: 'normal', token: '<c-d>', commandId: 'view.half-page-down' },
-  { mode: 'normal', token: '<c-u>', commandId: 'view.half-page-up' },
-  { mode: 'visual', token: '<c-d>', commandId: 'view.half-page-down' },
-  { mode: 'visual', token: '<c-u>', commandId: 'view.half-page-up' },
-]);
-
 export interface ViewCommandContext {
   readonly workbench: Pick<WorkbenchSession, 'readView' | 'setViewScroll'>;
   readonly getSession: (viewId: ViewId) => ScrollCursorSession | undefined;

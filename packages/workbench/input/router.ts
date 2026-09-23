@@ -6,7 +6,7 @@ import { ExCommandLineSession, type ExCommandLineInput } from '../commands/ex-co
 import { PrefixHelpController, buildPrefixHelpReadModel, type PrefixHelpBinding, type PrefixHelpReadModel, type PrefixHelpRequest } from '../commands/prefix-help';
 import type { OwnedVimKeyEvent, VimPrefixHelpState } from '../vim-session';
 import { canonicalKeyToken } from './key-token';
-import { DEFAULT_VIEW_BINDINGS, executeViewCommand, isViewCommandId } from './view-commands';
+import { executeViewCommand, isViewCommandId } from './view-commands';
 
 export type { OwnedVimKeyEvent as RouterKeyEvent };
 
@@ -26,12 +26,10 @@ function normalizeConfigToken(token: string): string {
 }
 
 /** Single-key (non-chord) mode+key -> commandId bindings, resolved before Vim's own key
- * handling gets a chance -- `<C-Up>`/`<C-Down>` line-scroll defaults, overridable (and
- * extensible) by the user's compiled config bindings. Multi-key chord bindings are out of
- * scope for this fast-path lookup (see AGENTS.md ticket-scope note in the class doc below). */
+ * handling gets a chance. Defaults and overrides both come from the compiled config.
+ * Multi-key chord bindings are out of scope for this fast-path lookup. */
 function buildBindingMap(bindings: readonly RouterBindingConfig[]): ReadonlyMap<string, string> {
   const map = new Map<string, string>();
-  for (const binding of DEFAULT_VIEW_BINDINGS) map.set(`${binding.mode}\u0000${binding.token}`, binding.commandId);
   for (const binding of bindings) {
     if (binding.keys.length !== 1) continue;
     const token = normalizeConfigToken(binding.keys[0] as string);

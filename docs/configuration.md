@@ -86,6 +86,15 @@ config. A canonical value wins over the same saved/legacy value. `:config-open` 
 the canonical file when absent and opens that path. Explicit `-c` skips workspace config;
 without it, workspace loading still follows the workspace-trust policy.
 
+[`config/default.toml`](../config/default.toml) is the built-in configuration and Xi-owned
+keymap in both source and packaged launches. The compiler retains conditional fallbacks
+for profile-specific motion trail, legacy wrap, and automatic platform clipboard selection.
+Vim motions, operators, registers, and mode keys follow the [Vim parity contract](vim.md)
+rather than this keymap. In a checkout, copy `config/default.toml` to
+`~/.config/xi/config.toml` to start from the full defaults, or create a smaller file with
+only the values and bindings you want to override. The user file merges above these
+built-ins; `$XDG_CONFIG_HOME/xi/config.toml` is used when XDG_CONFIG_HOME is absolute.
+
 ## `[editor]` scalar and union keys
 
 `Stable` defaults are from 25.07.1. A master change is called out where it changes the
