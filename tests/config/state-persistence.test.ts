@@ -31,7 +31,7 @@ assert.equal(canonical, '[xi.sidebar]\nvisible = false # keep\nwidth = 28\n');
 const canonicalAdded = updateSidebarVisibility('[xi.sidebar]\nwidth = 28\n', false);
 const canonicalParsed = parseToml(canonicalAdded);
 assert.ok(canonicalParsed.ok);
-assert.deepEqual((canonicalParsed.value.value.xi as Record<string, unknown>).sidebar, { visible: false, width: 28 });
+assert.deepEqual({ ...((canonicalParsed.value.value.xi as Record<string, unknown>).sidebar as Record<string, unknown>) }, { visible: false, width: 28 });
 
 const files = new Map<string, Uint8Array>();
 const errors: string[] = [];
@@ -60,7 +60,7 @@ assert.equal(writes, 1, 'burst toggles coalesce to one pending value');
 const saved = parseToml(new TextDecoder().decode(files.get('/.xi.toml')));
 assert.ok(saved.ok);
 assert.equal((saved.value.value.editor as Record<string, unknown>).theme, 'xi-dark');
-assert.deepEqual((saved.value.value.xi as Record<string, unknown>).sidebar, { visible: false, panel: 'git', width: 34 });
+assert.deepEqual({ ...((saved.value.value.xi as Record<string, unknown>).sidebar as Record<string, unknown>) }, { visible: false, panel: 'git', width: 34 });
 files.set('/.xi.toml', new TextEncoder().encode(original));
 fail = true;
 const failure = new EditorStatePersistence(filesystem, '/.xi.toml', message => errors.push(message));

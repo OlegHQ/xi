@@ -251,8 +251,6 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
   removeRoot(rootId: string): boolean {
     const rootNodeId = nodeIdentity(rootId, '');
     if (!this.#nodes.has(rootNodeId)) return false;
-    this.#watchers.get(rootId)?.dispose();
-    this.#watchers.delete(rootId);
     this.removeSubtree(rootNodeId);
     const index = this.#roots.indexOf(rootNodeId);
     if (index >= 0) this.#roots.splice(index, 1);
@@ -265,7 +263,11 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
   async watchRoot(rootId: string, cancellation?: CancellationToken): Promise<Result<void, ExplorerFailure>> {
     const root = this.#rootPaths.get(rootId);
     if (root === undefined) return failure('root-not-found', rootId, 'explorer root does not exist');
-    this.#watchers.get(rootId)?.dispose();
+    return this.watchNode(nodeIdentity(rootId, ''), root.path, cancellation);
+  }
+
+  private async watchNode(nodeId: string, path: string, cancellation?: CancellationToken): Promise<Result<void, ExplorerFailure>> {
+    this.#watchers.get(nodeId)?.dispose();
     // A raw filesystem watcher can fire a burst of 'changed' notifications for
     // the same directory (e.g. a multi-file save or `git checkout`); each one
     // without an attached entry re-runs a full enumerateDirectory of the
@@ -280,7 +282,7 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
       if (this.#disposed) return;
       for (const event of events) this.dispatchWatchEvent(event);
     };
-    const watched = await this.#filesystem.watchDirectory(root.path, (event) => {
+    const watched = await this.#filesystem.watchDirectory(path, (event) => {
       if (this.#disposed) return;
       if (event.kind === 'changed' && event.entry === undefined) {
         pendingRefresh.set(`${event.rootId}\0${event.relativePath}`, event);
@@ -290,7 +292,11 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
       this.dispatchWatchEvent(event);
     }, cancellation ?? neverCancelledToken);
     if (!watched.ok) return watched;
-    this.#watchers.set(rootId, Object.freeze({
+    if (this.#disposed || !this.#nodes.has(nodeId) || cancellation?.isCancelled) {
+      watched.value.dispose();
+      return { ok: false, error: { kind: 'cancelled', message: 'directory watch was cancelled' } };
+    }
+    this.#watchers.set(nodeId, Object.freeze({
       dispose() {
         if (flushTimer !== undefined) clearTimeout(flushTimer);
         flushTimer = undefined;
@@ -313,6 +319,7 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
       return { ok: false, error: { kind: 'symlink-cycle', path: node.path, message: node.message } };
     }
     if (!force && (node.loadState === 'ready' || node.loadState === 'empty' || node.loadState === 'permission-denied' || node.loadState === 'symlink-cycle')) {
+      if (node.kind !== 'root' && (node.loadState === 'ready' || node.loadState === 'empty') && !this.#watchers.has(nodeId)) await this.watchNode(nodeId, node.path, cancellation);
       this.publish(node.loadState === 'permission-denied' || node.loadState === 'symlink-cycle' ? 'error' : 'ready');
       return { ok: true, value: undefined };
     }
@@ -333,6 +340,7 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
     const reconciled = await this.reconcile(node, result.value, cancellation ?? neverCancelledToken);
     if (!reconciled.ok) return reconciled;
     node.loadState = node.children.length === 0 ? 'empty' : 'ready';
+    if (node.kind !== 'root' && !this.#watchers.has(nodeId)) await this.watchNode(nodeId, node.path, cancellation);
     this.publish(node.children.length === 0 ? 'empty' : 'ready');
     return { ok: true, value: undefined };
   }
@@ -686,6 +694,8 @@ export class ExplorerTree implements ExplorerReadPort, Disposable {
   private removeSubtree(nodeId: string): void {
     const node = this.#nodes.get(nodeId);
     if (node === undefined) return;
+    this.#watchers.get(nodeId)?.dispose();
+    this.#watchers.delete(nodeId);
     for (const child of [...node.children]) this.removeSubtree(child);
     if (node.parentId !== undefined) {
       const parent = this.#nodes.get(node.parentId);

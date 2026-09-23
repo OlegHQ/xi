@@ -71,13 +71,13 @@ function checkGroupedUndoRedoAndSelectionIntent(): void {
   assert.equal(undone.ok, true);
   if (undone.ok) {
     assert.equal(undone.value.kind, 'undone');
-    assert.deepEqual(undone.value.restoredSelection, { primaryId: 'p1', cursor: { offset: 0 } });
+    assert.deepEqual(JSON.parse(JSON.stringify(undone.value.restoredSelection)), { primaryId: 'p1', cursor: { offset: 0 } });
   }
   assert.equal(read(document), 'abc');
   assert.equal(document.isDirty, true, 'undo away from the saved revision becomes dirty');
   const redone = document.redo();
   assert.equal(redone.ok, true);
-  if (redone.ok) assert.deepEqual(redone.value.restoredSelection, { primaryId: 'p1', cursor: { offset: 3 } });
+  if (redone.ok) assert.deepEqual(JSON.parse(JSON.stringify(redone.value.restoredSelection)), { primaryId: 'p1', cursor: { offset: 3 } });
   assert.equal(read(document), 'aXYbc');
   assert.equal(document.revisionId, saved.revisionId, 'redo restores the saved content identity');
   assert.equal(document.isDirty, false);
@@ -116,7 +116,7 @@ function checkAlternateRedoBranchesAndSavedIdentity(): void {
   assert.equal(redoA.ok, true);
   assert.equal(read(document), '0A');
   assert.equal(document.isDirty, false, 'redo can return to a saved revision on the alternate branch');
-  if (redoA.ok) assert.deepEqual(redoA.value.restoredSelection, { cursor: 2, label: 'A' });
+  if (redoA.ok) assert.deepEqual(JSON.parse(JSON.stringify(redoA.value.restoredSelection)), { cursor: 2, label: 'A' });
 
   assert.equal(document.undo().ok, true);
   assert.equal(document.redo().ok, true, 'default redo chooses the most recently-created branch');

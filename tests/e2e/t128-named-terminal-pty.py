@@ -56,7 +56,7 @@ def run_xterm() -> str:
         environment = os.environ.copy()
         environment["DISPLAY"] = display
         script = (
-            f"cd {workspace} && HOME={workspace} XI_UI_TEST_MARKERS=1 "
+            f"cd {workspace} && HOME={workspace} XDG_CONFIG_HOME={workspace / '.config'} XI_UI_TEST_MARKERS=1 "
             f"bun run {ROOT / 'apps/xi/src/main.ts'} main.ts 2>{stderr_path}"
         )
         xterm = subprocess.Popen(
@@ -160,7 +160,7 @@ def run_tmux() -> str:
         # is the one named, reliable tmux configuration this ticket qualifies; fish-as-default-shell
         # is a documented, unsupported capability limit.
         command = (
-            f"cd {workspace} && HOME={workspace} XI_UI_TEST_MARKERS=1 "
+            f"cd {workspace} && HOME={workspace} XDG_CONFIG_HOME={workspace / '.config'} XI_UI_TEST_MARKERS=1 "
             f"bun run {ROOT / 'apps/xi/src/main.ts'} main.ts 2>{stderr_path}"
         )
         subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True)

@@ -4,6 +4,12 @@ Xi is a keyboard-first terminal code editor built with Bun, strict TypeScript an
 OpenTUI. It owns its Vim engine and combines multiple cursors, LSP, Git, filesystem tools,
 tasks, mouse interaction and a restrained terminal UI.
 
+Use Bun 1.4.2 or newer. Run the editor directly from source without building a binary:
+
+```sh
+bun run apps/xi/src/main.ts path/to/file
+```
+
 ```sh
 bun install --frozen-lockfile
 bun run xi -- path/to/file

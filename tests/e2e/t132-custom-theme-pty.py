@@ -78,7 +78,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-custom-theme-") as temporary:
     (themes_directory / "broken.toml").write_text('"ui.background" = 1\n', encoding="utf-8")
     master, slave = pty.openpty()
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": str(home), "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config"), "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "a.txt"],
         cwd=home,

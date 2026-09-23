@@ -21,9 +21,11 @@ class FakeWatcher extends EventEmitter {
   close(): void { this.closed = true; }
 }
 let lastWatcher: FakeWatcher | undefined;
+let lastWatchOptions: unknown;
 mock.module('node:fs', () => ({
   ...realFs,
-  watch: (_path: string, _options: unknown, listener: (eventType: string, filename: string) => void) => {
+  watch: (_path: string, options: unknown, listener: (eventType: string, filename: string) => void) => {
+    lastWatchOptions = options;
     const watcher = new FakeWatcher();
     // Mirrors real fs.watch: the third argument is wired as a 'change' listener.
     watcher.on('change', listener);
@@ -56,6 +58,7 @@ async function testWatchDirectoryErrorDoesNotCrashAndReportsOverflow(root: strin
   const events: { readonly kind: string; readonly path: string }[] = [];
   const watched = await filesystem.watchDirectory(directory, (event) => { events.push(event); }, cancellation.token);
   assert.equal(watched.ok, true, 'T-FS-WATCH-DIR-01 watchDirectory installs successfully');
+  assert.deepEqual(lastWatchOptions, { persistent: false }, 'T-FS-WATCH-DIR-06 watching a large workspace must not synchronously recurse');
   if (!watched.ok) return;
   assert.ok(lastWatcher !== undefined, 'T-FS-WATCH-DIR-02 the fake watcher was constructed');
   // This is the exact mechanism of the original bug: emitting 'error' with no

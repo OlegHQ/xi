@@ -41,15 +41,17 @@ const directoryEntries = new Map<string, readonly ExplorerDirectoryEntry[]>([
   ['/workspace/chain/one/two', chainTwoEntries],
 ]);
 let watcher: ((event: ExplorerWatchEvent) => void) | undefined;
+const watchers = new Map<string, (event: ExplorerWatchEvent) => void>();
 const filesystem: ExplorerFilesystemPort = {
   async enumerateDirectory(path: string, _cancellation: CancellationToken): Promise<Result<readonly ExplorerDirectoryEntry[], ExplorerFailure>> {
     if (path === '/workspace/secret') return { ok: false, error: { kind: 'permission-denied', path, message: 'Permission denied' } };
     const entries = directoryEntries.get(path);
     return entries === undefined ? { ok: false, error: { kind: 'filesystem', path, message: 'Missing fixture directory' } } : { ok: true, value: entries };
   },
-  async watchDirectory(_path: string, listener: (event: ExplorerWatchEvent) => void, _cancellation: CancellationToken): Promise<Result<Disposable, ExplorerFailure>> {
-    watcher = listener;
-    return { ok: true, value: Object.freeze({ dispose: () => { watcher = undefined; } }) };
+  async watchDirectory(path: string, listener: (event: ExplorerWatchEvent) => void, _cancellation: CancellationToken): Promise<Result<Disposable, ExplorerFailure>> {
+    watchers.set(path, listener);
+    if (path === '/workspace') watcher = listener;
+    return { ok: true, value: Object.freeze({ dispose: () => { watchers.delete(path); if (watcher === listener) watcher = undefined; } }) };
   },
 };
 
@@ -74,12 +76,14 @@ const srcId = firstModel.visibleRows.map((row) => tree.readNode(row.nodeId)).fin
 assert.ok(srcId !== undefined, 'T040-E03-03 source directory has stable identity');
 if (srcId === undefined) throw new Error('src fixture missing');
 assert.equal((await tree.expand(srcId)).ok, true, 'T040-E03-04 expanded directories enumerate on demand');
+assert.ok(watchers.has('/workspace/src'), 'T040-WATCH-02 expanded directories get their own non-recursive watcher');
 const selectedFile = tree.model.visibleRows.map((row) => tree.readNode(row.nodeId)).find((node) => node?.name === 'main.ts');
 assert.ok(selectedFile !== undefined, 'T040-E03-05 nested file is visible');
 if (selectedFile === undefined) throw new Error('main fixture missing');
 assert.equal(tree.select(selectedFile.id), true, 'T040-SELECT-01 selects by opaque identity');
 const selectedBeforeInsert = tree.model.selectedId;
-await tree.applyWatchEvent({ kind: 'created', rootId: 'workspace', relativePath: 'src/aaa.ts', entry: { name: 'aaa.ts', relativePath: 'src/aaa.ts', kind: 'file' } });
+watchers.get('/workspace/src')?.({ kind: 'created', rootId: 'workspace', relativePath: 'src/aaa.ts', entry: { name: 'aaa.ts', relativePath: 'src/aaa.ts', kind: 'file' } });
+await new Promise((resolve) => setImmediate(resolve));
 assert.equal(tree.model.selectedId, selectedBeforeInsert, 'T040-E03-06 external insertion above selection does not select by row index');
 assert.equal(tree.model.visibleRows.map((row) => tree.readNode(row.nodeId)?.name).includes('aaa.ts'), true, 'T040-E03-07 watcher insertion reconciles expanded directory');
 
@@ -162,6 +166,7 @@ if (unflattenedChain !== undefined && unflattenedOne !== undefined) {
 unflattenedTree.dispose();
 
 tree.dispose();
+assert.equal(watchers.size, 0, 'T040-WATCH-03 disposal closes root and expanded-directory watchers');
 assert.equal(tree.model.nodes.length, 0, 'T040-DISPOSE-01 tree releases nodes and watcher state');
 
 // T040-COALESCE: a burst of raw 'changed' watch events (no entry) for the same

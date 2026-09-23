@@ -76,6 +76,7 @@ def launch(source: Path) -> bytes:
         read_for(master, captured, 0.1)
         # Alt-click adds a normal caret; Alt-Shift drag creates a block.
         os.write(master, mouse(8, 12, 4) + mouse(8, 12, 4, True))
+        read_until(master, captured, b'"kind":"add-caret"', 2)
         os.write(master, mouse(12, 9, 2) + mouse(44, 14, 4) + mouse(12, 14, 4, True))
         # Wheel is routed to the active view without changing keyboard focus.
         os.write(master, mouse(64, 20, 5))

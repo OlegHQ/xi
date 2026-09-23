@@ -153,7 +153,7 @@ const dispatched = await commands.dispatch({ kind: 'alias', name: 'example-read'
 assert.deepEqual(dispatched, { ok: true, value: 'snapshot-read' }, 'EX01 alias dispatch reaches the registered command');
 assert.equal(reads.value, 1, 'EX01 one dispatch invokes the handler once');
 const model = await registry.readModel('example.picker');
-assert.deepEqual(model, {
+assert.deepEqual(JSON.parse(JSON.stringify(model)), {
   ok: true,
   value: {
     value: { title: 'snapshot-read', selectionGeneration: 7 },
@@ -164,7 +164,7 @@ assert.deepEqual(model, {
 const formatted = await registry.invokeProvider('format', { text: 'source' });
 assert.equal(formatted.ok, true, 'EX02 formatter provider is arbitrated by capability');
 if (formatted.ok) {
-  assert.deepEqual(formatted.value.value, { proposed: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(formatted.value.value)), { proposed: true });
   assert.equal(formatted.value.origin.providerId, providerId('example.formatter'));
   assert.equal(formatted.value.origin.capability, 'format');
 }
