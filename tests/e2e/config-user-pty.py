@@ -68,7 +68,7 @@ def case(name: str, use_xdg: bool, user: str, expected: str, *, legacy: str = ""
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 14, 100, 0, 0))
         env = {key: value for key, value in os.environ.items() if not key.startswith(("XI_", "OTUI_")) and key != "XDG_CONFIG_HOME"}
-        env.update(HOME=temporary, TERM="xterm-256color", XI_UI_TEST_MARKERS="1")
+        env.update(HOME=temporary, TERM="xterm-256color", COLORTERM="truecolor", XI_UI_TEST_MARKERS="1")
         if use_xdg:
             env["XDG_CONFIG_HOME"] = str(root / "xdg")
         child = subprocess.Popen([*command, *extra, str(source)], cwd=root, env=env, stdin=slave, stdout=slave, stderr=slave)
@@ -80,8 +80,8 @@ def case(name: str, use_xdg: bool, user: str, expected: str, *, legacy: str = ""
             marker = f'XI_EDITOR_CONFIG {{"enabled":true,"lineNumber":"{expected}"}}'.encode()
             if marker not in output:
                 raise AssertionError(f"{name} did not apply {expected}: {bytes(output[-1200:])!r}")
-            if theme_conflict and b"\x1b[48;2;252;252;250m" not in output:
-                raise AssertionError("canonical xi-light theme lost to persisted state.json")
+            if theme_conflict:
+                wait_for(master, output, b"\x1b[48;2;252;252;250m", replied)
             if open_config:
                 os.write(master, b":config-open")
                 wait_for(master, output, b'"source":":config-open"', replied)
