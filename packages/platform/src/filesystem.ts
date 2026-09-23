@@ -161,9 +161,9 @@ class WorkspaceIgnoreMatcher {
     return { ok: true, value: undefined };
   }
 
-  async ignored(relativePath: string, isDirectory: boolean, absolutePath = resolve(this.#root, relativePath)): Promise<boolean> {
+  async ignored(relativePath: string, isDirectory: boolean, absolutePath = resolve(this.#root, relativePath), checkAncestors = true): Promise<boolean> {
     const parts = relativePath.split('/');
-    for (let count = 1; count <= parts.length; count += 1) {
+    for (let count = checkAncestors ? 1 : parts.length; count <= parts.length; count += 1) {
       const current = count === parts.length ? absolutePath : resolve(this.#root, ...parts.slice(0, count));
       const directory = count < parts.length || isDirectory;
       let matched: IgnoreRule | undefined;
@@ -604,7 +604,9 @@ export class NodeFilesystemPort implements FilesystemPort {
           if (++visited > maxVisitedEntries) return { ok: false, error: { code: 'enumeration-limit', message: 'file enumeration visit limit reached', retryable: false } };
           const relativePath = directory.relative.length === 0 ? entry.name : `${directory.relative}/${entry.name}`;
           const absolutePath = join(directory.absolute, entry.name);
-          if (await ignoreMatcher.value.ignored(relativePath, entry.isDirectory(), absolutePath)) continue;
+          // Ancestor directories have already passed this matcher before entering the
+          // queue; checking them again for every child multiplies deep-tree work.
+          if (await ignoreMatcher.value.ignored(relativePath, entry.isDirectory(), absolutePath, false)) continue;
           if (entry.isDirectory()) {
             if (!ignored.has(entry.name) && (maxDepth === undefined || directory.depth < maxDepth)) queue.push({ absolute: absolutePath, relative: relativePath, ancestors: directory.ancestors, depth: directory.depth + 1 });
             continue;
