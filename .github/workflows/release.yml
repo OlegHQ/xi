@@ -236,4 +236,5 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           gh release create "$tag" dist/release/xi-* dist/release/SHA256SUMS dist/release/install.sh dist/release/install.ps1 \
             --draft --verify-tag --title "Xi $tag" \
-            --notes "Install on macOS or Linux: curl -fsSL https://github.com/OlegHQ/xi/releases/latest/download/install.sh | sh\nWindows PowerShell: irm https://github.com/OlegHQ/xi/releases/latest/download/install.ps1 | iex"
+            --notes "Install on macOS or Linux: curl -fsSL https://github.com/OlegHQ/xi/releases/latest/download/install.sh | sh
+          Windows PowerShell: irm https://github.com/OlegHQ/xi/releases/latest/download/install.ps1 | iex"
