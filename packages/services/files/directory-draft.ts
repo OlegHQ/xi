@@ -812,6 +812,7 @@ export class DirectoryDraft implements DirectoryDraftReadPort {
 
   private publish(): void {
     this.#generation += 1;
+    if (this.#listeners.size === 0) return;
     const model = this.buildModel();
     for (const listener of [...this.#listeners]) listener(model);
   }

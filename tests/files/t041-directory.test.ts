@@ -37,10 +37,20 @@ function draft() {
 
 async function main(): Promise<void> {
   testNativeDraftOperationsAndEscaping();
+  testPublishWhenSubscribed();
   testInvalidRowsPreserveDraft();
   testDuplicateAndAmbiguousIdentityFailures();
   await testReviewCancelRestoresEditFocus();
   console.log('T041 directory draft passed native in-memory edits, anchored IDs, reversible control-name escaping, located validation errors, duplicate/collision rejection and review focus restoration');
+}
+
+function testPublishWhenSubscribed(): void {
+  const editable = draft();
+  const published: string[] = [];
+  const subscription = editable.subscribe((model) => { published.push(model.text); });
+  assert.equal(editable.rename('source-alpha', 'renamed.txt').ok, true);
+  assert.equal(published[0], 'renamed.txt\nbeta.txt\nline\\nname', 'T041-PUBLISH-01 subscribers receive the updated model');
+  subscription.dispose();
 }
 
 function testNativeDraftOperationsAndEscaping(): void {
