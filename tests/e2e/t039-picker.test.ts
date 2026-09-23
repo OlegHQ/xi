@@ -65,8 +65,8 @@ if (hiddenByDefault.ok) assert.deepEqual(hiddenByDefault.value.entries.map((entr
 hiddenByDefaultIndex.dispose();
 
 // T039-ASYNC-INDEX: queryAsync must time-slice a large index -- yielding to the
-// event loop between chunks -- and honor cancellation/generation between those
-// yields instead of scoring 50k+ entries in one uninterruptible synchronous pass.
+// event loop between chunks -- and honor cancellation/removal between those
+// yields while allowing append-only indexing to return partial results.
 const asyncWarm = await index.queryAsync('generated/file-004', { limit: 40, includeHidden: false });
 assert.equal(asyncWarm.ok, true, 'T039-ASYNC-INDEX-01 time-sliced query succeeds on a large index');
 if (asyncWarm.ok) assert.ok(asyncWarm.value.entries.length > 0, 'T039-ASYNC-INDEX-02 time-sliced query still finds matches');
@@ -78,11 +78,16 @@ const asyncCancelled = await asyncCancelPending;
 assert.equal(asyncCancelled.ok, false, 'T039-ASYNC-INDEX-03 a query over 50k+ entries yields at least once, so a cancel requested right after dispatch still lands before completion');
 if (!asyncCancelled.ok) assert.equal(asyncCancelled.error.kind, 'cancelled', 'T039-ASYNC-INDEX-04 cancellation between slices is typed');
 
-const asyncStalePending = index.queryAsync('generated');
+const asyncAppendPending = index.queryAsync('late-added');
 assert.equal(index.addPaths('root-a', [{ rootId: 'root-a', relativePath: 'src/late-added-during-scan.ts' }]).ok, true, 'T039-ASYNC-INDEX-05 index mutates mid-scan');
+const asyncAppendResult = await asyncAppendPending;
+assert.equal(asyncAppendResult.ok, true, 'T039-ASYNC-INDEX-06 append-only indexing can return a useful partial query');
+if (asyncAppendResult.ok) assert.equal(asyncAppendResult.value.entries[0]?.relativePath, 'src/late-added-during-scan.ts', 'T039-ASYNC-INDEX-07 appended match is selectable');
+const asyncStalePending = index.queryAsync('generated');
+assert.equal(index.removePath('root-a', 'src/generated/file-000000.ts'), true, 'T039-ASYNC-INDEX-08 destructive mutation succeeds');
 const asyncStaleResult = await asyncStalePending;
-assert.equal(asyncStaleResult.ok, false, 'T039-ASYNC-INDEX-06 a generation change mid-scan is observed between slices, not scored against a moving store');
-if (!asyncStaleResult.ok) assert.equal(asyncStaleResult.error.kind, 'stale', 'T039-ASYNC-INDEX-07 generation mismatch is reported as stale');
+assert.equal(asyncStaleResult.ok, false, 'T039-ASYNC-INDEX-09 removal mid-scan invalidates the query');
+if (!asyncStaleResult.ok) assert.equal(asyncStaleResult.error.kind, 'stale', 'T039-ASYNC-INDEX-10 removal mismatch is reported as stale');
 
 // T039-LARGE-INDEX: a query matching most of a 250k-entry index must still
 // score in bounded time slices and keep a bounded candidate set (top-N insert

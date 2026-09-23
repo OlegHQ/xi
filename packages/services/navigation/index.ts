@@ -137,6 +137,8 @@ export class FilePathIndex implements Disposable {
   readonly #entries = new Map<string, IndexedPath>();
   readonly #normalizedEntries = new Map<string, string>();
   #generation = 0;
+  // Appending indexed paths is safe for an in-flight query; removing them is not.
+  #removalGeneration = 0;
   #ready = false;
   #disposed = false;
 
@@ -200,7 +202,7 @@ export class FilePathIndex implements Disposable {
     const identity = pathIdentity(rootId, relativePath);
     const deleted = this.#entries.delete(identity);
     this.#normalizedEntries.delete(identity);
-    if (deleted) this.#generation += 1;
+    if (deleted) { this.#generation += 1; this.#removalGeneration += 1; }
     return deleted;
   }
 
@@ -215,6 +217,7 @@ export class FilePathIndex implements Disposable {
       }
     }
     this.#generation += 1;
+    this.#removalGeneration += 1;
     this.#ready = this.#entries.size > 0;
     return removed || true;
   }
@@ -229,8 +232,8 @@ export class FilePathIndex implements Disposable {
    * Time-sliced counterpart to `query()`: scores entries in bounded chunks and
    * yields to the event loop between them so a query over a large index (up to
    * 250k entries) never holds the thread for one long synchronous pass. Honors
-   * cancellation and the index's own generation (bumped by any mutation) between
-   * slices so a query never scores against a store that changed underneath it.
+   * cancellation and destructive index changes between slices. Append-only
+   * batches can produce useful partial results while the workspace is still indexing.
    */
   async queryAsync(query: string, options: FilePickerQueryOptions = {}): Promise<Result<FilePickerQueryResult, PickerFailure>> {
     const cancellation = options.cancellation;
@@ -238,6 +241,7 @@ export class FilePathIndex implements Disposable {
     if (this.#disposed) return { ok: false, error: { kind: 'provider', message: 'filename index is disposed' } };
     if (!this.#ready) return { ok: false, error: { kind: 'not-ready', mode: 'file', message: 'filename index is still warming' } };
     const generation = this.#generation;
+    const removalGeneration = this.#removalGeneration;
     const limit = boundedLimit(options.limit);
     const includeHidden = options.includeHidden ?? this.#includeHidden;
     const includeIgnored = options.includeIgnored ?? this.#includeIgnored;
@@ -268,7 +272,7 @@ export class FilePathIndex implements Disposable {
       if (scanned % CHUNK_SIZE === 0) {
         await yieldToEventLoop();
         if (cancellation?.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
-        if (this.#generation !== generation) return { ok: false, error: { kind: 'stale', generation } };
+        if (this.#removalGeneration !== removalGeneration) return { ok: false, error: { kind: 'stale', generation } };
       }
       if (!includeHidden && path.hidden === true) continue;
       if (!includeIgnored && path.ignored === true) continue;
@@ -282,7 +286,7 @@ export class FilePathIndex implements Disposable {
       insertTopN(matches, makeFileEntry(root, path, score), candidateCap);
     }
     if (cancellation?.isCancelled) return { ok: false, error: { kind: 'cancelled' } };
-    if (this.#generation !== generation) return { ok: false, error: { kind: 'stale', generation } };
+    if (this.#removalGeneration !== removalGeneration) return { ok: false, error: { kind: 'stale', generation } };
     const entries = Object.freeze(matches.slice(0, limit));
     return { ok: true, value: Object.freeze({ entries, generation: this.#generation, totalMatches, truncated: totalMatches > entries.length }) };
   }
@@ -294,6 +298,7 @@ export class FilePathIndex implements Disposable {
     this.#normalizedEntries.clear();
     this.#roots.clear();
     this.#generation += 1;
+    this.#removalGeneration += 1;
     this.#ready = false;
   }
 }
