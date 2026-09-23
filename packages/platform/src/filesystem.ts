@@ -1,5 +1,5 @@
 import { constants, promises as fs, watch as watchFile } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export function xiConfigDirectory(environment: Readonly<Record<string, string | undefined>>): string {
   const xdgConfigHome = environment.XDG_CONFIG_HOME;
@@ -222,6 +222,36 @@ class WorkspaceIgnoreMatcher {
   }
 }
 
+/** Check specific open-buffer paths with the same ignore rules as file enumeration. */
+async function visibleWorkspacePaths(
+  root: string,
+  paths: readonly string[],
+  options: WorkspaceIgnoreOptions,
+  cancellation: CancellationToken,
+): Promise<Result<ReadonlySet<string>, PlatformFailure>> {
+  const rootPath = resolve(root);
+  const created = await WorkspaceIgnoreMatcher.create(rootPath, options, cancellation);
+  if (!created.ok) return created;
+  const visible = new Set<string>();
+  for (const path of paths) {
+    if (cancellation.isCancelled) return cancelled();
+    const absolute = resolve(rootPath, path);
+    const relativePath = relative(rootPath, absolute);
+    if (path.length === 0 || path.includes('\0') || isAbsolute(path) || relativePath === '' || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) return { ok: false, error: { code: 'invalid-path', message: `path escapes workspace: ${path}`, retryable: false } };
+    const parts = relativePath.split(sep);
+    let ignored = false;
+    for (let depth = 0; depth < parts.length; depth += 1) {
+      const directory = resolve(rootPath, ...parts.slice(0, depth));
+      const loaded = await created.value.loadDirectory(directory);
+      if (!loaded.ok) return loaded;
+      const candidate = parts.slice(0, depth + 1).join('/');
+      if (await created.value.ignored(candidate, depth < parts.length - 1, resolve(rootPath, candidate))) { ignored = true; break; }
+    }
+    if (!ignored) visible.add(path);
+  }
+  return { ok: true, value: visible };
+}
+
 function parseIgnoreRule(raw: string, base: string, priority: number): IgnoreRule | undefined {
   let pattern = raw.replace(/(?<!\\) +$/u, '');
   if (pattern.length === 0 || pattern.startsWith('#')) return undefined;
@@ -282,6 +312,11 @@ const COALESCE_MILLISECONDS = 20;
  */
 export class NodeFilesystemPort implements FilesystemPort {
   #temporaryCounter = 0;
+
+  /** Resolve dirty-buffer eligibility through the same filesystem ignore policy as enumeration. */
+  visibleWorkspacePaths(root: string, paths: readonly string[], options: WorkspaceIgnoreOptions, cancellation: CancellationToken): Promise<Result<ReadonlySet<string>, PlatformFailure>> {
+    return visibleWorkspacePaths(root, paths, options, cancellation);
+  }
 
   /** Keep OS path policy behind the platform boundary used by the launcher. */
   resolvePath(base: string, path: string): string { return resolve(base, path); }

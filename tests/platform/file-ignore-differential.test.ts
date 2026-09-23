@@ -29,6 +29,10 @@ try {
   const candidates = ['named', 'sub/named/child.txt', 'top.log', 'sub/deep.log', 'anchored.txt', 'sub/anchored.txt', 'dir/file.txt', 'sub/dir/file.txt', 'a.tmp', 'c.tmp', 'escaped space.txt', '#hash.txt', 'blocked/child.txt', 'conflict.txt', 'plain.txt'];
   for (const path of candidates) await put(path);
   const actual = await collect(root, enabled);
+  const openBufferPaths = candidates.filter((path) => path !== 'named');
+  const visibleBuffers = await new NodeFilesystemPort().visibleWorkspacePaths(root, openBufferPaths, enabled, new CancellationSource().token);
+  assert.equal(visibleBuffers.ok, true, 'F20-BUFFER-IGNORE-01 open buffers resolve against the same ignore rules');
+  if (visibleBuffers.ok) for (const path of openBufferPaths) assert.equal(visibleBuffers.value.has(path), actual.has(path), `F20-BUFFER-IGNORE-02 ${path}`);
   for (const path of candidates) {
     const git = await run('git', ['-C', root, 'check-ignore', '--no-index', '-q', '--', path]).then(() => true, () => false);
     assert.equal(actual.has(path), !git, `F20-GIT-DIFF ${path}`);
@@ -51,6 +55,9 @@ try {
   await writeFile(join(linked, 'child', 'visible.txt'), 'visible');
   const nested = await collect(join(linked, 'child'), enabled);
   assert.deepEqual([...nested].sort(), ['visible.txt'], 'F20-WORKTREE-ROOT parent ignore and linked git exclude apply below editor root');
+  const nestedBuffers = await new NodeFilesystemPort().visibleWorkspacePaths(join(linked, 'child'), ['parent.txt', 'excluded.txt', 'visible.txt'], enabled, new CancellationSource().token);
+  assert.equal(nestedBuffers.ok, true);
+  if (nestedBuffers.ok) assert.deepEqual([...nestedBuffers.value], ['visible.txt'], 'F20-BUFFER-WORKTREE-01 linked gitdir and parent ignores also gate dirty buffers');
 
   const bounded = join(temporary, 'bounded');
   await mkdir(bounded);

@@ -160,6 +160,14 @@ export function createOptionalServicesWiring(deps: OptionalServicesWiringDeps): 
         debounceMilliseconds: deps.searchDebounceMilliseconds ?? 5,
         defaultLimit: deps.searchDefaultLimit ?? 10_000,
         bufferSourceProvider: () => deps.getSearchFeature().readBuffers(),
+        visibleBufferPaths: async (query, paths, cancellation) => {
+          const homeDirectory = deps.processEnvironment().HOME;
+          const result = await deps.filesystem.visibleWorkspacePaths(query.rootPath, paths, {
+            parents: true, ignore: true, gitIgnore: true, gitGlobal: true, gitExclude: true,
+            ...(homeDirectory === undefined ? {} : { homeDirectory }),
+          }, cancellation);
+          return result.ok ? result : { ok: false, error: { kind: 'backend', message: result.error.message } };
+        },
       });
       searchService = nextSearch;
       const nextReplace = new WorkspaceReplaceService(deps.getSearchFeature().createReplacePort());

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NodeProcessPort } from '../../packages/platform/src/index';
+import { promisify } from 'node:util';
+import { NodeFilesystemPort, NodeProcessPort } from '../../packages/platform/src/index';
 import {
   InMemorySearchBackend,
   RealtimeSearchService,
@@ -108,6 +110,36 @@ async function productionRipgrepPath(): Promise<void> {
   // reaching maxResults.
   assert.equal(floodResult.ok, true, 'output flood keeps matches already parsed before the byte cap');
   if (floodResult.ok) assert.ok(floodResult.value.length > 0, 'flooded search still returns the matches parsed before the cap');
+}
+
+async function dirtyBuffersRespectIgnoreRules(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'xi-search-ignore-'));
+  await promisify(execFile)('git', ['init', '-q', root]);
+  await writeFile(join(root, '.gitignore'), 'ignored.txt\n');
+  await writeFile(join(root, 'ignored.txt'), 'needle on disk\n');
+  await writeFile(join(root, 'visible.txt'), 'needle on disk\n');
+  await writeFile(join(root, '.hidden.txt'), 'needle on disk\n');
+  const filesystem = new NodeFilesystemPort();
+  const environment = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  const service = new RealtimeSearchService({
+    backend: new RipgrepSearchBackend({ process: new NodeProcessPort(), environment }),
+    debounceMilliseconds: 0,
+    bufferSourceProvider: () => [
+      { rootId: 'root', path: 'ignored.txt', version: 1, text: 'needle in buffer' },
+      { rootId: 'root', path: 'visible.txt', version: 1, text: 'needle in buffer' },
+      { rootId: 'root', path: '.hidden.txt', version: 1, text: 'needle in buffer' },
+    ],
+    visibleBufferPaths: async (search, paths, cancellation) => {
+      const visible = await filesystem.visibleWorkspacePaths(search.rootPath, paths, { parents: true, ignore: true, gitIgnore: true, gitGlobal: true, gitExclude: true }, cancellation);
+      return visible.ok ? visible : { ok: false, error: { kind: 'backend', message: visible.error.message } };
+    },
+  });
+  for (const includeHidden of [false, true]) {
+    const result = await service.query(query('needle', { rootPath: root, includeHidden }));
+    assert.equal(result.ok, true);
+    if (result.ok) assert.deepEqual(result.value.matches.map((match) => match.path), includeHidden ? ['.hidden.txt', 'visible.txt'] : ['visible.txt'], 'dirty buffers obey ignore and hidden settings while visible buffers replace disk matches');
+  }
+  service.dispose();
 }
 
 async function cancelledDebounceResolves(): Promise<void> {
@@ -280,6 +312,7 @@ await contentAndBufferSources();
 await staleGenerationIsRejected();
 await invalidRegexKeepsPriorResults();
 await productionRipgrepPath();
+await dirtyBuffersRespectIgnoreRules();
 await cancelledDebounceResolves();
 await idleSearchStartsBeforeReplacementDebounce();
 await processExitRaceRejectsLateOutput();

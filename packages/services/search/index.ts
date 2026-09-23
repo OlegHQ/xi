@@ -69,6 +69,8 @@ export interface SearchServiceOptions {
   readonly backend?: SearchBackend;
   /** Read current dirty buffers on the scheduled search turn, outside the keypress handler. */
   readonly bufferSourceProvider?: () => readonly SearchBufferSource[];
+  /** Platform-owned ignore check for open buffers; disk matches use ripgrep's ignore rules. */
+  readonly visibleBufferPaths?: (query: SearchQuery, paths: readonly string[], cancellation: CancellationToken) => Promise<Result<ReadonlySet<string>, SearchFailure>>;
 }
 
 export interface RipgrepSearchBackendOptions {
@@ -102,6 +104,7 @@ export class RealtimeSearchService implements Disposable {
   readonly #debounceMilliseconds: number;
   readonly #defaultLimit: number;
   readonly #bufferSourceProvider: (() => readonly SearchBufferSource[]) | undefined;
+  readonly #visibleBufferPaths: SearchServiceOptions['visibleBufferPaths'];
   readonly #listeners = new Set<(model: SearchReadModel) => void>();
   #bufferSources: readonly SearchBufferSource[] = Object.freeze([]);
   #model: SearchReadModel = EMPTY_MODEL;
@@ -116,6 +119,7 @@ export class RealtimeSearchService implements Disposable {
     this.#debounceMilliseconds = bounded(options.debounceMilliseconds ?? 5, 0, 2_000);
     this.#defaultLimit = bounded(options.defaultLimit ?? 10_000, 1, 100_000);
     this.#bufferSourceProvider = options.bufferSourceProvider;
+    this.#visibleBufferPaths = options.visibleBufferPaths;
   }
 
   get model(): SearchReadModel { return this.#model; }
@@ -197,7 +201,9 @@ export class RealtimeSearchService implements Disposable {
 
   async #run(query: SearchQuery, generation: number, cancellation: CancellationSource, resolve: (result: Result<SearchReadModel, SearchFailure>) => void): Promise<void> {
     this.#timer = undefined;
-    const bufferSources = this.#bufferSourceProvider?.() ?? this.#bufferSources;
+    const bufferSources = (this.#bufferSourceProvider?.() ?? this.#bufferSources).filter((buffer) =>
+      buffer.rootId === query.rootId && !buffer.path.split('/').some((segment) =>
+        segment === '.git' || segment === 'node_modules' || (query.includeHidden !== true && segment.startsWith('.'))));
     const limit = query.maxResults ?? this.#defaultLimit;
     const ownedPaths = bufferOwnedPaths(bufferSources);
     const streamed: SearchMatch[] = [];
@@ -248,16 +254,21 @@ export class RealtimeSearchService implements Disposable {
     // Dirty-buffer text does not change while a single search run is in flight, so scan it
     // once instead of on every ripgrep batch. Run concurrently with the disk search: the
     // buffer scan must never delay starting rg (previously `await`ed before spawning it).
-    const bufferPromise = computeBufferMatches(query, bufferSources, generation, limit, cancellation.token).then((result) => {
+    const bufferPromise = (async (): Promise<Result<{ readonly matches: readonly SearchMatch[]; readonly total: number; readonly ownedPaths: ReadonlySet<string> }, SearchFailure>> => {
+      const visible = this.#visibleBufferPaths === undefined || bufferSources.length === 0
+        ? undefined
+        : await this.#visibleBufferPaths(query, bufferSources.map((buffer) => buffer.path), cancellation.token);
+      if (visible !== undefined && !visible.ok) return visible;
+      const eligible = visible === undefined ? bufferSources : bufferSources.filter((buffer) => visible.value.has(buffer.path));
+      const result = await computeBufferMatches(query, eligible, generation, limit, cancellation.token);
       if (!(this.#disposed || generation !== this.#generation || cancellation.token.isCancelled) && result.matches.length > 0) {
         for (const match of result.matches) combined.push(match);
         schedulePublish();
       }
-      return result;
-    });
+      return { ok: true, value: { ...result, ownedPaths: bufferOwnedPaths(eligible) } };
+    })();
     const diskPromise = this.#backend.search(query, cancellation.token, generation, onBatch);
     const [bufferResult, disk] = await Promise.all([bufferPromise, diskPromise]);
-    const bufferMatches = bufferResult.matches;
     // A coalesced intermediate publish must never land after the final model below, or a
     // 'ready' result flips back to 'loading' and replace refuses to run.
     if (publishTimer !== undefined) { clearTimeout(publishTimer); publishTimer = undefined; }
@@ -266,6 +277,12 @@ export class RealtimeSearchService implements Disposable {
       resolve({ ok: false, error: { kind: 'stale', generation } });
       return;
     }
+    if (!bufferResult.ok) {
+      this.#publish({ ...this.#model, query, generation, state: 'error', message: failureMessage(bufferResult.error) });
+      resolve({ ok: false, error: bufferResult.error });
+      return;
+    }
+    const bufferMatches = bufferResult.value.matches;
     if (!disk.ok) {
       const state = disk.error.kind === 'cancelled' ? 'stale' : 'error';
       const model = { ...this.#model, query, generation, state, message: failureMessage(disk.error) } as SearchReadModel;
@@ -273,7 +290,7 @@ export class RealtimeSearchService implements Disposable {
       resolve({ ok: false, error: disk.error });
       return;
     }
-    const filteredDisk = disk.value.filter((match) => !ownedPaths.has(bufferPathKey(match.rootId, match.path)));
+    const filteredDisk = disk.value.filter((match) => !bufferResult.value.ownedPaths.has(bufferPathKey(match.rootId, match.path)));
     // Bounded top-N insertion (mirrors packages/services/navigation's picker index): keeps a
     // sorted, capped-at-`limit` array instead of concatenating every disk+buffer match and
     // sorting/slicing the whole thing, so a query with far more matches than `limit` only ever
@@ -281,7 +298,7 @@ export class RealtimeSearchService implements Disposable {
     const merged: SearchMatch[] = [];
     let totalMatches = 0;
     for (const match of filteredDisk) { totalMatches += 1; insertTopN(merged, match, limit); }
-    totalMatches += bufferResult.total;
+    totalMatches += bufferResult.value.total;
     for (const match of bufferMatches) insertTopN(merged, match, limit);
     const matches = merged;
     const model: SearchReadModel = Object.freeze({
