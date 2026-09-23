@@ -38,7 +38,7 @@ def fixture(root: Path) -> Path:
     return workspace
 
 
-def sample(command: list[str], workspace: Path, home: Path) -> dict[str, float]:
+def sample(command: list[str], workspace: Path, home: Path, settle_ms: int) -> dict[str, float]:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     env = {key: value for key, value in os.environ.items() if not key.startswith(("XI_", "OTUI_"))}
@@ -64,6 +64,13 @@ def sample(command: list[str], workspace: Path, home: Path) -> dict[str, float]:
 
     try:
         startup = until(b"XI_WORKBENCH_READY")
+        deadline = time.monotonic() + settle_ms / 1000
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], .01)[0]:
+                try:
+                    output.extend(os.read(master, 65536))
+                except OSError:
+                    break
         output.clear()
         os.write(master, b" f")
         prompt = until(b"Files  >")
@@ -100,10 +107,11 @@ def main() -> None:
     parser.add_argument("--source", action="store_true")
     parser.add_argument("--binary", type=Path, default=ROOT / "dist/xi")
     parser.add_argument("--samples", type=int, default=20)
+    parser.add_argument("--settle-ms", type=int, default=0, help="drain background terminal output before opening the picker")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if args.samples < 1:
-        parser.error("samples must be positive")
+    if args.samples < 1 or args.settle_ms < 0:
+        parser.error("samples must be positive and settle-ms nonnegative")
     command = ["bun", "run", str(ROOT / "apps/xi/src/main.ts")] if args.source else [str(args.binary.resolve())]
     with tempfile.TemporaryDirectory(prefix="xi-picker-latency-") as temporary:
         root = Path(temporary)
@@ -112,12 +120,12 @@ def main() -> None:
         config = home / ".config" / "xi" / "config.toml"
         config.parent.mkdir(parents=True)
         config.write_text('[editor.workspace-trust]\nlevel = "insecure"\n')
-        sample(command, workspace, home)  # warm module and filesystem caches
-        runs = [sample(command, workspace, home) for _ in range(args.samples)]
+        sample(command, workspace, home, args.settle_ms)  # warm module and filesystem caches
+        runs = [sample(command, workspace, home, args.settle_ms) for _ in range(args.samples)]
     summary = {key: {name: percentile([run[key] for run in runs], fraction)
                      for name, fraction in (("p50", .5), ("p95", .95), ("p99", .99), ("max", 1))}
                for key in runs[0]}
-    report = {"command": command, "samples": args.samples, "fixture": "5,002 source files, 1,200 ignored files, nested .gitignore, 120x40 PTY",
+    report = {"command": command, "samples": args.samples, "settle_ms": args.settle_ms, "fixture": "5,002 source files, 1,200 ignored files, nested .gitignore, 120x40 PTY",
               "boundary": "write keys to matching terminal output", "summary": summary, "runs": runs}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")

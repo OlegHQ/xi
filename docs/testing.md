@@ -75,3 +75,5 @@ prove first-frame speed, and a profiler changes timing; use the PTY measurements
 release claims. Bun's runtime transpiler cache stores transformed source, but [ESM
 bytecode that skips parsing requires compilation](https://bun.com/docs/bundler/bytecode#esm-bytecode),
 so it cannot stand in for the ordinary source-run check.
+For picker latency after Explorer has populated, add `--settle-ms 500`; the PTY is
+drained during that interval so queued terminal output does not inflate the key timing.

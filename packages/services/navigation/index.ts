@@ -718,8 +718,9 @@ function longestLiteralAnchor(query: string): string {
   return current.length > best.length ? current : best;
 }
 
+const pickerCollator = new Intl.Collator('en-US');
 function compareEntries(left: PickerEntry, right: PickerEntry): number {
-  return right.score - left.score || left.label.localeCompare(right.label, 'en-US') || left.id.localeCompare(right.id, 'en-US');
+  return right.score - left.score || pickerCollator.compare(left.label, right.label) || pickerCollator.compare(left.id, right.id);
 }
 
 /**
