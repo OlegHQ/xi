@@ -4,12 +4,19 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      native_run_id:
+        description: Reuse native artifacts from a prior qualification run
+        type: string
+        default: ''
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   native-assets:
+    if: inputs.native_run_id == ''
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +75,7 @@ jobs:
 
   build:
     needs: native-assets
+    if: always() && (needs.native-assets.result == 'success' || inputs.native_run_id != '')
     strategy:
       fail-fast: false
       matrix:
@@ -115,6 +123,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: opentui-native
+          run-id: ${{ inputs.native_run_id || github.run_id }}
+          github-token: ${{ github.token }}
           path: dist
       - name: Install fork-built native library (Unix)
         if: runner.os != 'Windows'
@@ -166,6 +176,30 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & dist/stage/xi/xi.exe --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Smoke test Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tag = 'v' + (Get-Content package.json | ConvertFrom-Json).version
+          $release = Join-Path $env:RUNNER_TEMP "xi-release/download/$tag"
+          New-Item -ItemType Directory -Force -Path $release | Out-Null
+          Copy-Item dist/release/* $release
+          $server = Start-Process python -ArgumentList @('-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', $env:RUNNER_TEMP) -PassThru -NoNewWindow
+          try {
+            $env:XI_RELEASE_URL = 'http://127.0.0.1:8765/xi-release'
+            $env:XI_VERSION = $tag
+            $env:XI_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'xi-installed'
+            for ($attempt = 0; $attempt -lt 20; $attempt++) {
+              try { Invoke-WebRequest "$env:XI_RELEASE_URL/download/$tag/SHA256SUMS" -TimeoutSec 1 | Out-Null; break }
+              catch { Start-Sleep -Milliseconds 100 }
+            }
+            & docs/installation/install.ps1
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $env:XI_INSTALL_DIR 'xi.exe') --version
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Stop-Process -Id $server.Id -Force
+          }
       - name: Smoke test compiled terminal on Unix
         if: runner.os != 'Windows'
         run: python3 tests/distribution/t064-compiled-pty.py

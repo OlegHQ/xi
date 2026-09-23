@@ -62,7 +62,7 @@ def drain(fd: int, captured: bytearray, deadline: float) -> None:
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="xi-t064-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="xi-t064-", dir="/tmp") as temporary:
         isolated = Path(temporary)
         binary = isolated / "xi"
         home = isolated / "home"

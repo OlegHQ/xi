@@ -18,26 +18,23 @@ Bun's `patchedDependencies`. Both published Bun and Node chunks consume the
 same source change. Helix underline colour adds native OpenTUI symbols, so a
 source-only Bun patch cannot use the official 0.5.11 platform binaries. The
 fork release must publish matching owned platform packages before a fresh
-registry install can use underline colours. This checkout is exercised with a
-rebuilt Linux/arm64 library; other platforms still need release qualification.
+registry install can use underline colours. Xi release builds instead compile
+the pinned fork for all packaged targets and bundle those native libraries.
 
-The Linux/arm64 glibc asset in `native-assets.sha256` is built from submodule
+The native assets in `native-assets.sha256` are built from submodule
 `ac9a6156d17680c4b6f8b7ddd45a1a96424c3be7` with Zig 0.16.0:
 
 ```sh
 cd vendor/opentui/packages/native
 bun run prepare:zig
-zig build -Doptimize=ReleaseFast
-cp lib/aarch64-linux/libopentui.so /tmp/xi-libopentui.so
-strip --strip-all /tmp/xi-libopentui.so
-sha256sum /tmp/xi-libopentui.so
+zig build -j2 -Dall -Doptimize=ReleaseFast
 ```
 
-The stripped result is `e1652d0ab20c2c1c23df7a50c54c9445c7496af0197f15fd3cbc7029cdac4681`.
-The published 0.5.11 Linux/arm64 asset hashes to
-`4cedc1bc049c2e498923f2647280c1f5c0a370feac9de87675a689f6dfa57c23`;
-it predates the fork's native underline symbols. `bun run package:audit` checks
-that the installed asset matches the manifest.
+The release workflow strips distribution copies, checks their hashes against
+the pinned manifest, and smoke-tests compiled Xi on each target. The published
+OpenTUI 0.5.11 binaries predate the fork's native underline symbols, so they
+cannot replace the pinned fork assets. `bun run package:audit` checks the
+installed asset against the manifest.
 
 The pinned Solid 0.5.11 package also receives
 `patches/opentui-solid-0.5.11.patch`. It defers Babel until an actual TSX transform
@@ -96,8 +93,7 @@ Unix Bun executables extract the embedded native library once into a private
 temporary directory so all bindings share native state. Orderly exit removes
 the directory; SIGKILL cannot run cleanup. Windows embedded DLLs retain eager
 binding because Windows cannot delete a loaded DLL. Installed Windows packages
-still use lazy binding. Only Linux arm64 was exercised; other platform
-qualification remains outstanding. Existing bundle source maps cover the
+still use lazy binding. Existing bundle source maps cover the
 original code, not appended generated helpers.
 
 See [T122 evidence](../evidence/T122.md) for startup and first-input measurements,
