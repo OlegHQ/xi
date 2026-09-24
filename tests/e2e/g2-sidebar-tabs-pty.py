@@ -224,6 +224,21 @@ with tempfile.TemporaryDirectory(prefix="xi-g2-sidebar-tabs-") as temporary:
         if not committed or committed[-1].get("committed") is not True:
             raise SystemExit(f"sidebar splitter drag never committed: {splitter_events!r}")
 
+        # G2-06: the Outline header is the Files/Outline splitter. Expand Outline by clicking its
+        # collapsed header (bottom row), then jump the header up over the Files rows in one move:
+        # the press captured the pointer, so the drag resizes instead of reaching the tree.
+        click(master, captured, screen, 5, 39)
+        before_fast = len(captured)
+        os.write(master, mouse(0, 5, 25))
+        read_for(master, captured, screen, 0.1)
+        os.write(master, mouse(32, 5, 15))
+        read_for(master, captured, screen, 0.1)
+        os.write(master, mouse(0, 5, 15, True))
+        read_for(master, captured, screen, 0.4)
+        fast = [json.loads(match.group(1)) for match in SPLITTER.finditer(captured[before_fast:])]
+        if not any(event.get("nodeId") == "outline" and event.get("action") == "move" and event.get("firstSize") == 24 for event in fast):
+            raise SystemExit(f"a fast Outline header drag over the Files rows lost the splitter capture: {fast!r}")
+
         os.write(master, b"\x1b")
         read_for(master, captured, screen, 0.2)
         os.write(master, b":qa!\r")

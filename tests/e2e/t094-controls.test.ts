@@ -3,7 +3,7 @@ import { asIdentifier, type DocumentId, type ViewId } from '../../packages/primi
 import { TextFileDocument } from '../../packages/document/src/index';
 import { WorkbenchSession } from '../../packages/workbench/src/index';
 import { SplitterDragController, TerminalRestoration, WorkbenchControlRegistry } from '../../packages/workbench/input/controls';
-import { PanelHitMap, PanelScroll } from '../../packages/ui/src/panel-pointer';
+import { PanelHitMap, PanelScroll, verticalWheelDelta } from '../../packages/ui/src/panel-pointer';
 
 const hitMap = new PanelHitMap();
 hitMap.publish(7, [undefined, 'explorer:workspace\0src/a.ts']);
@@ -79,6 +79,12 @@ const terminal = new TerminalRestoration({ enterMouse: () => modes.push('enter')
 terminal.start();
 terminal.dispose();
 assert.deepEqual(modes, ['enter', 'leave', 'cursor'], 'T094-TERM-01 terminal modes restore on disposal');
+// Trackpad drags drift sideways: horizontal wheel events must never scroll vertically.
+assert.equal(verticalWheelDelta({ direction: 'up', delta: 1 }), -1, 'T094-WHEEL-01 wheel up scrolls up');
+assert.equal(verticalWheelDelta({ direction: 'down', delta: 1 }), 1, 'T094-WHEEL-02 wheel down scrolls down');
+assert.equal(verticalWheelDelta({ direction: 'left', delta: 1 }) + verticalWheelDelta({ direction: 'right', delta: 1 }), 0, 'T094-WHEEL-03 horizontal wheel events do not scroll vertically');
+assert.equal(verticalWheelDelta({ direction: 'left', delta: 1 }), 0, 'T094-WHEEL-04 left is not up');
+
 controls.dispose();
 splitter.dispose();
 console.log('T094 workbench controls passed stable identity, cached layout reads, splitter rollback/commit and terminal restoration');

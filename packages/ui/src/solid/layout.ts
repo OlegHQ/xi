@@ -1,6 +1,7 @@
 import type { ExCommandLineReadModel } from '../../../workbench/src/index.ts';
 import type { SidebarReadModel } from '../../../workbench/src/entrypoints/launch';
 import { calculateWorkbenchLayout, computeSidebarSectionLayout } from '../workbench';
+import { exCommandDoc, exCompletionGrid, wrapDocLines } from '../../commandline/index';
 
 export type SurfaceBounds = { readonly width: number; readonly height: number; readonly left: number; readonly top: number };
 
@@ -108,20 +109,25 @@ export function popupBoundsInEditor(
   return { ...bounds, left: bounds.left + layout.editorX };
 }
 
+/** Helix prompt: the completion grid sits directly above the `:` line at the bottom row. */
 export function getCommandLineBounds(width: number, height: number, model: ExCommandLineReadModel | undefined): SurfaceBounds {
-  const panelHeight = Math.max(1, Math.min(height, commandLineContentHeight(model)));
+  const panelHeight = Math.max(1, Math.min(height, exCompletionGrid(model, width).rows + 1));
   return { width: Math.max(1, width), height: panelHeight, left: 0, top: Math.max(0, height - panelHeight) };
 }
 
-function commandLineContentHeight(model: ExCommandLineReadModel | undefined): number {
-  if (model === undefined) return 1;
-  const candidateRows = Math.min(model.candidates.length, 16);
-  if (candidateRows === 0) return model.parseFailure === undefined ? 1 : 2;
-  const selected = model.candidates[model.selectedIndex];
-  return 2 + candidateRows + (selected !== undefined && selected.detail.length > 0 ? 1 : 0);
+/** Helix's command doc popup: up to 90 cells wide, framed, stacked above the completion grid. */
+export function getCommandDocBounds(width: number, height: number, model: ExCommandLineReadModel | undefined): SurfaceBounds {
+  const panelWidth = Math.max(1, Math.min(90, width));
+  const lines = wrapDocLines(exCommandDoc(model)?.lines ?? [], panelWidth - 4).length;
+  const panelHeight = Math.max(1, Math.min(height, lines + 2));
+  const gridTop = getCommandLineBounds(width, height, model).top;
+  return { width: panelWidth, height: panelHeight, left: 0, top: Math.max(0, gridTop - panelHeight) };
 }
 
-export function getPrefixHelpBounds(width: number, height: number, hintCount = 5): SurfaceBounds {
-  const panelHeight = Math.max(1, Math.min(hintCount + 1, Math.max(1, height - 1)));
-  return { width: Math.max(1, width), height: panelHeight, left: 0, top: Math.max(0, height - panelHeight - 1) };
+/** Helix's info box: framed content anchored to the bottom-right corner, just above the statusline. */
+export function getPrefixHelpBounds(width: number, height: number, content: { readonly width: number; readonly height: number }): SurfaceBounds {
+  const statusRow = calculateWorkbenchLayout(width, height).statusRow;
+  const panelWidth = Math.max(1, Math.min(width, content.width + 2));
+  const panelHeight = Math.max(1, Math.min(statusRow, content.height + 2));
+  return { width: panelWidth, height: panelHeight, left: Math.max(0, width - panelWidth), top: Math.max(0, statusRow - panelHeight) };
 }

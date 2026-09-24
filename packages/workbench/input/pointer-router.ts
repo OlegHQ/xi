@@ -52,7 +52,7 @@ export interface PointerWorkbenchEvent {
 
 /** Mirrors `packages/ui`'s `WorkbenchPanelPointerEvent`. */
 export interface PointerPanelEvent {
-  readonly panel: 'explorer' | 'picker' | 'search' | 'problems' | 'git' | 'git-diff';
+  readonly panel: 'explorer' | 'picker' | 'search' | 'problems' | 'git' | 'git-diff' | 'outline';
   readonly action: 'activate' | 'context' | 'preview';
   readonly itemId: string;
   readonly generation: number;
@@ -155,6 +155,8 @@ export interface WorkbenchPointerRouterOptions {
   /** Drives the sidebar's own resize splitter (`splitter:sidebar`), separate from the editor
    * pane splitters which resize through `session.resizeSplit`. */
   readonly sidebar?: PointerSidebarPort;
+  /** Sets the Outline section's height from its header-row splitter (`splitter:outline`). */
+  readonly resizeOutline?: (height: number) => void;
 }
 
 /**
@@ -165,6 +167,7 @@ export interface WorkbenchPointerRouterOptions {
  * matching how `BufferHost` is passed to every other feature controller.
  */
 export class WorkbenchPointerRouter implements Disposable {
+  #outlinePress: { readonly start: number; moved: boolean } | undefined;
   readonly #options: WorkbenchPointerRouterOptions;
   readonly #controlRegistry = new WorkbenchControlRegistry();
   readonly #splitterDrag: SplitterDragController;
@@ -243,6 +246,21 @@ export class WorkbenchPointerRouter implements Disposable {
         this.#options.marker('XI_TAB_CLOSE_POINTER', { id: control.id });
       }
       return event.phase === 'up' || event.phase === 'move';
+    }
+    if (control?.id === 'splitter:outline' && control.firstSize !== undefined) {
+      // Dragging the Outline header resizes it; releasing without a drag is a header click.
+      if (control.action === 'begin') this.#outlinePress = { start: control.firstSize, moved: false };
+      else if (this.#outlinePress !== undefined && control.firstSize !== this.#outlinePress.start) {
+        this.#outlinePress.moved = true;
+        this.#options.resizeOutline?.(control.firstSize);
+        this.#options.onLayoutChange?.();
+      }
+      if (control.action === 'commit') {
+        if (this.#outlinePress?.moved === false) this.#controlRegistry.activate('sidebar-section.outline');
+        this.#outlinePress = undefined;
+      }
+      this.#options.marker('XI_WORKBENCH_SPLITTER', { action: control.action, nodeId: 'outline', firstSize: control.firstSize });
+      return true;
     }
     if (control?.kind === 'splitter') {
       this.#pressedTab = undefined;

@@ -83,7 +83,7 @@ export type { SemanticDecoration, SemanticReadModel } from '../editor/semantic-t
 export { formatCompletionLines, formatSignatureLines } from '../completion/index';
 export type { CompletionItemRead, CompletionReadModel as CompletionUiReadModel, CompletionReadPort, SignatureReadModel, SignatureReadPort } from '../completion/index';
 export { formatOutlineLines, formatHierarchyLines, formatHoverLines, measureHover } from '../navigation/index';
-export type { OutlineSymbolRead, OutlineReadModel, OutlineReadPort, HierarchyNodeRead, HierarchyLinkRead, HierarchyReadModel, HierarchyReadPort, HoverReadModel, HoverReadPort } from '../navigation/index';
+export type { OutlineRowRead, OutlineReadModel, OutlineReadPort, HierarchyNodeRead, HierarchyLinkRead, HierarchyReadModel, HierarchyReadPort, HoverReadModel, HoverReadPort } from '../navigation/index';
 export { formatTaskOutputLines } from '../output/index';
 export type { TaskOutputReadModel, TaskOutputReadPort } from '../output/index';
 export type {

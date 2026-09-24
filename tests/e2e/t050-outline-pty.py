@@ -67,8 +67,13 @@ with tempfile.TemporaryDirectory(prefix="xi-t050-outline-") as temporary:
                     break
         else:
             raise SystemExit(f"Outline never reached ready state: {states!r}")
-        os.write(master, b"\x1b")
+        # Enter on the tree row moves the editor cursor to the symbol name and returns focus.
+        os.write(master, b"\r")
         read_until(master, captured, b"XI_OUTLINE_CLOSED", 5)
+        reveal = re.search(rb"XI_OUTLINE_REVEAL (\{[^\r\n]*\})", captured)
+        if reveal is None or json.loads(reveal.group(1)).get("line") != 0 or json.loads(reveal.group(1)).get("utf16") != 9:
+            raise SystemExit(f"Outline Enter did not reveal `render` at 0:9: {reveal.group(1) if reveal else None!r}")
+        os.write(master, b"0")
         os.write(master, b"llllllll k")
         read_until(master, captured, b"XI_HOVER_OPEN", 5)
         deadline = time.monotonic() + 10

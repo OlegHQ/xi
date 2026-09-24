@@ -8,7 +8,7 @@ import { CommandRegistry } from './registry';
 
 /** Parser-owned continuation metadata forwarded to discovery. */
 export type PrefixHelpParserContinuation =
-  | { readonly kind: 'keys'; readonly keys: readonly string[]; readonly label: string }
+  | { readonly kind: 'keys'; readonly keys: readonly string[]; readonly label: string; readonly docs?: readonly (readonly [key: string, doc: string])[] }
   | { readonly kind: 'motions'; readonly keys: readonly string[]; readonly label: string }
   | { readonly kind: 'count-digits'; readonly keys: readonly string[]; readonly label: string }
   | { readonly kind: 'register-name'; readonly characters: readonly string[]; readonly label: string }
@@ -106,7 +106,9 @@ export function buildPrefixHelpReadModel(input: PrefixHelpBuildInput): PrefixHel
   }
 
   for (const continuation of request.parserContinuations) {
-    hints.push(parserHint(continuation, pendingKeys));
+    if (continuation.kind === 'keys' && continuation.docs !== undefined) {
+      for (const [key, doc] of continuation.docs) hints.push(documentedKeyHint(key, doc, pendingKeys));
+    } else hints.push(parserHint(continuation, pendingKeys));
   }
 
   const deduped = dedupeHints(hints);
@@ -126,6 +128,13 @@ export function buildPrefixHelpReadModel(input: PrefixHelpBuildInput): PrefixHel
 
 function commandTitle(commandId: string): string {
   return commandId.split(/[.-]/u).map((part) => part.length === 0 ? part : `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`).join(' ');
+}
+
+function documentedKeyHint(key: string, doc: string, pendingKeys: readonly string[]): PrefixHelpHint {
+  return Object.freeze({
+    kind: 'parser', keys: Object.freeze([key]), keyLabel: key, sequence: Object.freeze([...pendingKeys, key]),
+    title: doc, description: doc, commandId: undefined, aliases: Object.freeze([]), available: true, disabledReason: undefined,
+  });
 }
 
 function parserHint(continuation: PrefixHelpParserContinuation, pendingKeys: readonly string[]): PrefixHelpHint {
@@ -154,17 +163,13 @@ function parserHint(continuation: PrefixHelpParserContinuation, pendingKeys: rea
 
 function dedupeHints(hints: readonly PrefixHelpHint[]): PrefixHelpHint[] {
   const seen = new Set<string>();
-  return hints.slice().sort((left, right) => compareText(left.kind, right.kind) || compareText(left.keyLabel, right.keyLabel) || compareText(left.title, right.title))
-    .filter((hint) => {
+  // Keymap/docs order is preserved, as in Helix's info box: related commands stay together.
+  return hints.filter((hint) => {
       const key = `${hint.kind}\u0000${hint.keyLabel}\u0000${hint.title}\u0000${hint.description}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function aliasesFor(snapshot: CommandRegistrySnapshot, commandId: string): readonly string[] {

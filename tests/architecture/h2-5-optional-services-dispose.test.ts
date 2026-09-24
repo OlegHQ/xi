@@ -108,7 +108,7 @@ try {
   const { SidebarController } = await import('../../packages/workbench/sidebar/index');
   const { ContextMenuStore } = await import('../../packages/ui/src/context-menu');
 
-  const sidebar = new SidebarController({ outline: { hasSymbols: false } });
+  const sidebar = new SidebarController({});
   sidebar.readModel();
   assert.doesNotThrow(() => sidebar.dispose(), 'H2-5: SidebarController.dispose() must not throw');
   assert.doesNotThrow(() => sidebar.dispose(), 'H2-5: SidebarController.dispose() must be safe to call twice');

@@ -150,6 +150,10 @@ export interface WorkbenchInputRouterOptions {
   readonly isSearchServiceLoaded: () => boolean;
   readonly ensureOptionalServices: () => Promise<void>;
   readonly toggleSidebar?: () => void;
+  /** Flips soft wrap in the live viewport; returns the new state. */
+  readonly toggleWrap?: () => boolean;
+  /** Sidebar `<Space>o`: switch to the Files tab when elsewhere, then toggle its Outline section. */
+  readonly toggleSidebarOutline?: () => void;
   readonly toggleMouseMode: () => boolean;
   readonly launchViewId: ViewId;
   /** Compiled config key bindings (`compileConfig(...).bindings`); `<C-Up>`/`<C-Down>` line
@@ -221,6 +225,22 @@ interface JumpLabelState {
 const JUMP_WORD_CHARACTER = /^[\p{L}\p{N}_]$/u;
 const JUMP_LABEL_BACKGROUND = '#e5c07b';
 
+
+/** Helix-style one-line docs for the workbench commands this router dispatches (prefix help). */
+const WORKBENCH_COMMAND_DOCS: Readonly<Record<string, string>> = Object.freeze({
+  'files.pick': 'Open file picker', 'buffers.pick': 'Open buffer picker', 'diagnostics.pick': 'Open diagnostic picker',
+  'command.pick': 'Open command palette', 'theme.pick': 'Open theme picker', 'config.open': 'Open config',
+  'config.reload': 'Reload config', 'search.workspace': 'Global search in workspace folder', 'search.replace': 'Search and replace in workspace',
+  'files.edit-directory': 'Edit working directory as a buffer', 'files.edit-buffer-directory': "Edit current file's directory as a buffer",
+  'lsp.hover': 'Show docs for item under cursor', 'lsp.code-action': 'Perform code action', 'lsp.references': 'Goto references',
+  'lsp.rename': 'Rename symbol', 'editor.goto-word': 'Jump to a two-character label', 'editor.mouse.toggle': 'Toggle mouse', 'editor.wrap.toggle': 'Toggle soft wrap',
+  'panel.files.focus': 'Focus files', 'panel.search.focus': 'Focus search', 'panel.git.focus': 'Focus git changes',
+  'panel.outline.focus': 'Focus outline', 'panel.outline.toggle': 'Toggle outline', 'panel.problems.focus': 'Open problems',
+  'panel.preview': 'Preview selected item', 'panel.open': 'Open selected item', 'panel.close': 'Close panel',
+  'panel.expand-all': 'Expand all folders', 'panel.include-hidden': 'Toggle hidden files', 'panel.include-ignored': 'Toggle ignored files',
+  'git.diff': 'Diff current file against git', 'sidebar.toggle': 'Toggle sidebar', 'macro.record': 'Record macro into register',
+  'view.scroll-up': 'Scroll view up', 'view.scroll-down': 'Scroll view down', 'view.half-page-up': 'Move half page up', 'view.half-page-down': 'Move half page down',
+});
 /**
  * Owns leader/macro-register pending state, prefix-help scheduling, the Ex command-line
  * session lifecycle/read port and the top-level keypress/paste decision chain that used to
@@ -285,7 +305,7 @@ export class WorkbenchInputRouter implements Disposable {
           keys: binding.keys,
           command: { kind: 'command' as const, id: binding.commandId as CommandId },
           contexts: Object.freeze([]),
-          description: undefined,
+          description: WORKBENCH_COMMAND_DOCS[binding.commandId],
         })),
       }),
     }, {
@@ -739,6 +759,7 @@ export class WorkbenchInputRouter implements Disposable {
       case 'panel.search.focus': search.open(); return true;
       case 'panel.git.focus': await this.#options.openGitPanel?.(); return true;
       case 'panel.outline.focus': overlays.openOutline(); return true;
+      case 'panel.outline.toggle': this.#options.toggleSidebarOutline?.(); return true;
       case 'panel.problems.focus': problems.openProblems(); return true;
       case 'git.diff': await this.#options.openGitDiffForActiveBuffer?.(); return true;
       case 'lsp.hover': overlays.openHover(); return true;
@@ -750,6 +771,7 @@ export class WorkbenchInputRouter implements Disposable {
       }
       case 'editor.goto-word': this.openJumpLabels(); return true;
       case 'sidebar.toggle': this.#options.toggleSidebar?.(); return true;
+      case 'editor.wrap.toggle': this.#options.marker('XI_WRAP', { enabled: this.#options.toggleWrap?.() }); return true;
       case 'editor.mouse.toggle': {
         const enabled = this.#options.toggleMouseMode();
         this.#options.marker('XI_MOUSE_MODE', { enabled });
@@ -794,7 +816,8 @@ export class WorkbenchInputRouter implements Disposable {
 
   #bindingMode(): string {
     const o = this.#options;
-    if (o.overlayExplorer?.isOpen() === true) return 'files-panel';
+    // The focused Outline lives in the Files tab, so it shares that tab's panel keys.
+    if (o.overlayExplorer?.isOpen() === true || o.overlays.isOutlineOpen) return 'files-panel';
     if (o.overlaySearch?.isOpen() === true) return 'search-panel';
     if (o.picker.isOpen && o.picker.mode === 'file') return 'file-picker';
     if (o.overlayGitDiff?.isOpen() === true && !this.#gitPanelFocused) return 'normal';

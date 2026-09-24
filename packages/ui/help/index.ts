@@ -25,3 +25,52 @@ const clip = (value: string, width: number): string => value.length <= width ? v
 export function formatPrefixHelpLines(model: PrefixHelpReadModel | undefined, width: number, maxRows: number): readonly string[] { if (model === undefined || maxRows <= 0 || width <= 0) return Object.freeze([]); const safeWidth = Math.max(1, Math.trunc(width)); const rows = Math.max(1, Math.trunc(maxRows)); const prefix = model.pendingKeys.length === 0 ? 'Prefix' : `Prefix ${model.pendingKeys.join(' ')}`; const compact = model.compactHint ?? `${prefix}: no legal continuation`; if (safeWidth < 48 || rows === 1) return Object.freeze([clip(compact, safeWidth)]); const output = [clip(`${prefix}  (${model.hints.length} hints)`, safeWidth)]; for (const hint of model.hints) { if (output.length >= rows) break; const state = hint.available ? '' : ` [${hint.disabledReason ?? 'unavailable'}]`; const alias = hint.aliases.length === 0 ? '' : ` (${hint.aliases.join(', ')})`; output.push(clip(`  ${hint.keyLabel}  ${hint.title}${alias} — ${hint.description}${state}`, safeWidth)); } return Object.freeze(output); }
 function sameGenerations(left: PrefixHelpGenerations, right: PrefixHelpGenerations): boolean { return left.registryGeneration === right.registryGeneration && left.configGeneration === right.configGeneration && left.focusGeneration === right.focusGeneration; }
 export type { PrefixHelpHint };
+
+/** One Helix info-box line: a key (or key group) and its one-line doc. */
+export interface PrefixHelpEntry { readonly key: string; readonly doc: string; readonly available: boolean; }
+
+const PREFIX_TITLES: Readonly<Record<string, string>> = Object.freeze({ '<Space>': 'Space', g: 'Goto', z: 'View', Z: 'Quit', '<C-w>': 'Window' });
+
+/** Helix names its info boxes after the keymap ("Space", "Goto", "Window"); nested prefixes show their keys. */
+export function prefixHelpTitle(model: PrefixHelpReadModel): string {
+  const keys = model.pendingKeys;
+  return keys.length === 1 ? PREFIX_TITLES[keys[0] ?? ''] ?? keys[0] ?? '' : keys.map(key => PREFIX_TITLES[key] ?? key).join(' ');
+}
+
+/** Info-box rows in keymap order: Esc is implied (Helix omits it), and a deeper mapping collapses
+ * into one row for its next key, labelled by its commands' shared namespace ("v  Panel…"). */
+export function prefixHelpEntries(model: PrefixHelpReadModel): readonly PrefixHelpEntry[] {
+  const entries: PrefixHelpEntry[] = [];
+  const groups = new Map<string, string[]>();
+  for (const hint of model.hints) {
+    if (hint.kind === 'escape') continue;
+    const first = hint.keys[0];
+    if (hint.kind === 'mapping' && hint.keys.length > 1 && first !== undefined) {
+      const ids = groups.get(first);
+      if (ids !== undefined) { ids.push(hint.commandId ?? ''); continue; }
+      groups.set(first, [hint.commandId ?? '']);
+      entries.push({ key: first, doc: '', available: true });
+      continue;
+    }
+    const doc = hint.description.replace(/\.$/u, '');
+    entries.push({ key: hint.keyLabel, doc: hint.available || hint.disabledReason === undefined ? doc : `${doc} (${hint.disabledReason})`, available: hint.available });
+  }
+  return Object.freeze(entries.map(entry => {
+    const ids = groups.get(entry.key);
+    return ids === undefined || entry.doc.length > 0 ? entry : Object.freeze({ ...entry, doc: groupLabel(ids) });
+  }));
+}
+
+function groupLabel(commandIds: readonly string[]): string {
+  const counts = new Map<string, number>();
+  for (const id of commandIds) { const head = id.split('.')[0] ?? ''; counts.set(head, (counts.get(head) ?? 0) + 1); }
+  const head = [...counts].sort((left, right) => right[1] - left[1])[0]?.[0] ?? '';
+  return head.length === 0 ? 'More…' : `${head[0]?.toUpperCase() ?? ''}${head.slice(1)}…`;
+}
+
+/** Content size of the info box (without its border): Helix's `key  doc` columns plus one-cell side margins. */
+export function measurePrefixHelp(entries: readonly PrefixHelpEntry[], title: string): { readonly keyWidth: number; readonly width: number; readonly height: number } {
+  const keyWidth = entries.reduce((max, entry) => Math.max(max, [...entry.key].length), 0);
+  const body = entries.reduce((max, entry) => Math.max(max, keyWidth + 2 + [...entry.doc].length), [...title].length);
+  return { keyWidth, width: body + 2, height: entries.length };
+}

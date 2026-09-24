@@ -112,14 +112,14 @@ const expectedNormalLeader = {
   q: 'macro.record', c: 'config.open', s: 'sidebar.toggle', f: 'files.pick', b: 'buffers.pick',
   ';': 'command.pick', '/': 'search.workspace', o: 'files.edit-directory', O: 'files.edit-buffer-directory',
   t: 'theme.pick', k: 'lsp.hover', a: 'lsp.code-action', d: 'diagnostics.pick',
-  e: 'panel.problems.focus', m: 'editor.mouse.toggle', r: 'search.replace',
+  e: 'panel.problems.focus', m: 'editor.mouse.toggle', w: 'editor.wrap.toggle', r: 'search.replace',
 };
 const expectedPanelLeader = { s: 'sidebar.toggle', l: 'panel.preview', o: 'panel.open', q: 'panel.close' };
 const expectedFocusedPanelLeaders = {
-  'files-panel': { ...expectedPanelLeader, h: 'panel.include-hidden', i: 'panel.include-ignored', f: 'panel.files.focus', g: 'panel.git.focus', e: 'panel.expand-all' },
-  'search-panel': { ...expectedPanelLeader, h: 'panel.include-hidden', i: 'panel.include-ignored', f: 'panel.files.focus', g: 'panel.git.focus' },
+  'files-panel': { ...expectedPanelLeader, o: 'panel.outline.toggle', h: 'panel.include-hidden', i: 'panel.include-ignored', f: 'panel.files.focus', g: 'panel.git.focus', e: 'panel.expand-all' },
+  'search-panel': { ...expectedPanelLeader, o: 'panel.outline.toggle', h: 'panel.include-hidden', i: 'panel.include-ignored', f: 'panel.files.focus', g: 'panel.git.focus' },
   'file-picker': { h: 'panel.include-hidden', i: 'panel.include-ignored' },
-  'git-panel': { ...expectedPanelLeader, f: 'panel.files.focus', g: 'panel.git.focus' },
+  'git-panel': { ...expectedPanelLeader, o: 'panel.outline.toggle', f: 'panel.files.focus', g: 'panel.git.focus' },
   'diff-panel': expectedPanelLeader,
 };
 const expectedBindings = [

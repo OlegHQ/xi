@@ -131,6 +131,7 @@ export interface Controllers {
   readonly syntaxAssetsCancellation: CancellationSource;
   readonly syntaxResultSubscription: Disposable;
   readonly mouseMode: { readonly registered: (toggle: () => boolean) => void; readonly toggle: () => boolean };
+  readonly wrapMode: { readonly registered: (toggle: () => boolean) => void; readonly toggle: () => boolean };
   readonly jobControlDisposables: Disposable[];
   /** Helix-style picker preview: leading lines of a file, read once in the background and
    * cached; `undefined` while loading (a surface change re-renders once it lands). */
@@ -156,9 +157,9 @@ async function ensureUserConfigDocument(deps: ControllersDeps, host: BufferHost)
   } finally { cancellation.dispose(); }
 }
 
-/** Small mutable cell for the renderer's own mouse-toggle callback, which only exists once
- * `runOpenTuiWorkbench` registers it -- a tiny owned object instead of a `main()`-scoped `let`. */
-function createMouseModeToggle(): { readonly registered: (toggle: () => boolean) => void; readonly toggle: () => boolean } {
+/** Small mutable cell for a renderer-owned toggle (mouse mode, soft wrap), which only exists
+ * once `runOpenTuiWorkbench` registers it -- a tiny owned object instead of a `main()`-scoped `let`. */
+function createRendererToggle(): { readonly registered: (toggle: () => boolean) => void; readonly toggle: () => boolean } {
   let current: (() => boolean) | undefined;
   return {
     registered: (toggle) => { current = toggle; },
@@ -719,7 +720,7 @@ function createOptionalServicesAndPicker(
   forward: ForwardRefs,
   host: BufferHost,
   pickerModel: InstanceType<CoreServicesModule['BoundedPickerModel']>,
-  mouseMode: ReturnType<typeof createMouseModeToggle>,
+  mouseMode: ReturnType<typeof createRendererToggle>,
   fileUri: CoreServicesModule['fileUri'],
   openDiagnostic: (id: string) => Promise<void>,
 ): { readonly optionalServices: OptionalServicesWiring; readonly picker: PickerController<PickerEntry, WorkbenchTheme> } {
@@ -999,6 +1000,13 @@ function createSearchProblemsOverlaySidebar(
     marker,
     focusExplorer: () => forward.explorerFeature.open(),
     ensureLanguage: () => forward.languageWiring.ensureLanguage(),
+    isOutlineVisible: () => forward.sidebarController.outlineVisible,
+    onCollapse: () => { forward.sidebarController.collapseSection('outline'); forward.explorerFeature.open(); },
+    revealOutline: () => {
+      forward.sidebarController.setVisible(true);
+      forward.sidebarController.expandSection('outline');
+      if (!forward.explorerFeature.isVisible) forward.explorerFeature.show();
+    },
   });
   const sidebarController = new SidebarController({
     initiallyVisible: ctx.startupConfig?.editor.sidebarVisible ?? true,
@@ -1007,7 +1015,6 @@ function createSearchProblemsOverlaySidebar(
     persistence: { width: ctx.startupConfig?.editor.sidebarWidth, setWidth: width => ctx.editorState.setSidebarWidth(width) },
     onVisibilityChange: visible => ctx.editorState.setSidebarVisible(visible),
     panelState: () => (forward.searchFeature.isOpen ? 'search' : forward.gitPanelFeature.isOpen ? 'git' : 'files'),
-    outline: { get hasSymbols() { return overlayFeature.outlineRead.model.symbols.length > 0; } },
   });
   marker('XI_SIDEBAR_CONFIG', { visible: sidebarController.visible, panel: sidebarController.lastPanel, width: sidebarController.width });
   return { searchFeature, gitPanelFeature, gitDiffFeature, problemsFeature, overlayFeature, sidebarController };
@@ -1226,7 +1233,10 @@ function createSaveAndHostCommands(
       return true;
     },
     focusEditorFromSidebar: (direction) => {
-      const focused = forward.explorerFeature.isOpen || forward.searchFeature.isOpen || forward.gitPanelFeature.isOpen;
+      // Files sits above Outline in the sidebar column: Ctrl-W j/k moves between them.
+      if (direction === 'down' && forward.explorerFeature.isOpen) { forward.overlayFeature.openOutline(); return true; }
+      if (direction === 'up' && forward.overlayFeature.isOutlineOpen) { forward.overlayFeature.closeOutline(); forward.explorerFeature.open(); return true; }
+      const focused = forward.explorerFeature.isOpen || forward.searchFeature.isOpen || forward.gitPanelFeature.isOpen || forward.overlayFeature.isOutlineOpen;
       if (!focused || (direction !== 'right' && direction !== 'next' && direction !== 'previous')) return false;
       host.closeAllPanels();
       forward.inputRouter?.focusEditor();
@@ -1256,7 +1266,8 @@ function createInputAndPointerRouters(
   contextMenuStore: InstanceType<UiModule['ContextMenuStore']>,
   pickerModel: InstanceType<CoreServicesModule['BoundedPickerModel']>,
   diagnostics: InstanceType<CoreServicesModule['DiagnosticStore']>,
-  mouseMode: ReturnType<typeof createMouseModeToggle>,
+  mouseMode: ReturnType<typeof createRendererToggle>,
+  wrapMode: ReturnType<typeof createRendererToggle>,
   directoryDraftController: DirectoryDraftController,
   gitDiffFeature: DiffViewController,
   onConfigReload: () => Promise<boolean>,
@@ -1288,6 +1299,7 @@ function createInputAndPointerRouters(
     isSearchServiceLoaded: () => forward.optionalServices.current !== undefined,
     ensureOptionalServices: async () => { await forward.optionalServices.ensure(); },
     toggleMouseMode: mouseMode.toggle,
+    toggleWrap: wrapMode.toggle,
     toggleSidebar: () => {
       const panel = sidebarController.readModel().panel;
       sidebarController.setVisible(!sidebarController.visible);
@@ -1298,6 +1310,17 @@ function createInputAndPointerRouters(
         else forward.explorerFeature.open();
       }
       else { host.closeAllPanels(); forward.explorerFeature.hide(); }
+      host.notifySurfaceChange();
+    },
+    toggleSidebarOutline: () => {
+      if (!sidebarController.visible || sidebarController.readModel().panel !== 'files') {
+        sidebarController.setVisible(true);
+        forward.explorerFeature.open();
+      }
+      sidebarController.toggleSection('outline');
+      marker('XI_SIDEBAR_OUTLINE', { expanded: sidebarController.outlineVisible });
+      if (sidebarController.outlineVisible) overlayFeature.openOutline();
+      else if (overlayFeature.isOutlineOpen) { overlayFeature.closeOutline(); forward.explorerFeature.open(); }
       host.notifySurfaceChange();
     },
     launchViewId: id<ViewId>('xi-launch-view'),
@@ -1379,6 +1402,7 @@ function createInputAndPointerRouters(
         host.notifySurfaceChange();
       }
     },
+    resizeOutline: (height) => sidebarController.resizeOutline(height),
     sidebar: {
       beginResize: () => sidebarController.beginResize(),
       moveResize: (width) => { sidebarController.moveResize(width); host.notifySurfaceChange(); },
@@ -1424,7 +1448,8 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const { fileUri, workspacePathFromUri, workspaceRelativePathFromUri } = deps.coreServices;
   const { filesystem, clock, persistence, marker } = deps;
   const forward = {} as ForwardRefs;
-  const mouseMode = createMouseModeToggle();
+  const mouseMode = createRendererToggle();
+  const wrapMode = createRendererToggle();
   const jobControlDisposables: Disposable[] = [];
 
   const settings = await loadStartupSettings(deps);
@@ -1454,7 +1479,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const pointerCapture = createPointerCapture(ctx, host, workbench);
   createSaveAndHostCommands(ctx, forward, host, workbench, workspaceEditsFeature, problemsFeature, workspacePathFromUri);
   let applyReloadedConfig: () => Promise<boolean> = async () => false;
-  const { inputRouter, pointerRouter } = createInputAndPointerRouters(ctx, forward, host, workbench, commandRegistry, picker, problemsFeature, overlayFeature, workspaceEditsFeature, sidebarController, pointerCapture, contextMenuStore, pickerModel, diagnostics, mouseMode, directoryDraftController, gitDiffFeature, () => applyReloadedConfig());
+  const { inputRouter, pointerRouter } = createInputAndPointerRouters(ctx, forward, host, workbench, commandRegistry, picker, problemsFeature, overlayFeature, workspaceEditsFeature, sidebarController, pointerCapture, contextMenuStore, pickerModel, diagnostics, mouseMode, wrapMode, directoryDraftController, gitDiffFeature, () => applyReloadedConfig());
   let reloadInFlight: Promise<boolean> | undefined;
   let uiReload: (() => void) | undefined;
   const reloadConfig = (): Promise<boolean> => {
@@ -1560,6 +1585,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     syntaxAssetsCancellation,
     syntaxResultSubscription,
     mouseMode,
+    wrapMode,
     jobControlDisposables,
     fileIndexStarter,
     pickerPreview: createPickerPreview(ctx, host, workbench, diagnostics),

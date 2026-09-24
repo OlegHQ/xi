@@ -35,6 +35,7 @@ export { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, BUI
 export { helixTextAttributes, helixThemeColor, themeColor } from '../theme/color-input';
 import { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, type WorkbenchTheme } from '../theme/workbench-themes';
 import { helixThemeColor, themeColor } from '../theme/color-input';
+import { verticalWheelDelta } from './panel-pointer';
 import { diagnosticColor, type Problem } from '../problems/index';
 import { endOfLineDiagnosticLines, inlineDiagnosticLines, type DiagnosticLine, type EndOfLineDiagnostic, type InlineDiagnosticsFilter } from '../problems/inline';
 
@@ -322,7 +323,7 @@ export function computeSidebarTabLayout(width: number): readonly SidebarTabLayou
 /** Row bounds for the sidebar's two inline sections, shared by Solid chrome and the
  * composition root (Explorer/Outline surface placement) so both agree on
  * exactly where each section's content lives. Files takes all remaining rows when Outline is
- * collapsed; both expanded split 60/40 with a 3-row floor each.
+ * collapsed; both expanded give Outline its dragged height (default 40%) with a 3-row floor each.
  * `totalRows` is the sidebar's usable row count above the status row -- callers pass
  * `geometry.statusRow`, not the full terminal height, so inline content never gets bottom-row painted over by the status bar. */
 export function computeSidebarSectionLayout(sidebar: SidebarReadModel, totalRows: number): SidebarSectionLayout {
@@ -335,8 +336,8 @@ export function computeSidebarSectionLayout(sidebar: SidebarReadModel, totalRows
   let outlineContentHeight = 0;
   if (filesExpanded && outlineExpanded) {
     if (available >= 6) {
-      filesContentHeight = Math.min(available - 3, Math.max(3, Math.round(available * 0.6)));
-      outlineContentHeight = available - filesContentHeight;
+      outlineContentHeight = Math.max(3, Math.min(available - 3, sidebar.outlineHeight ?? Math.round(available * 0.4)));
+      filesContentHeight = available - outlineContentHeight;
     } else {
       // Too little room to give both sections their 3-row floor: Files (the primary section)
       // keeps whatever is left; Outline's header still shows but with no content rows.
@@ -365,7 +366,7 @@ export class WorkbenchRenderable extends Renderable {
   readonly #gutters: readonly GutterType[];
   readonly #indentGuides: { readonly render: boolean; readonly character: string; readonly skipLevels: number };
   readonly #whitespace: NonNullable<WorkbenchRenderableOptions['whitespace']>;
-  readonly #wrap: boolean;
+  #wrap: boolean;
   readonly #wrapWidth: number | undefined;
   readonly #maxWrap: number;
   readonly #maxIndentRetain: number;
@@ -390,7 +391,8 @@ export class WorkbenchRenderable extends Renderable {
   readonly #sidebar: (() => SidebarReadModel) | undefined;
   readonly #tabs: ((viewId?: string) => readonly WorkbenchTabSnapshot[]) | undefined;
   readonly #bufferline: 'always' | 'never' | 'multiple';
-  #sidebarSplitterCapture = false;
+  /** Which sidebar splitter a press captured: its width edge, or the Outline header row. */
+  #sidebarSplitterCapture: 'width' | 'outline' | undefined;
   readonly #syntax: SyntaxReadPort | undefined;
   readonly #editorDiagnostics: WorkbenchRenderableOptions['editorDiagnostics'];
   readonly #editorCodeActionHints: WorkbenchRenderableOptions['editorCodeActionHints'];
@@ -511,12 +513,13 @@ export class WorkbenchRenderable extends Renderable {
     this.onMouse = (event: MouseEvent): void => {
       if (this.#onPointer === undefined || event.target !== this) return;
       const phase = pointerPhase(event.type);
-      if (phase === undefined) return;
+      if (phase === undefined || (phase === 'wheel' && verticalWheelDelta(event.scroll) === 0)) return;
       const geometry = this.layout;
       const comparison = this.#comparisonPaint;
       if (comparison !== undefined && event.y >= geometry.editorTop && event.y < geometry.editorTop + geometry.editorHeight && event.x >= geometry.editorX) {
         if (phase === 'wheel') {
-          this.#comparison?.onPointer(event.scroll === undefined ? 0 : (event.scroll.direction === 'up' ? -event.scroll.delta : event.scroll.delta));
+          const delta = verticalWheelDelta(event.scroll);
+          if (delta !== 0) this.#comparison?.onPointer(delta);
           event.preventDefault();
           this.refresh();
           return;
@@ -547,7 +550,7 @@ export class WorkbenchRenderable extends Renderable {
       const currentFrame = pane === undefined ? this.#lastFrame?.frame : this.#paneFrames.get(String(activeViewId));
       const currentFrameId = Number(currentFrame?.identity.frameId ?? 0);
       const dispatchFrameId = phase === 'down' ? currentFrameId : this.#pointerFrameId ?? currentFrameId;
-      let chromeControl = phase === 'wheel' || this.#splitterCapture !== undefined || this.#sidebarSplitterCapture ? undefined : this.#chromeControlAt(event.x, event.y, geometry);
+      let chromeControl = phase === 'wheel' || this.#splitterCapture !== undefined || this.#sidebarSplitterCapture !== undefined ? undefined : this.#chromeControlAt(event.x, event.y, geometry);
       if (phase === 'down' && (chromeControl?.kind === 'tab' || chromeControl?.kind === 'tab-close')) {
         const splitter = [...this.#splitters.values()].find(candidate => candidate.axis === 'horizontal'
           && event.x >= candidate.x && event.x < candidate.x + candidate.width && event.y === candidate.y);
@@ -609,7 +612,7 @@ export class WorkbenchRenderable extends Renderable {
         ...(control === undefined ? {} : { control }),
         button: phase === 'wheel' ? null : event.button,
         modifiers: { shift: event.modifiers.shift, alt: event.modifiers.alt, ctrl: event.modifiers.ctrl, meta: false },
-        wheelDelta: event.scroll === undefined ? 0 : (event.scroll.direction === 'up' || event.scroll.direction === 'left' ? -event.scroll.delta : event.scroll.delta),
+        wheelDelta: verticalWheelDelta(event.scroll),
         frameId: dispatchFrameId,
         viewportHeight: pane?.height ?? geometry.editorHeight,
         timestampMilliseconds: performance.now(),
@@ -662,9 +665,10 @@ export class WorkbenchRenderable extends Renderable {
   get lastPaintStats(): MotionPaintStats | undefined { return this.#lastPaintStats; }
   /** State changed: resolve cursor-follow anchors (memoized per view state) and mark for paint. */
   refresh(): void { this.syncAnchors(); this.markDirty(); }
-  updateViewportConfig(config: { readonly lineNumber: 'absolute' | 'relative'; readonly rulers: readonly number[] }): void {
+  updateViewportConfig(config: { readonly lineNumber: 'absolute' | 'relative'; readonly rulers: readonly number[]; readonly wrap: boolean }): void {
     this.#lineNumber = config.lineNumber;
     this.#rulers = config.rulers;
+    this.#wrap = config.wrap;
     this.#lastViewportSize = undefined;
     this.markDirty();
   }
@@ -1304,23 +1308,30 @@ export class WorkbenchRenderable extends Renderable {
   #sidebarSplitterControlAt(x: number, y: number, phase: WorkbenchPointerEvent['phase']): WorkbenchPointerEvent['control'] | undefined {
     const geometry = this.layout;
     if (!geometry.sidebarVisible) return undefined;
-    if (!this.#sidebarSplitterCapture && (x !== geometry.sidebarWidth || y < 0 || y >= this.height)) return undefined;
-    // Only a button press begins a resize; a hover ('move') over the splitter column must not
-    // capture it, or moving the pointer across the sidebar would drag its width around.
-    if (!this.#sidebarSplitterCapture && phase !== 'down') return undefined;
-    const availableCells = Math.max(23, this.width - 20);
-    const firstSize = clampSplitSize(x, availableCells);
-    const control: WorkbenchPointerEvent['control'] = {
-      id: 'splitter:sidebar',
-      kind: 'splitter',
-      action: this.#sidebarSplitterCapture ? (phase === 'up' ? 'commit' : 'move') : 'begin',
-      axis: 'vertical',
-      firstSize,
-      secondSize: availableCells - firstSize,
-      availableCells,
-    };
-    if (control.action === 'begin') this.#sidebarSplitterCapture = true;
-    if (control.action === 'commit') this.#sidebarSplitterCapture = false;
+    const action = this.#sidebarSplitterCapture !== undefined ? (phase === 'up' ? 'commit' : 'move') : 'begin';
+    // Only a button press begins a resize; a hover ('move') must not capture it.
+    if (action === 'begin' && phase !== 'down') return undefined;
+    const sidebar = this.#sidebar?.();
+    const sections = sidebar === undefined ? undefined : computeSidebarSectionLayout(sidebar, geometry.statusRow);
+    const onOutlineHeader = sections !== undefined && sections.filesContentHeight > 0 && sections.outlineContentHeight > 0 && y === sections.outlineHeaderRow && x >= 0 && x < geometry.sidebarWidth;
+    const target = this.#sidebarSplitterCapture ?? (x === geometry.sidebarWidth && y >= 0 && y < this.height ? 'width' : onOutlineHeader ? 'outline' : undefined);
+    if (target === undefined) return undefined;
+    let control: WorkbenchPointerEvent['control'];
+    if (target === 'outline') {
+      // The header row is the Files/Outline splitter: its row sets the Outline height.
+      const availableCells = Math.max(0, geometry.statusRow - 3);
+      const firstSize = Math.max(3, Math.min(availableCells - 3, availableCells - (y - 2)));
+      control = { id: 'splitter:outline', kind: 'splitter', action, axis: 'horizontal', firstSize, secondSize: availableCells - firstSize, availableCells };
+    } else {
+      const availableCells = Math.max(23, this.width - 20);
+      const firstSize = clampSplitSize(x, availableCells);
+      control = { id: 'splitter:sidebar', kind: 'splitter', action, axis: 'vertical', firstSize, secondSize: availableCells - firstSize, availableCells };
+    }
+    this.#sidebarSplitterCapture = action === 'commit' ? undefined : target;
+    // OpenTUI captures a drag on whatever is under the pointer at the first drag event, so a
+    // fast move off the splitter would hand the drag to the Files/Outline rows. Capture on the
+    // press instead (a runtime method of the pinned fork's renderer, private in its typings).
+    if (action === 'begin') (this.ctx as unknown as { setCapturedRenderable?: (renderable: unknown) => void }).setCapturedRenderable?.(this);
     return control;
   }
 
@@ -1339,7 +1350,9 @@ export class WorkbenchRenderable extends Renderable {
         if (tab !== undefined) return { id: `sidebar.${tab.id}`, kind: tab.id === 'files' ? 'tree' : 'button', action: 'activate' };
       }
       const sections = computeSidebarSectionLayout(sidebarModel, geometry.statusRow);
-      if (y === sections.outlineHeaderRow && x >= 0 && x < geometry.sidebarWidth) {
+      // With both sections open the header is the Outline resize splitter; a click without a
+      // drag still toggles it (see the pointer router's `splitter:outline`).
+      if (y === sections.outlineHeaderRow && x >= 0 && x < geometry.sidebarWidth && (sections.filesContentHeight === 0 || sections.outlineContentHeight === 0)) {
         return { id: 'sidebar-section.outline', kind: 'button', action: 'activate' };
       }
     }

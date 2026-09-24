@@ -27,6 +27,8 @@ for (let i = 0; i < 50_000; i += 1) {
   generated.push({ rootId: i % 2 === 0 ? 'root-a' : 'root-b', relativePath: `src/generated/file-${String(i).padStart(6, '0')}.ts` });
 }
 generated.push({ rootId: 'root-a', relativePath: 'src/shared.ts' });
+generated.push({ rootId: 'root-a', relativePath: 'tests/files/t-journal-safety.test.ts' });
+generated.push({ rootId: 'root-a', relativePath: 'tests/salt/other.ts' });
 generated.push({ rootId: 'root-b', relativePath: 'src/shared.ts' });
 generated.push({ rootId: 'root-a', relativePath: '.hidden/settings.json', hidden: true });
 generated.push({ rootId: 'root-a', relativePath: 'build/settings.json', ignored: true });
@@ -41,6 +43,10 @@ const warm = await index.queryAsync('generated/file-004', { limit: 40, includeHi
 const warmMilliseconds = performance.now() - warmStart;
 assert.equal(warm.ok, true, 'T039-BUDGET-01 warm 50k path query returns results');
 if (warm.ok) assert.ok(warm.value.entries.length > 0, 'T039-BUDGET-02 fuzzy subsequence matching finds generated files');
+// Fuzzy is a subsequence, not a substring: `tsa` finds t-journal-safety, and a filename match
+// outranks one spread across directories (tests/salt/other.ts).
+const sparse = await index.queryAsync('tsa', { limit: 5, includeHidden: false });
+assert.equal(sparse.ok && sparse.value.entries[0]?.relativePath, 'tests/files/t-journal-safety.test.ts', 'T039-FUZZY-01 a sparse query matches and ranks the filename first');
 assert.ok(warmMilliseconds < 500, `T039-BUDGET-03 warm query remains bounded (${warmMilliseconds.toFixed(2)}ms)`);
 
 const duplicates = await index.queryAsync('shared', { includeHidden: false });

@@ -1,4 +1,4 @@
-export type WorkbenchPanel = 'explorer' | 'picker' | 'search' | 'problems' | 'git' | 'git-diff';
+export type WorkbenchPanel = 'explorer' | 'picker' | 'search' | 'problems' | 'git' | 'git-diff' | 'outline';
 
 /** Stable row identity from the immutable panel model actually painted. */
 export interface WorkbenchPanelPointerEvent {
@@ -103,4 +103,10 @@ export class PanelScroll {
     const start = Math.round((this.#offset / max) * trackSpace);
     return { start, size };
   }
+}
+
+/** Lines to scroll for a wheel event; 0 for a horizontal one. A trackpad drag drifts sideways
+ * and emits left/right wheel events, which must not move the view up and down. */
+export function verticalWheelDelta(scroll: { readonly direction: string; readonly delta: number } | undefined): number {
+  return scroll?.direction === 'up' ? -scroll.delta : scroll?.direction === 'down' ? scroll.delta : 0;
 }

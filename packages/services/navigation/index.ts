@@ -248,9 +248,6 @@ export class FilePathIndex implements Disposable {
     const includeHidden = options.includeHidden ?? this.#includeHidden;
     const includeIgnored = options.includeIgnored ?? this.#includeIgnored;
     const normalizedQuery = normalizeForSearch(query);
-    const anchor = normalizedQuery.length >= 3 && !normalizedQuery.includes(' ')
-      ? normalizedQuery
-      : longestLiteralAnchor(normalizedQuery);
     // Bounded top-N: kept sorted (best first) and capped at `candidateCap`
     // rather than pushing every match into an unbounded array and sorting it
     // all at the end. A query that matches most of a 250k-entry index only
@@ -268,7 +265,7 @@ export class FilePathIndex implements Disposable {
     let scanned = 0;
     for (const [identity, path] of this.#entries) {
       // Count and yield on every visited entry, not only matches that pass every
-      // filter -- otherwise a query with a selective anchor (mostly `continue`s)
+      // filter -- otherwise a query rejected by most entries (mostly `continue`s)
       // could scan the whole index in one synchronous pass without ever yielding.
       scanned += 1;
       if (scanned % CHUNK_SIZE === 0) {
@@ -281,9 +278,12 @@ export class FilePathIndex implements Disposable {
       const root = this.#roots.get(path.rootId);
       if (root === undefined) continue;
       const normalizedPath = this.#normalizedEntries.get(identity) ?? '';
-      if (anchor.length >= 3 && !normalizedPath.includes(anchor)) continue;
-      const score = scoreFuzzyNormalized(normalizedQuery, normalizedPath);
-      if (score === undefined) continue;
+      // One pass rejects the (usual) non-match; a match is then rescored on its filename, which
+      // outranks directory-only matches (`tsa` → t-journal-safety.ts), as in fzf/VS Code.
+      const pathScore = scoreFuzzyNormalized(normalizedQuery, normalizedPath);
+      if (pathScore === undefined) continue;
+      const nameScore = scoreFuzzyNormalized(normalizedQuery, normalizedPath, normalizedPath.lastIndexOf('/') + 1);
+      const score = nameScore === undefined ? pathScore : nameScore + FILENAME_MATCH_BONUS;
       totalMatches += 1;
       insertTopN(matches, makeFileEntry(root, path, score), candidateCap);
     }
@@ -669,17 +669,21 @@ function scoreFuzzy(query: string, candidate: string): number | undefined {
   return scoreFuzzyNormalized(normalizeForSearch(query), normalizeForSearch(candidate));
 }
 
-/** ASCII paths use indexed code units to avoid 100k temporary arrays. Unicode
- * paths take the scalar-safe branch so surrogate pairs remain indivisible. */
-function scoreFuzzyNormalized(normalizedQuery: string, normalizedCandidate: string): number | undefined {
+const FILENAME_MATCH_BONUS = 100;
+
+/** Subsequence score of the query against `normalizedCandidate` from UTF-16 offset `start`
+ * (the filename, for paths). ASCII paths use indexed code units to avoid 100k temporary
+ * arrays. Unicode paths take the scalar-safe branch so surrogate pairs remain indivisible. */
+function scoreFuzzyNormalized(normalizedQuery: string, normalizedCandidate: string, start = 0): number | undefined {
   if (normalizedQuery.length === 0) return 0;
   const unicode = /[^\u0000-\u007f]/u.test(normalizedQuery) || /[^\u0000-\u007f]/u.test(normalizedCandidate);
   const queryChars = unicode ? [...normalizedQuery] : undefined;
   const candidateChars = unicode ? [...normalizedCandidate] : undefined;
   const queryLength = queryChars?.length ?? normalizedQuery.length;
   const candidateLength = candidateChars?.length ?? normalizedCandidate.length;
+  const first = unicode && start > 0 ? [...normalizedCandidate.slice(0, start)].length : start;
   let queryIndex = 0;
-  let candidateIndex = 0;
+  let candidateIndex = first;
   let score = 0;
   let previous = -2;
   while (queryIndex < queryLength) {
@@ -692,32 +696,18 @@ function scoreFuzzyNormalized(normalizedQuery: string, normalizedCandidate: stri
     }
     if (found < 0) return undefined;
     const previousCharacter = candidateChars?.[found - 1] ?? normalizedCandidate[found - 1];
-    const boundary = found === 0 || '/\\_- .'.includes(previousCharacter ?? '');
+    const boundary = found === first || '/\\_- .'.includes(previousCharacter ?? '');
     score += boundary ? 16 : 4;
     score += found === previous + 1 ? 10 : 0;
-    score -= found;
+    score -= found - first;
     previous = found;
     candidateIndex = found + 1;
     queryIndex += 1;
   }
-  if (normalizedCandidate.startsWith(normalizedQuery)) score += 80;
-  if (normalizedCandidate === normalizedQuery) score += 160;
-  score -= Math.max(0, candidateLength - queryLength) / 1000;
+  if (normalizedCandidate.startsWith(normalizedQuery, start)) score += 80;
+  if (normalizedCandidate.length - start === normalizedQuery.length && normalizedCandidate.startsWith(normalizedQuery, start)) score += 160;
+  score -= Math.max(0, candidateLength - first - queryLength) / 1000;
   return score;
-}
-
-function longestLiteralAnchor(query: string): string {
-  let best = '';
-  let current = '';
-  for (const character of query) {
-    if (' /\\_-'.includes(character)) {
-      if (current.length > best.length) best = current;
-      current = '';
-    } else {
-      current += character;
-    }
-  }
-  return current.length > best.length ? current : best;
 }
 
 let pickerCollator: Intl.Collator | undefined;

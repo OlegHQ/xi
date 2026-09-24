@@ -38,7 +38,8 @@ export interface VimParserSession {
 }
 
 export type VimContinuation =
-  | { readonly kind: 'keys'; readonly keys: readonly string[]; readonly label: string }
+  /** `docs` names individual continuations, in display order, for the prefix-help popup. */
+  | { readonly kind: 'keys'; readonly keys: readonly string[]; readonly label: string; readonly docs?: readonly (readonly [key: string, doc: string])[] }
   | { readonly kind: 'motions'; readonly keys: readonly string[]; readonly label: string }
   | { readonly kind: 'count-digits'; readonly keys: readonly string[]; readonly label: string }
   | { readonly kind: 'register-name'; readonly characters: readonly string[]; readonly label: string }
@@ -110,6 +111,39 @@ const G_KEYS = Object.freeze(['g', 'j', 'k', '0', '^', '$', '_', 'm', 'M', ';', 
 const Z_KEYS = Object.freeze(['z', 't', 'b', '<CR>', '<Space>', '=', 'f', 'F', 'o', 'O', 'H', 'L', 'M', 'w', 'W', 'h', 'l', 'z']);
 const CTRL_W_KEYS = Object.freeze(['h', 'j', 'k', 'l', 't', 'w', 'W', 'b', 'B', 'p', 'P', 'n', 'o', 'O', 'c', 'q', 'v', 'T', 'g', 'f', 'F', ']', '}', '=', '+', '-', '<', '>', '_', '|', 's', 'S', 'x', 'X', 'r', 'R']);
 const CTRL_W_G_KEYS = Object.freeze(['f', 'F', ']', '}', 't', 'T', 'g', 'G', '+', '-', '<', '>', '_', '|']);
+/** Helix-style one-line docs for the g/z/Ctrl-W continuations the engine implements (Vim meanings). */
+const G_DOCS = Object.freeze([
+  ['g', 'Goto first line'], ['e', 'Goto end of previous word'], ['E', 'Goto end of previous WORD'],
+  ['0', 'Goto screen line start'], ['^', 'Goto first non-blank in screen line'], ['$', 'Goto screen line end'],
+  ['_', 'Goto last non-blank in line'], ['m', 'Goto middle of screen line'], ['M', 'Goto middle of text line'],
+  ['j', 'Move down a screen line'], ['k', 'Move up a screen line'], ['o', 'Goto byte offset'],
+  ['d', 'Goto definition'], ['D', 'Goto global definition'], [']', 'Select tag under cursor'],
+  ['f', 'Goto file under cursor'], ['F', 'Goto file under cursor at line'],
+  [';', 'Goto older change'], [',', 'Goto newer change'],
+  ['*', 'Search word forward (partial match)'], ['#', 'Search word backward (partial match)'],
+  ['I', 'Insert at column 1'], ['J', 'Join lines without spaces'], ['a', 'Show character code'],
+  ['u', 'Lowercase'], ['U', 'Uppercase'], ['~', 'Toggle case'], ['?', 'Rot13 encode'],
+  ['q', 'Format lines'], ['w', 'Format lines, keep cursor'],
+  ['r', 'Virtual replace character'], ['R', 'Virtual replace mode'],
+  ['h', 'Select mode'], ['H', 'Select line mode'], ['<', 'Show last command output'],
+] as const);
+const Z_DOCS = Object.freeze([
+  ['z', 'Align view center'], ['t', 'Align view top'], ['b', 'Align view bottom'],
+  ['<CR>', 'Align view top, cursor to first non-blank'],
+  ['h', 'Scroll view left'], ['l', 'Scroll view right'], ['H', 'Scroll view half a screen left'], ['L', 'Scroll view half a screen right'],
+  ['f', 'Create fold'], ['o', 'Open fold'], ['O', 'Open folds recursively'], ['M', 'Close all folds'],
+] as const);
+const CTRL_W_DOCS = Object.freeze([
+  ['w', 'Goto next window'], ['W', 'Goto previous window'], ['p', 'Goto last accessed window'],
+  ['h', 'Goto left window'], ['j', 'Goto window below'], ['k', 'Goto window above'], ['l', 'Goto right window'],
+  ['t', 'Goto top-left window'], ['b', 'Goto bottom-right window'],
+  ['s', 'Horizontal split'], ['v', 'Vertical split'], ['n', 'New window'],
+  ['q', 'Close window'], ['o', 'Close other windows'],
+  ['x', 'Exchange with next window'], ['r', 'Rotate windows down'], ['R', 'Rotate windows up'],
+  ['=', 'Equalize window sizes'], ['+', 'Increase height'], ['-', 'Decrease height'],
+  ['>', 'Increase width'], ['<', 'Decrease width'], ['_', 'Maximize height'], ['|', 'Maximize width'],
+  ['f', 'Open file under cursor in split'], [']', 'Open tag in split'],
+] as const);
 const TEXT_OBJECT_KEYS = Object.freeze(['w', 'W', 's', 'p', '"', "'", '`', '(', '[', '{', '<', '>', ')', 'b', 'B', ']', '}', 't']);
 const BRACKET_HOST_KEYS = Object.freeze(['[', ']', '(', ')', '{', '}', 'd', 'D', '<C-d>', '<C-i>']);
 
@@ -849,8 +883,10 @@ function continuationsFor(pendingInput: VimPendingInput): readonly VimContinuati
               : pendingInput.prefix === 'Z' ? ['Z', 'Q']
               : pendingInput.prefix === 'left-bracket' || pendingInput.prefix === 'right-bracket' ? BRACKET_HOST_KEYS
                 : TEXT_OBJECT_KEYS;
+      const docs = pendingInput.operator !== undefined ? undefined
+        : pendingInput.prefix === 'g' ? G_DOCS : pendingInput.prefix === 'z' ? Z_DOCS : pendingInput.prefix === 'ctrl-w' ? CTRL_W_DOCS : undefined;
       const built = freezeContinuations([
-        { kind: 'keys', keys, label: pendingInput.operator === undefined ? `Continue ${pendingInput.prefix} command` : 'Continue operator motion' },
+        { kind: 'keys', keys, label: pendingInput.operator === undefined ? `Continue ${pendingInput.prefix} command` : 'Continue operator motion', ...(docs === undefined ? {} : { docs }) },
         ESCAPE_CONTINUATION,
       ]);
       commandPrefixContinuationCache.set(cacheKey, built);

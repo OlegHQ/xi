@@ -510,7 +510,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (!normalized.ok) return true;
     const outcome = parseVimInput(parser, normalized.value);
     parser = outcome.state;
-    updatePrefixKeys(key, outcome.kind);
+    updatePrefixKeys(key, outcome.kind, event.ctrl);
     if (outcome.kind !== 'command') return true;
       const pending = executeCommand(outcome.command);
       if (pending !== undefined) await pending;
@@ -546,7 +546,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     if (!normalized.ok) return true;
     const outcome = parseVimInput(parser, normalized.value);
     parser = outcome.state;
-    updatePrefixKeys(key, outcome.kind);
+    updatePrefixKeys(key, outcome.kind, event.ctrl);
     // canHandleSynchronously already excludes every command that can return a search
     // Promise, so this call is always void in practice; the cast just documents that
     // rather than silently dropping a Promise if that invariant is ever broken.
@@ -1054,8 +1054,9 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     }
   }
 
-  function updatePrefixKeys(key: string, outcomeKind: string): void {
-    prefixKeys = outcomeKind === 'pending' ? Object.freeze([...prefixKeys, key]) : EMPTY_PREFIX_KEYS;
+  /** Pending keys use Vim key notation (`<C-w>`), as prefix help and the router expect. */
+  function updatePrefixKeys(key: string, outcomeKind: string, ctrl: boolean): void {
+    prefixKeys = outcomeKind === 'pending' ? Object.freeze([...prefixKeys, ctrl && key.length === 1 ? `<C-${key}>` : key]) : EMPTY_PREFIX_KEYS;
   }
 
   async function submitCommandLine(source: string): Promise<boolean | 'quit'> {

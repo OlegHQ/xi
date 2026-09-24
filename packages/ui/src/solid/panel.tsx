@@ -5,7 +5,7 @@ import type { MouseEvent, RGBA } from '@opentui/core/renderer';
 import { Index, Show, createMemo, createSignal, onCleanup } from 'solid-js';
 import type { BoxRenderable } from '@opentui/core';
 import type { Disposable } from '../../../contracts/src/index';
-import { PanelHitMap, PanelScroll, type WorkbenchPanel, type WorkbenchPanelPointerEvent } from '../panel-pointer';
+import { PanelHitMap, PanelScroll, verticalWheelDelta, type WorkbenchPanel, type WorkbenchPanelPointerEvent } from '../panel-pointer';
 import { readableTextColor } from '../../theme/readability';
 import { helixTextAttributes, themeColor } from '../../theme/color-input';
 
@@ -90,6 +90,8 @@ export interface RowsSurfaceSpec<T> {
   readonly zIndex?: number;
   /** Requests a rounded frame while retaining the shared rows, scrolling and hit map. */
   readonly border?: boolean;
+  /** Helix-style frame: square border in the text color with this title set into its top edge. */
+  readonly title?: (model: T) => string;
   /** Hover is normally visual-only; previewing is opt-in for the theme picker. */
   readonly previewOnHover?: (model: T) => boolean;
   readonly onMouse?: (event: MouseEvent, row: number, column: number) => boolean;
@@ -152,9 +154,10 @@ export function RowsSurface<T>(spec: RowsSurfaceSpec<T>): JSX.Element {
     if (!visible) scroll.reset();
     return visible;
   };
+  const framed = spec.border === true || spec.title !== undefined;
   const contentSize = () => ({
-    width: Math.max(0, layout().width - (spec.border === true ? 2 : 0)),
-    height: Math.max(0, layout().height - (spec.border === true ? 2 : 0)),
+    width: Math.max(0, layout().width - (framed ? 2 : 0)),
+    height: Math.max(0, layout().height - (framed ? 2 : 0)),
   });
   const viewportRows = () => Math.max(0, Math.min(spec.maxRows, contentSize().height) - headerRows - footerRows);
   const rows = () => {
@@ -211,6 +214,8 @@ export function RowsSurface<T>(spec: RowsSurfaceSpec<T>): JSX.Element {
       return;
     }
     if (spec.panel === undefined || spec.generation === undefined) return;
+    // `over` with a source belongs to another renderable's drag (a splitter): no hover then.
+    if (event.type === 'over' && event.source !== undefined) { setHoveredId(undefined); return; }
     if (event.type === 'move' || event.type === 'over') {
       const itemId = column < 0 || column >= box.width ? undefined : hitMap.resolve(row, spec.generation(model()));
       setHoveredId(itemId);
@@ -232,7 +237,7 @@ export function RowsSurface<T>(spec: RowsSurfaceSpec<T>): JSX.Element {
       return;
     }
     if (event.type === 'scroll') {
-      const delta = event.scroll === undefined ? 0 : Math.max(1, event.scroll.delta) * (event.scroll.direction === 'up' ? -1 : 1);
+      const delta = verticalWheelDelta(event.scroll);
       if (delta !== 0) spec.onScroll?.(delta);
       if (delta !== 0 && scroll.scrollBy(delta, spec.totalRows?.(model()) ?? 0, viewportRows())) {
         setVersion(value => value + 1);
@@ -291,7 +296,8 @@ export function RowsSurface<T>(spec: RowsSurfaceSpec<T>): JSX.Element {
     <box onMouse={onMouse} position="absolute" zIndex={spec.zIndex ?? 80}
       left={layout().left} top={layout().top} width={layout().width} height={layout().height}
       visible={open()} backgroundColor={theme().background}
-      {...(spec.border !== true ? {} : { borderStyle: 'rounded' as const, borderColor: theme().accent })}>
+      {...(spec.title !== undefined ? { border: true, borderStyle: 'single' as const, borderColor: theme().foreground, title: spec.title(model()), titleAlignment: 'left' as const }
+        : spec.border !== true ? {} : { borderStyle: 'rounded' as const, borderColor: theme().accent })}>
       <box ref={node => { box = node; }} width={contentSize().width} height={contentSize().height} overflow="hidden">
       <Index each={rows()}>{(row, index) => (
         <box position="absolute" left={0} top={row().top ?? index} width="100%" height={1}

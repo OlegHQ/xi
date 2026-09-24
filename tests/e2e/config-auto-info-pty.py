@@ -33,6 +33,7 @@ def run_case(root: Path, enabled: bool, idle_timeout: int) -> None:
     master, slave = pty.openpty()
     environment = os.environ.copy()
     environment.update({"TERM": "xterm-256color", "HOME": str(root), "XI_UI_TEST_MARKERS": "1"})
+    environment.pop("XDG_CONFIG_HOME", None)  # it would outrank HOME and load the real user config
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "main.txt"],
         cwd=root,
@@ -53,9 +54,9 @@ def run_case(root: Path, enabled: bool, idle_timeout: int) -> None:
 
         os.write(master, b" ")
         deadline = time.monotonic() + (2 if enabled else 0.3)
-        while b"Prefix <Sp" not in captured and time.monotonic() < deadline:
+        while "─Space─".encode() not in captured and time.monotonic() < deadline:
             read_for(master, captured, 0.05)
-        visible = b"Prefix <Sp" in captured
+        visible = "─Space─".encode() in captured
         if visible != enabled:
             raise SystemExit(f"auto-info gate mismatch ({enabled=} {visible=})\n{captured[-5000:]!r}")
         os.write(master, b"\x1bq!")

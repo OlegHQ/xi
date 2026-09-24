@@ -156,12 +156,13 @@ class WorkspaceIgnoreMatcher {
     return { ok: true, value: matcher };
   }
 
-  async loadDirectory(directory: string): Promise<Result<void, PlatformFailure>> {
+  /** `names`, when the caller already listed the directory, skips opening absent ignore files. */
+  async loadDirectory(directory: string, names?: ReadonlySet<string>): Promise<Result<void, PlatformFailure>> {
     if (this.#cancellation.isCancelled) return cancelled();
     if (this.#loaded.has(directory)) return { ok: true, value: undefined };
     this.#loaded.add(directory);
-    if (this.#gitDirectory !== undefined && this.#options.gitIgnore) { const loaded = await this.readFile(join(directory, '.gitignore'), directory, 3); if (!loaded.ok) return loaded; }
-    if (this.#options.ignore) { const loaded = await this.readFile(join(directory, '.ignore'), directory, 4); if (!loaded.ok) return loaded; }
+    if (this.#gitDirectory !== undefined && this.#options.gitIgnore && names?.has('.gitignore') !== false) { const loaded = await this.readFile(join(directory, '.gitignore'), directory, 3); if (!loaded.ok) return loaded; }
+    if (this.#options.ignore && names?.has('.ignore') !== false) { const loaded = await this.readFile(join(directory, '.ignore'), directory, 4); if (!loaded.ok) return loaded; }
     return { ok: true, value: undefined };
   }
 
@@ -620,7 +621,8 @@ export class NodeFilesystemPort implements FilesystemPort {
     if (maxDepth !== undefined && (!Number.isSafeInteger(maxDepth) || maxDepth < 0)) return { ok: false, error: { code: 'invalid-limit', message: 'file enumeration max depth must be a non-negative integer', retryable: false } };
     const ignoreMatcher = await WorkspaceIgnoreMatcher.create(root, options.ignore, cancellation);
     if (!ignoreMatcher.ok) return { ok: false, error: ignoreMatcher.error };
-    const queue: Array<{ readonly absolute: string; readonly relative: string; readonly ancestors: readonly string[]; readonly depth: number }> = [{ absolute: root, relative: '', ancestors: [], depth: 0 }];
+    // `real` is known without a realpath call for a plain subdirectory of a resolved directory.
+    const queue: Array<{ readonly absolute: string; readonly relative: string; readonly ancestors: readonly string[]; readonly depth: number; readonly real?: string }> = [{ absolute: resolve(root), relative: '', ancestors: [], depth: 0 }];
     const visitedDirectories = new Set<string>();
     const visitedFiles = new Set<string>();
     const batch: WorkspaceFileEntry[] = [];
@@ -632,36 +634,44 @@ export class NodeFilesystemPort implements FilesystemPort {
         if (++visited > maxVisitedEntries) return { ok: false, error: { code: 'enumeration-limit', message: 'file enumeration visit limit reached', retryable: false } };
         let directory = queue.shift();
         if (directory === undefined) break;
-        const loadedRules = await ignoreMatcher.value.loadDirectory(directory.absolute);
-        if (!loadedRules.ok) return loadedRules;
         if (followSymlinks) {
-          const realDirectory = await fs.realpath(directory.absolute);
+          const realDirectory = directory.real ?? await fs.realpath(directory.absolute);
           if (directory.ancestors.includes(realDirectory)) continue;
           if (deduplicateLinks && visitedDirectories.has(realDirectory)) continue;
           if (deduplicateLinks) visitedDirectories.add(realDirectory);
           directory = { ...directory, ancestors: [...directory.ancestors, realDirectory] };
         }
-        let entries: Awaited<ReturnType<typeof fs.opendir>>;
+        // ponytail: one readdir per directory replaced a per-entry async opendir iterator; a single
+        // huge directory is listed whole before maxVisitedEntries applies. Stream it with opendir
+        // (large bufferSize) if that ceiling is ever hit.
+        let entries: import('node:fs').Dirent[];
         try {
-          entries = await fs.opendir(directory.absolute);
+          entries = await fs.readdir(directory.absolute, { withFileTypes: true });
         } catch (error: unknown) {
           if (directory.relative.length === 0) return { ok: false, error: platformFailure(error, 'enumerate-files') };
           continue;
         }
-        for await (const entry of entries) {
+        const loadedRules = await ignoreMatcher.value.loadDirectory(directory.absolute, new Set(entries.map((entry) => entry.name)));
+        if (!loadedRules.ok) return loadedRules;
+        // Both directories are already absolute and normalized; path.join/resolve per entry
+        // dominated enumeration CPU.
+        const absolutePrefix = directory.absolute.endsWith(sep) ? directory.absolute : directory.absolute + sep;
+        const identityDirectory = directory.ancestors.at(-1) ?? directory.absolute;
+        const identityPrefix = identityDirectory.endsWith(sep) ? identityDirectory : identityDirectory + sep;
+        for (const entry of entries) {
           if (cancellation.isCancelled) return cancelled();
           if (++visited > maxVisitedEntries) return { ok: false, error: { code: 'enumeration-limit', message: 'file enumeration visit limit reached', retryable: false } };
           const relativePath = directory.relative.length === 0 ? entry.name : `${directory.relative}/${entry.name}`;
-          const absolutePath = join(directory.absolute, entry.name);
+          const absolutePath = absolutePrefix + entry.name;
           if (ignored.has(entry.name)) continue;
           // Ancestor directories have already passed this matcher before entering the
           // queue; checking them again for every child multiplies deep-tree work.
           if (await ignoreMatcher.value.ignored(relativePath, entry.isDirectory(), absolutePath, false)) continue;
           if (entry.isDirectory()) {
-            if ((maxDepth === undefined || directory.depth < maxDepth)) queue.push({ absolute: absolutePath, relative: relativePath, ancestors: directory.ancestors, depth: directory.depth + 1 });
+            if ((maxDepth === undefined || directory.depth < maxDepth)) queue.push({ absolute: absolutePath, relative: relativePath, ancestors: directory.ancestors, depth: directory.depth + 1, ...(followSymlinks ? { real: identityPrefix + entry.name } : {}) });
             continue;
           }
-          let fileIdentity = resolve(directory.ancestors.at(-1) ?? directory.absolute, entry.name);
+          let fileIdentity = identityPrefix + entry.name;
           if (entry.isSymbolicLink() && followSymlinks) {
             let target: import('node:fs').Stats;
             try { target = await fs.stat(absolutePath); } catch { continue; }
@@ -679,13 +689,13 @@ export class NodeFilesystemPort implements FilesystemPort {
           batch.push({ relativePath, absolutePath, hidden: relativePath.startsWith('.') || relativePath.includes('/.') });
           total += 1;
           if (batch.length >= 128) {
-            await onBatch(Object.freeze(batch.splice(0, batch.length)));
+            await onBatch(batch.splice(0, batch.length));
             await new Promise<void>((done) => setImmediate(done));
           }
           if (total >= maxEntries) break;
         }
       }
-      if (batch.length > 0) await onBatch(Object.freeze(batch.splice(0, batch.length)));
+      if (batch.length > 0) await onBatch(batch.splice(0, batch.length));
       if (total >= maxEntries) return { ok: false, error: { code: 'enumeration-limit', message: 'file enumeration result limit reached', retryable: false } };
       return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
     } catch (error: unknown) {

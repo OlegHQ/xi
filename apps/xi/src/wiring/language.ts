@@ -105,6 +105,7 @@ export interface LanguageWiring {
   virtualAnnotations(documentId: string, documentVersion: number): readonly { readonly id: string; readonly documentVersion: DocumentVersion; readonly lineIndex: LineIndex; readonly offset: Utf16Offset; readonly text: string; readonly background?: string }[];
   readonly session: LanguageServerSession | undefined;
   readonly navigationController: LanguageNavigationController | undefined;
+  readonly outlineController: LanguageNavigationController | undefined;
   readonly navigationSubscription: Disposable | undefined;
   readonly completionController: CompletionController | undefined;
   readonly signatureController: SignatureController | undefined;
@@ -356,6 +357,7 @@ function subscribeLanguagePresentation(session: LanguageServerSession, runtime: 
 export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
   let languageSession: LanguageServerSession | undefined;
   let navigationController: LanguageNavigationController | undefined;
+  let outlineController: LanguageNavigationController | undefined;
   let completionController: CompletionController | undefined;
   let completionProvider: LanguageServerCompletionProvider | undefined;
   let signatureController: SignatureController | undefined;
@@ -408,7 +410,11 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
     inlaySubscription = subscribeLanguagePresentation(languageSession, inlayRuntime);
     // Lazy initialization and re-grants must admit every already-open buffer.
     admitExistingLanguageBuffers(deps, activeConnection, admitBufferToLanguageSession);
-    navigationController = new language.LanguageNavigationController(new language.LanguageServerNavigationProvider(languageSession));
+    const navigationProvider = new language.LanguageServerNavigationProvider(languageSession);
+    navigationController = new language.LanguageNavigationController(navigationProvider);
+    // The Outline refreshes in the background; its own controller keeps those requests from
+    // cancelling hover/definition/reference requests that share a request generation.
+    outlineController = new language.LanguageNavigationController(navigationProvider);
     completionController = new language.CompletionController();
     completionProvider = new language.LanguageServerCompletionProvider(languageSession);
     signatureProvider = new language.LanguageServerSignatureProvider(languageSession);
@@ -428,7 +434,7 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
       document: (uri) => workspaceEditExecutor?.resolveDocument(uri),
     });
     workspaceEditCoordinator = new language.WorkspaceEditCoordinator(workspaceEditExecutor.asPort());
-    navigationSubscription = activeConnection.overlayFeature.attachNavigation(navigationController, languageSession);
+    navigationSubscription = activeConnection.overlayFeature.attachNavigation(navigationController, languageSession, outlineController);
     const completionSubscriptions = activeConnection.completionFeature.attachLanguage(languageSession, completionController, completionProvider, signatureController);
     completionSubscription = completionSubscriptions.completionSubscription;
     signatureSubscription = completionSubscriptions.signatureSubscription;
@@ -456,9 +462,9 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
     if (session === undefined) return;
     languageSession = undefined;
     languageInitialization = undefined;
-    clearLanguageRuntime(inlayRuntime, presentation, connection, [completionSubscription, signatureSubscription, navigationSubscription, inlaySubscription, completionController, signatureController, navigationController, workspaceEditCoordinator]);
+    clearLanguageRuntime(inlayRuntime, presentation, connection, [completionSubscription, signatureSubscription, navigationSubscription, inlaySubscription, completionController, signatureController, navigationController, outlineController, workspaceEditCoordinator]);
     completionSubscription = undefined; signatureSubscription = undefined; navigationSubscription = undefined; inlaySubscription = undefined;
-    completionController = undefined; signatureController = undefined; navigationController = undefined; workspaceEditCoordinator = undefined;
+    completionController = undefined; signatureController = undefined; navigationController = undefined; outlineController = undefined; workspaceEditCoordinator = undefined;
     completionProvider = undefined; signatureProvider = undefined;
     workspaceEditProvider = undefined; workspaceEditExecutor = undefined; presentation = undefined;
     await session.dispose();
@@ -483,6 +489,7 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
     virtualAnnotations: (documentId, documentVersion) => readVirtualAnnotations(inlayRuntime, documentId, documentVersion, connection?.getBufferDocument(documentId as DocumentId)),
     get session() { return languageSession; },
     get navigationController() { return navigationController; },
+    get outlineController() { return outlineController; },
     get navigationSubscription() { return navigationSubscription; },
     get completionController() { return completionController; },
     get signatureController() { return signatureController; },

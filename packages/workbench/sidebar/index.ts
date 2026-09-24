@@ -16,12 +16,8 @@ export interface SidebarReadModel {
   readonly panel: SidebarPanelId;
   readonly width: number;
   readonly visible?: boolean;
-}
-
-/** Narrow port onto whatever tracks outline symbols (the language overlay feature); only
- * whether there is anything to show is needed here. */
-export interface SidebarOutlineModelPort {
-  readonly hasSymbols: boolean;
+  /** Outline content rows chosen by dragging its header; undefined keeps the default split. */
+  readonly outlineHeight?: number;
 }
 
 /** Persist only committed widths, never transient drag positions. */
@@ -31,7 +27,6 @@ export interface SidebarWidthPersistencePort {
 }
 
 export interface SidebarControllerOptions {
-  readonly outline: SidebarOutlineModelPort;
   readonly persistence?: SidebarWidthPersistencePort;
   readonly initialWidth?: number;
   readonly initiallyVisible?: boolean;
@@ -52,9 +47,8 @@ function clamp(value: number, minimum: number, maximum: number): number {
 /**
  * Owns the sidebar's section (Files/Outline) expand state and its resizable width: Files
  * starts collapsed (its tree loads lazily, so an expanded-but-empty header would lie) and
- * expands when the Explorer opens; Outline auto-expands once the outline model has symbols and auto-collapses
- * once it doesn't, except that a user's own toggle sticks until the symbol presence actually
- * changes. Resize mirrors `packages/workbench/input/controls`' `SplitterDragController`
+ * expands when the Explorer opens; Outline starts collapsed and only the user expands it
+ * (its symbols load while it is visible, so it cannot drive its own expansion). Resize mirrors `packages/workbench/input/controls`' `SplitterDragController`
  * begin/move/commit shape.
  */
 export class SidebarController {
@@ -63,9 +57,8 @@ export class SidebarController {
   readonly #maximumWidth: number;
   #activeSection: SidebarSectionId = 'files';
   #filesExpanded = false;
-  #outlineExpanded: boolean;
-  #outlineUserOverride = false;
-  #hadSymbols: boolean;
+  #outlineExpanded = false;
+  #outlineHeight: number | undefined;
   #width: number;
   #resizing = false;
   #visible = true;
@@ -87,8 +80,6 @@ export class SidebarController {
     this.#maximumWidth = options.maximumWidth ?? 40;
     const initial = options.persistence?.width ?? options.initialWidth ?? 28;
     this.#width = clamp(initial, this.#minimumWidth, this.#maximumWidth);
-    this.#hadSymbols = options.outline.hasSymbols;
-    this.#outlineExpanded = this.#hadSymbols;
   }
 
   get activeSection(): SidebarSectionId { return this.#activeSection; }
@@ -111,32 +102,24 @@ export class SidebarController {
     this.#activeSection = id;
   }
 
-  /** User-driven expand/collapse; Outline's toggle sticks until `refreshOutline` sees the
-   * symbol-presence flip. */
   collapseSection(id: SidebarSectionId): void {
     if (id === 'files') this.#filesExpanded = false;
-    else { this.#outlineExpanded = false; this.#outlineUserOverride = true; }
+    else this.#outlineExpanded = false;
   }
 
   expandSection(id: SidebarSectionId): void {
     if (id === 'files') this.#filesExpanded = true;
-    else { this.#outlineExpanded = true; this.#outlineUserOverride = true; }
+    else this.#outlineExpanded = true;
   }
 
   toggleSection(id: SidebarSectionId): void {
-    if (id === 'files') { this.#filesExpanded = !this.#filesExpanded; return; }
-    this.#outlineExpanded = !this.#outlineExpanded;
-    this.#outlineUserOverride = true;
+    if (id === 'files') this.#filesExpanded = !this.#filesExpanded;
+    else this.#outlineExpanded = !this.#outlineExpanded;
   }
 
-  /** Call after the outline model may have changed (new symbols computed, or cleared). A
-   * transition between "has symbols" and "has none" always resets any user override. */
-  refreshOutline(): void {
-    const hasSymbols = this.#options.outline.hasSymbols;
-    if (hasSymbols === this.#hadSymbols) return;
-    this.#hadSymbols = hasSymbols;
-    this.#outlineUserOverride = false;
-    this.#outlineExpanded = hasSymbols;
+  /** True when the Outline section's rows are on screen (sidebar shown on the Files tab). */
+  get outlineVisible(): boolean {
+    return this.#visible && this.#outlineExpanded && (this.#options.panelState?.() ?? 'files') === 'files';
   }
 
   beginResize(): void {
@@ -154,9 +137,14 @@ export class SidebarController {
     this.#options.persistence?.setWidth(this.#width);
   }
 
+  /** Outline height drag (the layout clamps it to the rows that exist). */
+  resizeOutline(height: number): void {
+    this.#outlineHeight = Math.max(3, Math.trunc(height));
+  }
+
   readModel(): SidebarReadModel {
     const panel = this.#visible ? this.#options.panelState?.() ?? 'files' : this.#lastPanel;
-    const key = `${this.#visible}|${this.#filesExpanded}|${this.#outlineExpanded}|${this.#activeSection}|${this.#width}|${panel}`;
+    const key = `${this.#visible}|${this.#filesExpanded}|${this.#outlineExpanded}|${this.#activeSection}|${this.#width}|${panel}|${this.#outlineHeight}`;
     if (this.#cachedModel !== undefined && this.#cachedModelKey === key) return this.#cachedModel;
     const model = Object.freeze({
       sections: Object.freeze([
@@ -167,6 +155,7 @@ export class SidebarController {
       panel,
       width: this.#width,
       visible: this.#visible,
+      ...(this.#outlineHeight === undefined ? {} : { outlineHeight: this.#outlineHeight }),
     });
     this.#cachedModel = model;
     this.#cachedModelKey = key;

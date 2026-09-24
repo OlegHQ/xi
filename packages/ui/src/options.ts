@@ -41,7 +41,7 @@ export interface OpenTuiWorkbenchOptions {
    * repaint the whole workbench with a new theme immediately (preview), and revert it just as
    * immediately (cancel) -- no renderer teardown/recreation involved. */
   readonly registerThemeSwitch?: (setTheme: (theme: WorkbenchTheme) => void) => void;
-  readonly registerViewportConfig?: (update: (config: { readonly lineNumber: 'absolute' | 'relative'; readonly rulers: readonly number[] }) => void) => void;
+  readonly registerViewportConfig?: (update: (config: { readonly lineNumber: 'absolute' | 'relative'; readonly rulers: readonly number[]; readonly wrap: boolean }) => void) => void;
   /**
    * Hands the application the renderer-side half of terminal job control (Ctrl-Z/`fg`):
    * `suspend` releases pointer capture and stops the renderer painting; `resume` starts it
@@ -228,10 +228,11 @@ export interface OpenTuiWorkbenchOptions {
     readonly read: TaskOutputReadPort;
     readonly isOpen: () => boolean;
   };
-  /** Optional read-only language outline; keyboard routing lives in `WorkbenchInputRouter`. */
+  /** Optional language outline tree in the sidebar; keyboard routing lives in `WorkbenchInputRouter`. */
   readonly outline?: {
     readonly read: OutlineReadPort;
     readonly isOpen: () => boolean;
+    readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
   };
   /** Optional lazy hierarchy surface; host owns expansion, cancellation and link actions. */
   readonly hierarchy?: {

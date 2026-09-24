@@ -6,7 +6,7 @@ import type { Disposable } from '../../../contracts/src/index.ts';
 import type { WorkbenchReadPort, ExCommandLineReadModel } from '../../../workbench/src/index.ts';
 import type { WorkbenchRenderable } from '../workbench';
 import { ASCII_WORKBENCH_THEME, helixThemeColor, helixThemeStyle, type WorkbenchTheme } from '../workbench';
-import { formatPrefixHelpLines, type PrefixHelpReadPort } from '../../help/index';
+import { formatPrefixHelpLines, measurePrefixHelp, prefixHelpEntries, prefixHelpTitle, type PrefixHelpReadPort } from '../../help/index';
 import { formatPickerLines, pickerRowIds, type PickerReadPort } from '../../picker/index';
 import { formatExplorerLines, type ExplorerReadModel, type ExplorerReadPort } from '../../explorer/index';
 import { resolveFileIcon, type IconColorToken } from '../../explorer/icons';
@@ -15,9 +15,9 @@ import { formatGitLines, gitRowIds, type GitReadPort } from '../../git/index';
 import { diagnosticColor, formatProblemsLines, type ProblemsReadPort } from '../../problems/index';
 import { formatGitDiffLines, type GitDiffReadPort } from '../../git/diff';
 import { formatTaskOutputLines, type TaskOutputReadPort } from '../../output/index';
-import { formatHierarchyLines, formatOutlineLines, formatHoverLines, measureHover, type OutlineReadPort, type HierarchyReadPort, type HoverReadPort } from '../../navigation/index';
+import { formatHierarchyLines, formatOutlineLines, formatHoverLines, measureHover, outlineEmptyMessage, outlineKindIcon, type OutlineReadPort, type HierarchyReadPort, type HoverReadPort } from '../../navigation/index';
 import { formatCompletionLines, formatSignatureLines, type CompletionReadPort, type SignatureReadPort } from '../../completion/index';
-import { formatExCommandLineLines, type ExCommandLineReadPort } from '../../commandline/index';
+import { exCommandDoc, exCompletionGrid, wrapDocLines, formatExCommandLineLines, type ExCommandLineReadPort } from '../../commandline/index';
 import { formatDirectoryReviewLines, type DirectoryDraftReadPort } from '../../directory/index';
 import { contextMenuBounds, formatContextMenuLines } from '../context-menu';
 import type { WorkbenchPanelPointerEvent } from '../panel-pointer';
@@ -31,6 +31,7 @@ import type { RowsSurfaceSpec, SurfaceRow, SurfaceRowSegment } from './panel';
 import type { SolidNode } from './root';
 import {
   getCommandLineBounds,
+  getCommandDocBounds,
   getDirectoryReviewBounds,
   getExplorerBounds,
   getGitBounds,
@@ -346,85 +347,71 @@ function highlightHoverCode(source: string, theme: WorkbenchTheme): readonly Sur
   return segments;
 }
 
+/** Helix prompt: column-major completion grid in `ui.menu` (the accepted item in
+ * `ui.menu.selected`) above the `:` line in `ui.background`/`ui.text`. */
 function commandLineRows(model: ExCommandLineReadModel | undefined, width: number, maxRows: number, theme: WorkbenchTheme): readonly SurfaceRow[] {
   if (model === undefined) return [];
-  const background = helixThemeColor(theme, 'ui.popup', 'bg', theme.surface);
-  const foreground = helixThemeColor(theme, 'ui.popup', 'fg', theme.foreground);
-  const selectedBackground = helixThemeColor(theme, 'ui.menu.selected', 'bg', theme.surfaceActive);
-  const rows: SurfaceRow[] = [{ segments: clipSegments([{ text: ':', foreground: theme.accent, bold: true }, { text: model.source.startsWith(':') ? model.source.slice(1) : model.source, foreground, bold: true }], width), background }];
-  if (model.parseFailure !== undefined && rows.length < maxRows) {
-    const detail = 'reason' in model.parseFailure ? model.parseFailure.reason : model.parseFailure.kind;
-    rows.push({ text: detail, foreground: theme.error, background });
-  } else if (rows.length < maxRows) rows.push({ text: model.acceptanceHint, foreground: theme.muted, background });
-  const selectedCandidate = model.candidates[model.selectedIndex];
-  if (model.position.typedName.length > 0 && selectedCandidate !== undefined && rows.length < maxRows) {
-    rows.push({
-      segments: clipSegments([
-        { text: `${selectedCandidate.label}  `, foreground: theme.accent, bold: true },
-        { text: selectedCandidate.detail, foreground: selectedCandidate.available ? foreground : theme.error },
-      ], width),
-      background: selectedBackground,
-    });
+  const grid = exCompletionGrid(model, width);
+  const menuBackground = helixThemeColor(theme, 'ui.menu', 'bg', theme.surface);
+  const menuForeground = readableTextColor(helixThemeColor(theme, 'ui.menu', 'fg', theme.foreground), menuBackground, theme.foreground);
+  const selectedStyle = helixThemeStyle(theme, 'ui.menu.selected');
+  const rows: SurfaceRow[] = [];
+  for (let row = 0; row < grid.rows && rows.length < maxRows - 1; row += 1) {
+    const segments: SurfaceRowSegment[] = [];
+    for (let column = 0; column < grid.columns; column += 1) {
+      const index = grid.offset + column * grid.rows + row;
+      const candidate = model.candidates[index];
+      if (candidate === undefined) break;
+      const label = [...candidate.label].slice(0, Math.max(0, grid.columnWidth - 1)).join('');
+      const selected = index === grid.highlighted;
+      segments.push({ text: label, foreground: candidate.available ? menuForeground : theme.muted, ...(selected && selectedStyle !== undefined ? { style: selectedStyle } : {}) });
+      segments.push({ text: ' '.repeat(grid.columnWidth + 1 - [...label].length), foreground: menuForeground });
+    }
+    rows.push({ segments: clipSegments(segments, width), background: menuBackground });
   }
-  for (let index = 0; index < model.candidates.length && rows.length < maxRows; index += 1) {
-    const candidate = model.candidates[index];
-    if (candidate === undefined) continue;
-    const selected = index === model.selectedIndex;
-    rows.push({
-      segments: clipSegments([
-        { text: selected ? '▸ ' : '  ', foreground: selected ? theme.accent : theme.muted },
-        { text: candidate.label, foreground: candidate.available ? foreground : theme.muted, bold: selected && candidate.available },
-        ...(candidate.alias === undefined ? [] : [{ text: `  → ${String(candidate.commandId ?? '')}`, foreground: theme.muted }]),
-      ], width),
-      background: selected ? selectedBackground : background,
-    });
-  }
+  const background = helixThemeColor(theme, 'ui.background', 'bg', theme.background);
+  const foreground = readableTextColor(helixThemeColor(theme, 'ui.text', 'fg', theme.foreground), background, theme.foreground);
+  rows.push({ text: `:${model.source.startsWith(':') ? model.source.slice(1) : model.source}`.slice(0, width), foreground, background });
   return rows;
 }
 
+/** Helix info box body: `key  doc` rows (Helix pads keys to the widest one), text in `ui.text.info`. */
 export function prefixHelpRows(model: PrefixHelpReadPort['model'], width: number, maxRows: number, theme: WorkbenchTheme): readonly SurfaceRow[] {
   if (model === undefined || width <= 0 || maxRows <= 0) return [];
   const background = helixThemeColor(theme, 'ui.popup.info', 'bg', theme.surface);
-  const foreground = helixThemeColor(theme, 'ui.popup.info', 'fg', theme.foreground);
-  const keyForeground = helixThemeColor(theme, 'ui.text.info', 'fg', theme.accent);
-  const keyStyle = helixThemeStyle(theme, 'ui.text.info');
-  const prefix = model.pendingKeys.length === 0 ? 'Prefix' : `Prefix ${model.pendingKeys.join(' ')}`;
-  if (maxRows === 1) return [{ text: (model.compactHint ?? `${prefix}: no legal continuation`).slice(0, width), foreground, background }];
-  if (width < 48) {
-    const rows: SurfaceRow[] = [{
-      segments: clipSegments([
-        { text: prefix, foreground: keyForeground, bold: true, ...(keyStyle === undefined ? {} : { style: keyStyle }) },
-        { text: ` · ${model.hints.length} hints`, foreground },
-      ], width),
-      background,
-    }];
-    const keyWidth = Math.min(12, Math.max(1, Math.floor(width / 3)));
-    for (const hint of model.hints) {
-      if (rows.length >= maxRows) break;
-      rows.push({
-        segments: clipSegments([
-          { text: `${hint.keyLabel.padEnd(keyWidth)} `, foreground: keyForeground, ...(keyStyle === undefined ? {} : { style: keyStyle }) },
-          { text: hint.available ? hint.title : `${hint.title} · ${hint.disabledReason ?? 'unavailable'}`, foreground: hint.available ? foreground : helixThemeColor(theme, 'error', 'fg', theme.error) },
-        ], width),
-        background,
-      });
-    }
-    return rows;
-  }
-  const rows: SurfaceRow[] = [{
-    segments: clipSegments([{ text: prefix, foreground: keyForeground, bold: true, ...(keyStyle === undefined ? {} : { style: keyStyle }) }, { text: `  (${model.hints.length} hints)`, foreground }], width),
+  const foreground = helixThemeColor(theme, 'ui.text.info', 'fg', helixThemeColor(theme, 'ui.popup.info', 'fg', theme.foreground));
+  const style = helixThemeStyle(theme, 'ui.text.info');
+  const entries = prefixHelpEntries(model);
+  const { keyWidth } = measurePrefixHelp(entries, prefixHelpTitle(model));
+  return entries.slice(0, maxRows).map(entry => ({
+    segments: clipSegments([{ text: ` ${entry.key.padEnd(keyWidth)}  ${entry.doc}`, foreground: entry.available ? foreground : theme.muted, ...(style === undefined ? {} : { style }) }], width),
     background,
-  }];
-  const keyWidth = Math.min(18, Math.max(6, ...model.hints.map(hint => [...hint.keyLabel].length)));
-  for (const hint of model.hints) {
-    if (rows.length >= maxRows) break;
-    const alias = hint.aliases.length === 0 ? '' : ` (${hint.aliases.join(', ')})`;
-    const state = hint.available ? '' : ` [${hint.disabledReason ?? 'unavailable'}]`;
+  }));
+}
+
+/** Tree disclosure glyph shared by the Files and Outline trees. */
+function disclosure(expanded: boolean, ascii: boolean): string { return expanded ? (ascii ? 'v' : '▾') : (ascii ? '>' : '▸'); }
+
+/** VS Code-style outline tree rows: indent, disclosure chevron, colored symbol-kind icon, name
+ * and muted detail. The focused selection uses the active row color; unfocused, the row under the
+ * editor cursor keeps a quieter highlight (follow-cursor). */
+function outlineRows(model: OutlineReadPort['model'], width: number, maxRows: number, offset: number, hoveredId: string | undefined, ascii: boolean, theme: WorkbenchTheme): readonly SurfaceRow[] {
+  const empty = outlineEmptyMessage(model);
+  if (empty !== undefined) return [{ text: ` ${empty}`, foreground: theme.muted, background: theme.surface, italic: true }];
+  const rows: SurfaceRow[] = [];
+  const quiet = theme.selectionSecondary ?? theme.surfaceActive;
+  for (const row of model.rows.slice(Math.max(0, offset), Math.max(0, offset) + maxRows)) {
+    const selected = row.id === model.selectedId;
+    const background = selected && model.focused ? theme.surfaceActive : selected || row.id === hoveredId ? quiet : theme.surface;
+    const icon = outlineKindIcon(row.kind);
+    const chevron = row.expandable ? disclosure(row.expanded, ascii) : ' ';
+    const foreground = readableTextColor(theme.foreground, background, theme.foreground);
     rows.push({
       segments: clipSegments([
-        { text: `  ${hint.keyLabel.padEnd(keyWidth)}  `, foreground: keyForeground, ...(keyStyle === undefined ? {} : { style: keyStyle }) },
-        { text: `${hint.title}${alias} — ${hint.description}`, foreground: hint.available ? foreground : theme.muted },
-        ...(state.length === 0 ? [] : [{ text: state, foreground: helixThemeColor(theme, 'error', 'fg', theme.error) }]),
+        { text: `${'  '.repeat(row.depth)}${chevron} `, foreground: theme.muted },
+        { text: `${ascii ? icon.ascii : icon.glyph} `, foreground: helixThemeColor(theme, icon.scope, 'fg', icon.fallback ?? theme.foreground) },
+        { text: row.name, foreground, bold: selected && model.focused },
+        ...(row.detail === undefined || row.detail.length === 0 ? [] : [{ text: `  ${row.detail}`, foreground: theme.muted }]),
       ], width),
       background,
     });
@@ -452,7 +439,7 @@ function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, 
       continue;
     }
     const expandable = node.kind === 'directory' || node.kind === 'root' || node.kind === 'symlink';
-    const disclosure = expandable ? node.loadState === 'loading' ? '·' : node.expanded ? (ascii ? 'v' : '▾') : (ascii ? '>' : '▸') : ' ';
+    const chevron = expandable ? node.loadState === 'loading' ? '·' : disclosure(node.expanded === true, ascii) : ' ';
     const icon = node.kind === 'root'
       ? { glyph: '⌂', color: 'accent' as const }
       : node.kind === 'symlink'
@@ -471,7 +458,7 @@ function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, 
     rows.push({
       background,
       segments: clipSegments([
-        { text: `${'  '.repeat(visible.depth)}${disclosure} `, foreground: theme.muted },
+        { text: `${'  '.repeat(visible.depth)}${chevron} `, foreground: theme.muted },
         { text: `${icon.glyph} `, foreground: iconColor(theme, icon.color) },
         { text: visible.label ?? node.name, foreground: selected ? theme.foreground : (node.kind === 'directory' || node.kind === 'root' ? helixThemeColor(theme, 'ui.text.directory', 'fg', theme.foreground) : theme.foreground), bold: selected, ...(directoryStyle === undefined ? {} : { style: directoryStyle }) },
         ...(node.git === undefined ? [] : [{ text: ` ${node.git.label}`, foreground: gitColor, ...(gitStyle === undefined ? {} : { style: gitStyle }) }]),
@@ -854,15 +841,23 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
       }, scopeColors('ui.popup'))}
       {options.outline !== undefined && rows({
         read: options.outline.read,
-        isOpen: options.outline.isOpen,
+        // Narrow terminals hide the sidebar; the outline then floats only while focused.
+        isOpen: () => options.outline?.isOpen() === true && (dimensions().width >= 100 || options.outline.read.model.focused),
         format: formatOutlineLines,
+        formatRows: (model, width, maxRows, offset, hoveredId) => outlineRows(model, width, maxRows, offset, hoveredId, props.themeBridge.current() === ASCII_WORKBENCH_THEME, sidebarTheme(props.themeBridge.current())),
         maxRows: Number.MAX_SAFE_INTEGER,
         background: props.theme.surface,
         foreground: props.theme.foreground,
         bounds: (width, height) => getSidebarOutlineBounds(width, height, options.sidebar?.()),
+        panel: 'outline',
+        generation: model => model.generation,
+        rowIds: (model, offset, count) => model.rows.slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, count)).map(row => row.id),
+        onPointer: event => forwardPanelPointer(options.outline?.onPointer, event, props.requestFrame),
+        totalRows: model => model.rows.length,
+        selectedId: model => model.selectedId,
+        selectedIndex: model => model.rows.findIndex(row => row.id === model.selectedId),
         zIndex: 70,
-        border: popupBorderVisible(options.popupBorder, 'popup'),
-      }, scopeColors('ui.popup'))}
+      }, sidebarColors)}
       {options.hierarchy !== undefined && rows({
         read: options.hierarchy.read,
         isOpen: options.hierarchy.isOpen,
@@ -943,8 +938,24 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         foreground: props.theme.foreground,
         bounds: (width, height) => getCommandLineBounds(width, height, options.commandLine!.read.model),
         zIndex: 130,
-        border: popupBorderVisible(options.popupBorder, 'popup'),
-      }, scopeColors('ui.popup'))}
+      }, scopeColors('ui.menu'))}
+      {options.commandLine !== undefined && commandLineRead !== undefined && rows({
+        read: commandLineRead,
+        isOpen: () => options.commandLine?.isOpen() === true && exCommandDoc(options.commandLine.read.model) !== undefined,
+        format: (model, width) => wrapDocLines(exCommandDoc(model)?.lines ?? [], Math.max(1, width - 2)),
+        formatRows: (model, width) => {
+          const doc = exCommandDoc(model);
+          const theme = props.themeBridge.current();
+          const foreground = doc?.error === true ? helixThemeColor(theme, 'error', 'fg', theme.error) : helixThemeColor(theme, 'ui.help', 'fg', theme.foreground);
+          return wrapDocLines(doc?.lines ?? [], Math.max(1, width - 2)).map(text => ({ text: ` ${text}`, foreground }));
+        },
+        maxRows: 20,
+        background: props.theme.surface,
+        foreground: props.theme.foreground,
+        bounds: (width, height) => getCommandDocBounds(width, height, options.commandLine!.read.model),
+        zIndex: 131,
+        title: () => '',
+      }, scopeColors('ui.help'))}
       {options.prefixHelp !== undefined && rows({
         read: options.prefixHelp,
         isOpen: () => options.prefixHelp?.model !== undefined,
@@ -953,9 +964,12 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         maxRows: Number.MAX_SAFE_INTEGER,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: (width, height) => getPrefixHelpBounds(width, height, options.prefixHelp?.model?.hints.length ?? 0),
+        bounds: (width, height) => {
+          const model = options.prefixHelp?.model;
+          return getPrefixHelpBounds(width, height, model === undefined ? { width: 1, height: 1 } : measurePrefixHelp(prefixHelpEntries(model), prefixHelpTitle(model)));
+        },
         zIndex: 125,
-        border: popupBorderVisible(options.popupBorder, 'popup'),
+        title: model => model === undefined ? '' : prefixHelpTitle(model),
       }, scopeColors('ui.popup.info'))}
       {options.contextMenu !== undefined && <ContextMenuBackdrop store={options.contextMenu} />}
       {options.contextMenu !== undefined && contextMenuRead !== undefined && rows({

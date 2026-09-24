@@ -31,3 +31,54 @@ function clip(value: string, width: number): string {
   if (width <= 1) return '…';
   return `${value.slice(0, width - 1)}…`;
 }
+
+/** Helix prompt completion geometry (`ui/prompt.rs`): columns at least 30 cells wide, filled
+ * column-major, at most 10 rows, paged so the highlighted item stays visible. */
+export interface ExCompletionGrid { readonly columns: number; readonly columnWidth: number; readonly rows: number; readonly offset: number; readonly highlighted: number | undefined; }
+const COMPLETION_BASE_WIDTH = 30;
+
+export function exCompletionGrid(model: ExCommandLineReadModel | undefined, width: number, maxRows = 10): ExCompletionGrid {
+  const candidates = model?.candidates ?? [];
+  const longest = candidates.reduce((max, candidate) => Math.max(max, [...candidate.label].length), COMPLETION_BASE_WIDTH);
+  const columns = Math.max(1, Math.floor(width / longest));
+  const columnWidth = Math.max(1, Math.floor((width - columns) / columns));
+  const rows = Math.min(maxRows, Math.ceil(candidates.length / columns));
+  const highlighted = exHighlightedCandidate(model);
+  const perPage = Math.max(1, rows * columns);
+  return { columns, columnWidth, rows, offset: highlighted === undefined ? 0 : Math.floor(highlighted / perPage) * perPage, highlighted };
+}
+
+/** Helix highlights a completion only once it has been accepted into the line (Tab); before
+ * that the list is a plain preview. */
+function exHighlightedCandidate(model: ExCommandLineReadModel | undefined): number | undefined {
+  const selected = model?.candidates[model.selectedIndex];
+  return selected !== undefined && model !== undefined && model.position.typedName.length > 0 && selected.label === model.position.typedName ? model.selectedIndex : undefined;
+}
+
+/** Doc popup text for the command being typed (Helix `doc_fn`); like Helix, a line that does
+ * not name a command shows none (Enter reports the error). */
+export function exCommandDoc(model: ExCommandLineReadModel | undefined): { readonly lines: readonly string[]; readonly error: boolean } | undefined {
+  if (model === undefined || model.position.typedName.length === 0 || model.parseFailure !== undefined) return undefined;
+  // `:w` names `write`: the parser resolves abbreviations and Vim aliases to the canonical name.
+  const names = [model.position.typedName, model.parsed?.name].filter(name => name !== undefined);
+  const candidate = model.candidates.find(item => names.includes(item.label) || (item.commandName !== undefined && names.includes(item.commandName)));
+  if (candidate === undefined || candidate.detail.length === 0) return undefined;
+  const lines = [candidate.detail];
+  if (candidate.alias !== undefined && candidate.commandId !== undefined) lines.push(`Alias for ${String(candidate.commandId)}`);
+  if (!candidate.available) lines.push(candidate.disabledReason ?? 'Unavailable');
+  return { lines, error: false };
+}
+
+/** Word-wraps doc lines to `width` cells (Helix wraps its doc popup text the same way). */
+export function wrapDocLines(lines: readonly string[], width: number): readonly string[] {
+  const wrapped: string[] = [];
+  for (const line of lines) {
+    let current = '';
+    for (const word of line.split(' ')) {
+      if (current.length > 0 && current.length + 1 + word.length > width) { wrapped.push(current); current = ''; }
+      current = current.length === 0 ? word : `${current} ${word}`;
+    }
+    wrapped.push(current);
+  }
+  return wrapped;
+}

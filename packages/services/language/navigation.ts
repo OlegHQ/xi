@@ -2,7 +2,8 @@ import type { Disposable, Result } from '../../contracts/src/index';
 import { requestIsSupported, type LanguageProviderSession } from './provider-session';
 
 export interface LanguageLocation { readonly uri: string; readonly startLine: number; readonly startUtf16: number; readonly endLine: number; readonly endUtf16: number; }
-export interface LanguageSymbol { readonly id: string; readonly name: string; readonly detail?: string; readonly kind: number; readonly range: LanguageLocation; readonly children: readonly LanguageSymbol[]; }
+/** `range` spans the whole declaration; `selection` is the name (LSP `selectionRange`) and falls back to `range`. */
+export interface LanguageSymbol { readonly id: string; readonly name: string; readonly detail?: string; readonly kind: number; readonly range: LanguageLocation; readonly selection: LanguageLocation; readonly children: readonly LanguageSymbol[]; }
 export interface NavigationRequest { readonly documentId: string; readonly documentVersion: number; readonly selectionGeneration: number; readonly uri?: string; readonly position: { readonly line: number; readonly utf16: number }; readonly hierarchyKind?: 'call' | 'type'; }
 export type NavigationFailure = { readonly kind: 'stale' | 'unavailable' | 'cancelled' | 'external-uri'; readonly message: string };
 export interface NavigationProvider {
@@ -182,7 +183,9 @@ function parseSymbol(value: unknown, id: string, defaultUri: string): LanguageSy
   }
   const detail = typeof record?.detail === 'string' ? record.detail : typeof record?.containerName === 'string' ? record.containerName : undefined;
   const symbolUri = typeof record?.uri === 'string' ? record.uri : typeof location?.uri === 'string' ? location.uri : defaultUri;
-  return Object.freeze({ id, name, ...(detail === undefined ? {} : { detail }), kind, range: Object.freeze({ uri: symbolUri, ...range }), children: Object.freeze(children) });
+  const fullRange = Object.freeze({ uri: symbolUri, ...range });
+  const selectionRange = parseRange(record?.selectionRange);
+  return Object.freeze({ id, name, ...(detail === undefined ? {} : { detail }), kind, range: fullRange, selection: selectionRange === undefined ? fullRange : Object.freeze({ uri: symbolUri, ...selectionRange }), children: Object.freeze(children) });
 }
 
 function parseRange(value: unknown): Omit<LanguageLocation, 'uri'> | undefined {

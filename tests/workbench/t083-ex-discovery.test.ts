@@ -15,7 +15,7 @@ import {
   type CommandSchema,
 } from '../../packages/contracts/src/index';
 import { asIdentifier, type CommandId, type Result, type ValidationIssue } from '../../packages/primitives/src/index';
-import { formatExCommandLineLines } from '../../packages/ui/commandline/index';
+import { exCommandDoc, exCompletionGrid, formatExCommandLineLines } from '../../packages/ui/commandline/index';
 
 const emptySchema: CommandSchema<null> = {
   decode(input: unknown): Result<null, readonly ValidationIssue[]> {
@@ -115,6 +115,19 @@ const rows = formatExCommandLineLines(quitModel, 44, 3);
 assert.ok(rows.some((row) => row.includes('quit')), 'E20-RENDER-01 command-line candidate rows include the quit completion');
 assert.ok(rows.length <= 3, 'E20-RENDER-02 command-line rows respect the row cap');
 assert.ok(rows.every((row) => row.length <= 44), 'E20-RENDER-03 command-line rows remain bounded');
+// Helix prompt (ui/prompt.rs): column-major grid of >=30-cell columns and at most 10 rows; the
+// doc popup follows the command the typed name resolves to, even through an abbreviation.
+const allCommands = buildExCommandLineReadModel({ source: ':', registry });
+const grid = exCompletionGrid(allCommands, 120);
+assert.equal(grid.columns, 4, 'E20-HELIX-01 a 120-cell prompt fits four 30-cell columns');
+assert.equal(grid.rows, Math.min(10, Math.ceil(allCommands.candidates.length / 4)), 'E20-HELIX-02 rows fill column-major up to ten');
+assert.equal(grid.highlighted, undefined, 'E20-HELIX-03 nothing is highlighted before Tab accepts a completion');
+const abbreviated = buildExCommandLineReadModel({ source: ':w', registry });
+assert.equal(exCommandDoc(abbreviated)?.lines[0], abbreviated.candidates.find((candidate) => candidate.label === 'write')?.detail, 'E20-HELIX-04 :w documents :write');
+const acceptedWrite = buildExCommandLineReadModel({ source: ':write', registry });
+assert.equal(exCompletionGrid(acceptedWrite, 120).highlighted, acceptedWrite.selectedIndex, 'E20-HELIX-05 an accepted completion is highlighted');
+assert.equal(exCommandDoc(buildExCommandLineReadModel({ source: ':qx', registry })), undefined, 'E20-HELIX-06 an unknown command shows no doc popup');
+
 session.dispose();
 void registry.dispose();
 console.log('T083 Ex discovery passed E20 typed-enter semantics, visible Tab acceptance, native q/wq/x/qa/wa scope, range/separator/path context, unavailable aliases, collision/cycle rollback and bounded command-line rows');

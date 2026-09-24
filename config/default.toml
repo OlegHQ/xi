@@ -207,6 +207,7 @@ a = "lsp.code-action"
 d = "diagnostics.pick"
 e = "panel.problems.focus"
 m = "editor.mouse.toggle"
+w = "editor.wrap.toggle"
 r = "search.replace"
 
 [keys.normal.space.v]
@@ -225,7 +226,7 @@ g = "panel.git.focus"
 e = "panel.expand-all"
 s = "sidebar.toggle"
 l = "panel.preview"
-o = "panel.open"
+o = "panel.outline.toggle"
 q = "panel.close"
 
 [xi.keys.search-panel.space]
@@ -235,7 +236,7 @@ f = "panel.files.focus"
 g = "panel.git.focus"
 s = "sidebar.toggle"
 l = "panel.preview"
-o = "panel.open"
+o = "panel.outline.toggle"
 q = "panel.close"
 
 [xi.keys.file-picker.space]
@@ -247,7 +248,7 @@ f = "panel.files.focus"
 g = "panel.git.focus"
 s = "sidebar.toggle"
 l = "panel.preview"
-o = "panel.open"
+o = "panel.outline.toggle"
 q = "panel.close"
 
 [xi.keys.diff-panel.space]

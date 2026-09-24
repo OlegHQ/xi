@@ -16,7 +16,7 @@ const second = controller.loadOutline({ ...request, documentVersion: 2 });
 pending[1]?.({ ok: true, value: Object.freeze([]) });
 const latest = await second;
 assert.equal(latest.ok, true, 'T050-OUTLINE-01 latest outline publishes');
-pending[0]?.({ ok: true, value: Object.freeze([{ id: 'old', name: 'Old', kind: 12, range: { uri: 'file:///old', startLine: 0, startUtf16: 0, endLine: 0, endUtf16: 1 }, children: Object.freeze([]) }]) });
+pending[0]?.({ ok: true, value: Object.freeze([{ id: 'old', name: 'Old', kind: 12, range: { uri: 'file:///old', startLine: 0, startUtf16: 0, endLine: 0, endUtf16: 1 }, selection: { uri: 'file:///old', startLine: 0, startUtf16: 0, endLine: 0, endUtf16: 1 }, children: Object.freeze([]) }]) });
 const stale = await first;
 assert.equal(stale.ok, false, 'T050-OUTLINE-02 out-of-order outline cannot replace active model');
 const hover = await controller.requestHover(request);

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { DARK_WORKBENCH_THEME } from '../../packages/ui/theme/workbench-themes';
 import { pickerRows, prefixHelpRows } from '../../packages/ui/src/solid/workbench';
+import { getPrefixHelpBounds } from '../../packages/ui/src/solid/layout';
+import { measurePrefixHelp, prefixHelpEntries, prefixHelpTitle } from '../../packages/ui/help/index';
 import type { PrefixHelpReadModel } from '../../packages/workbench/src/index';
 import type { PickerReadModel } from '../../packages/ui/picker/index';
 
@@ -14,17 +16,28 @@ const prefix: PrefixHelpReadModel = {
   compactHint: 'm: Add next occurrence',
   hints: [
     { kind: 'mapping', keys: ['m'], keyLabel: 'm', sequence: ['<Space>', 'm'], title: 'Add next occurrence', description: 'Select next matching word', commandId: 'selection.add-next', aliases: [], available: true, disabledReason: undefined },
-    { kind: 'mapping', keys: ['g', 's'], keyLabel: 'g s', sequence: ['<Space>', 'g', 's'], title: 'Open source control', description: 'Show changed files', commandId: 'git.open', aliases: [], available: false, disabledReason: 'Git is unavailable' },
+    { kind: 'mapping', keys: ['G'], keyLabel: 'G', sequence: ['<Space>', 'G'], title: 'Open source control', description: 'Show changed files', commandId: 'git.open', aliases: [], available: false, disabledReason: 'Git is unavailable' },
+    { kind: 'mapping', keys: ['v', 'f'], keyLabel: 'v f', sequence: ['<Space>', 'v', 'f'], title: 'Focus files', description: 'Focus files', commandId: 'panel.files.focus', aliases: [], available: true, disabledReason: undefined },
+    { kind: 'mapping', keys: ['v', 'd'], keyLabel: 'v d', sequence: ['<Space>', 'v', 'd'], title: 'Git diff', description: 'Git diff', commandId: 'git.diff', aliases: [], available: true, disabledReason: undefined },
+    { kind: 'mapping', keys: ['v', 's'], keyLabel: 'v s', sequence: ['<Space>', 'v', 's'], title: 'Focus search', description: 'Focus search', commandId: 'panel.search.focus', aliases: [], available: true, disabledReason: undefined },
+    { kind: 'escape', keys: ['<Esc>'], keyLabel: 'Esc', sequence: ['<Space>', '<Esc>'], title: 'Cancel', description: 'Cancel pending input', commandId: undefined, aliases: [], available: true, disabledReason: undefined },
   ],
 };
 
+// Helix info box: the keymap name is the frame title, Esc is implied, a deeper prefix collapses
+// into one row named after its commands' namespace, and keys share one padded column.
+const text = (row: ReturnType<typeof prefixHelpRows>[number] | undefined): string => row?.segments?.map(segment => segment.text).join('') ?? '';
+assert.equal(prefixHelpTitle(prefix), 'Space', 'E20-PREFIX-01 the Space keymap titles its box "Space"');
 const widePrefixRows = prefixHelpRows(prefix, 80, 8, theme);
-assert.equal(widePrefixRows.length, 3, 'E20-PREFIX-01 wide prefix renders a title and every legal continuation');
-assert.equal(widePrefixRows[1]?.segments?.[0]?.text.length, widePrefixRows[2]?.segments?.[0]?.text.length, 'E20-PREFIX-02 key labels share an aligned column');
-assert.match(widePrefixRows[2]?.segments?.at(-1)?.text ?? '', /Git is unavailable/u, 'E20-PREFIX-03 unavailable action explains its disabled state');
-const narrowPrefixRows = prefixHelpRows(prefix, 32, 8, theme);
-assert.equal(narrowPrefixRows.length, 3, 'E20-PREFIX-04 narrow prefix keeps individual choices visible');
-assert.match(narrowPrefixRows[1]?.segments?.map(segment => segment.text).join('') ?? '', /Add next/u, 'E20-PREFIX-05 narrow labels remain useful');
+assert.deepEqual(widePrefixRows.map(text), [' m  Select next matching word', ' G  Show changed files (Git is unavailable)', ' v  Panel…'], 'E20-PREFIX-02 one aligned `key  doc` row per choice, sub-prefix grouped, Esc omitted');
+assert.equal(prefixHelpTitle({ ...prefix, pendingKeys: ['<C-w>'] }), 'Window', 'E20-PREFIX-03 Ctrl-W titles its box "Window"');
+const size = measurePrefixHelp(prefixHelpEntries(prefix), prefixHelpTitle(prefix));
+assert.deepEqual(size, { keyWidth: 1, width: ' G  Show changed files (Git is unavailable)'.length + 1, height: 3 }, 'E20-PREFIX-04 the box fits its widest row plus side margins');
+const bounds = getPrefixHelpBounds(120, 40, size);
+assert.deepEqual(bounds, { width: size.width + 2, height: 5, left: 120 - size.width - 2, top: 39 - 5 }, 'E20-PREFIX-05 the framed box sits bottom-right, directly above the statusline');
+const narrowPrefixRows = prefixHelpRows(prefix, 20, 8, theme);
+assert.equal(narrowPrefixRows.length, 3, 'E20-PREFIX-06 narrow prefix keeps individual choices visible');
+assert.match(text(narrowPrefixRows[0]), /Select next/u, 'E20-PREFIX-07 narrow labels remain useful');
 
 const commandPicker: PickerReadModel = {
   contractVersion: 1,

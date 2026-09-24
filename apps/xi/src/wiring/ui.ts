@@ -188,10 +188,13 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     startupTrace,
     colorMode, undercurl: controllers.startupConfig?.editor.undercurl ?? false,
     theme: themeWiring.themeController.get(themeWiring.themeController.activeId) ?? LIGHT_WORKBENCH_THEME,
-    registerViewportConfig: (update) => controllers.registerUiReload(() => update({
-      lineNumber: controllers.startupConfig?.editor.lineNumber ?? 'absolute',
-      rulers: controllers.startupConfig?.editor.rulers ?? [],
-    })),
+    registerViewportConfig: (update) => {
+      let wrap = controllers.startupConfig?.editor.wrap ?? false;
+      const apply = () => update({ lineNumber: controllers.startupConfig?.editor.lineNumber ?? 'absolute', rulers: controllers.startupConfig?.editor.rulers ?? [], wrap });
+      // A config reload restores the configured wrap; `<Space>w` flips it for the session.
+      controllers.registerUiReload(() => { wrap = controllers.startupConfig?.editor.wrap ?? false; apply(); });
+      controllers.wrapMode.registered(() => { wrap = !wrap; apply(); return wrap; });
+    },
     ...(themeVariants === undefined ? {} : { themeVariants, onThemeMode: (mode: 'dark' | 'light' | 'fallback', id: string) => { themeWiring.themeController.setActiveId(id); marker('XI_THEME_MODE', { mode, id }); } }),
     mouseEnabled: controllers.startupConfig?.editor.mouse.enabled ?? true, kittyKeyboardProtocol: controllers.startupConfig?.editor.kittyKeyboardProtocol ?? 'auto',
     syntax: syntaxTracker,
@@ -229,7 +232,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     onPaste: (bytes: Uint8Array) => inputRouter.handlePaste(bytes),
     onPointerCancel: (reason) => pointerRouter.handlePointerCancel(reason),
     onFrame: () => {
-      sidebarController.refreshOutline();
+      overlayFeature.syncOutline();
     },
     sidebar: () => sidebarController.readModel(),
     tabs: viewId => workbench.readTabs(viewId as ViewId | undefined),
@@ -307,7 +310,8 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     },
     outline: {
       read: overlayFeature.outlineRead,
-      isOpen: () => overlayFeature.isOutlineOpen,
+      isOpen: () => sidebarController.outlineVisible,
+      onPointer: (event: PointerPanelEvent) => event.action === 'activate' && overlayFeature.handleOutlinePointer(event.itemId, event.column),
     },
     hover: {
       read: overlayFeature.hoverRead,

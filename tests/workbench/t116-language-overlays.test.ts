@@ -27,6 +27,8 @@ function key(name: string, raw: string): { readonly name: string; readonly raw: 
   return { name, raw, shift: false, option: false, ctrl: false, meta: false };
 }
 
+function range(startLine: number, startUtf16: number, endLine: number, endUtf16: number) { return { startLine, startUtf16, endLine, endUtf16 }; }
+
 const IDLE_MODEL: WorkbenchNavigationModel = Object.freeze({ state: 'idle', generation: 0, symbols: Object.freeze([]), hover: undefined, message: undefined });
 
 // -- A fake navigation controller recording every `loadOutline`/`returnToOrigin` call. --
@@ -46,7 +48,7 @@ class FakeNavigationController implements NavigationControllerPort {
   }
   async loadOutline(request: unknown): Promise<unknown> {
     this.loadOutlineRequests.push(request);
-    this.publish({ state: 'ready', generation: 1, symbols: Object.freeze([{ id: 's1', name: 'foo', kind: 12, children: Object.freeze([]) }]), hover: undefined, message: undefined });
+    this.publish({ state: 'ready', generation: 1, symbols: Object.freeze([{ id: 'file:///a.ts:0', name: 'foo', kind: 5, range: range(0, 0, 1, 4), selection: range(0, 0, 0, 5), children: Object.freeze([{ id: 'file:///a.ts:0.0', name: 'bar', kind: 6, range: range(1, 0, 1, 4), selection: range(1, 1, 1, 3), children: Object.freeze([]) }]) }]), hover: undefined, message: undefined });
     return { ok: true, value: [] };
   }
   async references(): Promise<unknown> { return { ok: true, value: [] }; }
@@ -80,6 +82,7 @@ const controller = new LanguageOverlayController({
   fileUri: (path) => `file://${path}`,
   marker: (name, payload) => { markers.push({ name, payload }); },
   ensureLanguage: async () => {},
+  isOutlineVisible: () => true,
 });
 host.registerPanel('outline', { isOpen: () => controller.isOutlineOpen, close: () => controller.closeOutline() });
 host.registerPanel('hover', { isOpen: () => controller.isHoverOpen, close: () => controller.closeHover() });
@@ -111,7 +114,36 @@ assert.equal(subscribedOutlineState, 'ready', 'T116-OVERLAY-02f reads subscribed
 const closed = controller.handleOutlineKeypress(key('escape', ''));
 assert.equal(closed, true, 'T116-OVERLAY-03a handleOutlineKeypress reports handled');
 assert.equal(controller.isOutlineOpen, false, 'T116-OVERLAY-03b escape closes the outline panel');
-assert.equal(navigation.returnToOriginCalls.length, 1, 'T116-OVERLAY-03c escape returns to the navigation origin');
+assert.equal(navigation.returnToOriginCalls.length, 0, 'T116-OVERLAY-03c escape only returns focus; the outline is a persistent tree, not a navigation preview');
+
+// T116-OVERLAY-03d..j: the Outline is a VS Code-style tree -- nested rows, keyboard selection,
+// collapse/expand, reveal in the editor, and a selection that follows the cursor when unfocused.
+assert.deepEqual(controller.outlineRead.model.rows.map((row) => [row.id, row.depth, row.expandable, row.expanded]), [['file:///a.ts:0', 0, true, true], ['file:///a.ts:0.0', 1, false, false]], 'T116-OVERLAY-03d nested symbols flatten into expanded tree rows');
+assert.equal(controller.outlineRead.model.activeId, 'file:///a.ts:0', 'T116-OVERLAY-03e the innermost symbol spanning the cursor line is active');
+controller.openOutline();
+controller.handleOutlineKeypress(key('j', 'j'));
+assert.equal(controller.outlineRead.model.selectedId, 'file:///a.ts:0.0', 'T116-OVERLAY-03f j moves the selection down');
+controller.handleOutlineKeypress(key('h', 'h'));
+assert.equal(controller.outlineRead.model.selectedId, 'file:///a.ts:0', 'T116-OVERLAY-03g h on a leaf moves to its parent');
+controller.handleOutlineKeypress(key('h', 'h'));
+assert.deepEqual(controller.outlineRead.model.rows.map((row) => row.id), ['file:///a.ts:0'], 'T116-OVERLAY-03h h on an expanded row collapses it');
+controller.handleOutlineKeypress(key('l', 'l'));
+assert.deepEqual(controller.outlineRead.model.rows.map((row) => row.id), ['file:///a.ts:0', 'file:///a.ts:0.0'], 'T116-OVERLAY-03i l expands a collapsed row (Files-tree semantics)');
+controller.handleOutlineKeypress(key('j', 'j'));
+controller.handleOutlineKeypress(key('l', 'l'));
+assert.equal(controller.isOutlineOpen, true, 'T116-OVERLAY-03i2 l on a leaf previews and keeps focus, like a Files preview');
+assert.equal(controller.outlineRead.model.selectedId, 'file:///a.ts:0.0', 'T116-OVERLAY-03i3 the previewed row stays selected');
+controller.handleOutlineKeypress({ ...key('u', '\u0015'), ctrl: true });
+assert.equal(controller.outlineRead.model.selectedId, 'file:///a.ts:0', 'T116-OVERLAY-03i4 Ctrl-U moves up (clamped at the first row)');
+controller.handleOutlineKeypress({ ...key('d', '\u0004'), ctrl: true });
+assert.equal(controller.outlineRead.model.selectedId, 'file:///a.ts:0.0', 'T116-OVERLAY-03i5 Ctrl-D moves down (clamped at the last row)');
+controller.handleOutlineKeypress(key('return', '\r'));
+const revealed = session.readView(launchViewId)?.selections;
+assert.equal(controller.isOutlineOpen, false, 'T116-OVERLAY-03j Enter hands focus back to the editor');
+assert.equal(Number(revealed?.members[0]?.head.at.offset), 'alpha\n'.length + 1, 'T116-OVERLAY-03k Enter moves the cursor to the symbol name (LSP selectionRange)');
+controller.syncOutline();
+assert.equal(controller.outlineRead.model.activeId, 'file:///a.ts:0.0', 'T116-OVERLAY-03l the unfocused selection follows the cursor into the child symbol');
+assert.equal(controller.outlineRead.model.selectedId, 'file:///a.ts:0.0', 'T116-OVERLAY-03m unfocused selection tracks the active symbol');
 
 // T116-OVERLAY-04: opening hover while outline is open closes outline through the shared panel
 // registry (`host.closeAllPanels`), matching every other overlay pair's mutual exclusivity.

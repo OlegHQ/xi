@@ -205,6 +205,7 @@ async function teardownControllers(controllers: Controllers, persistence: Persis
   controllers.syntaxAssetsCancellation.dispose();
   resolvedOptionalServices?.hostNavigation.dispose();
   controllers.languageWiring.navigationController?.dispose();
+  controllers.languageWiring.outlineController?.dispose();
   controllers.languageWiring.navigationSubscription?.dispose();
   controllers.overlayFeature.dispose();
   controllers.languageWiring.completionController?.dispose();

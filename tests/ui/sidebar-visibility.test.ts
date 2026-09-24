@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { SidebarController } from '../../packages/workbench/sidebar';
 import { calculateWorkbenchLayout } from '../../packages/ui/src/workbench';
 import { getSearchBounds, getGitDiffBounds } from '../../packages/ui/src/solid/layout';
-const sidebar = new SidebarController({ outline: { hasSymbols: false }, initialWidth: 32 });
+const sidebar = new SidebarController({ initialWidth: 32 });
 const open = calculateWorkbenchLayout(120, 40, false, sidebar.width, sidebar.visible);
 assert.equal(open.editorX, 33);
 sidebar.setVisible(false);
@@ -22,7 +22,7 @@ console.log('Sidebar hide/show restores width and invalidates layout geometry');
 const committedWidths: number[] = [];
 const savedPanels: string[] = [];
 const restored = new SidebarController({
-  outline: { hasSymbols: false }, initiallyVisible: false, initialPanel: 'search',
+  initiallyVisible: false, initialPanel: 'search',
   persistence: { width: 34, setWidth: width => committedWidths.push(width) },
   onPanelChange: panel => savedPanels.push(panel),
 });

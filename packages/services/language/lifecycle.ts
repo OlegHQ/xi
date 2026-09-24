@@ -760,6 +760,8 @@ export class LanguageServerSession implements Disposable {
           callHierarchy: { dynamicRegistration: true },
           typeHierarchy: { dynamicRegistration: true },
           documentLink: { dynamicRegistration: true },
+          // Nested DocumentSymbol results build the Outline tree; flat SymbolInformation cannot.
+          documentSymbol: { hierarchicalDocumentSymbolSupport: true },
         },
       },
       initializationOptions: this.#options.initializationOptions,

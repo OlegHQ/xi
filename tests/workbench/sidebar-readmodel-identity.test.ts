@@ -1,15 +1,10 @@
 import { strict as assert } from 'node:assert';
-import { SidebarController, type SidebarOutlineModelPort } from '../../packages/workbench/sidebar/index';
-
-class FakeOutline implements SidebarOutlineModelPort {
-  hasSymbols = false;
-}
+import { SidebarController } from '../../packages/workbench/sidebar/index';
 
 // G6: readModel() memoizes by a key of the fields it reads -- repeated calls with unchanged
 // state must return the exact same frozen object (identity-stable), not reallocate every call.
 {
-  const outline = new FakeOutline();
-  const sidebar = new SidebarController({ outline });
+  const sidebar = new SidebarController({});
   const first = sidebar.readModel();
   const second = sidebar.readModel();
   assert.equal(first, second, 'G6a readModel() returns the same object when nothing changed');

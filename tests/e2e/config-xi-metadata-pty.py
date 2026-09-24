@@ -132,13 +132,13 @@ with tempfile.TemporaryDirectory(prefix="xi-t036-xi-metadata-pty-") as temporary
         time.sleep(0.05)
         os.write(master, b" ")
         deadline = time.monotonic() + 0.15
-        while b"Prefix <Sp" not in captured and time.monotonic() < deadline:
+        while "─Space─".encode() not in captured and time.monotonic() < deadline:
             if select.select([master], [], [], 0.01)[0]:
                 try:
                     captured.extend(os.read(master, 65536))
                 except OSError:
                     break
-        if b"Prefix <Sp" not in captured:
+        if "─Space─".encode() not in captured:
             raise SystemExit(f"canonical xi.hints.delay-ms did not reach the production help surface\n{captured[-4000:]!r}")
         os.write(master, b"\x1bq")
         child.wait(timeout=5)

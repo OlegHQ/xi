@@ -1,64 +1,43 @@
 import { strict as assert } from 'node:assert';
-import { SidebarController, type SidebarOutlineModelPort } from '../../packages/workbench/sidebar/index';
-
-class FakeOutline implements SidebarOutlineModelPort {
-  hasSymbols = false;
-}
+import { SidebarController } from '../../packages/workbench/sidebar/index';
 
 // T-SIDEBAR-01: a visible Files panel starts expanded so startup never paints it collapsed
-// before the Explorer opens; Outline starts collapsed when the outline model has no symbols yet.
+// before the Explorer opens; Outline starts collapsed.
 {
-  const outline = new FakeOutline();
-  const sidebar = new SidebarController({ outline });
+  const sidebar = new SidebarController({});
   const model = sidebar.readModel();
   assert.equal(model.sections.find((section) => section.id === 'files')?.expanded, true, 'T-SIDEBAR-01a visible Files starts expanded');
-  const hidden = new SidebarController({ outline, initiallyVisible: false });
+  const hidden = new SidebarController({ initiallyVisible: false });
   assert.equal(hidden.readModel().sections.find((section) => section.id === 'files')?.expanded, false, 'T-SIDEBAR-01a2 hidden sidebar starts with Files collapsed');
   hidden.expandSection('files');
   assert.equal(hidden.readModel().sections.find((section) => section.id === 'files')?.expanded, true, 'T-SIDEBAR-01a3 expandSection expands Files');
-  assert.equal(model.sections.find((section) => section.id === 'outline')?.expanded, false, 'T-SIDEBAR-01b Outline starts collapsed with no symbols');
+  assert.equal(model.sections.find((section) => section.id === 'outline')?.expanded, false, 'T-SIDEBAR-01b Outline starts collapsed');
   assert.equal(model.activeSection, 'files', 'T-SIDEBAR-01c Files is the default active section');
 }
 
-// T-SIDEBAR-02: Outline auto-expands once the outline model gains symbols, and auto-collapses
-// again once it loses them -- without any user toggle.
+// T-SIDEBAR-02: Outline expansion is user-controlled; `outlineVisible` is true only while its
+// rows are on screen (sidebar shown, Files tab, section expanded).
 {
-  const outline = new FakeOutline();
-  const sidebar = new SidebarController({ outline });
-  outline.hasSymbols = true;
-  sidebar.refreshOutline();
-  assert.equal(sidebar.readModel().sections.find((section) => section.id === 'outline')?.expanded, true, 'T-SIDEBAR-02a Outline auto-expands once it has symbols');
-  outline.hasSymbols = false;
-  sidebar.refreshOutline();
-  assert.equal(sidebar.readModel().sections.find((section) => section.id === 'outline')?.expanded, false, 'T-SIDEBAR-02b Outline auto-collapses once its symbols are gone');
-}
-
-// T-SIDEBAR-03: a user's manual toggle sticks across refreshes that do not change whether the
-// outline has symbols, but resets once the symbol presence actually flips.
-{
-  const outline = new FakeOutline();
-  outline.hasSymbols = true;
-  const sidebar = new SidebarController({ outline });
-  assert.equal(sidebar.readModel().sections.find((section) => section.id === 'outline')?.expanded, true, 'starts auto-expanded (symbols present at construction)');
-
+  let panel: 'files' | 'search' | 'git' = 'files';
+  const sidebar = new SidebarController({ panelState: () => panel });
+  assert.equal(sidebar.outlineVisible, false, 'T-SIDEBAR-02a collapsed Outline is not visible');
   sidebar.toggleSection('outline');
-  assert.equal(sidebar.readModel().sections.find((section) => section.id === 'outline')?.expanded, false, 'T-SIDEBAR-03a user collapses it manually');
-  sidebar.refreshOutline();
-  assert.equal(sidebar.readModel().sections.find((section) => section.id === 'outline')?.expanded, false, 'T-SIDEBAR-03b the manual collapse sticks while symbol presence is unchanged');
-
-  outline.hasSymbols = false;
-  sidebar.refreshOutline();
-  assert.equal(sidebar.readModel().sections.find((section) => section.id === 'outline')?.expanded, false, 'T-SIDEBAR-03c symbols disappearing (still no-symbols outcome) resets to auto-collapsed');
-  outline.hasSymbols = true;
-  sidebar.refreshOutline();
-  assert.equal(sidebar.readModel().sections.find((section) => section.id === 'outline')?.expanded, true, 'T-SIDEBAR-03d symbols reappearing resets the override and auto-expands again');
+  assert.equal(sidebar.readModel().sections.find((section) => section.id === 'outline')?.expanded, true, 'T-SIDEBAR-02b toggle expands Outline');
+  assert.equal(sidebar.outlineVisible, true, 'T-SIDEBAR-02c expanded Outline on the Files tab is visible');
+  panel = 'search';
+  assert.equal(sidebar.outlineVisible, false, 'T-SIDEBAR-02d another sidebar tab hides the Outline rows');
+  panel = 'files';
+  sidebar.setVisible(false);
+  assert.equal(sidebar.outlineVisible, false, 'T-SIDEBAR-02e a hidden sidebar hides the Outline rows');
+  sidebar.setVisible(true);
+  sidebar.toggleSection('outline');
+  assert.equal(sidebar.outlineVisible, false, 'T-SIDEBAR-02f toggling again collapses it');
 }
 
 // T-SIDEBAR-04: width is clamped to 22-40 cells, and begin/move/commit mirrors the editor
 // splitter's drag shape -- a move before begin(), or after commit(), has no effect.
 {
-  const outline = new FakeOutline();
-  const sidebar = new SidebarController({ outline, initialWidth: 28 });
+  const sidebar = new SidebarController({ initialWidth: 28 });
   assert.equal(sidebar.width, 28, 'T-SIDEBAR-04a initialWidth is honored when in range');
 
   sidebar.moveResize(35);
@@ -79,10 +58,9 @@ class FakeOutline implements SidebarOutlineModelPort {
 
 // T-SIDEBAR-05: a persisted width is honored at construction, and commitResize persists it.
 {
-  const outline = new FakeOutline();
   let persisted = 26;
   const persistence = { get width() { return persisted; }, setWidth: (value: number) => { persisted = value; } };
-  const sidebar = new SidebarController({ outline, persistence });
+  const sidebar = new SidebarController({ persistence });
   assert.equal(sidebar.width, 26, 'T-SIDEBAR-05a a persisted width is honored at construction');
   sidebar.beginResize();
   sidebar.moveResize(33);
@@ -90,4 +68,4 @@ class FakeOutline implements SidebarOutlineModelPort {
   assert.equal(persisted, 33, 'T-SIDEBAR-05b commitResize persists the new width');
 }
 
-console.log('T-SIDEBAR SidebarController passed default-sections, outline-auto-toggle, user-override, resize-clamp and persistence fixtures');
+console.log('T-SIDEBAR SidebarController passed default-sections, outline-toggle/visibility, resize-clamp and persistence fixtures');

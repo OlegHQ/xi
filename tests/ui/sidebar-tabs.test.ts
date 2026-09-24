@@ -6,7 +6,7 @@ import { openTextDocument, type DocumentReadPort, type DocumentSnapshot } from '
 import { createSelectionSet } from '../../packages/selections/src/index';
 import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../../packages/workbench/src/index';
 import type { WorkbenchTabSnapshot } from '../../packages/workbench/session/index';
-import { SidebarController, type SidebarOutlineModelPort, type SidebarReadModel } from '../../packages/workbench/sidebar/index';
+import { SidebarController, type SidebarReadModel } from '../../packages/workbench/sidebar/index';
 import {
   WorkbenchPointerRouter,
   type PointerControlEvent,
@@ -17,7 +17,7 @@ import {
   type PointerSearchPort,
   type PointerWorkbenchEvent,
 } from '../../packages/workbench/input/pointer-router';
-import { WorkbenchRenderable, calculateWorkbenchLayout, computeSidebarTabLayout, computeTabLayout, type WorkbenchTheme } from '../../packages/ui/src/workbench';
+import { WorkbenchRenderable, calculateWorkbenchLayout, computeSidebarSectionLayout, computeSidebarTabLayout, computeTabLayout, type WorkbenchTheme } from '../../packages/ui/src/workbench';
 import { createChromeSurfaceNode, createThemeBridge, mountSolidRoot } from '../../packages/ui/src/solid/composition';
 import { parseColor } from '@opentui/core/renderer';
 import { wireControllerPanels } from '../../apps/xi/src/wiring/pointer';
@@ -60,10 +60,6 @@ function makeWorkbench(): WorkbenchReadPort {
   return { activeViewId: VIEW_ID, readView: (viewId) => viewId === VIEW_ID ? view : undefined, readDocument: (viewId) => viewId === VIEW_ID ? document : undefined };
 }
 
-class FakeOutline implements SidebarOutlineModelPort {
-  hasSymbols = false;
-}
-
 async function renderWithSidebar(sidebar: () => SidebarReadModel, ascii = false): Promise<{ readonly chars: string; readonly setup: Awaited<ReturnType<typeof createTestRenderer>> }> {
   const setup = await createTestRenderer({ width: 120, height: 30, bufferedOutput: 'memory', gatherStats: true });
   const viewport = new WorkbenchRenderable(setup.renderer.root.ctx, { workbench: makeWorkbench(), fileLabel: 'editor.ts', sidebar, ascii });
@@ -83,7 +79,7 @@ async function renderWithSidebar(sidebar: () => SidebarReadModel, ascii = false)
 // T-SIDEBAR-TABS-01: default sections render with chevrons -- Files expanded (▾) from the first
 // frame, Outline collapsed (▸) while its outline model has no symbols yet.
 async function testSectionChevronsDefault(): Promise<void> {
-  const controller = new SidebarController({ outline: new FakeOutline() });
+  const controller = new SidebarController({});
   const { chars, setup } = await renderWithSidebar(() => controller.readModel());
   assert.match(chars, /▾ .*Files/u, 'T-SIDEBAR-TABS-01a Files renders expanded before the Explorer opens');
   assert.match(chars, /▸ Outline/u, 'T-SIDEBAR-TABS-01b Outline renders collapsed with a right chevron while empty');
@@ -93,21 +89,19 @@ async function testSectionChevronsDefault(): Promise<void> {
   setup.renderer.destroy();
 }
 
-// T-SIDEBAR-TABS-02: once the outline model has symbols, the Outline section auto-expands
-// (chevron flips), matching `SidebarController.refreshOutline`'s auto-toggle contract.
+// T-SIDEBAR-TABS-02: an expanded Outline section flips its chevron.
 async function testSectionChevronsOutlineExpanded(): Promise<void> {
-  const outline = new FakeOutline();
-  outline.hasSymbols = true;
-  const controller = new SidebarController({ outline });
+  const controller = new SidebarController({});
+  controller.expandSection('outline');
   const { chars, setup } = await renderWithSidebar(() => controller.readModel());
-  assert.match(chars, /▾ Outline/u, 'T-SIDEBAR-TABS-02 Outline expands with a down chevron once it has symbols');
+  assert.match(chars, /▾ Outline/u, 'T-SIDEBAR-TABS-02 Outline expands with a down chevron');
   setup.renderer.destroy();
 }
 
 // T-SIDEBAR-TABS-03: the ASCII theme renders plain one-character chevrons ('v'/'>') instead
 // of the Unicode triangles, matching the rest of the ASCII fallback policy.
 async function testSectionChevronsAscii(): Promise<void> {
-  const controller = new SidebarController({ outline: new FakeOutline() });
+  const controller = new SidebarController({});
   controller.expandSection('files');
   const { chars, setup } = await renderWithSidebar(() => controller.readModel(), true);
   assert.match(chars, /v Files/u, 'T-SIDEBAR-TABS-03a ASCII Files chevron is a plain "v"');
@@ -200,7 +194,7 @@ function sidebarSplitterEvent(action: PointerControlEvent['action'], firstSize: 
 // T-SIDEBAR-TABS-06: dragging the sidebar splitter through `WorkbenchPointerRouter` resizes
 // `SidebarController`'s width, clamped to [22, 40] -- not the editor session's split tree.
 function testSidebarSplitterDragChangesWidth(): void {
-  const controller = new SidebarController({ outline: new FakeOutline(), initialWidth: 28 });
+  const controller = new SidebarController({ initialWidth: 28 });
   const sessionResizeCalls: unknown[] = [];
   const router = new WorkbenchPointerRouter({
     session: { resizeSplit: (...args: unknown[]) => { sessionResizeCalls.push(args); return { ok: true }; } } as never,
@@ -233,6 +227,41 @@ function testSidebarSplitterDragChangesWidth(): void {
   router.handleControl(sidebarSplitterEvent('commit', 85, 15));
 
   assert.equal(sessionResizeCalls.length, 0, 'T-SIDEBAR-TABS-06e the sidebar splitter never touches the editor split tree');
+  router.dispose();
+}
+
+// T-SIDEBAR-TABS-06f: the Outline header row is the Files/Outline splitter -- a drag sets the
+// Outline height (the section layout clamps it to a 3-row floor each), a press without a drag
+// is still the header click that toggles the section.
+function testOutlineSplitterDrag(): void {
+  const controller = new SidebarController({});
+  controller.expandSection('outline');
+  let toggles = 0;
+  const router = new WorkbenchPointerRouter({
+    session: { resizeSplit: () => ({ ok: true }) } as never,
+    marker: () => {},
+    clock: { monotonicMilliseconds: () => 0, schedule: () => ({ dispose: () => {} }), sleep: async () => ({ ok: true, value: undefined }) },
+    pointerCapture: { dispatch: () => true, cancel: () => {}, dispose: () => {} } as never,
+    contextMenu: { openAt: () => {} },
+    picker: noopPicker, pickerModel: noopPickerModel, explorer: noopExplorer, search: noopSearch, problems: noopProblems,
+    resizeOutline: height => controller.resizeOutline(height),
+  });
+  router.publishControls([{ id: 'sidebar-section.outline', kind: 'button', enabled: true, activate: () => { toggles += 1; } }]);
+  const event = (action: PointerControlEvent['action'], firstSize: number): PointerWorkbenchEvent => ({
+    phase: action === 'begin' ? 'down' : action === 'commit' ? 'up' : 'move', viewId: 'view-1', cell: { row: 0, column: 0 }, button: action === 'begin' ? 0 : null,
+    control: { id: 'splitter:outline', kind: 'splitter', action, firstSize, secondSize: 30 - firstSize, availableCells: 30 },
+  });
+  router.handleControl(event('begin', 12));
+  router.handleControl(event('move', 20));
+  router.handleControl(event('commit', 20));
+  assert.equal(controller.readModel().outlineHeight, 20, 'T-SIDEBAR-TABS-06f dragging the Outline header sets its height');
+  assert.equal(computeSidebarSectionLayout(controller.readModel(), 33).outlineContentHeight, 20, 'T-SIDEBAR-TABS-06g the section layout honors the dragged height');
+  controller.resizeOutline(99);
+  assert.equal(computeSidebarSectionLayout(controller.readModel(), 33).filesContentHeight, 3, 'T-SIDEBAR-TABS-06h Files keeps its 3-row floor');
+  assert.equal(toggles, 0, 'T-SIDEBAR-TABS-06i a drag is not a header click');
+  router.handleControl(event('begin', 12));
+  router.handleControl(event('commit', 12));
+  assert.equal(toggles, 1, 'T-SIDEBAR-TABS-06j a press without a drag toggles the Outline section');
   router.dispose();
 }
 
@@ -278,7 +307,6 @@ function testFilesTabSwitchesBackFromOtherPanels(): void {
   const gitPanelFeature = feature('git');
   const gitDiffFeature = feature('git-diff');
   const sidebarController = new SidebarController({
-    outline: { hasSymbols: false },
     panelState: () => (searchFeature.isOpen ? 'search' : gitPanelFeature.isOpen ? 'git' : 'files'),
   });
   const controls = new Map<string, () => void>();
@@ -317,6 +345,7 @@ await testSectionChevronsAscii();
 await testTabBarAttributes();
 testTabOverflowKeepsActiveVisible();
 testSidebarSplitterDragChangesWidth();
+testOutlineSplitterDrag();
 testLayoutHonorsSidebarWidthOverride();
 testSidebarTabTargetsFillHeader();
-console.log('T-SIDEBAR-TABS sidebar/tab chrome passed section-chevron, files-tab-switchback, outline auto-expand, ASCII fallback, tab-attribute, overflow, splitter-drag and layout-override fixtures');
+console.log('T-SIDEBAR-TABS sidebar/tab chrome passed section-chevron, files-tab-switchback, outline expand, ASCII fallback, tab-attribute, overflow, splitter-drag and layout-override fixtures');

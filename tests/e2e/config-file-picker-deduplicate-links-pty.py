@@ -55,9 +55,10 @@ with tempfile.TemporaryDirectory(prefix="xi-file-picker-dedupe-pty-") as tempora
         os.write(master, b" f")
         wait_for(master, captured, b"Files  >", 5)
         os.write(master, b"linked.txt")
-        wait_for(master, captured, b"/target/linked.txt", 5)
-        os.write(master, b"\x1b[B")
+        # Equal filename matches tie-break alphabetically: alias/ first, target/ below it.
         wait_for(master, captured, b"/alias/linked.txt", 5)
+        os.write(master, b"\x1b[B")
+        wait_for(master, captured, b"/target/linked.txt", 5)
         if b"XI_PICKER_PREVIEW" not in captured or b"/alias/linked.txt" not in captured or b"/target/linked.txt" not in captured:
             raise SystemExit(f"deduplicate-links=false did not retain both linked entries: {captured[-4000:]!r}")
         os.write(master, b"\x1bq")

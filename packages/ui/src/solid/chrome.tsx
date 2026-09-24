@@ -2,7 +2,7 @@
 import { useTerminalDimensions } from '@opentui/solid';
 import type { JSX } from '@opentui/solid';
 import type { MouseEvent } from '@opentui/core/renderer';
-import { createSignal, onCleanup } from 'solid-js';
+import { Index, createSignal, onCleanup } from 'solid-js';
 import { readableTextColor } from '../../theme/readability';
 import { sidebarTheme } from '../../theme/sidebar';
 import type { Disposable } from '../../../contracts/src/index';
@@ -40,6 +40,8 @@ export interface ChromeSurfaceSpec {
   readonly onPointer?: (event: MouseEvent) => void;
 }
 
+const SIDEBAR_SECTION_IDS = ['files', 'outline'] as const;
+
 export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (setter: (theme: WorkbenchTheme) => void) => Disposable }): JSX.Element {
   const dimensions = useTerminalDimensions();
   const [theme, setTheme] = createSignal(spec.theme);
@@ -65,25 +67,28 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
     const size = dimensions();
     return calculateWorkbenchLayout(size.width, size.height, spec.showBottomPanel, spec.sidebar?.().width, spec.sidebar?.().visible !== false, bufferlineVisible());
   };
-  const sidebarSections = () => {
-    version();
-    const model = spec.sidebar?.();
-    const chevron = (expanded: boolean): string => (spec.ascii === true ? (expanded ? 'v' : '>') : (expanded ? '▾' : '▸'));
-    if (model === undefined) return <text position="absolute" left={0} top={1} fg={paint(sidebar().foreground)}>{`${spec.ascii === true ? '> ' : '▾ '}${spec.fileLabel}\n${spec.ascii === true ? '> ' : '  '}Outline`}</text>;
-    // Each header sits on its layout row, so an expanded Files section keeps Outline at the
-    // bottom even before the Explorer surface paints the rows between them.
-    const rows = computeSidebarSectionLayout(model, layout().statusRow);
-    return model.sections.map(section => {
-      const style = attributes('ui.sidebar');
-      return <text position="absolute" left={0} top={section.id === 'files' ? rows.filesHeaderRow : rows.outlineHeaderRow} fg={paint(sidebar().foreground)}>
-        <span style={{
-          ...style,
-          fg: paint(sidebar().foreground),
-          bg: paint(sidebar().surface),
-          bold: section.expanded || style.bold,
-        }}>{`${chevron(section.expanded)} ${section.label}`}</span>
-      </text>;
-    });
+  const chevron = (expanded: boolean): string => (spec.ascii === true ? (expanded ? 'v' : '>') : (expanded ? '▾' : '▸'));
+  const sidebarModel = () => { version(); return spec.sidebar?.(); };
+  // Each header sits on its layout row, so an expanded Files section keeps Outline at the
+  // bottom even before the Explorer surface paints the rows between them. `<Index>` keeps the
+  // header nodes alive across renders: a drag on the Outline header (its resize splitter) stays
+  // captured by the same node while the header moves.
+  const sidebarSection = (id: 'files' | 'outline') => {
+    const section = () => sidebarModel()?.sections.find(candidate => candidate.id === id);
+    const top = () => {
+      const model = sidebarModel();
+      if (model === undefined) return 0;
+      const rows = computeSidebarSectionLayout(model, layout().statusRow);
+      return id === 'files' ? rows.filesHeaderRow : rows.outlineHeaderRow;
+    };
+    const style = () => attributes('ui.sidebar');
+    // Not selectable: a press on the Outline header begins its resize drag, not a text selection.
+    return <text position="absolute" left={0} top={top()} fg={paint(sidebar().foreground)} selectable={false}>
+      <span style={{ ...style(), fg: paint(sidebar().foreground), bg: paint(sidebar().surface), bold: section()?.expanded === true || style().bold }}>
+        {`${chevron(section()?.expanded === true)} ${section()?.label ?? ''}`}</span>
+      {id === 'outline' && <span style={{ fg: color('ui.background.separator', 'fg', color('ui.window', 'fg', theme().border)), bg: paint(sidebar().surface) }}>
+        {` ${(spec.ascii === true ? '-' : '─').repeat(Math.max(0, layout().sidebarWidth - (section()?.label.length ?? 0) - 3))}`}</span>}
+    </text>;
   };
   const sidebarTabs = () => {
     version();
@@ -252,10 +257,15 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
       <box position="absolute" left={0} top={0} width={layout().sidebarWidth} height={layout().statusRow}
         visible={layout().sidebarVisible} backgroundColor={paint(sidebar().surface)}>
         {sidebarTabs()}
-        {sidebarSections()}
+        {spec.sidebar === undefined
+          ? <text position="absolute" left={0} top={1} fg={paint(sidebar().foreground)}>{`${spec.ascii === true ? '> ' : '▾ '}${spec.fileLabel}\n${spec.ascii === true ? '> ' : '  '}Outline`}</text>
+          : <Index each={SIDEBAR_SECTION_IDS}>{id => sidebarSection(id())}</Index>}
       </box>
       <box position="absolute" left={layout().sidebarWidth} top={0} width={1} height={layout().statusRow}
-        visible={layout().sidebarVisible} backgroundColor={color('ui.background.separator', 'fg', color('ui.window', 'fg', theme().border))} />
+        visible={layout().sidebarVisible} backgroundColor={color('ui.background', 'bg', theme().background)}>
+        <text selectable={false} content={(spec.ascii === true ? '|' : '│').repeat(layout().statusRow)}
+          fg={color('ui.background.separator', 'fg', color('ui.window', 'fg', theme().border))} />
+      </box>
       {strips().map(strip => <box position="absolute" left={strip.x} top={strip.y} width={strip.width} height={1} backgroundColor={color('ui.bufferline.background', 'bg', theme().surfaceActive)}>
         <text fg={readableTextColor(color('ui.bufferline', 'fg', theme().foreground), color('ui.bufferline', 'bg', theme().surface), theme().foreground)}>{tabContent(strip.width, strip.viewId)}</text>
       </box>)}

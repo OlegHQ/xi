@@ -260,7 +260,6 @@ export type {
 export { SidebarController } from '../../sidebar';
 export type {
   SidebarControllerOptions,
-  SidebarOutlineModelPort,
   SidebarReadModel,
   SidebarSection,
   SidebarSectionId,
