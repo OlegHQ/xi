@@ -32,7 +32,8 @@ assert.ok(existsSync(manifestPath), 'T064-PACKAGE-RELEASE-03 staging includes a 
 assert.ok(existsSync(join(stagedDirectory, 'THIRD-PARTY-NOTICES.md')), 'T064-PACKAGE-RELEASE-04 staging includes dependency notices');
 assert.ok(existsSync(join(stagedDirectory, 'native-assets.sha256')), 'T064-PACKAGE-RELEASE-05 staging includes native checksums');
 assert.ok(existsSync(join(stagedDirectory, 'licenses', '@opentui__core', 'LICENSE')), 'T064-PACKAGE-RELEASE-06 staging includes license text');
-const archiveName = 'xi-0.0.2-linux-arm64.tar.gz';
+const version = (JSON.parse(readFileSync('package.json', 'utf8')) as { readonly version: string }).version;
+const archiveName = `xi-${version}-linux-arm64.tar.gz`;
 const archivePath = join(assetsDirectory, archiveName);
 assert.ok(existsSync(archivePath), 'T064-PACKAGE-RELEASE-07 creates a versioned Linux ARM64 archive');
 assert.ok(existsSync(join(assetsDirectory, 'SHA256SUMS')), 'T064-PACKAGE-RELEASE-08 creates an archive checksum manifest');
@@ -52,7 +53,7 @@ const configPty = spawnSync('python3', ['tests/e2e/config-user-pty.py', '--binar
 });
 assert.equal(configPty.status, 0, `T064-PACKAGE-RELEASE-14 staged binary obeys XDG/HOME/CLI/workspace config paths: ${configPty.stdout ?? ''}${configPty.stderr ?? ''}`);
 
-const simulatedRelease = join(releaseDirectory, 'release', 'download', 'v0.0.2');
+const simulatedRelease = join(releaseDirectory, 'release', 'download', `v${version}`);
 mkdirSync(simulatedRelease, { recursive: true });
 const targets = [
   { os: 'Linux', arch: 'x86_64', target: 'linux-x64' },
@@ -62,7 +63,7 @@ const targets = [
 ];
 const sums: string[] = [];
 for (const { target } of targets) {
-  const name = `xi-0.0.2-${target}.tar.gz`;
+  const name = `xi-${version}-${target}.tar.gz`;
   const destination = join(simulatedRelease, name);
   copyFileSync(archivePath, destination);
   sums.push(`${createHash('sha256').update(readFileSync(destination)).digest('hex')}  ${name}`);
@@ -74,7 +75,7 @@ const installerEnv = {
   ...process.env,
   PATH: `/usr/bin:/bin`,
   HOME: join(releaseDirectory, 'home'),
-  XI_VERSION: 'v0.0.2',
+  XI_VERSION: `v${version}`,
   XI_RELEASE_URL: `file://${join(releaseDirectory, 'release')}`,
   XI_INSTALL_DIR: installDirectory,
 };
@@ -88,7 +89,7 @@ for (const { os, arch, target } of targets) {
 }
 assert.ok(existsSync(join(installDirectory, 'xi')), 'T064-INSTALL-02 installs executable into the selected user directory');
 writeFileSync(join(installDirectory, 'xi'), 'existing working binary');
-writeFileSync(join(simulatedRelease, 'xi-0.0.2-linux-arm64.tar.gz'), 'corrupted archive');
+writeFileSync(join(simulatedRelease, archiveName), 'corrupted archive');
 const arm64Shim = join(releaseDirectory, 'shim-linux-arm64');
 const corrupted = spawnSync('sh', [installer], { encoding: 'utf8', env: { ...installerEnv, PATH: `${arm64Shim}:/usr/bin:/bin` } });
 assert.notEqual(corrupted.status, 0, 'T064-INSTALL-03 rejects a corrupted archive');
