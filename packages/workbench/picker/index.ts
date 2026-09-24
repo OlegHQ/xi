@@ -36,6 +36,8 @@ export interface PickerControllerOptions<TEntry extends WorkbenchPickerEntry, TT
   readonly startFileIndexPopulation: () => Promise<void>;
   /** Populates ignored file paths only after the user enables them in the picker. */
   readonly startIgnoredFileIndexPopulation?: () => Promise<void>;
+  /** Loads the custom theme catalog on first theme-picker use. */
+  readonly loadThemeCatalog?: () => Promise<void>;
   readonly toggleMouseMode: () => boolean;
   readonly openDiagnostic?: (id: string) => Promise<void>;
   /** Opens the user's config.toml for the config picker/`:config-open` command. */
@@ -103,7 +105,10 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
     this.#query = '';
     this.#open = true;
     if (mode === 'file') void this.#options.startFileIndexPopulation();
-    if (mode === 'theme') this.#options.theme.beginPreview();
+    if (mode === 'theme') {
+      this.#options.theme.beginPreview();
+      void this.#options.loadThemeCatalog?.().then(() => { if (this.#open && this.#mode === 'theme') this.refresh(); });
+    }
     this.#runQuery();
   }
 

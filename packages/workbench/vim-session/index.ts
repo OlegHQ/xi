@@ -2247,6 +2247,9 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
           }
           return;
         }
+        // The ghost classifies the whole `gg`/`g_`/`ge` motion, not the final raw `g` keystroke.
+        ghostMotionKey = key;
+        ghostMotionCount = command.count.value;
         const invocation = motionInvocation(key, command.count.value);
         if (invocation !== null && motionCursor !== undefined) {
           const moved = resolveVimMotion(document.snapshot(), motionCursor, invocation as Parameters<typeof resolveVimMotion>[2]);

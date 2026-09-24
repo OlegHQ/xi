@@ -1,0 +1,77 @@
+name: OpenTUI native libraries
+
+# Builds and strips the fork's native libraries for every Xi target. Pack them into
+# vendor/opentui/xi-packages with `bun scripts/xi-packages.ts <artifact-dir>`; see
+# docs/installation/opentui-fork.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-assets:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+          use-cache: false
+      - name: Build OpenTUI native libraries for all targets
+        run: bun run prepare:zig && zig build -j2 -Dall -Doptimize=ReleaseFast
+        working-directory: vendor/opentui/packages/native
+      - name: Install cross-platform strip tool
+        run: brew list llvm >/dev/null 2>&1 || brew install llvm
+      - name: Stage native libraries and checksum inventory
+        run: |
+          set -euo pipefail
+          LLVM_OBJCOPY="$(brew --prefix llvm)/bin/llvm-objcopy"
+          LLVM_NM="$(brew --prefix llvm)/bin/llvm-nm"
+          LLVM_READOBJ="$(brew --prefix llvm)/bin/llvm-readobj"
+          mkdir -p dist/native
+          : > dist/native-assets.sha256
+          stage() {
+            target="$1"
+            source_dir="$2"
+            package="$3"
+            library="$4"
+            source="vendor/opentui/packages/native/lib/$source_dir/$library"
+            test -s "$source"
+            mkdir -p "dist/native/$target"
+            cp "$source" "dist/native/$target/$library"
+            case "$target" in
+              linux-*) "$LLVM_OBJCOPY" --strip-unneeded "dist/native/$target/$library" ;;
+              darwin-*) xcrun strip -S -x "dist/native/$target/$library" ;;
+            esac
+            case "$target" in
+              linux-*) symbols="$("$LLVM_NM" -D --defined-only "dist/native/$target/$library")" ;;
+              darwin-*) symbols="$(xcrun nm -gU "dist/native/$target/$library")" ;;
+              win32-*) symbols="$("$LLVM_READOBJ" --coff-exports "dist/native/$target/$library")" ;;
+            esac
+            grep -q 'textBufferSetStyledTextWithUnderlineColors' <<< "$symbols"
+            grep -q 'bufferSetUnderlineColor' <<< "$symbols"
+            hash="$(shasum -a 256 "dist/native/$target/$library" | cut -d ' ' -f 1)"
+            printf '%s  node_modules/@opentui/%s/%s\n' "$hash" "$package" "$library" >> dist/native-assets.sha256
+          }
+          stage linux-x64 x86_64-linux core-linux-x64 libopentui.so
+          stage linux-arm64 aarch64-linux core-linux-arm64 libopentui.so
+          stage linux-x64-musl x86_64-linux-musl core-linux-x64-musl libopentui.so
+          stage linux-arm64-musl aarch64-linux-musl core-linux-arm64-musl libopentui.so
+          stage darwin-x64 x86_64-macos core-darwin-x64 libopentui.dylib
+          stage darwin-arm64 aarch64-macos core-darwin-arm64 libopentui.dylib
+          stage win32-x64 x86_64-windows core-win32-x64 opentui.dll
+          stage win32-arm64 aarch64-windows core-win32-arm64 opentui.dll
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opentui-native
+          path: |
+            dist/native
+            dist/native-assets.sha256
+          if-no-files-found: error
+          retention-days: 7

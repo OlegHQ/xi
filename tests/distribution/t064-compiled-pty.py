@@ -103,6 +103,9 @@ def main() -> None:
             # transcript may contain `econd` instead of the full word.
             if source.name.encode("utf-8") not in captured or not (b"second" in captured or b"econd" in captured):
                 raise SystemExit(f"T064 compiled PTY {label} run did not render file:line content: {captured[-1024:]!r}")
+            # Runtime warnings go to the PTY and scroll the alternate-screen frame.
+            if b"(node:" in captured:
+                raise SystemExit(f"T064 compiled PTY {label} run printed a runtime warning into the frame")
             if b"\x1b[?1049l" not in captured or b"\x1b[?25h" not in captured:
                 raise SystemExit(f"T064 compiled PTY {label} run did not restore alternate screen/cursor")
         print(f"T064 compiled PTY passed isolated no-Neovim launch, q/:q shutdown, resize and terminal restoration; q_bytes={len(quit_capture)} ex_quit_bytes={len(ex_quit_capture)} resize_bytes={len(resized_capture)}")

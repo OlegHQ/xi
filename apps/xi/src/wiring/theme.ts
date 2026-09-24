@@ -54,12 +54,12 @@ export interface ThemeWiring {
   readonly themeController: ThemeController<WorkbenchTheme>;
   readonly persistedThemeId: string | undefined;
   loadCustomTheme(id: string): Promise<boolean>;
+  /** Loads the full custom catalog once, on first theme-picker use. */
   loadCustomThemes(): Promise<void>;
-  disposeStateCancellation(): void;
 }
 
 /** Constructs the theme controller and loads only a persisted custom selection before the
- * first frame. The full picker catalog loads after that frame. */
+ * first frame. The full catalog loads only when the theme picker first needs it. */
 export async function createThemeWiring(filesystem: NodeFilesystemPort, statusMessages: StatusMessageController): Promise<ThemeWiring> {
   const editorState = new EditorStatePersistence(filesystem, `${process.env.HOME ?? process.cwd()}/.xi.toml`, message => statusMessages.publish(message));
   const themeStateCancellation = new CancellationSource();
@@ -80,11 +80,12 @@ export async function createThemeWiring(filesystem: NodeFilesystemPort, statusMe
     themeController.addCustomTheme(id, custom.label, custom.theme);
     return true;
   };
-  const loadCustomThemes = async (): Promise<void> => {
+  let catalog: Promise<void> | undefined;
+  const loadCustomThemes = (): Promise<void> => catalog ??= (async () => {
     for (const [customId, custom] of await discoverCustomThemes(filesystem, themeStateCancellation, statusMessages)) {
       themeController.addCustomTheme(customId, custom.label, custom.theme);
     }
-  };
+  })();
   if (persistedThemeId !== undefined && !themeController.has(persistedThemeId)) await loadCustomThemeById(persistedThemeId);
   if (persistedThemeId !== undefined && themeController.has(persistedThemeId)) themeController.setActiveId(persistedThemeId);
   return {
@@ -93,6 +94,5 @@ export async function createThemeWiring(filesystem: NodeFilesystemPort, statusMe
     persistedThemeId,
     loadCustomTheme: loadCustomThemeById,
     loadCustomThemes,
-    disposeStateCancellation: () => themeStateCancellation.dispose(),
   };
 }

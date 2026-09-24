@@ -175,9 +175,12 @@ class WorkspaceIgnoreMatcher {
         if (index % 256 === 255) await new Promise<void>((done) => setImmediate(done));
         const rule = this.#rules[index]!;
         if (rule.directoryOnly && !directory) continue;
-        const candidate = relative(rule.base, current).replaceAll('\\', '/');
-        if (candidate === '..' || candidate.startsWith('../') || candidate === '') continue;
-        const subject = rule.basenameOnly ? basename(candidate) : candidate;
+        // Both paths are already resolved, so a prefix test replaces path.relative, which
+        // dominated index CPU when run for every entry and rule.
+        const start = rule.base.endsWith(sep) ? rule.base.length : rule.base.length + 1;
+        if (current.length <= start || !current.startsWith(rule.base) || current[start - 1] !== sep) continue;
+        const candidate = current.slice(start).replaceAll('\\', '/');
+        const subject = rule.basenameOnly ? candidate.slice(candidate.lastIndexOf('/') + 1) : candidate;
         if (!rule.glob.match(subject)) continue;
         if (matched === undefined || rule.priority > matched.priority || (rule.priority === matched.priority && rule.base.length >= matched.base.length)) matched = rule;
       }
@@ -650,11 +653,12 @@ export class NodeFilesystemPort implements FilesystemPort {
           if (++visited > maxVisitedEntries) return { ok: false, error: { code: 'enumeration-limit', message: 'file enumeration visit limit reached', retryable: false } };
           const relativePath = directory.relative.length === 0 ? entry.name : `${directory.relative}/${entry.name}`;
           const absolutePath = join(directory.absolute, entry.name);
+          if (ignored.has(entry.name)) continue;
           // Ancestor directories have already passed this matcher before entering the
           // queue; checking them again for every child multiplies deep-tree work.
           if (await ignoreMatcher.value.ignored(relativePath, entry.isDirectory(), absolutePath, false)) continue;
           if (entry.isDirectory()) {
-            if (!ignored.has(entry.name) && (maxDepth === undefined || directory.depth < maxDepth)) queue.push({ absolute: absolutePath, relative: relativePath, ancestors: directory.ancestors, depth: directory.depth + 1 });
+            if ((maxDepth === undefined || directory.depth < maxDepth)) queue.push({ absolute: absolutePath, relative: relativePath, ancestors: directory.ancestors, depth: directory.depth + 1 });
             continue;
           }
           let fileIdentity = resolve(directory.ancestors.at(-1) ?? directory.absolute, entry.name);
@@ -662,7 +666,7 @@ export class NodeFilesystemPort implements FilesystemPort {
             let target: import('node:fs').Stats;
             try { target = await fs.stat(absolutePath); } catch { continue; }
             if (target.isDirectory()) {
-              if (!ignored.has(entry.name) && (maxDepth === undefined || directory.depth < maxDepth)) queue.push({ absolute: absolutePath, relative: relativePath, ancestors: directory.ancestors, depth: directory.depth + 1 });
+              if ((maxDepth === undefined || directory.depth < maxDepth)) queue.push({ absolute: absolutePath, relative: relativePath, ancestors: directory.ancestors, depth: directory.depth + 1 });
               continue;
             }
             if (!target.isFile()) continue;
@@ -672,7 +676,7 @@ export class NodeFilesystemPort implements FilesystemPort {
           } else if (!entry.isFile() || entry.isSymbolicLink()) continue;
           if (deduplicateLinks && visitedFiles.has(fileIdentity)) continue;
           if (deduplicateLinks) visitedFiles.add(fileIdentity);
-          batch.push(Object.freeze({ relativePath, absolutePath, hidden: relativePath.startsWith('.') || relativePath.includes('/.') }));
+          batch.push({ relativePath, absolutePath, hidden: relativePath.startsWith('.') || relativePath.includes('/.') });
           total += 1;
           if (batch.length >= 128) {
             await onBatch(Object.freeze(batch.splice(0, batch.length)));

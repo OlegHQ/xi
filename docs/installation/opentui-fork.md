@@ -13,54 +13,41 @@ bun install --frozen-lockfile
 bun run apps/xi/src/main.ts
 ```
 
-`package.json` applies the fork's `patches/opentui-core-0.5.11.patch` through
-Bun's `patchedDependencies`. Both published Bun and Node chunks consume the
-same source change. Helix underline colour adds native OpenTUI symbols, so a
-source-only Bun patch cannot use the official 0.5.11 platform binaries. The
-fork release must publish matching owned platform packages before a fresh
-registry install can use underline colours. Xi release builds instead compile
-the pinned fork for all packaged targets and bundle those native libraries.
+`package.json` installs the fork from committed tarballs in
+`vendor/opentui/xi-packages/`: `@opentui/core` and `@opentui/solid` built from the
+submodule source, and all eight `@opentui/core-<platform>` native packages through
+`overrides`. A plain `bun install` therefore gets the fork everywhere (local
+checkouts and every release runner) with no Zig toolchain, patching or native
+overlay step. Bun installs every overridden native package, but compiled builds
+fold `process.platform`/`process.arch`, so an executable embeds only its target's
+library.
 
-The native assets in `native-assets.sha256` are built from submodule
-`ac9a6156d17680c4b6f8b7ddd45a1a96424c3be7` with Zig 0.16.0:
+The fork's Solid package defers Babel until an actual TSX transform is needed and
+supports Xi's disposable `.cache/solid` transform cache. Source changes and
+compiler/runtime changes invalidate that cache. A fresh cache still pays
+compilation cost; it is not an instant cold-source launch. `@opentui/core/renderer`
+is the fork's re-export-only `renderer-entry.ts`: it exposes renderer primitives
+from the same shared chunks as the full package without loading the all-widgets
+entrypoint.
 
-```sh
-cd vendor/opentui/packages/native
-bun run prepare:zig
-zig build -j2 -Dall -Doptimize=ReleaseFast
-```
+The native libraries are built and stripped by the manual `OpenTUI native
+libraries` workflow (`.github/workflows/opentui-native.yml`) with Zig 0.16.0,
+which also checks for the fork's underline exports. The published OpenTUI 0.5.11
+binaries lack those exports and cannot replace them. `native-assets.sha256` lists
+the committed libraries; `bun run package:audit`, which every release build runs,
+rejects any other installed library.
 
-The release workflow strips distribution copies, checks for the fork's native
-underline symbols, records their exact hashes in each release manifest, and
-smoke-tests compiled Xi on each target. Native build IDs change between clean
-builds, so the committed checksum inventory records a qualified build rather
-than serving as a byte-for-byte pin for subsequent builds. The published
-OpenTUI 0.5.11 binaries predate the fork's native underline symbols, so they
-cannot replace the pinned fork assets. `bun run package:audit` checks the
-installed asset against the manifest.
-
-The pinned Solid 0.5.11 package also receives
-`patches/opentui-solid-0.5.11.patch`. It defers Babel until an actual TSX transform
-is needed and supports Xi's disposable `.cache/solid` transform cache. Source
-changes and compiler/runtime changes invalidate that cache. A fresh cache still
-pays compilation cost; it is not an instant cold-source launch.
-
-The generator transpiles the fork's `lazy-library.ts` and
-`materialize-library.ts`, appends them to the published bundles, and updates
-native initialization. It does not maintain a second handwritten implementation.
-It also generates `@opentui/core/renderer` from the fork's re-export-only
-`renderer-entry.ts`. Published export aliases are resolved to existing shared
-chunks: the narrow entry and full package use identical classes, functions and
-native owners. This avoids loading the large all-widgets entrypoint; dependencies
-inside the renderer's shared chunks still load. The normal fork build emits the
-same public entrypoint for Bun and Node.
-To regenerate or verify, obtain the pristine published `@opentui/core@0.5.11`
-package in a temporary directory:
+After changing fork source or native code, commit it in the submodule, run the
+native workflow on a branch that pins that commit, then repack and verify:
 
 ```sh
-bun vendor/opentui/scripts/xi-startup-patch.ts /path/to/pristine/package
-bun vendor/opentui/scripts/xi-startup-patch.ts /path/to/pristine/package --check
-bun install --frozen-lockfile
+gh run download <run id> -n opentui-native -D /tmp/opentui-native
+cd vendor/opentui
+bun scripts/xi-packages.ts /tmp/opentui-native
+bun scripts/xi-packages.ts /tmp/opentui-native --check
+cd ../..
+cp /tmp/opentui-native/native-assets.sha256 docs/installation/native-assets.sha256
+bun install
 bun run check
 bun run test:ui
 bun run test:e2e -- --suite interaction
@@ -70,8 +57,9 @@ bun run test:startup
 
 `bun run package:build` and `bun run package:release` compile an ESM executable.
 Explicit ESM is required because Xi and its dependencies use top-level await.
-Bytecode is disabled: with Bun 1.4.2 it increased the file-picker result p95
-from 75 ms to over 200 ms on the same host and fixture. Run `./dist/xi [file]`
+ESM bytecode is enabled: it skips bundle parsing and roughly halves time to first
+frame. An earlier picker-latency regression attributed to bytecode did not reproduce
+with a non-full disk; `bun run perf-gates` guards it. Run `./dist/xi [file]`
 after a build; `bun run apps/xi/src/main.ts [file]` remains the source development
 command. Rebuild after source or dependency changes.
 
@@ -82,22 +70,18 @@ bundle; it is measured separately from direct source execution. Tests install th
 source plugin through Bun's `[test].preload` so TSX is transformed before test
 module loading, rather than relying on sibling-import evaluation order.
 
-To regenerate the Solid patch, run
-`bun vendor/opentui/scripts/xi-solid-patch.ts /path/to/pristine/solid` (or append
-`--check`). Use a fresh Bun installation cache after changing patches, as described
-in `vendor/opentui/XI-STARTUP.md`, and verify installed file hashes before timing.
-
 The first native binding opens the library and owns callbacks. Other bindings
 load on first access and become cached direct functions. Closing releases every
 opened handle before the callback owner, even when one close fails. Unavailable
 deferred symbols raise their backend errors when accessed.
 
-Unix Bun executables extract the embedded native library once into a private
-temporary directory so all bindings share native state. Orderly exit removes
-the directory; SIGKILL cannot run cleanup. Windows embedded DLLs retain eager
+Unix Bun executables extract the embedded native library into
+`$XDG_CACHE_HOME/opentui` (default `~/.cache/opentui`), named by content hash, so
+all bindings share native state; later launches reuse the file and killed
+processes leave nothing behind. If the cache is unusable they fall back to a
+private temporary copy removed on orderly exit. Windows embedded DLLs retain eager
 binding because Windows cannot delete a loaded DLL. Installed Windows packages
-still use lazy binding. Existing bundle source maps cover the
-original code, not appended generated helpers.
+still use lazy binding.
 
 See [T122 evidence](../evidence/T122.md) for startup and first-input measurements,
 upstream test limitations, and exact revision/artifact identity. Diagnostic

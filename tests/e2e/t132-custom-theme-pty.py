@@ -8,8 +8,8 @@ message and never partially applies".
 Before this pass, packages/services/config's real parseThemeConfig/ThemeConfig (which can
 already parse a theme.toml's tokens) had zero runtime caller -- only the two built-in themes
 (xi-light, xi-dark) existed. This exercises the real wiring: configured startup reads its
-selected theme and inheritance chain before the first frame, then discovery reads every
-*.toml under ~/.config/xi/themes/ for the picker. Both paths use the real parser and the Helix
+selected theme and inheritance chain before the first frame, then the first theme-picker open reads every
+*.toml under ~/.config/xi/themes/. Both paths use the real parser and the Helix
 scope-to-workbench decoder. The fixture uses Helix's direct scoped-style syntax, including the
 palette-free form used by simple user themes.
 
@@ -98,14 +98,17 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-custom-theme-") as temporary:
         if NEON_BACKGROUND not in captured:
             raise SystemExit(f"the configured Helix theme was not applied before the first frame: {captured[-4000:]!r}")
 
-        # The invalid theme file must be rejected with a clear, specific message.
-        rejection = re.search(rb"xi: theme file broken\.toml is invalid: [^\r\n]*", captured)
-        if rejection is None:
-            raise SystemExit(f"the invalid custom theme was not rejected with a clear message: {captured[-4000:]!r}")
+        # The catalog loads on first theme-picker use, like Helix; startup never scans it.
+        if re.search(rb"theme file broken\.toml", captured):
+            raise SystemExit(f"startup scanned the custom theme catalog: {captured[-4000:]!r}")
 
         # The valid custom theme must be discoverable and genuinely selectable/previewable.
         os.write(master, b" t")
         read_for(master, captured, 0.4)
+        # The invalid theme file must be rejected with a clear, specific message.
+        rejection = re.search(rb"xi: theme file broken\.toml is invalid: [^\r\n]*", captured)
+        if rejection is None:
+            raise SystemExit(f"the invalid custom theme was not rejected with a clear message: {captured[-4000:]!r}")
         before_filter = len(captured)
         os.write(master, b"neon")
         read_for(master, captured, 0.4)

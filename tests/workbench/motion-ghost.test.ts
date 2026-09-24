@@ -51,6 +51,13 @@ for (const key of ['h', 'Escape', 'i', 'd']) {
   assert.equal(f.vim.motionGhost, undefined, `clear on ${key}`);
   f.vim.dispose();
 }
+// `gg` arrives as a g-prefixed command; its final raw `g` must not make it a ghosted motion.
+for (const keys of [['j', 'g', 'g'], ['G', 'g', 'g'], ['g', '_']]) {
+  const f = fixture();
+  for (const key of keys) await f.key(key);
+  assert.equal(f.vim.motionGhost, undefined, `no ghost after ${keys.join('')}`);
+  f.vim.dispose();
+}
 const strict = fixture(undefined, false);
 await strict.key('w');
 assert.equal(strict.vim.motionGhost, undefined);

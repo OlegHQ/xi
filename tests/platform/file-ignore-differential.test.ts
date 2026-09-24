@@ -54,6 +54,13 @@ try {
   await writeFile(join(linked, 'child', 'parent.txt'), 'parent');
   await writeFile(join(linked, 'child', 'excluded.txt'), 'excluded');
   await writeFile(join(linked, 'child', 'visible.txt'), 'visible');
+  for (const directory of [root, linked]) {
+    const paths: string[] = [];
+    const result = await filesystem.enumerateFiles(directory, new CancellationSource().token, entries => { for (const entry of entries) paths.push(entry.relativePath); }, { followSymlinks: false, ignoredDirectoryNames: ['.git'], ignore: enabled });
+    assert.equal(result.ok, true);
+    assert.equal(paths.some(path => path === '.git' || path.startsWith('.git/')), false, `F20-VCS-SKIP ${directory} skips .git directories and worktree files`);
+    assert.equal(paths.length > 0, true);
+  }
   const nested = await collect(join(linked, 'child'), enabled);
   assert.deepEqual([...nested].sort(), ['visible.txt'], 'F20-WORKTREE-ROOT parent ignore and linked git exclude apply below editor root');
   const nestedBuffers = await new NodeFilesystemPort().visibleWorkspacePaths(join(linked, 'child'), ['parent.txt', 'excluded.txt', 'visible.txt'], enabled, new CancellationSource().token);

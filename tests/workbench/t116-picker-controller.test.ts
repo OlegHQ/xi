@@ -86,6 +86,8 @@ const markers: Array<{ readonly name: string; readonly payload: unknown }> = [];
 const secondaryActions: Array<{ readonly entryId: string; readonly key: string }> = [];
 const diagnosticJumps: string[] = [];
 let configOpens = 0;
+let catalogLoads = 0;
+let finishCatalog = (): void => {};
 
 const testClock: ClockPort = {
   monotonicMilliseconds: () => Date.now(),
@@ -103,6 +105,7 @@ const picker = new PickerController<FixtureEntry, string>({
   clock: testClock,
   marker: (name, payload) => { markers.push({ name, payload }); },
   startFileIndexPopulation: async () => {},
+  loadThemeCatalog: () => { catalogLoads += 1; return new Promise<void>((resolve) => { finishCatalog = resolve; }); },
   toggleMouseMode: () => true,
   openDiagnostic: async diagnosticId => { diagnosticJumps.push(diagnosticId); },
   openConfig: async () => { configOpens += 1; },
@@ -129,6 +132,12 @@ assert.equal(picker.isOpen, true, 'T116-PICKER-01b the picker is open');
 assert.equal(theme.activeId, 'light', 'T116-PICKER-01c opening selects the active theme, not the first alphabetical result');
 assert.equal(model.selectedId, 'light', 'T116-PICKER-01d the active theme is visibly selected');
 assert.equal(appliedTheme, 'light-theme', 'T116-PICKER-01e the UI-facing setTheme port receives the active theme');
+assert.equal(catalogLoads, 1, 'T116-PICKER-CATALOG-01 the custom theme catalog loads on theme-picker open, not before');
+const queriesBeforeCatalog = model.visibility.length;
+finishCatalog();
+await flush();
+assert.equal(model.visibility.length, queriesBeforeCatalog + 1, 'T116-PICKER-CATALOG-02 the open theme picker requeries once the catalog loads');
+assert.equal(model.selectedId, 'light', 'T116-PICKER-CATALOG-03 the requery keeps the applied theme selected');
 model.select('dark');
 picker.previewSelected();
 assert.equal(theme.activeId, 'dark', 'T116-PICKER-01f the shared selected-entry preview path applies hover/key selection live');

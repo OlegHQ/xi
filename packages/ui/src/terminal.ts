@@ -232,6 +232,9 @@ export async function runOpenTuiWorkbench(
   const done = new Promise<void>((resolveDone) => { finish = resolveDone; });
   const renderer = await (options.renderer ?? createConfiguredRenderer({ onDestroy: finish }));
   options.startupTrace?.('renderer-ready');
+  // Each Solid useTerminalDimensions consumer adds a resize listener. Node's default of 10
+  // is a false leak signal, and its warning is written over the alternate screen.
+  renderer.setMaxListeners(64);
   if (options.kittyKeyboardProtocol === 'disabled') renderer.disableKittyKeyboard();
   else if (options.kittyKeyboardProtocol === 'enabled') renderer.enableKittyKeyboard();
   const themeVariants = options.themeVariants;

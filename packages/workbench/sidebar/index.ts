@@ -81,6 +81,8 @@ export class SidebarController {
     this.#options = options;
     this.#visible = options.initiallyVisible ?? true;
     this.#lastPanel = options.initialPanel ?? 'files';
+    // A restored Files panel paints expanded on the first frame; the Explorer fills it after.
+    this.#filesExpanded = this.#visible && this.#lastPanel === 'files';
     this.#minimumWidth = options.minimumWidth ?? 22;
     this.#maximumWidth = options.maximumWidth ?? 40;
     const initial = options.persistence?.width ?? options.initialWidth ?? 28;

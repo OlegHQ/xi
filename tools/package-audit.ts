@@ -42,9 +42,10 @@ if (targetPlatform === undefined || targetArch === undefined || targetSuffix.len
   fail(`invalid target "${requestedTarget}" (expected <platform>-<arch>[ -musl])`);
 }
 const target = targetSuffix.length === 1 ? `${targetPlatform}-${targetArch}-${targetSuffix[0]}` : `${targetPlatform}-${targetArch}`;
-const packageManifest = readManifest(join(root, 'package.json'));
-const openTuiVersion = readDependencyVersion(packageManifest, '@opentui/core');
-if (openTuiVersion === undefined) fail('package.json does not pin @opentui/core');
+// package.json pins the fork tarball by path; its installed manifest carries the version.
+const coreVersion = readManifest(join(root, 'node_modules', '@opentui', 'core', 'package.json')).version;
+if (typeof coreVersion !== 'string') fail('@opentui/core is not installed');
+const openTuiVersion = coreVersion;
 
 const assets = nativeAssets(targetPlatform, targetArch, targetSuffix[0]);
 const foundAssets: AuditResult['assets'][number][] = [];
@@ -121,16 +122,6 @@ function readManifest(path: string): PackageManifest {
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) fail(`invalid object manifest: ${relativeToRoot(path)}`);
   return parsed as PackageManifest;
-}
-
-function readDependencyVersion(manifest: PackageManifest, name: string): string | undefined {
-  const rootPackage = manifest as PackageManifest & { readonly dependencies?: unknown; readonly devDependencies?: unknown };
-  for (const dependencies of [rootPackage.dependencies, rootPackage.devDependencies]) {
-    if (typeof dependencies !== 'object' || dependencies === null || Array.isArray(dependencies)) continue;
-    const version = (dependencies as Record<string, unknown>)[name];
-    if (typeof version === 'string') return version;
-  }
-  return undefined;
 }
 
 function readOptionalDependencies(path: string): readonly string[] {

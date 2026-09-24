@@ -10,7 +10,7 @@ import type { WorkbenchReadPort } from '../../../workbench/src/index';
 import type { SidebarReadModel, WorkbenchTabSnapshot } from '../../../workbench/src/entrypoints/launch';
 import type { DocumentId } from '../../../contracts/src/index';
 import type { Problem } from '../../problems/index';
-import { calculateWorkbenchLayout, computeSidebarTabLayout, computeTabLayout, helixTextAttributes, helixThemeColor, helixThemeStyle, type SidebarTabId, type ThemeColor, type WorkbenchTheme } from '../workbench';
+import { calculateWorkbenchLayout, computeSidebarSectionLayout, computeSidebarTabLayout, computeTabLayout, helixTextAttributes, helixThemeColor, helixThemeStyle, type SidebarTabId, type ThemeColor, type WorkbenchTheme } from '../workbench';
 import { resolvePaintColor } from '../../theme/motion-tokens';
 
 export interface ChromeSurfaceSpec {
@@ -69,18 +69,21 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
     version();
     const model = spec.sidebar?.();
     const chevron = (expanded: boolean): string => (spec.ascii === true ? (expanded ? 'v' : '>') : (expanded ? '▾' : '▸'));
-    if (model === undefined) return `${spec.ascii === true ? '> ' : '▾ '}${spec.fileLabel}\n${spec.ascii === true ? '> ' : '  '}Outline`;
-    return <>
-      {model.sections.map((section, index) => {
-        const style = attributes('ui.sidebar');
-        return <span style={{
+    if (model === undefined) return <text position="absolute" left={0} top={1} fg={paint(sidebar().foreground)}>{`${spec.ascii === true ? '> ' : '▾ '}${spec.fileLabel}\n${spec.ascii === true ? '> ' : '  '}Outline`}</text>;
+    // Each header sits on its layout row, so an expanded Files section keeps Outline at the
+    // bottom even before the Explorer surface paints the rows between them.
+    const rows = computeSidebarSectionLayout(model, layout().statusRow);
+    return model.sections.map(section => {
+      const style = attributes('ui.sidebar');
+      return <text position="absolute" left={0} top={section.id === 'files' ? rows.filesHeaderRow : rows.outlineHeaderRow} fg={paint(sidebar().foreground)}>
+        <span style={{
           ...style,
           fg: paint(sidebar().foreground),
           bg: paint(sidebar().surface),
           bold: section.expanded || style.bold,
-        }}>{`${chevron(section.expanded)} ${section.label}${index + 1 < model.sections.length ? '\n' : ''}`}</span>;
-      })}
-    </>;
+        }}>{`${chevron(section.expanded)} ${section.label}`}</span>
+      </text>;
+    });
   };
   const sidebarTabs = () => {
     version();
@@ -249,7 +252,7 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
       <box position="absolute" left={0} top={0} width={layout().sidebarWidth} height={layout().statusRow}
         visible={layout().sidebarVisible} backgroundColor={paint(sidebar().surface)}>
         {sidebarTabs()}
-        <text position="absolute" left={0} top={1} fg={paint(sidebar().foreground)}>{sidebarSections()}</text>
+        {sidebarSections()}
       </box>
       <box position="absolute" left={layout().sidebarWidth} top={0} width={1} height={layout().statusRow}
         visible={layout().sidebarVisible} backgroundColor={color('ui.background.separator', 'fg', color('ui.window', 'fg', theme().border))} />

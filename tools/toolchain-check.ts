@@ -16,7 +16,9 @@ const requiredBunVersion = process.env.XI_REQUIRED_BUN_VERSION;
 const requiredTypeScriptVersion = process.env.XI_REQUIRED_TYPESCRIPT_VERSION;
 
 const expectedTypeScriptVersion = packageJson.devDependencies?.typescript ?? 'unknown';
-const expectedOpenTuiVersion = packageJson.devDependencies?.['@opentui/core'] ?? 'unknown';
+const openTuiSpec = packageJson.devDependencies?.['@opentui/core'] ?? 'unknown';
+// The fork is installed from a committed tarball named <package>-<version>.tgz.
+const expectedOpenTuiVersion = /-(\d+\.\d+\.\d+)\.tgz$/.exec(openTuiSpec)?.[1] ?? openTuiSpec;
 
 const run = (command: string, args: string[] = []): string => {
   const result = spawnSync(command, args, {

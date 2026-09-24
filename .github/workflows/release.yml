@@ -4,115 +4,28 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      native_run_id:
-        description: Reuse native artifacts from a prior qualification run
-        type: string
-        default: ''
 
 permissions:
   contents: write
-  actions: read
 
 jobs:
-  native-assets:
-    if: inputs.native_run_id == ''
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-          use-cache: false
-      - name: Build OpenTUI native libraries for all targets
-        run: bun run prepare:zig && zig build -j2 -Dall -Doptimize=ReleaseFast
-        working-directory: vendor/opentui/packages/native
-      - name: Install cross-platform strip tool
-        run: brew list llvm >/dev/null 2>&1 || brew install llvm
-      - name: Stage native libraries and checksum inventory
-        run: |
-          set -euo pipefail
-          LLVM_OBJCOPY="$(brew --prefix llvm)/bin/llvm-objcopy"
-          LLVM_NM="$(brew --prefix llvm)/bin/llvm-nm"
-          LLVM_READOBJ="$(brew --prefix llvm)/bin/llvm-readobj"
-          mkdir -p dist/native
-          : > dist/native-assets.sha256
-          stage() {
-            target="$1"
-            source_dir="$2"
-            package="$3"
-            library="$4"
-            source="vendor/opentui/packages/native/lib/$source_dir/$library"
-            test -s "$source"
-            mkdir -p "dist/native/$target"
-            cp "$source" "dist/native/$target/$library"
-            case "$target" in
-              linux-*) "$LLVM_OBJCOPY" --strip-unneeded "dist/native/$target/$library" ;;
-              darwin-*) xcrun strip -S -x "dist/native/$target/$library" ;;
-            esac
-            case "$target" in
-              linux-*) symbols="$("$LLVM_NM" -D --defined-only "dist/native/$target/$library")" ;;
-              darwin-*) symbols="$(xcrun nm -gU "dist/native/$target/$library")" ;;
-              win32-*) symbols="$("$LLVM_READOBJ" --coff-exports "dist/native/$target/$library")" ;;
-            esac
-            grep -q 'textBufferSetStyledTextWithUnderlineColors' <<< "$symbols"
-            grep -q 'bufferSetUnderlineColor' <<< "$symbols"
-            hash="$(shasum -a 256 "dist/native/$target/$library" | cut -d ' ' -f 1)"
-            printf '%s  node_modules/@opentui/%s/%s\n' "$hash" "$package" "$library" >> dist/native-assets.sha256
-          }
-          stage linux-x64 x86_64-linux core-linux-x64 libopentui.so
-          stage linux-arm64 aarch64-linux core-linux-arm64 libopentui.so
-          stage linux-x64-musl x86_64-linux-musl core-linux-x64-musl libopentui.so
-          stage linux-arm64-musl aarch64-linux-musl core-linux-arm64-musl libopentui.so
-          stage darwin-x64 x86_64-macos core-darwin-x64 libopentui.dylib
-          stage darwin-arm64 aarch64-macos core-darwin-arm64 libopentui.dylib
-          stage win32-x64 x86_64-windows core-win32-x64 opentui.dll
-          stage win32-arm64 aarch64-windows core-win32-arm64 opentui.dll
-      - uses: actions/upload-artifact@v4
-        with:
-          name: opentui-native
-          path: |
-            dist/native
-            dist/native-assets.sha256
-          if-no-files-found: error
-          retention-days: 7
-
   build:
-    needs: native-assets
-    if: always() && (needs.native-assets.result == 'success' || inputs.native_run_id != '')
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: linux-x64
             runner: ubuntu-24.04
-            package: core-linux-x64
-            library: libopentui.so
           - target: linux-arm64
             runner: ubuntu-24.04-arm
-            package: core-linux-arm64
-            library: libopentui.so
           - target: darwin-x64
             runner: macos-15-intel
-            package: core-darwin-x64
-            library: libopentui.dylib
           - target: darwin-arm64
             runner: macos-15
-            package: core-darwin-arm64
-            library: libopentui.dylib
           - target: win32-x64
             runner: windows-2025
-            package: core-win32-x64
-            library: opentui.dll
           - target: win32-arm64
             runner: windows-11-arm
-            package: core-win32-arm64
-            library: opentui.dll
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -129,35 +42,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: test "${GITHUB_REF_NAME#v}" = "$(bun -e 'console.log((await Bun.file("package.json").json()).version)')"
         shell: bash
-      - uses: actions/download-artifact@v4
-        with:
-          name: opentui-native
-          run-id: ${{ inputs.native_run_id || github.run_id }}
-          github-token: ${{ github.token }}
-          path: dist
-      - name: Install fork-built native library (Unix)
-        if: runner.os != 'Windows'
-        env:
-          PACKAGE: ${{ matrix.package }}
-          LIBRARY: ${{ matrix.library }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-          cp "dist/native/$TARGET/$LIBRARY" "node_modules/@opentui/$PACKAGE/$LIBRARY"
-          if [[ "$TARGET" == linux-arm64 ]]; then
-            cp dist/native/linux-arm64-musl/libopentui.so node_modules/@opentui/core-linux-arm64-musl/libopentui.so
-          fi
-          cp dist/native-assets.sha256 docs/installation/native-assets.sha256
-      - name: Install fork-built native library (Windows)
-        if: runner.os == 'Windows'
-        env:
-          PACKAGE: ${{ matrix.package }}
-          LIBRARY: ${{ matrix.library }}
-          TARGET: ${{ matrix.target }}
-        shell: pwsh
-        run: |
-          Copy-Item "dist/native/$env:TARGET/$env:LIBRARY" "node_modules/@opentui/$env:PACKAGE/$env:LIBRARY"
-          Copy-Item dist/native-assets.sha256 docs/installation/native-assets.sha256
       - name: Build release package
         run: bun run tools/package-release.ts --output dist/stage/xi --release-directory dist/release
       - name: Smoke test package

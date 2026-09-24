@@ -83,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t132-theme-") as temporary:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "COLORTERM": "truecolor", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "COLORTERM": "truecolor", "HOME": temporary, "XDG_CONFIG_HOME": str(Path(temporary) / ".config"), "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), "theme.txt"],
         cwd=temporary,

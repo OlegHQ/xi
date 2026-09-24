@@ -5,15 +5,17 @@ class FakeOutline implements SidebarOutlineModelPort {
   hasSymbols = false;
 }
 
-// T-SIDEBAR-01: Files starts collapsed (its tree loads lazily) and expands when the Explorer
-// opens; Outline starts collapsed when the outline model has no symbols yet.
+// T-SIDEBAR-01: a visible Files panel starts expanded so startup never paints it collapsed
+// before the Explorer opens; Outline starts collapsed when the outline model has no symbols yet.
 {
   const outline = new FakeOutline();
   const sidebar = new SidebarController({ outline });
   const model = sidebar.readModel();
-  assert.equal(model.sections.find((section) => section.id === 'files')?.expanded, false, 'T-SIDEBAR-01a Files is collapsed by default');
-  sidebar.expandSection('files');
-  assert.equal(sidebar.readModel().sections.find((section) => section.id === 'files')?.expanded, true, 'T-SIDEBAR-01a2 expandSection expands Files');
+  assert.equal(model.sections.find((section) => section.id === 'files')?.expanded, true, 'T-SIDEBAR-01a visible Files starts expanded');
+  const hidden = new SidebarController({ outline, initiallyVisible: false });
+  assert.equal(hidden.readModel().sections.find((section) => section.id === 'files')?.expanded, false, 'T-SIDEBAR-01a2 hidden sidebar starts with Files collapsed');
+  hidden.expandSection('files');
+  assert.equal(hidden.readModel().sections.find((section) => section.id === 'files')?.expanded, true, 'T-SIDEBAR-01a3 expandSection expands Files');
   assert.equal(model.sections.find((section) => section.id === 'outline')?.expanded, false, 'T-SIDEBAR-01b Outline starts collapsed with no symbols');
   assert.equal(model.activeSection, 'files', 'T-SIDEBAR-01c Files is the default active section');
 }

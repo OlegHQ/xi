@@ -80,12 +80,12 @@ async function renderWithSidebar(sidebar: () => SidebarReadModel, ascii = false)
   return { chars: setup.captureCharFrame(), setup };
 }
 
-// T-SIDEBAR-TABS-01: default sections render with chevrons -- Files collapsed (▸) until the
-// Explorer opens, Outline collapsed (▸) while its outline model has no symbols yet.
+// T-SIDEBAR-TABS-01: default sections render with chevrons -- Files expanded (▾) from the first
+// frame, Outline collapsed (▸) while its outline model has no symbols yet.
 async function testSectionChevronsDefault(): Promise<void> {
   const controller = new SidebarController({ outline: new FakeOutline() });
   const { chars, setup } = await renderWithSidebar(() => controller.readModel());
-  assert.match(chars, /▸ .*Files/u, 'T-SIDEBAR-TABS-01a Files renders collapsed with a right chevron until the Explorer opens');
+  assert.match(chars, /▾ .*Files/u, 'T-SIDEBAR-TABS-01a Files renders expanded before the Explorer opens');
   assert.match(chars, /▸ Outline/u, 'T-SIDEBAR-TABS-01b Outline renders collapsed with a right chevron while empty');
   assert.match(chars, /󰉋 Files/u, 'T-SIDEBAR-TABS-01c Files has its navigation icon');
   assert.match(chars, / Search/u, 'T-SIDEBAR-TABS-01d Search has its navigation icon');

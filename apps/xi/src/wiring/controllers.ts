@@ -176,6 +176,9 @@ function createDeferredStart(delayMilliseconds: number, start: () => void): { re
   };
 }
 
+/** Helix's file picker always skips these VCS entries, even when ignore files are off. */
+const VCS_DIRECTORY_NAMES = ['.git', '.pijul', '.jj', '.hg', '.svn'];
+
 async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, shouldPublishEarly: (entries: readonly { readonly relativePath: string }[]) => boolean, onUpdate: () => void, onError: (message: string) => void): Promise<void> {
   const cancellation = new CancellationSource();
   // ponytail: publish the first partial batch immediately, then every 2,048 paths;
@@ -194,7 +197,7 @@ async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePat
       }
       else if (added.ok) indexedEntries += added.value;
       else if (!reportedIndexError) { reportedIndexError = true; onError(`xi: file picker index incomplete: ${added.error.kind}`); }
-    }, { maxEntries: 120_000, followSymlinks, deduplicateLinks, ...(maxDepth === undefined ? {} : { maxDepth }), ignore });
+    }, { maxEntries: 120_000, ignoredDirectoryNames: VCS_DIRECTORY_NAMES, followSymlinks, deduplicateLinks, ...(maxDepth === undefined ? {} : { maxDepth }), ignore });
     if (!result.ok) onError(`xi: file picker index incomplete: ${result.error.message}`);
   } finally {
     index.markReady();
@@ -223,7 +226,7 @@ function createIgnoredFileIndexPopulator(fileIndex: InstanceType<CoreServicesMod
       const entries: WorkspaceFileEntry[] = [];
       try {
         const all = await filesystem.enumerateFiles(root, cancellation.token, batch => { entries.push(...batch); }, {
-          maxEntries: 120_000, maxVisitedEntries: 500_000, followSymlinks, deduplicateLinks,
+          maxEntries: 120_000, maxVisitedEntries: 500_000, ignoredDirectoryNames: VCS_DIRECTORY_NAMES, followSymlinks, deduplicateLinks,
           ...(maxDepth === undefined ? {} : { maxDepth }),
           ignore: { parents: false, ignore: false, gitIgnore: false, gitGlobal: false, gitExclude: false },
         });
@@ -573,7 +576,7 @@ function createPickerModel(
       { id: 'config.open', mode: 'command', label: 'Config', detail: 'Open configuration', value: 'config' },
       { id: 'mouse.toggle', mode: 'command', label: 'Toggle Mouse', detail: 'Enable/disable mouse reporting; disable for terminal-native click-drag text selection', value: 'toggle-mouse' },
     ]),
-    // Live source: custom themes finish loading after the first frame.
+    // Live source: custom themes load when this picker first opens.
     new BufferPickerProvider('xi.navigation.themes', () => [
       { id: 'xi-light', label: 'Xi Light', detail: '', value: 'xi-light' },
       { id: 'xi-dark', label: 'Xi Dark', detail: '', value: 'xi-dark' },
@@ -759,6 +762,7 @@ function createOptionalServicesAndPicker(
     includeHiddenByDefault: ctx.startupConfig?.editor.filePicker.hidden ?? true,
     startFileIndexPopulation: () => forward.startFileIndexPopulation(),
     startIgnoredFileIndexPopulation: () => forward.startIgnoredFileIndexPopulation(),
+    loadThemeCatalog: () => deps.themeWiring.loadCustomThemes(),
     toggleMouseMode: mouseMode.toggle,
     openDiagnostic,
     openConfig: () => ensureUserConfigDocument(deps, host),

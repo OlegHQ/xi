@@ -150,7 +150,7 @@ function resolveThemeVariants(controllers: Controllers, themeWiring: ThemeWiring
   return Object.keys(variants).length === 0 ? undefined : variants;
 }
 
-function handleWorkbenchReady(controllers: Controllers, themeWiring: ThemeWiring, startupTrace: WorkbenchUiOptionsDeps['startupTrace']): void {
+function handleWorkbenchReady(controllers: Controllers, startupTrace: WorkbenchUiOptionsDeps['startupTrace']): void {
   startupTrace('ready-callback');
   const viewId = controllers.workbench.activeViewId;
   const view = viewId === undefined ? undefined : controllers.workbench.readView(viewId);
@@ -160,7 +160,6 @@ function handleWorkbenchReady(controllers: Controllers, themeWiring: ThemeWiring
       controllers.statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
-  void themeWiring.loadCustomThemes().finally(() => themeWiring.disposeStateCancellation());
   controllers.fileIndexStarter.schedule();
   if (controllers.sidebarController.visible) {
     if (controllers.sidebarController.lastPanel === 'search') controllers.searchFeature.open();
@@ -241,7 +240,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       isOpen: () => inputRouter.isCommandLineActive(),
     },
     statusMessage: { read: statusMessages },
-    onReady: () => handleWorkbenchReady(controllers, themeWiring, startupTrace),
+    onReady: () => handleWorkbenchReady(controllers, startupTrace),
     // H1-7: the router owns the ordered overlay-focus stack (and its own fallthrough) as the
     // one and only per-key dispatch `processKeypress` calls; the overlay port objects below
     // (`picker`, `explorer`, ...) stay for their read models/`isOpen`/`onPointer`, which
