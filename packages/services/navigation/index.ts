@@ -17,7 +17,7 @@ import {
 /** Stable public contract version for navigation read models and picker providers. */
 export const NAVIGATION_CONTRACT_VERSION = 1 as const;
 
-export type PickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git' | 'diagnostic';
+export type PickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git' | 'diagnostic' | 'recovery';
 export type PickerEntryKind = PickerMode;
 
 export interface PickerEntry {

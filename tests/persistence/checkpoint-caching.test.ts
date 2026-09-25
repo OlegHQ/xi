@@ -124,7 +124,7 @@ async function checkpointOfOversizedDocumentBailsQuickly(): Promise<void> {
   assert.equal(elapsedMilliseconds < 50, true, `oversized checkpoint must bail in under 50ms, took ${elapsedMilliseconds}ms`);
 }
 
-async function repeatedCheckpointsOfSameDocumentDoNotGrowTheJournal(): Promise<void> {
+async function repeatedCheckpointsRetainBoundedVersions(): Promise<void> {
   const fs = new CountingFilesystem();
   fs.seed('/tmp/cache-bounded.txt', new TextEncoder().encode('one\n'));
   const service = new PersistenceService(fs, undefined, testDocumentFactory);
@@ -133,18 +133,19 @@ async function repeatedCheckpointsOfSameDocumentDoNotGrowTheJournal(): Promise<v
   if (!opened.ok || opened.value.kind !== 'editable') return;
   const document = opened.value.document;
 
-  let journalBytesAfterFirst = 0;
   for (let round = 0; round < 20; round += 1) {
     const end = offset(document.snapshot().lengthUtf16);
     assert.equal(document.apply({ start: end, end, text: 'x' }, document.version).ok, true);
     const result = await service.checkpoint(document, '/tmp/cache-bounded.txt', cancellation);
     assert.equal(result.ok, true, `checkpoint ${round} succeeds`);
-    const bytes = fs.bytes('/tmp/cache-bounded.txt.xi-recovery.json').length;
-    if (round === 0) journalBytesAfterFirst = bytes;
-    // Repeated checkpoints of the SAME open document (same documentId) replace that document's
-    // entry in place instead of accumulating superseded versions, so the on-disk journal grows
-    // only with this document's own (slightly increasing) content, not with 20 retained copies.
-    assert.ok(bytes < journalBytesAfterFirst + 200, `T-PERSIST-CHECKPOINT-BOUND-01 journal size stays close to one entry's size at round ${round} (was ${journalBytesAfterFirst}, now ${bytes})`);
+    assert.ok(fs.bytes('/tmp/cache-bounded.txt.xi-recovery.json').length <= 16 * 1024 * 1024, 'T-PERSIST-CHECKPOINT-BOUND-01 journal remains within the byte cap');
+  }
+
+  const versions = await service.listRecovery('/tmp/cache-bounded.txt', cancellation);
+  assert.equal(versions.ok, true);
+  if (versions.ok) {
+    assert.equal(versions.value.length, 20, 'T-PERSIST-CHECKPOINT-BOUND-03 distinct revisions remain selectable');
+    assert.equal(versions.value[0]?.normalizedText, `one\n${'x'.repeat(20)}`, 'T-PERSIST-CHECKPOINT-BOUND-04 newest version appears first');
   }
 
   const recovered = await new PersistenceService(fs, undefined, testDocumentFactory).recover('/tmp/cache-bounded.txt', id('cache-bounded'), cancellation);
@@ -155,7 +156,7 @@ async function repeatedCheckpointsOfSameDocumentDoNotGrowTheJournal(): Promise<v
 }
 
 await secondCheckpointDoesNotReparseJournal();
-await repeatedCheckpointsOfSameDocumentDoNotGrowTheJournal();
+await repeatedCheckpointsRetainBoundedVersions();
 await saveDoesNotRereadUnchangedFile();
 await checkpointOfOversizedDocumentBailsQuickly();
 console.log('checkpoint-caching passed journal reuse, save identity-hint, and oversized-document fixtures');

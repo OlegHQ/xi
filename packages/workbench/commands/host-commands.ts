@@ -82,6 +82,7 @@ export interface HostCommandsOptions {
   readonly workspaceTrust?: HostCommandsWorkspaceTrustPort;
   /** Opens the user config file through the composition-root buffer owner. */
   readonly openConfig?: () => Promise<void>;
+  readonly openRecovery?: (viewId: ViewId) => Promise<void>;
   /** `gd`: language-server definition lookup for the active cursor; resolves to the first
    * location, or a user-facing reason when no server/definition is available. */
   readonly lookupDefinition?: () => Promise<{ readonly ok: true; readonly location: HostNavigationLocation } | { readonly ok: false; readonly message: string }>;
@@ -318,6 +319,7 @@ export class WorkbenchHostCommands {
     })();
     if (command === 'format') return this.formatCurrentDocument(viewId).then(() => 'handled' as const);
     if (command === 'config-open') return (this.#options.openConfig?.() ?? Promise.resolve()).then(() => 'handled' as const);
+    if (command === 'recover') return (this.#options.openRecovery?.(viewId) ?? Promise.resolve()).then(() => 'handled' as const);
     if (command === 'workspace-trust' || command === 'workspace-untrust' || command === 'workspace-exclude') {
       const trust = this.#options.workspaceTrust;
       if (trust === undefined) { onError('xi: workspace trust is unavailable\n'); return 'handled'; }

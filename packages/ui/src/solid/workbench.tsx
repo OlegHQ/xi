@@ -176,7 +176,7 @@ export function pickerRows(model: PickerReadPort['model'], width: number, maxRow
   const headerBackground = helixThemeColor(theme, 'ui.picker.header', 'bg', background);
   const headerForeground = helixThemeColor(theme, 'ui.picker.header', 'fg', foreground);
   const directoryStyle = helixThemeStyle(theme, 'ui.text.directory');
-  const title = ({ file: 'Files', buffer: 'Buffers', command: 'Commands', theme: 'Themes', config: 'Config', git: 'Git', diagnostic: 'Diagnostics' } as const)[model.mode];
+  const title = ({ file: 'Files', buffer: 'Buffers', command: 'Commands', theme: 'Themes', config: 'Config', git: 'Git', diagnostic: 'Diagnostics', recovery: 'Recovery' } as const)[model.mode];
   const rows: SurfaceRow[] = [{
     segments: clipSegments([
       { text: `${title}${model.mode === 'theme' ? '  ·  Live preview' : ''}  > `, foreground: headerForeground, bold: true },
@@ -210,7 +210,7 @@ export function pickerRows(model: PickerReadPort['model'], width: number, maxRow
       ? width < 80
         ? `${model.totalMatches} themes · C-n/p C-u/d · Enter apply · Esc restore`
         : `${model.totalMatches}${model.truncated ? '+' : ''} themes · ↑↓/C-n/p move · C-u/d half page · Hover preview · Enter apply · Esc restore`
-      : `${model.totalMatches}${model.truncated ? '+' : ''} matches  ·  ↑↓/Ctrl-N/P move  ·  Enter open  ·  Esc cancel`),
+      : `${model.totalMatches}${model.truncated ? '+' : ''} matches  ·  ↑↓/Ctrl-N/P move  ·  Enter ${model.mode === 'recovery' ? 'load' : 'open'}  ·  Esc cancel`),
     foreground: model.state === 'error' ? theme.error : theme.muted,
     background,
   });

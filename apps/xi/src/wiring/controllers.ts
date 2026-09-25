@@ -9,6 +9,7 @@ import { BUILTIN_WORKBENCH_THEMES } from '../../../../packages/ui/src/entrypoint
 import type {
   FilePathIndex,
   PersistenceService,
+  RecoveryCheckpoint,
   PickerEntry,
   ExplorerDirectoryEntry,
   ExplorerFailure,
@@ -333,6 +334,8 @@ function createExplorerFilesystem(filesystem: NodeFilesystemPort, root: string, 
  * whichever earlier helper's closure needs it -- same forward-reference shape, just crossing
  * function boundaries instead of `let` bindings in one function body. */
 interface ForwardRefs {
+  recoveryCheckpoints: readonly RecoveryCheckpoint[];
+  picker: PickerController<PickerEntry, WorkbenchTheme>;
   syntaxTracker: SyntaxDocumentTracker;
   host: BufferHost;
   saveCoordinator: SaveCoordinator;
@@ -569,6 +572,9 @@ function createPickerModel(
       value: problem.id,
       ...(problem.severity === undefined ? {} : { severity: problem.severity }),
     })), 'diagnostic'),
+    new BufferPickerProvider('xi.navigation.recovery', () => forward.recoveryCheckpoints.map((checkpoint, index) => ({
+      id: String(index), label: `Version ${checkpoint.documentVersion}`, detail: `${checkpoint.normalizedText.length} characters · ${checkpoint.normalizedText.split('\n', 1)[0]?.slice(0, 60) ?? ''}`, value: String(index),
+    })), 'recovery'),
     new StaticPickerProvider('xi.navigation.commands', 'command', [
       { id: 'files.pick', mode: 'command', label: 'Files', detail: 'Open file picker', value: 'file' },
       { id: 'buffers.pick', mode: 'command', label: 'Buffers', detail: 'Switch open buffer', value: 'buffer' },
@@ -727,6 +733,7 @@ function createOptionalServicesAndPicker(
   ctx: BuildContext,
   forward: ForwardRefs,
   host: BufferHost,
+  workbench: WorkbenchSession,
   pickerModel: InstanceType<CoreServicesModule['BoundedPickerModel']>,
   mouseMode: ReturnType<typeof createRendererToggle>,
   fileUri: CoreServicesModule['fileUri'],
@@ -774,6 +781,29 @@ function createOptionalServicesAndPicker(
     loadThemeCatalog: () => deps.themeWiring.loadCustomThemes(),
     toggleMouseMode: mouseMode.toggle,
     openDiagnostic,
+    restoreRecovery: async (id) => {
+      const index = Number(id);
+      const checkpoint = Number.isSafeInteger(index) ? forward.recoveryCheckpoints[index] : undefined;
+      const viewId = workbench.activeViewId;
+      const view = viewId === undefined ? undefined : workbench.views().find((candidate) => candidate.viewId === viewId);
+      const buffer = view === undefined ? undefined : workbench.buffer(view.bufferId);
+      const document = buffer === undefined ? undefined : host.documents.get(buffer.documentId);
+      if (checkpoint === undefined || buffer?.path !== checkpoint.path || document === undefined) return false;
+      const end = asUtf16Offset(document.snapshot().lengthUtf16);
+      const start = asUtf16Offset(0);
+      if (!start.ok || !end.ok) return false;
+      if (buffer.dirty) {
+        const current = document.snapshot().slice(start.value, end.value);
+        if (!current.ok || !forward.recoveryCheckpoints.some((item) => item.normalizedText === current.value)) {
+          deps.statusMessages.publish('xi: save or close the current unsaved buffer before loading a recovery version');
+          return false;
+        }
+      }
+      const applied = await workbench.applyDocumentEdits(document.id, [{ start: start.value, end: end.value, text: checkpoint.normalizedText }]);
+      if (!applied.ok) { deps.statusMessages.publish(`xi: recovery failed: ${applied.error.kind}`); return false; }
+      marker('XI_RECOVERY_LOADED', { path: checkpoint.path, version: checkpoint.documentVersion });
+      return true;
+    },
     openConfig: () => ensureUserConfigDocument(deps, host),
     openFile: async (path, preview) => {
       const opened = await host.openBufferAtPath(path, { preview });
@@ -797,10 +827,11 @@ function createOptionalServicesAndPicker(
     },
     // The default Files load yields to queued startup picker input; resume it once the
     // overlay closes, without starting a second directory scan under the picker.
-    onClose: () => setImmediate(() => {
+    onClose: () => { if (picker.mode === 'recovery') forward.recoveryCheckpoints = []; setImmediate(() => {
       if (!picker.isDisposed && !picker.isOpen && forward.sidebarController.visible && forward.sidebarController.lastPanel === 'files' && !forward.explorerFeature.isVisible) forward.explorerFeature.show();
-    }),
+    }); },
   });
+  forward.picker = picker;
   return { optionalServices, picker };
 }
 
@@ -1194,6 +1225,19 @@ function createSaveAndHostCommands(
     directoryDrafts: { open: (target, viewId) => forward.directoryDraftController.explore(target, viewId) },
     workspaceTrust: deps.workspaceTrust,
     openConfig: () => ensureUserConfigDocument(deps, host),
+    openRecovery: async (viewId) => {
+      const view = workbench.views().find((candidate) => candidate.viewId === viewId);
+      const buffer = view === undefined ? undefined : workbench.buffer(view.bufferId);
+      if (buffer?.path === undefined) { ctx.deps.statusMessages.publish('xi: no file to recover'); return; }
+      const cancellation = new CancellationSource();
+      try {
+        const listed = await ctx.persistence.listRecovery(buffer.path, cancellation.token);
+        if (!listed.ok) { ctx.deps.statusMessages.publish(`xi: recovery list failed: ${listed.error.kind}`); return; }
+        if (listed.value.length === 0) { ctx.deps.statusMessages.publish('xi: no recovery versions for this file'); return; }
+        forward.recoveryCheckpoints = listed.value;
+        forward.picker.open('recovery');
+      } finally { cancellation.dispose(); }
+    },
     lookupDefinition: async () => {
       await forward.languageWiring.ensureLanguage();
       const navigation = forward.languageWiring.navigationController;
@@ -1473,7 +1517,7 @@ function createInputAndPointerRouters(
 export async function createControllers(deps: ControllersDeps): Promise<Controllers> {
   const { fileUri, workspacePathFromUri, workspaceRelativePathFromUri } = deps.coreServices;
   const { filesystem, clock, persistence, marker } = deps;
-  const forward = {} as ForwardRefs; const mouseMode = createRendererToggle(); const wrapMode = createRendererToggle();
+  const forward = {} as ForwardRefs; forward.recoveryCheckpoints = []; const mouseMode = createRendererToggle(); const wrapMode = createRendererToggle();
   const jobControlDisposables: Disposable[] = [];
 
   const settings = await loadStartupSettings(deps);
@@ -1490,7 +1534,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
   const { fileIndex, commandRegistry, contributionRegistry, commandAliasRegistration } = await createRegistries(ctx);
   const pickerModel = createPickerModel(ctx, forward, workbench, fileIndex, diagnostics);
   const host = createHostController(ctx, forward, workbench, syntaxTracker);
-  const { optionalServices, picker } = createOptionalServicesAndPicker(ctx, forward, host, pickerModel, mouseMode, fileUri, async diagnosticId => {
+  const { optionalServices, picker } = createOptionalServicesAndPicker(ctx, forward, host, workbench, pickerModel, mouseMode, fileUri, async diagnosticId => {
     const problem = diagnostics.model.all.find(candidate => candidate.id === diagnosticId);
     if (problem !== undefined) await problemsFeature.openProblem(problem);
   });

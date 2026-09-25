@@ -114,6 +114,12 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e13-b-") as temporary:
 
     master2, child2, captured2 = launch(workspace, target)
     check("scenario 2: disk-diverged marker fires, not recovered", b'"kind":"disk-diverged"' in captured2, True)
+    os.write(master2, b":recover\r")
+    read_for(master2, captured2, 0.5)
+    os.write(master2, b"\r")
+    read_for(master2, captured2, 0.5)
+    check("scenario 2: diverged checkpoint can be loaded manually", b"XI_RECOVERY_LOADED" in captured2, True)
+    check("scenario 2: manual load does not overwrite external disk change", target.read_text(encoding="utf-8"), "someone else changed this\n")
     os.write(master2, b":q!\r")
     child2.wait(timeout=5)
     os.close(master2)
@@ -137,8 +143,36 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e13-c-") as temporary:
     child2.wait(timeout=5)
     os.close(master2)
 
+# --- Scenario 4: :recover presents older checkpoints and loads one without writing disk ---
+with tempfile.TemporaryDirectory(prefix="xi-t045-e13-d-") as temporary:
+    workspace = Path(temporary)
+    target = workspace / "note.txt"
+    target.write_text("original\n", encoding="utf-8")
+    master, child, captured = launch(workspace, target)
+    os.write(master, b"AONE\x1b")
+    read_for(master, captured, 2.0)
+    os.write(master, b"ATWO\x1b")
+    read_for(master, captured, 2.0)
+    child.kill()
+    child.wait()
+    os.close(master)
+
+    master2, child2, captured2 = launch(workspace, target)
+    before_picker = len(captured2)
+    os.write(master2, b":recover\r")
+    read_for(master2, captured2, 0.7)
+    check("scenario 4: recovery picker opens", b"Recovery" in captured2[before_picker:], True)
+    os.write(master2, b"\x1b[B\r")
+    read_for(master2, captured2, 0.6)
+    check("scenario 4: older checkpoint loads", b"XI_RECOVERY_LOADED" in captured2, True)
+    check("scenario 4: loading leaves disk untouched", target.read_text(encoding="utf-8"), "original\n")
+    os.write(master2, b":wq\r")
+    child2.wait(timeout=5)
+    os.close(master2)
+    check("scenario 4: selected version saves", target.read_text(encoding="utf-8"), "originalONE\n")
+
 if failures:
     raise SystemExit("T045-E13 crash recovery failed:\n" + "\n".join(failures))
 print("T045-E13-CRASH-RECOVERY-PTY pass: real SIGKILL + reopen recovers an unsaved edit, an "
-      "externally-changed file is never silently overwritten, and a clean save clears the "
-      "recovery journal -- all through the production CLI")
+      "externally-changed file is never silently overwritten, a clean save clears the journal, "
+      "and :recover loads an older checkpoint through the picker")

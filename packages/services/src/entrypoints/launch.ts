@@ -1,5 +1,5 @@
 /** Small public service surface used by the standalone launcher. */
-export { PersistenceService } from '../../persistence';
+export { PersistenceService, type RecoveryCheckpoint } from '../../persistence';
 export {
   BoundedPickerModel,
   BufferPickerProvider,

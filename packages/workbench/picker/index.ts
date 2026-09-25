@@ -5,7 +5,7 @@ import type { BufferHost } from '../host';
 /** Mirrors `packages/services/navigation`'s `PickerMode`/`PickerEntry` shape structurally --
  * workbench cannot import `packages/services`, not even types, so only the literal union and
  * the fields this controller actually reads are declared here. */
-export type WorkbenchPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git' | 'diagnostic';
+export type WorkbenchPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git' | 'diagnostic' | 'recovery';
 
 export interface WorkbenchPickerEntry {
   readonly id: string;
@@ -40,6 +40,7 @@ export interface PickerControllerOptions<TEntry extends WorkbenchPickerEntry, TT
   readonly loadThemeCatalog?: () => Promise<void>;
   readonly toggleMouseMode: () => boolean;
   readonly openDiagnostic?: (id: string) => Promise<void>;
+  readonly restoreRecovery?: (id: string) => Promise<boolean>;
   /** Opens the user's config.toml for the config picker/`:config-open` command. */
   readonly openConfig?: () => Promise<void>;
   /** Opens a promoted buffer's file (commit) or a preview (no commit); returns the same
@@ -174,6 +175,10 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
     if (entry.mode === 'diagnostic') {
       await this.close(false);
       await this.#options.openDiagnostic?.(entry.value);
+      return;
+    }
+    if (entry.mode === 'recovery') {
+      if (await this.#options.restoreRecovery?.(entry.value)) await this.close(false);
       return;
     }
     if (entry.mode === 'command') {

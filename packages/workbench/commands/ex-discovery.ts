@@ -32,6 +32,7 @@ export const DEFAULT_NATIVE_EX_COMMANDS: readonly NativeExCommandSpec[] = Object
   Object.freeze({ name: 'x', abbreviations: Object.freeze(['x']), title: 'Write if modified and quit', detail: 'Native :x semantics; writes only when modified.', acceptsBang: true, acceptsRange: false }),
   Object.freeze({ name: 'qa', abbreviations: Object.freeze(['qa']), title: 'Quit all', detail: 'Native close-all semantics; dirty buffers report an error.', acceptsBang: true, acceptsRange: false }),
   Object.freeze({ name: 'wa', abbreviations: Object.freeze(['wa']), title: 'Write all', detail: 'Native write-all semantics.', acceptsBang: true, acceptsRange: false }),
+  Object.freeze({ name: 'recover', abbreviations: Object.freeze(['recover']), title: 'Recover unsaved version', detail: 'Choose a retained crash checkpoint.', acceptsBang: false, acceptsRange: false }),
   Object.freeze({ name: 'Xi', abbreviations: Object.freeze(['Xi']), title: 'Xi command namespace', detail: 'Dispatch an exact namespaced Xi command.', acceptsBang: false, acceptsRange: false }),
 ]);
 

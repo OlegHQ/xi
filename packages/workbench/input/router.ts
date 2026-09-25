@@ -40,7 +40,7 @@ function buildBindingMap(bindings: readonly RouterBindingConfig[]): ReadonlyMap<
 }
 
 /** Mirrors `packages/services/navigation`'s `PickerMode`; workbench cannot import services. */
-export type RouterPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git' | 'diagnostic';
+export type RouterPickerMode = 'file' | 'buffer' | 'command' | 'theme' | 'config' | 'git' | 'diagnostic' | 'recovery';
 
 export interface RouterPickerPort {
   readonly isOpen: boolean;

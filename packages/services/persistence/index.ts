@@ -440,16 +440,13 @@ export class PersistenceService {
     // keystroke-triggered checkpoint.
     const existing = await this.#readJournalCache(journalPath, cancellation);
     if (!existing.ok) return existing;
-    // A checkpoint for a document already tracked in this journal replaces that document's
-    // prior entry in place, instead of appending a new one and letting superseded versions of
-    // the SAME document accumulate. `recover()` only ever reads the latest entry per
-    // (path, documentId) (see the `.reverse().find(...)` below), so keeping old versions of
-    // the same open document serves no recovery purpose and only inflates every subsequent
-    // write. This keeps the journal (and so each write's cost) at O(distinct open documents
-    // for this path) -- ordinarily one -- rather than O(DEFAULT_MAX_RECOVERY_ENTRIES).
+    // Keep distinct content for the recovery picker, while replacing a retried checkpoint
+    // of the same text. Version counters can restart after a crash; content avoids hiding
+    // an older version that happened to receive the same counter in a later session.
     const entries = [...existing.value.entries];
     const encodedEntries = [...existing.value.encoded];
-    const replaceAt = entries.findIndex((entry) => entry.documentId === checkpoint.documentId);
+    const last = entries.at(-1);
+    const replaceAt = last?.documentId === checkpoint.documentId && last.normalizedText === checkpoint.normalizedText ? entries.length - 1 : -1;
     if (replaceAt === -1) {
       entries.push(checkpoint);
       encodedEntries.push(journalEntryEncoding(checkpoint));
@@ -520,6 +517,21 @@ export class PersistenceService {
   }
 
   recoverFile = this.recover.bind(this);
+
+  async listRecovery(path: string, cancellation: CancellationToken, options: RecoveryOptions = {}): Promise<Result<readonly RecoveryCheckpoint[], PersistenceFailure>> {
+    if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
+    const journalPaths = options.journalPath === undefined
+      ? [...new Set([recoveryJournalPath(path), this.#journalPathForPath(path)])]
+      : [options.journalPath];
+    const checkpoints: RecoveryCheckpoint[] = [];
+    for (const journalPath of journalPaths) {
+      const journal = await this.#readJournal(journalPath, cancellation);
+      if (!journal.ok) return journal;
+      for (const checkpoint of journal.value) if (checkpoint.path === path
+        && !checkpoints.some((item) => item.documentId === checkpoint.documentId && item.documentVersion === checkpoint.documentVersion && item.normalizedText === checkpoint.normalizedText)) checkpoints.push(checkpoint);
+    }
+    return { ok: true, value: Object.freeze(checkpoints.reverse()) };
+  }
 
   /** Remove a checkpoint journal only after its owning save/session operation succeeds. */
   async clearRecovery(path: string, cancellation: CancellationToken, journalPath?: string): Promise<Result<void, PersistenceFailure>> {
