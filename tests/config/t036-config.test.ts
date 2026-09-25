@@ -883,6 +883,7 @@ if (languages.ok) {
 const shippedLanguages = compileConfig([defaults, { name: 'default-languages', kind: 'language', source: DEFAULT_LANGUAGES_TOML }]);
 assert.equal(shippedLanguages.ok, true, 'T036-LANGUAGE-RUBY-01 shipped Ruby configuration compiles');
 if (shippedLanguages.ok) {
+  assert.equal(shippedLanguages.value.languages.find((entry) => entry.name === 'typescript')?.indent?.unit, '  ', 'T036-LANGUAGE-INDENT-01 TypeScript uses two spaces by default');
   const ruby = shippedLanguages.value.languages.find((entry) => entry.name === 'ruby');
   const rubyServer = shippedLanguages.value.languageServers.find((entry) => entry.name === ruby?.languageServers[0]);
   assert.ok(ruby?.fileTypes.includes('rb') && ruby.fileTypes.includes('Gemfile'), 'T036-LANGUAGE-RUBY-02 Ruby extensions and conventional filenames ship by default');

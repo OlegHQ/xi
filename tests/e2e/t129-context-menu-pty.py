@@ -162,10 +162,11 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
         # that the disabled action ran.
         if b"XI_EXPLORER_OPEN" in bytes(captured[before_enter:]):
             raise SystemExit(f"Enter activated a disabled context menu item: {captured[before_enter:][-2000:]!r}")
-        # Activate the selected enabled item via keyboard; it must behave exactly like the
+        # Click the enabled Collapse row; it must behave exactly like the
         # equivalent left-click (root toggles between expanded/collapsed).
         before_toggle = len(captured)
-        os.write(master, b"\r")
+        os.write(master, mouse(0, 5, 4))
+        os.write(master, mouse(0, 5, 4, "m"))
         deadline = time.monotonic() + 5
         while (b"XI_EXPLORER_REFRESH" not in captured[before_toggle:] and
                b"Files tree changed; open the menu again" not in captured[before_toggle:] and
@@ -178,10 +179,11 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
             os.write(master, mouse(2, 5, 3, "m"))
             read_until_after(master, captured, len(captured) - 1, b'"action":"context"', 5)
             before_toggle = len(captured)
-            os.write(master, b"\r")
+            os.write(master, mouse(0, 5, 4))
+            os.write(master, mouse(0, 5, 4, "m"))
             read_until_after(master, captured, before_toggle, b"XI_EXPLORER_REFRESH", 5)
         if b"XI_EXPLORER_REFRESH" not in bytes(captured[before_toggle:]):
-            raise SystemExit(f"keyboard-activated context menu item did not toggle the root: {captured[before_toggle:][-2000:]!r}")
+            raise SystemExit(f"mouse-activated context menu item did not toggle the root: {captured[before_toggle:][-2000:]!r}")
 
         # Expand the root again before addressing its file rows.
         os.write(master, mouse(2, 5, 3))
@@ -201,7 +203,8 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
         file_hit = next((m for m in PANEL_POINTER.finditer(bytes(captured[before_file:])) if b'"action":"context"' in m.group(0)), None)
         if file_hit is None:
             raise SystemExit(f"right-click on the file row produced no context action: {captured[before_file:][-4000:]!r}")
-        os.write(master, b"\r")
+        os.write(master, mouse(0, 5, 5))
+        os.write(master, mouse(0, 5, 5, "m"))
         read_for(master, captured, 0.6)
         if b"ONTEXT_MENU_TARGET_MARKER" not in bytes(captured[before_file:]):
             raise SystemExit(f"activating the enabled 'Open' menu item did not open the file: {captured[before_file:][-4000:]!r}")
@@ -238,4 +241,4 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
                 child.wait()
         os.close(master)
 
-print("T129-CONTEXT-MENU-PTY-01 pass: production right-click menu is visible/keyboard-reachable, rejects a disabled action and runs the enabled one")
+print("T129-CONTEXT-MENU-PTY-01 pass: production right-click menu activates file and folder actions by mouse, rejects a disabled action and dismisses outside clicks")

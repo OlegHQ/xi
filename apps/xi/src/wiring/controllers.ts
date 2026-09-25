@@ -628,6 +628,12 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
   });
   // Xi has no syntax-tree indentation queries yet; Helix's documented fallback is simple.
   const autoindent = indentHeuristic !== undefined;
+  const baseInsertOptions = {
+    autoindent, continueComments: ctx.startupConfig?.editor.continueComments ?? true,
+    commentContinuation: continueComment, smarttab: ctx.startupConfig?.editor.smartTab.enable ?? true,
+    ...(ctx.startupConfig?.editor.autoPairs === undefined ? {} : { autoPairs: ctx.startupConfig.editor.autoPairs }),
+    tabstop: 2, shiftwidth: 2, softtabstop: 2, expandtab: true,
+  };
   const host = new BufferHost(workbench, document, {
     motionGhost: motionTrail !== 'off',
     ...(ctx.startupConfig?.editor.selection.limit === undefined ? {} : { selectionLimit: ctx.startupConfig.editor.selection.limit }),
@@ -635,25 +641,16 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
     defaultYankRegister: ctx.startupConfig?.editor.defaultYankRegister ?? '"',
     mouseYankRegister: ctx.startupConfig?.editor.mouseYankRegister ?? '*',
     clipboard: deps.clipboard,
-    insertOptions: {
-      autoindent,
-      continueComments: ctx.startupConfig?.editor.continueComments ?? true,
-      commentContinuation: continueComment,
-      smarttab: ctx.startupConfig?.editor.smartTab.enable ?? true,
-      ...(ctx.startupConfig?.editor.autoPairs === undefined ? {} : { autoPairs: ctx.startupConfig.editor.autoPairs }),
-    },
+    insertOptions: baseInsertOptions,
     insertOptionsForPath: (path) => {
       const settings = path === undefined ? undefined : deps.editorConfigForPath(path);
-      if (settings === undefined) return undefined;
-      const tabstop = settings.tabWidth ?? (typeof settings.indentSize === 'number' ? settings.indentSize : 8);
-      const shiftwidth = settings.indentSize === 'tab' ? tabstop : settings.indentSize ?? tabstop;
-      return { autoindent, continueComments: ctx.startupConfig?.editor.continueComments ?? true,
-        commentContinuation: continueComment,
-        smarttab: ctx.startupConfig?.editor.smartTab.enable ?? true,
-        ...(ctx.startupConfig?.editor.autoPairs === undefined ? {} : { autoPairs: ctx.startupConfig.editor.autoPairs }),
-        tabstop, shiftwidth, softtabstop: shiftwidth,
-        ...(settings.indentStyle === undefined ? {} : { expandtab: settings.indentStyle === 'space' }),
-      };
+      const languageId = resolveConfiguredLanguageId(ctx.configuredLanguages, path);
+      const indent = ctx.configuredLanguages?.find((entry) => entry.name === languageId)?.indent;
+      const languageWidth = indent?.unit.length ?? 2;
+      const tabstop = settings?.tabWidth ?? (typeof settings?.indentSize === 'number' ? settings.indentSize : indent?.tabWidth ?? 2);
+      const shiftwidth = settings?.indentSize === 'tab' ? tabstop : settings?.indentSize ?? (indent?.unit === '\t' ? tabstop : languageWidth);
+      return { ...baseInsertOptions, tabstop, shiftwidth, softtabstop: shiftwidth,
+        expandtab: settings?.indentStyle === undefined ? indent?.unit !== '\t' : settings.indentStyle === 'space' };
     },
     openDocument: async (path, documentId) => (path === undefined ? undefined : await forward.directoryDraftController.openDocumentIfDirectory(path, documentId)) ?? deps.openDocumentAt(path, documentId),
     workspaceRelativePath: (path) => filesystem.workspaceRelativePath(workspaceRoot, path),

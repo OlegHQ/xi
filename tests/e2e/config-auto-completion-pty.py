@@ -192,7 +192,7 @@ def run_case(enabled: bool, replace: bool = False, accept: bool = False, preview
         if child.returncode != 0:
             raise SystemExit(f"Xi exited {child.returncode}: {captured[-4000:]!r}")
         if accept:
-            expected = "ab\tx\n" if supersede_menu else ("beta\n" if replace else "betax\n")
+            expected = "ab  x\n" if supersede_menu else ("beta\n" if replace else "betax\n")
             if source.read_text(encoding="utf-8") != expected:
                 raise SystemExit(f"completion-replace={replace} produced unexpected text: {source.read_text(encoding='utf-8')!r}")
         if cancel_preview and source.read_text(encoding="utf-8") != "aba\n":
@@ -211,4 +211,25 @@ run_case(True, cancel_preview=True, focus_preview=True)
 run_case(True, cancel_preview=True, preview=False)
 if not enabled_matches or disabled_matches:
     raise SystemExit("automatic completion gate cases did not diverge")
+with tempfile.TemporaryDirectory(prefix="xi-ruby-no-server-") as temporary:
+    workspace = Path(temporary)
+    source = workspace / "sample.rb"
+    source.write_text("", encoding="utf-8")
+    master, slave = pty.openpty()
+    environment = os.environ.copy()
+    environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": str(workspace / ".config"), "XI_UI_TEST_MARKERS": "1"})
+    child = subprocess.Popen(["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(source)], cwd=workspace, env=environment, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+    os.close(slave)
+    captured = bytearray()
+    try:
+        if not read_until(master, captured, b"XI_WORKBENCH_READY", 15):
+            raise SystemExit("Ruby no-server fixture did not reach the workbench")
+        os.write(master, b"iabcdef")
+        read_for(master, captured, 0.8)
+        if b"No language server available" in captured or b'XI_COMPLETION_STATE {"state":"unavailable"' in captured:
+            raise SystemExit(f"typing Ruby showed a no-server completion popup: {captured[-4000:]!r}")
+    finally:
+        child.kill()
+        child.wait()
+        os.close(master)
 print("Config automatic-completion PTY passed: configured identifier trigger opens character completion and false gates it.")

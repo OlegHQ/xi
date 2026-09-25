@@ -1258,7 +1258,7 @@ root-markers = ["Gemfile", "gems.rb", ".ruby-version", ".git"]
 name = "typescript"
 file-types = ["ts", "tsx"]
 language-servers = ["typescript"]
-indent = { tab-width = 2, unit = "\\t" }
+indent = { tab-width = 2, unit = "  " }
 formatter = { command = "biome", args = ["format", "--stdin-file-path", "{file}"] }
 auto-format = true
 

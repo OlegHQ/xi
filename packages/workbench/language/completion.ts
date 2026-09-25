@@ -540,6 +540,7 @@ export class CompletionSnippetController {
         return true;
       }
       this.#completionEnsureRetried = false;
+      if (trigger === 'character') { this.closeCompletion(); return true; }
       this.#completionUnavailable = true;
       for (const listener of this.#completionReadListeners) listener(this.completionRead.model);
       this.#options.marker('XI_COMPLETION_STATE', { state: 'unavailable', items: 0 });
@@ -559,6 +560,7 @@ export class CompletionSnippetController {
         const ready = await session!.waitForReady();
         if (!this.#completionOpen || this.#completionSerial === 0) return;
         if (ready.ok === false && wordProvider === undefined) {
+          if (trigger === 'character') { this.closeCompletion(); return; }
           controller.fail(this.#completionSerial, request, { kind: 'unavailable', message: ready.error.message });
           return;
         }
@@ -581,9 +583,11 @@ export class CompletionSnippetController {
         controller.publish(this.#completionSerial, request, list);
       } else if (wordProvider !== undefined && this.#options.wordCompletion !== false) {
         const words = await wordProvider.complete(request, cancellation.token);
+        if (trigger === 'character' && (!words.ok || words.value.items.length === 0)) { this.closeCompletion(); return; }
         if (words.ok) controller.publish(this.#completionSerial, request, { ...words.value, isIncomplete: true });
         else controller.fail(this.#completionSerial, request, result.error);
-      } else controller.fail(this.#completionSerial, request, result.error);
+      } else if (trigger === 'character') this.closeCompletion();
+      else controller.fail(this.#completionSerial, request, result.error);
     })();
     return true;
   }

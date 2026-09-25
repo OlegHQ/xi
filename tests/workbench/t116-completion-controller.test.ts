@@ -481,4 +481,17 @@ await new Promise(resolve => setTimeout(resolve, 30));
 assert.equal(delayedMenu.isCompletionOpen, false, 'T116-AUTO-DELAY-02 a following key cancels the obsolete trigger');
 await delayedMenu.dispose();
 
+const unavailableAutomatic = new CompletionSnippetController({
+  host, session, marker: () => {}, onError: () => {}, fileUri: path => `file://${path}`,
+  positionToOffset, ensureLanguage: async () => {}, ensureOptionalServices: async () => {},
+  getSnippetSupport: () => undefined,
+  wordCompletionProvider: { complete: async () => ({ ok: true, value: { isIncomplete: false, items: [] } }) },
+});
+unavailableAutomatic.attachLanguage(new ReadyLanguageSession(), new FakeCompletionController(),
+  { complete: async () => ({ ok: false, error: { kind: 'unavailable', message: 'server missing' } }) }, new FakeSignatureController());
+unavailableAutomatic.openCompletion('character');
+await new Promise<void>(resolve => setImmediate(resolve));
+assert.equal(unavailableAutomatic.isCompletionOpen, false, 'T116-AUTO-UNAVAILABLE-01 automatic completion closes when the server fails and no local matches exist');
+await unavailableAutomatic.dispose();
+
 console.log('T116 CompletionSnippetController passed plan-overlap-rejection, stale-response-drop and escape-close fixtures');
