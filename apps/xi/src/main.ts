@@ -53,9 +53,11 @@ async function main(): Promise<void> {
   // Loading OpenTUI can occupy the event loop while its native module is evaluated.
   // Let the launch document and config settle before loading the UI for either path.
   const vimSession = import('../../../packages/workbench/src/entrypoints/launch');
-  const [{ PersistenceService }, { NodeFilesystemPort, NodeProcessPort, createNodeClock, installJobControl }, { openTextDocument, openTextDocumentChunks, TextFileDocument, positionToOffset }] = await Promise.all([persistenceModule, platformModule, documentModule]);
+  const [{ PersistenceService }, { NodeFilesystemPort, NodeProcessPort, createNodeClock, installJobControl, xiRecoveryStateDirectory, xiRecoveryJournalPath }, { openTextDocument, openTextDocumentChunks, TextFileDocument, positionToOffset }] = await Promise.all([persistenceModule, platformModule, documentModule]);
   startupTrace('base-modules');
   const filesystem = new NodeFilesystemPort();
+  const recoveryDirectory = xiRecoveryStateDirectory(process.env);
+  const journalPathForPath = (path: string): string => xiRecoveryJournalPath(path, recoveryDirectory);
   const workspaceTrust = createWorkspaceTrustWiring(filesystem, process.cwd(), workspaceTrustStateDirectory(process.env), process.env);
   const clock = createNodeClock();
   // PersistenceService (a service) never constructs documents itself
@@ -65,8 +67,9 @@ async function main(): Promise<void> {
     openTextChunks: (documentId, chunks, seed, options) => openTextDocumentChunks(documentId, chunks, seed, options),
     restoreCheckpoint: (documentId, text, lineEndings, defaultLineEnding, hasUtf8Bom, seed, textIntent) =>
       TextFileDocument.create(documentId, text, lineEndings, defaultLineEnding, hasUtf8Bom, seed, textIntent),
-  });
+  }, journalPathForPath);
   const configCancellation = new CancellationSource();
+  const recoveryDirectoryReady = filesystem.makePrivateDirectory(recoveryDirectory, configCancellation.token);
   // Owns every feature-reported status/error message from here on, including ones raised
   // before the renderer exists (recovery notices below): the OpenTUI status row picks up
   // whatever is already published the moment it mounts, so nothing is lost, and nothing is
@@ -82,7 +85,10 @@ async function main(): Promise<void> {
   // theme files are only enumerated before the first frame when the persisted theme is not
   // builtin; otherwise they load after the first frame for the picker.
   const themeWiringPromise = createThemeWiring(filesystem, statusMessages).then(value => { startupTrace('theme-wiring-ready'); return value; });
-  const documentPromise = openDocument(openTextDocument, persistence, filesystem, editorConfigByPath, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages, startupConfigPromise).then(value => { startupTrace('document-opened'); return value; });
+  const documentPromise = recoveryDirectoryReady.then((ready) => {
+    if (!ready.ok) statusMessages.publish(`xi: cannot prepare recovery storage: ${ready.error.message}`);
+    return openDocument(openTextDocument, persistence, filesystem, editorConfigByPath, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages, startupConfigPromise);
+  }).then(value => { startupTrace('document-opened'); return value; });
   const themeWiring = await themeWiringPromise;
   const document = await documentPromise;
   if (document === undefined) {

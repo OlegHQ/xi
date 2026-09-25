@@ -24,6 +24,7 @@ import fcntl
 import os
 import pty
 import select
+import stat
 import struct
 import subprocess
 import tempfile
@@ -50,7 +51,7 @@ def launch(workspace: Path, target: Path) -> tuple[int, subprocess.Popen[bytes],
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     environment = os.environ.copy()
-    environment.update({"TERM": "xterm-256color", "HOME": str(workspace), "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"TERM": "xterm-256color", "HOME": str(workspace), "XDG_STATE_HOME": str(workspace / ".local/state"), "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(target)],
         cwd=str(workspace),
@@ -86,6 +87,10 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e13-a-") as temporary:
     child.wait()
     os.close(master)
     check("scenario 1: disk untouched by the crash itself", target.read_text(encoding="utf-8"), "original\n")
+    check("scenario 1: no recovery sidecar beside the file", Path(f"{target}.xi-recovery.json").exists(), False)
+    recovery_dir = workspace / ".local/state/xi/recovery"
+    check("scenario 1: checkpoint is in user state", len(list(recovery_dir.glob("*.json"))), 1)
+    check("scenario 1: recovery directory is private", stat.S_IMODE(recovery_dir.stat().st_mode), 0o700)
 
     master2, child2, captured2 = launch(workspace, target)
     check("scenario 1: recovery marker fires", b'"kind":"recovered"' in captured2, True)

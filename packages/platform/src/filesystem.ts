@@ -1,5 +1,15 @@
 import { constants, promises as fs, watch as watchFile } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+
+export function xiRecoveryStateDirectory(environment: Readonly<Record<string, string | undefined>>): string {
+  const stateHome = environment.XDG_STATE_HOME;
+  return join(stateHome !== undefined && isAbsolute(stateHome) ? stateHome : join(environment.HOME ?? process.cwd(), '.local/state'), 'xi', 'recovery');
+}
+
+export function xiRecoveryJournalPath(path: string, directory: string): string {
+  return join(directory, `${createHash('sha256').update(path).digest('hex')}.json`);
+}
 
 export function xiConfigDirectory(environment: Readonly<Record<string, string | undefined>>): string {
   const xdgConfigHome = environment.XDG_CONFIG_HOME;
@@ -798,6 +808,19 @@ export class NodeFilesystemPort implements FilesystemPort {
       return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
     } catch (error: unknown) {
       return { ok: false, error: platformFailure(error, 'make-directory') };
+    }
+  }
+
+  async makePrivateDirectory(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
+    if (cancellation.isCancelled) return cancelled();
+    try {
+      await fs.mkdir(path, { recursive: true, mode: 0o700 });
+      const entry = await fs.lstat(path);
+      if (!entry.isDirectory()) return { ok: false, error: { code: 'invalid-recovery-directory', message: 'recovery storage is not a directory', retryable: false } };
+      await fs.chmod(path, 0o700);
+      return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
+    } catch (error: unknown) {
+      return { ok: false, error: platformFailure(error, 'make-private-directory') };
     }
   }
 

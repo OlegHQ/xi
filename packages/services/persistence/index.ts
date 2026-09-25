@@ -183,12 +183,14 @@ export class PersistenceService {
   readonly #pendingCheckpoints = new Map<string, { readonly promise: Promise<Result<RecoveryCheckpoint, PersistenceFailure>>; readonly cancel: () => void }>();
   readonly #onError: (message: string) => void;
   readonly #documents: PersistenceDocumentFactory | undefined;
+  readonly #journalPathForPath: (path: string) => string;
   #disposed = false;
 
-  constructor(filesystem: FilesystemPort, onError: (message: string) => void = () => {}, documents?: PersistenceDocumentFactory) {
+  constructor(filesystem: FilesystemPort, onError: (message: string) => void = () => {}, documents?: PersistenceDocumentFactory, journalPathForPath = recoveryJournalPath) {
     this.#filesystem = filesystem;
     this.#onError = onError;
     this.#documents = documents;
+    this.#journalPathForPath = journalPathForPath;
   }
 
   /** `openFile`/`recover` construct documents; both require the composition root to have
@@ -215,8 +217,9 @@ export class PersistenceService {
   closeDocument(documentId: DocumentId, journalPath?: string): void {
     const identity = this.#opened.get(documentId);
     this.#opened.delete(documentId);
-    const path = journalPath ?? (identity === undefined ? undefined : recoveryJournalPath(identity.path));
+    const path = journalPath ?? (identity === undefined ? undefined : this.#journalPathForPath(identity.path));
     if (path !== undefined) this.#journalCache.delete(path);
+    if (identity !== undefined) this.#journalCache.delete(recoveryJournalPath(identity.path));
   }
 
   /**
@@ -226,7 +229,7 @@ export class PersistenceService {
    * reintroduce a stale recovery journal for -- a save that already completed. The workbench
    * save coordinator (owned elsewhere) is expected to call this before saveFile.
    */
-  async cancelPendingCheckpoint(path: string, journalPath = recoveryJournalPath(path)): Promise<void> {
+  async cancelPendingCheckpoint(path: string, journalPath = this.#journalPathForPath(path)): Promise<void> {
     const pending = this.#pendingCheckpoints.get(journalPath);
     if (pending === undefined) return;
     pending.cancel();
@@ -387,7 +390,7 @@ export class PersistenceService {
     options: RecoveryOptions = {},
   ): Promise<Result<RecoveryCheckpoint, PersistenceFailure>> {
     if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
-    const journalPath = options.journalPath ?? recoveryJournalPath(path);
+    const journalPath = options.journalPath ?? this.#journalPathForPath(path);
     const cancelFlag = { cancelled: false };
     const run = this.#runCheckpoint(document, path, cancellation, options, journalPath, cancelFlag);
     this.#pendingCheckpoints.set(journalPath, { promise: run, cancel: () => { cancelFlag.cancelled = true; } });
@@ -489,10 +492,16 @@ export class PersistenceService {
     options: RecoveryOptions = {},
   ): Promise<Result<RecoveryResult, PersistenceFailure>> {
     if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
-    const journalPath = options.journalPath ?? recoveryJournalPath(path);
-    const journal = await this.#readJournal(journalPath, cancellation);
-    if (!journal.ok) return journal;
-    const checkpoint = [...journal.value].reverse().find((entry) => entry.path === path && entry.documentId === documentId);
+    const journalPaths = options.journalPath === undefined
+      ? [...new Set([this.#journalPathForPath(path), recoveryJournalPath(path)])]
+      : [options.journalPath];
+    let checkpoint: RecoveryCheckpoint | undefined;
+    for (const journalPath of journalPaths) {
+      const journal = await this.#readJournal(journalPath, cancellation);
+      if (!journal.ok) return journal;
+      checkpoint = [...journal.value].reverse().find((entry) => entry.path === path && entry.documentId === documentId);
+      if (checkpoint !== undefined) break;
+    }
     if (checkpoint === undefined) return { ok: true, value: { kind: 'none', path } };
     const restored = restoreCheckpointDocument(this.#requireDocuments(), checkpoint, documentId, options.seed ?? 41027);
     if (!restored.ok) return restored;
@@ -513,7 +522,16 @@ export class PersistenceService {
   recoverFile = this.recover.bind(this);
 
   /** Remove a checkpoint journal only after its owning save/session operation succeeds. */
-  async clearRecovery(path: string, cancellation: CancellationToken, journalPath = recoveryJournalPath(path)): Promise<Result<void, PersistenceFailure>> {
+  async clearRecovery(path: string, cancellation: CancellationToken, journalPath?: string): Promise<Result<void, PersistenceFailure>> {
+    const paths = journalPath === undefined ? [...new Set([this.#journalPathForPath(path), recoveryJournalPath(path)])] : [journalPath];
+    for (const target of paths) {
+      const cleared = await this.#clearJournal(target, cancellation);
+      if (!cleared.ok) return cleared;
+    }
+    return { ok: true, value: undefined };
+  }
+
+  async #clearJournal(journalPath: string, cancellation: CancellationToken): Promise<Result<void, PersistenceFailure>> {
     if (this.#disposed) return { ok: false, error: { kind: 'disposed' } };
     const present = await this.#stat(journalPath, cancellation);
     if (!present.ok) return present;

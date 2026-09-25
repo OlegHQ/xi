@@ -19,9 +19,32 @@ async function main(): Promise<void> {
   await testExactRoundTripAndSafeBinaryFallback();
   await testEmptyNamedFileDefaultEndings();
   await testFaultRecoveryAndDivergence();
+  await testCentralRecoveryLocation();
   await testFailurePolicies();
   testSessionSchema();
   console.log('T037 persistence passed UTF-8/EOL round-trip, binary fallback, atomic fault recovery, divergence reporting, failure policies and session schema fixtures');
+}
+
+async function testCentralRecoveryLocation(): Promise<void> {
+  const fs = new FakeFilesystem();
+  const path = '/tmp/T037-central.txt';
+  const journal = '/state/xi/recovery/central.json';
+  fs.seed(path, new TextEncoder().encode('base'));
+  const legacy = new PersistenceService(fs, undefined, testDocumentFactory);
+  const opened = await legacy.openFile(path, id('T037-central'), cancellation);
+  assert.equal(opened.ok && opened.value.kind === 'editable', true);
+  if (!opened.ok || opened.value.kind !== 'editable') return;
+  const document = opened.value.document;
+  assert.equal(document.apply({ start: offset(4), end: offset(4), text: ' edit' }, document.version).ok, true);
+  assert.equal((await legacy.checkpoint(document, path, cancellation)).ok, true);
+  const central = new PersistenceService(fs, undefined, testDocumentFactory, () => journal);
+  const migrated = await central.recover(path, document.id, cancellation);
+  assert.equal(migrated.ok && migrated.value.kind === 'recovered', true, 'T037-CENTRAL-01 old adjacent checkpoints remain recoverable');
+  assert.equal((await central.checkpoint(document, path, cancellation)).ok, true);
+  assert.ok(fs.bytes(journal).length > 2, 'T037-CENTRAL-02 new checkpoints use the configured state location');
+  assert.equal((await central.clearRecovery(path, cancellation)).ok, true);
+  assert.equal(new TextDecoder().decode(fs.bytes(journal)), '[]', 'T037-CENTRAL-03 central checkpoint is cleared after save');
+  assert.equal(new TextDecoder().decode(fs.bytes(`${path}.xi-recovery.json`)), '[]', 'T037-CENTRAL-04 legacy checkpoint is also cleared');
 }
 
 async function testEmptyNamedFileDefaultEndings(): Promise<void> {
