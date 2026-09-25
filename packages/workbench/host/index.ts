@@ -1,7 +1,7 @@
 import { asIdentifier, type ClipboardPort, type ClockPort, type DocumentId, type Disposable, type Result, type ViewId } from '../../contracts/src/index';
 import type { SelectionSetSnapshot } from '../../selections/src/index';
 import type { TextFileDocument } from '../../document/src/entrypoints/launch';
-import type { VimHostCommand, VimInsertOptions } from '../../vim/src/index';
+import { createVimJumpHistory, recordVimJump, type VimHostCommand, type VimInsertOptions, type VimJumpHistory, type VimNavigationTarget } from '../../vim/src/index';
 import { createOwnedVimSession } from '../vim-session';
 import type { OwnedVimKeyEvent, OwnedVimSession, VimCommandLineState, VimPrefixHelpState } from '../vim-session';
 import type { WorkbenchBufferSnapshot, WorkbenchSession, WorkbenchSessionFailure } from '../session';
@@ -104,6 +104,7 @@ export class BufferHost {
   #pendingSurfaceChanges: SurfaceChangePayload[] = [];
   #surfaceChangeScheduled = false;
   #documentSequence = 0;
+  #jumpHistory: VimJumpHistory = createVimJumpHistory();
 
   constructor(session: WorkbenchSession, launchDocument: TextFileDocument, options: BufferHostOptions) {
     this.#session = session;
@@ -166,6 +167,11 @@ export class BufferHost {
         currentPath: () => workbenchSession.buffer(document.id)?.path,
         alternatePath: () => workbenchSession.alternateBufferPath(),
       },
+      jumps: {
+        read: () => this.#jumpHistory,
+        write: (history) => { this.#jumpHistory = history; },
+        activate: (target) => this.#activateJumpTarget(target),
+      },
       viewport: {
         topLine: () => workbenchSession.readView(viewId)?.scrollTop ?? 0,
         bottomLine: () => {
@@ -214,17 +220,50 @@ export class BufferHost {
    * host/native jump). Buffers are matched by workspace-relative path so an undefined
    * `buffer.path` (an unsaved "[No Name]" buffer) never spuriously matches. */
   async openBufferAtPath(path: string, options: OpenBufferAtPathOptions = {}): Promise<OpenBufferAtPathResult | undefined> {
+    const origin = options.preview === true ? undefined : this.#activeJumpTarget();
     const relativePath = this.#options.workspaceRelativePath(path);
     const inFlight = relativePath === undefined ? undefined : this.#openingByPath.get(relativePath);
-    if (inFlight !== undefined) return inFlight;
-    const attempt = this.#openBufferAtPathAttempt(path, options, relativePath);
-    if (relativePath !== undefined) {
+    const attempt = inFlight ?? this.#openBufferAtPathAttempt(path, options, relativePath);
+    if (inFlight === undefined && relativePath !== undefined) {
       this.#openingByPath.set(relativePath, attempt);
       void attempt.finally(() => {
         if (this.#openingByPath.get(relativePath) === attempt) this.#openingByPath.delete(relativePath);
       });
     }
-    return attempt;
+    const opened = await attempt;
+    if (opened !== undefined && origin !== undefined && origin.documentId !== opened.bufferId) {
+      const destination = this.#activeJumpTarget();
+      if (destination !== undefined) {
+        const from = recordVimJump(this.#jumpHistory, origin, 'buffer');
+        if (from.ok) {
+          const to = recordVimJump(from.value, destination, 'buffer');
+          if (to.ok) this.#jumpHistory = to.value;
+        }
+      }
+    }
+    return opened;
+  }
+
+  #activeJumpTarget(): VimNavigationTarget | undefined {
+    const viewId = this.#session.activeViewId;
+    const view = viewId === undefined ? undefined : this.#session.readView(viewId);
+    if (view === undefined || this.#session.buffer(view.document.id)?.path === undefined) return undefined;
+    const primary = view.selections.members.find((member) => member.id === view.selections.primaryId) ?? view.selections.members[0];
+    return primary === undefined ? undefined : { documentId: view.document.id, documentVersion: view.document.version, offset: primary.head.at.offset };
+  }
+
+  #activateJumpTarget(target: VimNavigationTarget): boolean {
+    const buffer = this.#session.buffer(target.documentId);
+    const viewId = buffer?.viewIds[0];
+    const document = this.documents.get(target.documentId);
+    if (viewId === undefined || document === undefined) return false;
+    const session = this.sessions.get(viewId) ?? this.createSession(document, viewId, this.#session.readView(viewId)?.selections);
+    const snapshot = document.snapshot();
+    const at = Math.min(target.offset, snapshot.lengthUtf16) as typeof target.offset;
+    const line = snapshot.lineIndexAt(at);
+    if (!line.ok) return false;
+    const start = snapshot.lineStartOffset(line.value);
+    return start.ok && session.setCursorPosition(line.value, at - start.value) && this.focusBufferById(String(target.documentId)) !== undefined;
   }
 
   async #openBufferAtPathAttempt(path: string, options: OpenBufferAtPathOptions, relativePath: string | undefined): Promise<OpenBufferAtPathResult | undefined> {

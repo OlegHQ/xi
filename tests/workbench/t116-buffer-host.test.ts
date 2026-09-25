@@ -129,6 +129,36 @@ assert.equal(session.buffers().length, 0, 'T116-HOST-07b the underlying workbenc
 
 console.log('T116 BufferHost passed bookkeeping, focus-reuse, preview-discard, panel-exclusivity and dispose fixtures');
 
+// Normal-mode jump history follows a committed file switch and can traverse back into
+// the source buffer, then forward to the destination without adding another jump.
+{
+  const first = document(id<DocumentId>('jump-first'), 'one\ntwo\nthree');
+  const workspace = new WorkbenchSession({ workspaceId: 'jump-files' });
+  assert.ok(workspace.openBuffer(first, { viewId: launchViewId, path: '/workspace/jump-first.txt' }).ok);
+  const jumpHost = new BufferHost(workspace, first, {
+    openDocument: async (_path, documentId) => document(documentId, 'next\n'),
+    workspaceRelativePath: path => path,
+    marker: () => {},
+    launchViewId,
+  });
+  const firstSession = jumpHost.createSession(first, launchViewId);
+  const key = (name: string, ctrl = false) => ({ name, raw: name, shift: false, option: false, ctrl, meta: false });
+  await firstSession.handleKey(key('G'));
+  const next = await jumpHost.openBufferAtPath('/workspace/jump-next.txt');
+  assert.ok(next);
+  const nextSession = jumpHost.sessions.get(next.viewId)!;
+  await nextSession.handleKey(key('o', true));
+  assert.equal(workspace.activeViewId, launchViewId, 'T116-HOST-JUMP-01 Ctrl-O returns to the previous file');
+  assert.equal(workspace.readView(launchViewId)?.selections.members[0]?.head.at.offset, 8, 'T116-HOST-JUMP-02 Ctrl-O restores the source cursor');
+  await firstSession.handleKey(key('o', true));
+  assert.equal(workspace.readView(launchViewId)?.selections.members[0]?.head.at.offset, 0, 'T116-HOST-JUMP-03 Ctrl-O continues through local jumps');
+  await firstSession.handleKey(key('p', true));
+  assert.equal(workspace.readView(launchViewId)?.selections.members[0]?.head.at.offset, 8, 'T116-HOST-JUMP-04 Ctrl-P traverses local jumps forward');
+  await firstSession.handleKey(key('p', true));
+  assert.equal(workspace.activeViewId, next.viewId, 'T116-HOST-JUMP-05 Ctrl-P returns to the next file');
+  jumpHost.dispose();
+}
+
 for (const preview of [false, true]) {
   const scratch = document(id<DocumentId>(`scratch-${preview}`), '');
   const workspace = new WorkbenchSession({ workspaceId: 'scratch-replacement' });

@@ -256,10 +256,13 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   function recordJump(from: Utf16Offset, to: Utf16Offset, reason: VimJumpReason): void {
     if (from === to) return;
     const current = document.snapshot();
-    const origin = recordVimJump(jumpHistory, { documentId, documentVersion: current.version, offset: from }, reason);
+    const origin = recordVimJump(options.jumps?.read() ?? jumpHistory, { documentId, documentVersion: current.version, offset: from }, reason);
     if (!origin.ok) return;
     const destination = recordVimJump(origin.value, { documentId, documentVersion: current.version, offset: to }, reason);
-    if (destination.ok) jumpHistory = destination.value;
+    if (destination.ok) {
+      jumpHistory = destination.value;
+      options.jumps?.write(jumpHistory);
+    }
   }
   let searchState: VimSearchState = EMPTY_VIM_SEARCH_STATE;
   // Every interactive search (n/N/*/#/g*/g#/`/`/`?`) runs through this generation
@@ -1286,14 +1289,18 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
       if (command.kind === 'single-key' && mode === 'normal' && (command.key === '<C-o>' || command.key === '<C-i>' || command.key === '<C-p>')) {
         for (let step = 0; step < command.count.value; step += 1) {
-          const moved = command.key === '<C-o>' ? jumpBackward(jumpHistory) : jumpForward(jumpHistory);
+          const moved = command.key === '<C-o>' ? jumpBackward(options.jumps?.read() ?? jumpHistory) : jumpForward(options.jumps?.read() ?? jumpHistory);
           if (!moved.ok) break;
           const current = document.snapshot();
-          if (moved.value.target.documentId !== documentId) break;
-          const at = Math.min(moved.value.target.offset, current.lengthUtf16) as Utf16Offset;
-          selections = makeNormalSelection(current, at, (selections.selectionGeneration as number) + 1, selections.primaryId);
-          motionCursor = makeMotionCursor(current, selections);
+          if (moved.value.target.documentId !== documentId) {
+            if (options.jumps?.activate(moved.value.target) !== true) break;
+          } else {
+            const at = Math.min(moved.value.target.offset, current.lengthUtf16) as Utf16Offset;
+            selections = makeNormalSelection(current, at, (selections.selectionGeneration as number) + 1, selections.primaryId);
+            motionCursor = makeMotionCursor(current, selections);
+          }
           jumpHistory = moved.value.state;
+          options.jumps?.write(jumpHistory);
         }
         parser = makeParser(mode, selections);
         return;

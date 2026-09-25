@@ -3,7 +3,7 @@ import type { CommittedDocumentChange } from '../../document/src/index';
 import type { SelectionSetSnapshot } from '../../selections/src/index';
 import type { VimMode } from '../../vim/src/entrypoints/launch';
 import type { WorkbenchReadPort } from '../src/read-model';
-import type { VimHostCommand, VimInsertOptions } from '../../vim/src/index';
+import type { VimHostCommand, VimInsertOptions, VimJumpHistory, VimNavigationTarget } from '../../vim/src/index';
 import type { PointerSelectionIntent } from '../../vim/src/entrypoints/launch';
 import type { PrefixHelpParserContinuation } from '../commands/prefix-help';
 
@@ -45,6 +45,12 @@ export interface OwnedVimSessionOptions {
   readonly files?: {
     readonly currentPath: () => string | undefined;
     readonly alternatePath: () => string | undefined;
+  };
+  /** Shared workbench jump list and cross-buffer target activation. */
+  readonly jumps?: {
+    readonly read: () => VimJumpHistory;
+    readonly write: (history: VimJumpHistory) => void;
+    readonly activate: (target: VimNavigationTarget) => boolean;
   };
   readonly initialLine?: number;
   readonly initialSelections?: SelectionSetSnapshot;
