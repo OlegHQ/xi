@@ -66,5 +66,7 @@ with tempfile.TemporaryDirectory(prefix="xi-named-save-pty-") as temporary:
     ])
     run(root, None, [(b":e edited.txt\rihello\x1b:w\r", root / "edited.txt", b"hello\n")])
     run(root, None, [(b"ihello\x1b:w named file.txt\r", root / "named file.txt", b"hello\n")])
+    run(root, "new.rb", [(b"ihello\x1b:w\r", root / "new.rb", b"hello\n")])
+    run(root, "new.ml", [(b"ihello\x1b:w\r", root / "new.ml", b"hello\n")])
 
 print("Named save PTY passed: missing CLI and :edit paths save, and :w name binds scratch for later :w.")

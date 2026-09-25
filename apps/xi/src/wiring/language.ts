@@ -293,24 +293,24 @@ function readVirtualAnnotations(runtime: InlayHintRuntime, documentId: string, d
   return Object.freeze([...readInlayHints(runtime, documentId, documentVersion, document), ...readColorSwatches(runtime, documentId, documentVersion, document)]);
 }
 
-function resolveConfiguredLanguageId(deps: LanguageWiringDeps, path: string | undefined): string | undefined {
-  if (path !== undefined && deps.configuredLanguages !== undefined) {
+export function resolveConfiguredLanguageId(configuredLanguages: readonly LanguageConfig[] | undefined, path: string | undefined): string | undefined {
+  if (path !== undefined && configuredLanguages !== undefined) {
     const fileName = path.split(/[\\/]/u).at(-1)?.toLowerCase() ?? '';
     const extension = fileName.slice(fileName.lastIndexOf('.') + 1);
-    const configured = deps.configuredLanguages.find((entry) => entry.fileTypes.some((type) => type.toLowerCase() === extension || type.toLowerCase() === fileName));
+    const configured = configuredLanguages.find((entry) => entry.fileTypes.some((type) => type.toLowerCase() === extension || type.toLowerCase() === fileName));
     if (configured !== undefined) return configured.name;
   }
   return languageIdForPath(path);
 }
 
 function hasLanguageServerForPath(deps: LanguageWiringDeps, path: string | undefined): boolean {
-  const languageId = resolveConfiguredLanguageId(deps, path);
+  const languageId = resolveConfiguredLanguageId(deps.configuredLanguages, path);
   return languageId !== undefined && resolveLanguageServerConfig(deps, languageId) !== undefined;
 }
 
 function admitLanguageBuffer(deps: LanguageWiringDeps, runtime: InlayHintRuntime, session: LanguageServerSession | undefined, path: string | undefined, documentId: DocumentId, document: TextFileDocument): void {
   if (session === undefined || path === undefined) return;
-  const languageId = resolveConfiguredLanguageId(deps, path);
+  const languageId = resolveConfiguredLanguageId(deps.configuredLanguages, path);
   if (languageId === undefined || resolveLanguageServerConfig(deps, languageId) === undefined) return;
   const text = deps.readDocumentText(document);
   if (text === undefined) return;
@@ -373,7 +373,7 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
   let lastEnabled = deps.lspEnabled();
   let connection: LanguageWiringConnection | undefined;
   let presentation: InstanceType<LanguageServices['LanguagePresentationFeatures']> | undefined;
-  const resolveLanguageId = (path: string | undefined): string | undefined => resolveConfiguredLanguageId(deps, path);
+  const resolveLanguageId = (path: string | undefined): string | undefined => resolveConfiguredLanguageId(deps.configuredLanguages, path);
   const inlayRuntime = createInlayRuntime(deps, {
     session: () => languageSession,
     presentation: () => presentation,

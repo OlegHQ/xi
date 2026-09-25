@@ -134,9 +134,33 @@ export const DARK_WORKBENCH_THEME: WorkbenchTheme = Object.freeze({
   syntax: DARK_SYNTAX_COLORS,
 });
 
+/** Xi's own high-contrast blue-green palette for dark terminals. */
+export const OCEAN_WORKBENCH_THEME: WorkbenchTheme = Object.freeze({
+  background: '#11212B', surface: '#1A303B', surfaceActive: '#294957',
+  foreground: '#EAF3F4', muted: '#B9CED3', border: '#58737B',
+  accent: '#84D7F0', error: '#FFAAA5',
+  selectionPrimary: '#355768', selectionSecondary: '#294653',
+  cursorPrimary: '#FFE5B4', cursorSecondary: '#A6DEE8', cursorOnSelection: '#F4C891',
+  motionTrail: '#4A4535', operatorPreview: '#623D42', searchMatch: '#5D563A',
+  syntax: Object.freeze({ comment: '#A8C0BD', string: '#A9E0B2', number: '#F4C08B', keyword: '#C6B9EF', boolean: '#8CD8EA', type: '#E2D89B', function: '#8CD8EA', operator: '#A1D5C4', punctuation: '#C4D8D8', variable: '#EAF3F4', property: '#F3B2B2', constant: '#F4C08B' }),
+});
+
+/** Xi's own warm-paper palette for light terminals. */
+export const PAPER_WORKBENCH_THEME: WorkbenchTheme = Object.freeze({
+  background: '#FFF9EC', surface: '#F3EAD8', surfaceActive: '#EADDC4',
+  foreground: '#292824', muted: '#625E55', border: '#B5A78E',
+  accent: '#165F8D', error: '#A83232',
+  selectionPrimary: '#C5DFE9', selectionSecondary: '#DDEBE7',
+  cursorPrimary: '#263B4E', cursorSecondary: '#455A4D', cursorOnSelection: '#634674',
+  motionTrail: '#F8E4B0', operatorPreview: '#F4CFC5', searchMatch: '#F2DA90',
+  syntax: Object.freeze({ comment: '#6A695E', string: '#306D45', number: '#96521C', keyword: '#653F94', boolean: '#155B81', type: '#66558E', function: '#155B81', operator: '#28696C', punctuation: '#5F5A50', variable: '#292824', property: '#913C4A', constant: '#96521C' }),
+});
+
 /** Builtin themes selectable at runtime, keyed by the id used in EditorConfig.theme and the
  * theme picker's entries. */
 export const BUILTIN_WORKBENCH_THEMES: Readonly<Record<string, WorkbenchTheme>> = Object.freeze({
   'xi-light': LIGHT_WORKBENCH_THEME,
   'xi-dark': DARK_WORKBENCH_THEME,
+  'xi-ocean': OCEAN_WORKBENCH_THEME,
+  'xi-paper': PAPER_WORKBENCH_THEME,
 });

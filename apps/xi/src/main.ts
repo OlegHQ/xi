@@ -4,7 +4,8 @@ import type { ClipboardPort } from '../../../packages/contracts/src/entrypoints/
 // Value imports of the UI entrypoint would evaluate OpenTUI before main() runs; keep the UI lazy.
 import type { LineEnding, TextFileDocument } from '../../../packages/document/src/entrypoints/launch';
 import type { PersistenceService } from '../../../packages/services/src/entrypoints/launch';
-import { languageIdForPath, VIEW_COMMAND_IDS, StatusMessageController } from '../../../packages/workbench/src/entrypoints/launch';
+import { VIEW_COMMAND_IDS, StatusMessageController } from '../../../packages/workbench/src/entrypoints/launch';
+import { resolveConfiguredLanguageId } from './wiring/language';
 import { createWorkspaceTrustWiring, loadStartupXiConfig, readEditorConfig, workspaceTrustStateDirectory, type EditorConfigProperties } from '../../../packages/services/src/entrypoints/config';
 import { createConfiguredClipboardPort, type NodeFilesystemPort } from '../../../packages/platform/src/entrypoints/launch';
 import { parseCliArgs, resolveFileArgument } from './cli';
@@ -43,7 +44,6 @@ async function main(): Promise<void> {
     return;
   }
   const filePath = action.fileArgument === undefined ? undefined : resolveFileArgument(action.fileArgument, process.cwd());
-  const languageId = languageIdForPath(filePath?.path);
   // Keep CLI startup free of the optional service barrel. The small persistence
   // entrypoint, OpenTUI, Vim and the service graph can load concurrently.
   const persistenceModule = import('../../../packages/services/src/entrypoints/persistence');
@@ -118,7 +118,7 @@ async function main(): Promise<void> {
       persistence,
       document,
       filePath,
-      languageId,
+      languageId: resolveConfiguredLanguageId((await startupConfigPromise).config?.languages, filePath?.path),
       NodeProcessPort,
       createClock: createNodeClock,
       positionToOffset,

@@ -22,7 +22,7 @@ import type {
 } from '../../../packages/services/src/entrypoints/syntax';
 
 export interface AssetFileReader {
-  readFile(path: string, cancellation: CancellationToken): Promise<Result<Uint8Array, PlatformFailure>>;
+  readFile(path: string, cancellation: CancellationToken, options?: { readonly maxBytes?: number }): Promise<Result<Uint8Array, PlatformFailure>>;
 }
 
 interface FileImportModule {
@@ -113,10 +113,21 @@ export async function resolveTreeSitterRuntimeOptions(): Promise<TreeSitterRunti
 const textDecoder = new TextDecoder('utf-8');
 
 /** Lazily resolves and caches a bundled grammar per languageId; never loaded on the input path. */
-export function createBundledGrammarProvider(reader: AssetFileReader, cancellation: CancellationToken, rainbowBrackets = false): SyntaxGrammarProvider {
+export function createBundledGrammarProvider(reader: AssetFileReader, cancellation: CancellationToken, rainbowBrackets = false, grammarDirectory?: string): SyntaxGrammarProvider {
   const grammarCache = new Map<string, Promise<Result<SyntaxGrammarSource, SyntaxGrammarFailure>>>();
 
   async function loadGrammar(languageId: string): Promise<Result<SyntaxGrammarSource, SyntaxGrammarFailure>> {
+    if (grammarDirectory !== undefined && /^[a-z][a-z0-9_-]*$/u.test(languageId)) {
+      const [wasm, highlights] = await Promise.all([
+        reader.readFile(`${grammarDirectory}/${languageId}.wasm`, cancellation, { maxBytes: 16_000_000 }),
+        reader.readFile(`${grammarDirectory}/${languageId}.scm`, cancellation, { maxBytes: 1_000_000 }),
+      ]);
+      if (wasm.ok && highlights.ok) return { ok: true, value: { wasm: wasm.value, highlights: textDecoder.decode(highlights.value) } };
+      if (wasm.ok || highlights.ok || wasm.error.code !== 'ENOENT' || highlights.error.code !== 'ENOENT') {
+        const failure = !wasm.ok && wasm.error.code !== 'ENOENT' ? wasm.error : highlights.ok ? (wasm.ok ? undefined : wasm.error) : highlights.error;
+        return { ok: false, error: { kind: 'grammar-missing', message: `failed to load custom grammar for "${languageId}": ${failure?.message ?? 'incomplete grammar pair'}` } };
+      }
+    }
     const loaders = GRAMMAR_ASSET_LOADERS[languageId];
     if (loaders === undefined) {
       return { ok: false, error: { kind: 'grammar-missing', message: `no bundled Tree-sitter grammar for languageId "${languageId}"` } };

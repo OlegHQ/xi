@@ -55,7 +55,6 @@ with tempfile.TemporaryDirectory(prefix="xi-trust-prompt-pty-") as temporary:
     try:
         read_until(master, captured, lambda: b"XI_WORKBENCH_READY" in captured and "Trust workspace" in rows_for(captured) and "Never trust workspace" in rows_for(captured))
         os.write(master, b"\x1b")
-        captured.clear()
         read_until(master, captured, lambda: "[⚠]" in rows_for(captured) and "Trust workspace" not in rows_for(captured))
         rows = rows_for(captured)
         if "[⚠]" not in rows or "Trust workspace" in rows:

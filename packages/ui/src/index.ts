@@ -5,6 +5,8 @@ export {
   BUILTIN_WORKBENCH_THEMES,
   DARK_WORKBENCH_THEME,
   LIGHT_WORKBENCH_THEME,
+  OCEAN_WORKBENCH_THEME,
+  PAPER_WORKBENCH_THEME,
   themeColor,
   helixTextAttributes,
   WorkbenchRenderable,

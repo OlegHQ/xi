@@ -5,6 +5,7 @@ import type { DocumentSnapshot, TextFileDocument } from '../../../../packages/do
 import { openTextDocument } from '../../../../packages/document/src/entrypoints/launch';
 import type { NodeFilesystemPort, NodeProcessPort, WorkspaceDirectoryEntry, WorkspaceDirectoryWatchEvent, WorkspaceFileEntry, WorkspaceIgnoreOptions, createNodeClock } from '../../../../packages/platform/src/entrypoints/launch';
 import type { WorkbenchTheme } from '../../../../packages/ui/src/entrypoints/launch';
+import { BUILTIN_WORKBENCH_THEMES } from '../../../../packages/ui/src/entrypoints/theme';
 import type {
   FilePathIndex,
   PersistenceService,
@@ -23,7 +24,6 @@ import {
   DiffViewController,
   ExplorerController,
   GitPanelController,
-  languageIdForPath,
   LanguageOverlayController,
   PickerController,
   ProblemsController,
@@ -52,7 +52,7 @@ import { createBundledGrammarProvider, resolveTreeSitterRuntimeOptions } from '.
 import type { StatusMessageController } from '../../../../packages/workbench/src/entrypoints/launch';
 import type { ThemeWiring } from './theme';
 import { createTaskWiring, type TaskWiring } from './tasks';
-import { createLanguageWiring, type LanguageWiring } from './language';
+import { createLanguageWiring, resolveConfiguredLanguageId, type LanguageWiring } from './language';
 import { createOptionalServicesWiring, type OptionalServicesWiring } from './optional-services';
 import type { WorkspaceTrustWiring } from '../../../../packages/services/src/entrypoints/config';
 import type { ResolvedFileArgument } from '../cli';
@@ -376,10 +376,10 @@ interface BuildContext {
 /** Syntax tracking is constructed first and touched by almost everything else (workbench,
  * host, language wiring); grammar/runtime wasm loads lazily on the first request for a known
  * languageId, never here, so this does no filesystem or wasm work. */
-function createSyntaxTracker(filesystem: NodeFilesystemPort, rainbowBrackets: boolean): { readonly syntaxAssetsCancellation: CancellationSource; readonly syntaxTracker: SyntaxDocumentTracker } {
+function createSyntaxTracker(filesystem: NodeFilesystemPort, rainbowBrackets: boolean, userConfigPath: string): { readonly syntaxAssetsCancellation: CancellationSource; readonly syntaxTracker: SyntaxDocumentTracker } {
   const syntaxAssetsCancellation = new CancellationSource();
   const syntaxTracker = new SyntaxDocumentTracker({
-    grammars: createBundledGrammarProvider(filesystem, syntaxAssetsCancellation.token, rainbowBrackets),
+    grammars: createBundledGrammarProvider(filesystem, syntaxAssetsCancellation.token, rainbowBrackets, `${userConfigPath.replace(/[\\/][^\\/]*$/u, '')}/grammars`),
     runtime: resolveTreeSitterRuntimeOptions,
     rainbowBrackets,
   });
@@ -579,8 +579,7 @@ function createPickerModel(
     ]),
     // Live source: custom themes load when this picker first opens.
     new BufferPickerProvider('xi.navigation.themes', () => [
-      { id: 'xi-light', label: 'Xi Light', detail: '', value: 'xi-light' },
-      { id: 'xi-dark', label: 'Xi Dark', detail: '', value: 'xi-dark' },
+      ...Object.keys(BUILTIN_WORKBENCH_THEMES).map(id => ({ id, label: `Xi ${id.slice(3, 4).toUpperCase()}${id.slice(4)}`, detail: '', value: id })),
       ...deps.themeWiring.themeController.customThemeEntries().map(({ id: customId, label }) => ({ id: customId, label, detail: '', value: customId })),
     ].sort((left, right) => left.label.localeCompare(right.label)), 'theme'),
     new StaticPickerProvider('xi.navigation.config', 'config', [{ id: 'config.open', mode: 'config', label: 'Open config', value: 'config.open' }]),
@@ -697,7 +696,7 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
       void forward.workspaceEditsFeature?.refreshCodeActionHints();
     },
     onBufferOpened: (buffer) => {
-      syntaxTracker.openDocument({ documentId: buffer.documentId, languageId: languageIdForPath(buffer.path), snapshot: buffer.document.snapshot() });
+      syntaxTracker.openDocument({ documentId: buffer.documentId, languageId: resolveConfiguredLanguageId(ctx.configuredLanguages, buffer.path), snapshot: buffer.document.snapshot() });
       forward.languageWiring.admitBufferToLanguageSession(buffer.path, buffer.documentId, buffer.document);
       if (forward.languageWiring.hasServerForPath(buffer.path)) void forward.languageWiring.ensureLanguage().catch((error: unknown) => {
         deps.statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
@@ -974,7 +973,7 @@ function createSearchProblemsOverlaySidebar(
     workbench,
     workspaceRoot,
     marker,
-    openSyntax: (snapshot, path) => forward.syntaxTracker.openDocument({ documentId: snapshot.id, languageId: languageIdForPath(path), snapshot }),
+    openSyntax: (snapshot, path) => forward.syntaxTracker.openDocument({ documentId: snapshot.id, languageId: resolveConfiguredLanguageId(ctx.configuredLanguages, path), snapshot }),
     closeSyntax: (documentId) => forward.syntaxTracker.closeDocument(documentId),
     onError: (message) => ctx.deps.statusMessages.publish(message),
     service: {
@@ -1156,10 +1155,10 @@ function createSaveAndHostCommands(
     isTransientEditActive: (documentId) => forward.completionFeature?.isCompletionPreviewActiveFor(documentId) === true,
     formatOnSave,
     formatOnSaveForPath: (path) => {
-      const language = languageIdForPath(path);
+      const language = resolveConfiguredLanguageId(ctx.configuredLanguages, path);
       return resolveFormatOnSave(process.env, language !== undefined && (configuredLanguages?.find((entry) => entry.name === language)?.autoFormat ?? false), startupConfig?.editor.autoFormat ?? true);
     },
-    formatterKeyForPath: (path) => languageIdForPath(path) ?? '',
+    formatterKeyForPath: (path) => resolveConfiguredLanguageId(ctx.configuredLanguages, path) ?? '',
     insertFinalNewline: startupConfig?.editor.insertFinalNewline ?? true,
     trimFinalNewlines: startupConfig?.editor.trimFinalNewlines ?? false,
     trimTrailingWhitespace: startupConfig?.editor.trimTrailingWhitespace ?? false,
@@ -1169,7 +1168,7 @@ function createSaveAndHostCommands(
     autoSaveFocusLost: startupConfig?.editor.autoSave.focusLost ?? false,
     createFormatterPipeline: async (path) => {
       const { FormatterPipeline, createExternalFormatter } = await import('../../../../packages/services/src/entrypoints/formatting');
-      const language = path === undefined ? deps.languageId : languageIdForPath(path);
+      const language = path === undefined ? deps.languageId : resolveConfiguredLanguageId(ctx.configuredLanguages, path);
       const configuredFormatter = language === undefined ? undefined : configuredLanguages?.find((entry) => entry.name === language)?.formatter;
       return createFormatterPipelineFromEnvironment(workspaceRoot, FormatterPipeline, createExternalFormatter, deps.NodeProcessPort, marker, ctx.deps.statusMessages, configuredFormatter);
     },
@@ -1458,7 +1457,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
 
   const settings = await loadStartupSettings(deps);
   let currentConfig = settings.startupConfig;
-  const { syntaxAssetsCancellation, syntaxTracker } = createSyntaxTracker(filesystem, settings.startupConfig?.editor.rainbowBrackets ?? false);
+  const { syntaxAssetsCancellation, syntaxTracker } = createSyntaxTracker(filesystem, settings.startupConfig?.editor.rainbowBrackets ?? false, deps.userConfigPath);
   forward.syntaxTracker = syntaxTracker;
   const editorState = deps.themeWiring.editorState;
   const ctx: BuildContext = { editorState, deps, filesystem, clock, persistence, marker, ...settings };

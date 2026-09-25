@@ -61,6 +61,18 @@ with tempfile.TemporaryDirectory(prefix="xi-soft-wrap-pty-") as temporary:
         screen.feed(captured)
         if TEXT[:33] not in screen.row_text(1) or f"↪  {TEXT[33:]}" not in screen.row_text(2):
             raise SystemExit(f"soft-wrap segments missing: {screen.row_text(1)!r}, {screen.row_text(2)!r}")
+        os.write(master, b" w")
+        read_for(master, captured, 0.5)
+        screen = Screen(14, 40)
+        screen.feed(captured)
+        if "next" not in screen.row_text(2) or "↪" in screen.row_text(2):
+            raise SystemExit(f"Space+w did not disable wrapping: {screen.row_text(2)!r}")
+        os.write(master, b" w")
+        read_for(master, captured, 0.5)
+        screen = Screen(14, 40)
+        screen.feed(captured)
+        if f"↪  {TEXT[33:]}" not in screen.row_text(2):
+            raise SystemExit(f"Space+w did not restore wrapping: {screen.row_text(2)!r}")
         os.write(master, b"q")
         child.wait(timeout=5)
     finally:
@@ -71,4 +83,4 @@ with tempfile.TemporaryDirectory(prefix="xi-soft-wrap-pty-") as temporary:
     if child.returncode != 0:
         raise SystemExit(f"Xi exited {child.returncode}: {captured[-4000:]!r}")
 
-print("Config soft-wrap PTY passed: launched Xi wrapped a long logical line with its configured indicator.")
+print("Config soft-wrap PTY passed: launched Xi wrapped a long logical line and Space+w toggled it off and on.")

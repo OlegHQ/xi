@@ -6,6 +6,8 @@ import {
   ASCII_WORKBENCH_THEME,
   DARK_WORKBENCH_THEME,
   LIGHT_WORKBENCH_THEME,
+  OCEAN_WORKBENCH_THEME,
+  PAPER_WORKBENCH_THEME,
   resolveMotionPaintTokens,
   themeColor,
   type ThemeColor,
@@ -19,6 +21,8 @@ assert.notDeepEqual(resolvePaintColor('#D5D4CF', 'ansi256').toInts().slice(0, 3)
 const themes: readonly { readonly name: string; readonly theme: WorkbenchTheme }[] = [
   { name: 'xi-light', theme: LIGHT_WORKBENCH_THEME },
   { name: 'xi-dark', theme: DARK_WORKBENCH_THEME },
+  { name: 'xi-ocean', theme: OCEAN_WORKBENCH_THEME },
+  { name: 'xi-paper', theme: PAPER_WORKBENCH_THEME },
   { name: 'xi-ascii', theme: ASCII_WORKBENCH_THEME },
 ];
 

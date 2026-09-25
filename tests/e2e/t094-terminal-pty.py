@@ -166,14 +166,15 @@ with tempfile.TemporaryDirectory(prefix="xi-t094-terminal-pty-") as temporary:
     finally:
         job.finish()
 
-    missing = Path(temporary) / "missing.txt"
+    unreadable = Path(temporary) / "directory-not-a-file"
+    unreadable.mkdir()
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     initial_lflag = termios.tcgetattr(slave)[3]
     environment = os.environ.copy()
     environment.update({"TERM": "xterm-256color", "HOME": temporary, "XI_UI_TEST_MARKERS": "1"})
     partial = subprocess.Popen(
-        ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(missing)],
+        ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(unreadable)],
         cwd=ROOT,
         env=environment,
         stdin=slave,

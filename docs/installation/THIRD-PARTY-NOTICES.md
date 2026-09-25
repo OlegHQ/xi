@@ -1,5 +1,12 @@
 # Xi third-party notices
 
+## Bundled themes
+
+`xi-light`, `xi-ocean`, and `xi-paper` are original Xi palettes licensed under
+MIT (`packages/ui/theme/LICENSE`). `xi-dark` uses Catppuccin Mocha colors,
+licensed under MIT by Catppuccin (`packages/ui/theme/CATPPUCCIN-LICENSE`).
+Both license texts are included in release archives.
+
 This file describes runtime dependencies included by the Xi package at the
 current lockfile revision. License text is retained in each dependency's
 package directory when the source installation is available. A release bundle

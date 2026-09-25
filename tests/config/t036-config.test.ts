@@ -888,14 +888,14 @@ if (shippedLanguages.ok) {
   assert.ok(ruby?.fileTypes.includes('rb') && ruby.fileTypes.includes('Gemfile'), 'T036-LANGUAGE-RUBY-02 Ruby extensions and conventional filenames ship by default');
   assert.equal(rubyServer?.command, 'ruby-lsp', 'T036-LANGUAGE-RUBY-03 Ruby LSP ships by default');
   assert.equal(ruby?.formatter?.command, 'rubocop', 'T036-LANGUAGE-RUBY-04 Ruby formatter ships by default');
-  assert.equal(ruby?.autoFormat, true, 'T036-LANGUAGE-RUBY-05 Ruby formatting runs on save');
+  assert.equal(ruby?.autoFormat, false, 'T036-LANGUAGE-RUBY-05 Ruby formatting is opt-in so a missing formatter cannot block saves');
   const ocaml = shippedLanguages.value.languages.find((entry) => entry.name === 'ocaml');
   const ocamlServer = shippedLanguages.value.languageServers.find((entry) => entry.name === ocaml?.languageServers[0]);
   const ocamlInterface = shippedLanguages.value.languages.find((entry) => entry.name === 'ocaml_interface');
   assert.ok(ocaml?.fileTypes.includes('ml') && ocamlInterface?.fileTypes.includes('mli'), 'T036-LANGUAGE-OCAML-01 OCaml implementation and interface extensions ship by default');
   assert.equal(ocamlServer?.command, 'ocamllsp', 'T036-LANGUAGE-OCAML-02 OCaml LSP ships by default');
   assert.equal(ocaml?.formatter?.command, 'ocamlformat', 'T036-LANGUAGE-OCAML-03 OCaml formatter ships by default');
-  assert.equal(ocaml?.autoFormat, true, 'T036-LANGUAGE-OCAML-04 OCaml formatting runs on save');
+  assert.equal(ocaml?.autoFormat, false, 'T036-LANGUAGE-OCAML-04 OCaml formatting is opt-in so a missing formatter cannot block saves');
   assert.equal(ocamlInterface?.formatter?.command, 'ocamlformat', 'T036-LANGUAGE-OCAML-05 OCaml interfaces format on save');
 }
 const theme = parseThemeConfig(DEFAULT_THEME_TOML, 'config/themes/xi-light.toml');

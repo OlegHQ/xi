@@ -52,6 +52,8 @@ if (versionCheck.status !== 0 || versionCheck.stdout !== `xi ${version}\n`) {
 const noticesSource = join(root, 'docs', 'installation', 'THIRD-PARTY-NOTICES.md');
 const checksumSource = join(root, 'docs', 'installation', 'native-assets.sha256');
 cpSync(noticesSource, join(output, 'THIRD-PARTY-NOTICES.md'));
+cpSync(join(root, 'packages', 'ui', 'theme', 'LICENSE'), join(output, 'THEMES-LICENSE'));
+cpSync(join(root, 'packages', 'ui', 'theme', 'CATPPUCCIN-LICENSE'), join(output, 'CATPPUCCIN-LICENSE'));
 cpSync(checksumSource, join(output, 'native-assets.sha256'));
 copyDependencyLicenses(output, audit);
 

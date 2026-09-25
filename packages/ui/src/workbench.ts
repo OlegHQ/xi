@@ -31,7 +31,7 @@ import {
   type MotionTrailMode,
 } from '../theme/motion-tokens';
 
-export { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, BUILTIN_WORKBENCH_THEMES, helixThemeStyle, type HelixThemeStyle, type ThemeColor, type WorkbenchTheme } from '../theme/workbench-themes';
+export { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, OCEAN_WORKBENCH_THEME, PAPER_WORKBENCH_THEME, BUILTIN_WORKBENCH_THEMES, helixThemeStyle, type HelixThemeStyle, type ThemeColor, type WorkbenchTheme } from '../theme/workbench-themes';
 export { helixTextAttributes, helixThemeColor, themeColor } from '../theme/color-input';
 import { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, type WorkbenchTheme } from '../theme/workbench-themes';
 import { helixThemeColor, themeColor } from '../theme/color-input';
