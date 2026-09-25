@@ -1145,7 +1145,11 @@ export class WorkbenchRenderable extends Renderable {
       }
     }
     for (const splitter of splitters) {
-      if (splitter.axis === 'vertical') buffer.fillRect(splitter.x, splitter.y, splitter.width, splitter.height, this.#border);
+      if (splitter.axis === 'vertical') {
+        for (let row = 0; row < splitter.height; row++) buffer.drawText(this.#ascii ? '|' : '│', splitter.x, splitter.y + row, this.#border, this.#background);
+      } else if (!this.bufferlineVisible()) {
+        buffer.drawText((this.#ascii ? '-' : '─').repeat(splitter.width), splitter.x, splitter.y, this.#border, this.#background);
+      }
     }
     this.#lastFrame = Object.freeze({ layout: geometry, frame: activeFrame, view: activeView });
     this.#lastPresentation = activePresentation;
