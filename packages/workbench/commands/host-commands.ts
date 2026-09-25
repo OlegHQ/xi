@@ -131,9 +131,17 @@ export class WorkbenchHostCommands {
     if (command.kind === 'open-file') {
       const source = session.views().find((candidate) => candidate.viewId === sourceViewId);
       const sourcePath = source === undefined ? undefined : session.buffer(source.bufferId)?.path;
-      const targetPath = await this.resolveHostFilePath(command.target, sourcePath);
+      const existingPath = await this.resolveHostFilePath(command.target, sourcePath);
+      const targetPath = existingPath ?? (command.allowMissing && command.target.length > 0 && !command.target.includes('\0')
+        ? this.#options.filesystem.resolvePath(sourcePath === undefined ? this.#options.workspaceRoot : this.#options.filesystem.directoryPath(sourcePath), command.target)
+        : undefined);
       if (targetPath === undefined) {
         onError(`xi: file target not found: ${command.target}\n`);
+        return;
+      }
+      if (existingPath === undefined) {
+        await this.#options.host.openBufferAtPath(targetPath, { ...(command.split ? { split: sourceViewId } : {}) });
+        this.#options.host.notifySurfaceChange();
         return;
       }
       const fileCancellation = new CancellationSource();

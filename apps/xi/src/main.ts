@@ -276,6 +276,11 @@ async function openDocument(
       ...(lineEnding === undefined ? {} : { editorConfigLineEnding: lineEnding }),
     });
     if (!opened.ok) {
+      if (opened.error.kind === 'not-found') {
+        const empty = openTextDocument(documentId, new Uint8Array(), 41027, { defaultLineEnding: defaultLineEnding as LineEnding });
+        if (empty.kind !== 'editable') throw new Error(`xi cannot edit this input: ${empty.kind}`);
+        return empty.document;
+      }
       statusMessages.publish(`xi: cannot open ${path}: ${opened.error.kind}`);
       return undefined;
     }

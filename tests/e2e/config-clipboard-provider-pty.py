@@ -75,12 +75,14 @@ with tempfile.TemporaryDirectory(prefix="xi-clipboard-provider-pty-") as tempora
         if b"XI_WORKBENCH_READY" not in captured:
             raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
 
-        os.write(master, b'"+yy')
+        os.write(master, b' Y')
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and (not clipboard.exists() or clipboard.read_text(encoding="utf-8") != "one\n"):
             read_for(master, captured, 0.05)
         if not clipboard.exists() or clipboard.read_text(encoding="utf-8") != "one\n":
-            raise SystemExit(f"custom yank command did not receive the + register: {captured[-5000:]!r}")
+            raise SystemExit(f"Space+Shift+Y did not copy the line to the + register: {captured[-5000:]!r}")
+
+        os.write(master, b'"+yy')
 
         os.write(master, b'gg"*yy')
         deadline = time.monotonic() + 5

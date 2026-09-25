@@ -121,6 +121,11 @@ function copyDependencyLicenses(outputDirectory: string, audit: PackageAuditOutp
     'vscode-languageserver-protocol',
     'vscode-languageserver-types',
     'web-tree-sitter',
+    'tree-sitter-python',
+    'tree-sitter-ruby',
+    'tree-sitter-json',
+    'tree-sitter-ocaml',
+    '@tree-sitter-grammars/tree-sitter-toml',
     'undici-types',
   ];
   for (const packageName of packageNames) {

@@ -7,6 +7,8 @@ export function languageIdForPath(path: string | undefined): string | undefined 
   if (extension === 'ts' || extension === 'tsx') return 'typescript';
   if (extension === 'js' || extension === 'mjs' || extension === 'cjs' || extension === 'jsx') return 'javascript';
   if (extension === 'py' || extension === 'pyi') return 'python';
+  if (extension === 'ml') return 'ocaml';
+  if (extension === 'mli') return 'ocaml_interface';
   if (extension === 'rb' || extension === 'rake' || extension === 'gemspec') return 'ruby';
   if (fileName === 'gemfile' || fileName === 'rakefile' || fileName === 'guardfile' || fileName === 'podfile' || fileName === 'vagrantfile' || fileName === '.irbrc') return 'ruby';
   if (extension === 'json' || extension === 'jsonc') return 'json';

@@ -668,12 +668,18 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
       // writing draft text to disk; the plan only reaches disk once the review is applied.
       if (forward.directoryDraftController.requestSave(sessionDocument.id)) return true;
       const buffer = workbench.views().find((view) => view.viewId === viewId);
-      const path = target ?? (buffer === undefined ? undefined : workbench.buffer(buffer.bufferId)?.path);
+      const currentPath = buffer === undefined ? undefined : workbench.buffer(buffer.bufferId)?.path;
+      const path = target === undefined ? currentPath : filesystem.resolvePath(workspaceRoot, target);
       if (path === undefined) {
         ctx.deps.statusMessages.publish('xi: no file name');
         return false;
       }
-      return forward.saveCoordinator.requestSave(sessionDocument, path, viewId);
+      const saved = await forward.saveCoordinator.requestSave(sessionDocument, path, viewId);
+      if (saved && currentPath === undefined && buffer !== undefined) {
+        workbench.renameBufferPath(buffer.bufferId, path);
+        forward.host.notifySurfaceChange();
+      }
+      return saved;
     },
     onExCommand: (source, viewId) => forward.hostCommands.handleWorkbenchCommand(source, viewId),
     onPrefixStateChange: (viewId, state) => forward.inputRouter.schedulePrefixHelp(viewId, state.pendingKeys, state.parserContinuations),
@@ -1447,9 +1453,7 @@ function createInputAndPointerRouters(
 export async function createControllers(deps: ControllersDeps): Promise<Controllers> {
   const { fileUri, workspacePathFromUri, workspaceRelativePathFromUri } = deps.coreServices;
   const { filesystem, clock, persistence, marker } = deps;
-  const forward = {} as ForwardRefs;
-  const mouseMode = createRendererToggle();
-  const wrapMode = createRendererToggle();
+  const forward = {} as ForwardRefs; const mouseMode = createRendererToggle(); const wrapMode = createRendererToggle();
   const jobControlDisposables: Disposable[] = [];
 
   const settings = await loadStartupSettings(deps);

@@ -68,6 +68,14 @@ const GRAMMAR_ASSET_LOADERS: Readonly<Record<string, GrammarAssetLoaders>> = {
     wasm: () => import('../../../node_modules/tree-sitter-ruby/tree-sitter-ruby.wasm' as string, { with: { type: 'file' } }),
     highlights: () => import('../../../node_modules/tree-sitter-ruby/queries/highlights.scm' as string, { with: { type: 'file' } }),
   },
+  ocaml: {
+    wasm: () => import('../../../node_modules/tree-sitter-ocaml/tree-sitter-ocaml.wasm' as string, { with: { type: 'file' } }),
+    highlights: () => import('../../../node_modules/tree-sitter-ocaml/queries/highlights.scm' as string, { with: { type: 'file' } }),
+  },
+  ocaml_interface: {
+    wasm: () => import('../../../node_modules/tree-sitter-ocaml/tree-sitter-ocaml_interface.wasm' as string, { with: { type: 'file' } }),
+    highlights: () => import('../../../node_modules/tree-sitter-ocaml/queries/highlights.scm' as string, { with: { type: 'file' } }),
+  },
   json: {
     wasm: () => import('../../../node_modules/tree-sitter-json/tree-sitter-json.wasm' as string, { with: { type: 'file' } }),
     highlights: () => import('../../../node_modules/tree-sitter-json/queries/highlights.scm' as string, { with: { type: 'file' } }),

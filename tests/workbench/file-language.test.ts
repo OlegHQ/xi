@@ -12,6 +12,8 @@ const cases: readonly (readonly [string | undefined, string | undefined])[] = [
   ['src/app.jsx', 'javascript'],
   ['tools/run.py', 'python'],
   ['tools/run.pyi', 'python'],
+  ['src/main.ml', 'ocaml'],
+  ['src/main.mli', 'ocaml_interface'],
   ['lib/example.rb', 'ruby'],
   ['Rakefile.rake', 'ruby'],
   ['example.gemspec', 'ruby'],

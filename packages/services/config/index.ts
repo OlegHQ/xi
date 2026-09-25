@@ -1244,6 +1244,11 @@ command = "pyright-langserver"
 args = ["--stdio"]
 root-markers = ["pyproject.toml", "setup.py", "requirements.txt", ".git"]
 
+[language-server.ocaml]
+command = "ocamllsp"
+args = []
+root-markers = ["dune-project", "dune-workspace", ".git"]
+
 [language-server.ruby-lsp]
 command = "ruby-lsp"
 args = []
@@ -1264,10 +1269,28 @@ language-servers = ["pyright"]
 indent = { tab-width = 4, unit = "    " }
 
 [[language]]
+name = "ocaml"
+file-types = ["ml"]
+language-servers = ["ocaml"]
+indent = { tab-width = 2, unit = "  " }
+formatter = { command = "ocamlformat", args = ["--name", "{file}", "-"] }
+auto-format = true
+
+[[language]]
+name = "ocaml_interface"
+file-types = ["mli"]
+language-servers = ["ocaml"]
+indent = { tab-width = 2, unit = "  " }
+formatter = { command = "ocamlformat", args = ["--name", "{file}", "-"] }
+auto-format = true
+
+[[language]]
 name = "ruby"
 file-types = ["rb", "rake", "gemspec", "Gemfile", "Rakefile", "Guardfile", "Podfile", "Vagrantfile", ".irbrc"]
 language-servers = ["ruby-lsp"]
 indent = { tab-width = 2, unit = "  " }
+formatter = { command = "rubocop", args = ["--fix-layout", "--stderr", "--fail-level", "fatal", "--stdin", "{file}"] }
+auto-format = true
 
 [[language]]
 name = "json"

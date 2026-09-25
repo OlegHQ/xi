@@ -654,8 +654,7 @@ export class WorkbenchInputRouter implements Disposable {
   handlePaste(bytes: Uint8Array): void {
     if (this.#options.overlayGitDiff?.isReadOnly?.() === true || this.#gitPanelFocused) return;
     const { explorer, search, problems, overlays, picker, host } = this.#options;
-    // Only the editor's own Insert/Replace/Virtual-replace mode consumes paste today;
-    // pasting while any overlay/panel is focused is a disclosed, un-wired gap (T045/E12).
+    // Pasting while a text-input overlay/panel is focused is not handled here.
     if (explorer.isOpen || search.isOpen || problems.isProblemsOpen || overlays.isOutlineOpen || picker.isOpen || this.#leaderPending) return;
     const active = host.activeSession();
     if (active?.commandLineActive === true) return;

@@ -57,7 +57,9 @@ version, license and notice source here first.
 |---|---:|---|---|
 | `@opentui/core` (typescript, javascript, markdown assets) | 0.5.11 | MIT | `@opentui/core/LICENSE` |
 | `tree-sitter-python` | 0.25.0 | MIT | `tree-sitter-python/LICENSE` |
+| `tree-sitter-ruby` | 0.23.1 | MIT | `tree-sitter-ruby/LICENSE` |
 | `tree-sitter-json` | 0.24.8 | MIT | `tree-sitter-json/LICENSE` |
+| `tree-sitter-ocaml` (implementation and interface) | 0.23.0 | MIT | `tree-sitter-ocaml/LICENSE` |
 | `@tree-sitter-grammars/tree-sitter-toml` | 0.7.0 | MIT | `@tree-sitter-grammars/tree-sitter-toml/LICENSE` |
 
 Markdown ships the block-level grammar only; inline emphasis and link styling

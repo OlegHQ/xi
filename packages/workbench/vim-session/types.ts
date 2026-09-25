@@ -121,8 +121,7 @@ export interface OwnedVimSession extends WorkbenchReadPort {
    * exposed here rather than through Normal-mode 'q', which Xi already claims to quit).
    * Returns false if not in Normal mode, already recording, or an invalid register. */
   beginMacroRecording(register: string): boolean;
-  /** Insert bracketed-paste bytes as one atomic insertion. Only supported while in
-   * Insert/Replace/Virtual-replace mode; a Normal-mode paste is a safe no-op for now. */
+  /** Insert bracketed-paste bytes atomically in Insert modes, or put them in Normal mode. */
   handlePaste(bytes: Uint8Array): boolean;
   handleClipboardPaste(selection?: 'clipboard' | 'primary'): Promise<boolean>;
   /** Release pending session state (command line, prefix keys, macro recording, insert

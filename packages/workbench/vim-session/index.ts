@@ -965,6 +965,15 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     },
     handlePaste(bytes: Uint8Array): boolean {
       if (disposed) return true;
+      if (mode === 'normal') {
+        try {
+          const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/\r\n?/gu, '\n');
+          return text.length === 0 ? true : storeClipboardTextAndPut(text, '+', 'p');
+        } catch {
+          message('xi: paste failed: invalid UTF-8\n');
+          return true;
+        }
+      }
       if (!isInsertMode(mode) || insert === null) {
         message('xi: paste is only supported while inserting\n');
         return true;
@@ -1211,7 +1220,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
           } else if (effect.kind === 'open') {
             if (document.isDirty && !effect.bang) { message('xi: unsaved changes (use :e! to open anyway)\n'); return 'stay'; }
             if (effect.path === null || options.onHostCommand === undefined) { message('xi: :edit requires an available file path\n'); return 'stay'; }
-            await options.onHostCommand({ kind: 'open-file', target: effect.path, split: false });
+            await options.onHostCommand({ kind: 'open-file', target: effect.path, split: false, allowMissing: true });
           } else if (effect.kind === 'quit') {
             if (document.isDirty && !effect.bang) {
               message('xi: unsaved changes (use :q! or :wq)\n');

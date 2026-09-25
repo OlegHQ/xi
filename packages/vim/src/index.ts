@@ -26,6 +26,7 @@ export type VimHostCommand =
       readonly target: string;
       readonly line?: number;
       readonly split: boolean;
+      readonly allowMissing?: boolean;
     }
   | {
       readonly kind: 'open-tag';

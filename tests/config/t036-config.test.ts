@@ -109,7 +109,7 @@ const invalidHelixKeyMap = compileConfig([{ name: 'invalid-helix-key-map', kind:
 assert.equal(invalidHelixKeyMap.ok, false, 'T036-KEYS-INVALID-01 unknown key commands are rejected');
 const expectedViewBindings = { '<C-Up>': 'view.scroll-up', '<C-Down>': 'view.scroll-down', '<C-d>': 'view.half-page-down', '<C-u>': 'view.half-page-up' };
 const expectedNormalLeader = {
-  q: 'macro.record', c: 'config.open', s: 'sidebar.toggle', f: 'files.pick', b: 'buffers.pick',
+  q: 'macro.record', Y: `macro:${JSON.stringify(['"', '+', 'y', 'y'])}`, c: 'config.open', s: 'sidebar.toggle', f: 'files.pick', b: 'buffers.pick',
   ';': 'command.pick', '/': 'search.workspace', o: 'files.edit-directory', O: 'files.edit-buffer-directory',
   t: 'theme.pick', k: 'lsp.hover', a: 'lsp.code-action', d: 'diagnostics.pick',
   e: 'panel.problems.focus', m: 'editor.mouse.toggle', w: 'editor.wrap.toggle', r: 'search.replace',
@@ -140,7 +140,7 @@ const expectedAliases = {
 const actualAliases = new Map(initial.value.aliases.map(alias => [alias.name, alias.commandId]));
 for (const [name, command] of Object.entries(expectedAliases)) assert.equal(actualAliases.get(name), command, `T036-CONFIG-DEFAULT-ALIAS-01 ${name}`);
 assert.equal(actualAliases.size, Object.keys(expectedAliases).length, 'T036-CONFIG-DEFAULT-ALIAS-02 no undeclared default aliases');
-assert.ok(initial.value.bindings.every((binding) => DEFAULT_COMMAND_CATALOG.commandIds.includes(binding.commandId)), 'T036-CONFIG-03 every binding command resolves in the catalog');
+assert.ok(initial.value.bindings.every((binding) => DEFAULT_COMMAND_CATALOG.commandIds.includes(binding.commandId) || binding.commandId.startsWith('macro:')), 'T036-CONFIG-03 every binding command resolves in the catalog or a validated macro');
 assert.ok(DEFAULT_COMMAND_CATALOG.commandIds.includes('config.open'), 'T036-CONFIG-OPEN-SCHEMA-01 config.open is a registered command id');
 assert.ok(DEFAULT_COMMAND_CATALOG.commandIds.includes('config.reload'), 'T036-CONFIG-OPEN-DEFAULT-01 config command catalog retains the reload companion');
 assert.equal(initial.value.aliases.find((alias) => alias.name === 'config-reload')?.commandId, 'config.reload', 'T036-CONFIG-RELOAD-DEFAULT-01 config-reload alias resolves to the reload command');
@@ -887,6 +887,16 @@ if (shippedLanguages.ok) {
   const rubyServer = shippedLanguages.value.languageServers.find((entry) => entry.name === ruby?.languageServers[0]);
   assert.ok(ruby?.fileTypes.includes('rb') && ruby.fileTypes.includes('Gemfile'), 'T036-LANGUAGE-RUBY-02 Ruby extensions and conventional filenames ship by default');
   assert.equal(rubyServer?.command, 'ruby-lsp', 'T036-LANGUAGE-RUBY-03 Ruby LSP ships by default');
+  assert.equal(ruby?.formatter?.command, 'rubocop', 'T036-LANGUAGE-RUBY-04 Ruby formatter ships by default');
+  assert.equal(ruby?.autoFormat, true, 'T036-LANGUAGE-RUBY-05 Ruby formatting runs on save');
+  const ocaml = shippedLanguages.value.languages.find((entry) => entry.name === 'ocaml');
+  const ocamlServer = shippedLanguages.value.languageServers.find((entry) => entry.name === ocaml?.languageServers[0]);
+  const ocamlInterface = shippedLanguages.value.languages.find((entry) => entry.name === 'ocaml_interface');
+  assert.ok(ocaml?.fileTypes.includes('ml') && ocamlInterface?.fileTypes.includes('mli'), 'T036-LANGUAGE-OCAML-01 OCaml implementation and interface extensions ship by default');
+  assert.equal(ocamlServer?.command, 'ocamllsp', 'T036-LANGUAGE-OCAML-02 OCaml LSP ships by default');
+  assert.equal(ocaml?.formatter?.command, 'ocamlformat', 'T036-LANGUAGE-OCAML-03 OCaml formatter ships by default');
+  assert.equal(ocaml?.autoFormat, true, 'T036-LANGUAGE-OCAML-04 OCaml formatting runs on save');
+  assert.equal(ocamlInterface?.formatter?.command, 'ocamlformat', 'T036-LANGUAGE-OCAML-05 OCaml interfaces format on save');
 }
 const theme = parseThemeConfig(DEFAULT_THEME_TOML, 'config/themes/xi-light.toml');
 assert.equal(theme.ok, true, 'T036-THEME-01 shipped theme example validates');

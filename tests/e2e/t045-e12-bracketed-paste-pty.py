@@ -12,9 +12,7 @@ Two cases:
    embedded Ex command (":wq!\r") and a Ctrl-C byte while in Insert mode must insert the
    bytes literally as text -- it must never execute ":wq!" or exit on the embedded Ctrl-C.
    This is the "no pasted commands" and "no Ctrl-C accidental exit" half of E12.
-2. Pasting while in Normal mode must be a safe no-op (disclosed limitation: only
-   Insert/Replace/Virtual-replace consume paste today) -- it must not crash and must not
-   change the buffer.
+2. Pasting while in Normal mode puts the literal text at the cursor as one Vim edit.
 """
 from __future__ import annotations
 
@@ -73,9 +71,9 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e12-") as temporary:
     try:
         read_until_count(master, captured, b"XI_WORKBENCH_READY", 1, 10)
 
-        # Case 2 first, from Normal mode: must be a safe no-op, no crash, no change.
+        # Case 2 first, from Normal mode: put literal text without entering Insert mode.
         dangerous = b"DANGER:wq!\rEND\x03TAIL"
-        os.write(master, bracketed_paste(dangerous))
+        os.write(master, bracketed_paste(b"NORMAL"))
         read_for(master, captured, 0.3)
         if child.poll() is not None:
             raise SystemExit(f"editor exited on a Normal-mode paste: {captured[-4000:]!r}")
@@ -106,9 +104,8 @@ with tempfile.TemporaryDirectory(prefix="xi-t045-e12-") as temporary:
 
 # The Ctrl-C byte (0x03) is stripped by the paste decoder's control handling only if it were
 # parsed as a key; as an opaque paste byte it must survive as literal text along with the rest.
-expected = "start" + dangerous.decode("utf-8").replace("\r", "\n") + "\n"
+expected = "sNORMALtart" + dangerous.decode("utf-8").replace("\r", "\n") + "\n"
 if final_text != expected:
     raise SystemExit(f"pasted bytes were not inserted literally and unexecuted: expected {expected!r}, got {final_text!r}")
-print("T045-E12-BRACKETED-PASTE-PTY pass: a bracketed-paste payload containing an embedded "
-      "':wq!' and a Ctrl-C byte was inserted as literal text with no command execution and "
-      "no accidental exit, in both Normal mode (safe no-op) and Insert mode (literal insertion)")
+print("T045-E12-BRACKETED-PASTE-PTY pass: Normal-mode paste put text, and an Insert-mode "
+      "payload containing ':wq!' and Ctrl-C remained literal without command execution")

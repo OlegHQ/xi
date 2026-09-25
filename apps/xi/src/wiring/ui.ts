@@ -181,9 +181,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     mouseMode, jobControlDisposables, workbench, picker, pickerModel, explorerFeature, searchFeature, gitPanelFeature, gitDiffFeature, diagnostics, problemsFeature, taskWiring, directoryDraftController, overlayFeature, completionFeature,
     fileIndexStarter, pickerPreview, statusMessages,
   } = controllers;
-  const { renderer, themeWiring, marker, startupTrace, installJobControl } = deps;
-  const loadingExplorer = pendingExplorerRead(explorerFeature);
-  const themeVariants = resolveThemeVariants(controllers, themeWiring); const colorMode = resolveStartupColorMode(controllers, marker); const options: RelaxedWorkbenchUiOptions = {
+  const { renderer, themeWiring, marker, startupTrace, installJobControl } = deps; const loadingExplorer = pendingExplorerRead(explorerFeature); const themeVariants = resolveThemeVariants(controllers, themeWiring); const colorMode = resolveStartupColorMode(controllers, marker); const options: RelaxedWorkbenchUiOptions = {
     renderer,
     startupTrace,
     colorMode, undercurl: controllers.startupConfig?.editor.undercurl ?? false,

@@ -193,6 +193,7 @@ follow-symlinks = false
 
 [keys.normal.space]
 q = "macro.record"
+Y = '@"+yy'
 c = "config.open"
 s = "sidebar.toggle"
 f = "files.pick"
