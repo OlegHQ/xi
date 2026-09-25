@@ -154,6 +154,7 @@ export class ExplorerController {
   #pendingCtrlW = false;
   #pendingZ = false;
   #deleteConfirm: { readonly nodeId: string; readonly generation: number } | undefined;
+  #fileClipboard: { readonly nodeId: string; readonly path: string; readonly name: string; readonly cut: boolean } | undefined;
   readonly #undoJournal: { readonly kind: 'rename' | 'copy' | 'delete'; readonly from: string; readonly to: string; readonly journal: unknown }[] = [];
   #tree: ExplorerTreePort | undefined;
   #navigation: ExplorerNavigationPort | undefined;
@@ -424,9 +425,37 @@ export class ExplorerController {
       if (node !== undefined && node.kind !== 'root') this.#renameDraft = { nodeId: node.id, text: node.name, generation: tree.model.generation };
       return true;
     }
-    if (key === 'y' && !event.ctrl && !event.meta) {
+    if (key === 'y' && !event.shift && !event.ctrl && !event.meta) {
       const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
       if (node !== undefined && node.kind !== 'root') this.#copyDraft = { nodeId: node.id, text: node.name, generation: tree.model.generation };
+      return true;
+    }
+    if (!event.ctrl && !event.meta && !event.option && ((event.shift && key === 'y') || (key === 'x' && !event.shift))) {
+      const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
+      if (node !== undefined && node.kind !== 'root' && node.kind !== 'state' && node.kind !== 'symlink') {
+        this.#fileClipboard = { nodeId: node.id, path: node.path, name: node.name, cut: key === 'x' };
+        this.#options.marker('XI_EXPLORER_CLIPBOARD', { path: node.path, cut: key === 'x' });
+      }
+      return true;
+    }
+    if (key === 'p' && !event.ctrl && !event.meta) {
+      const copied = this.#fileClipboard;
+      const source = copied === undefined ? undefined : tree.readNode(copied.nodeId);
+      const selected = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
+      if (copied === undefined || source?.path !== copied.path || selected === undefined) return true;
+      const parent = selected.kind === 'root' || selected.kind === 'directory'
+        ? selected.path : selected.path.slice(0, selected.path.length - selected.name.length).replace(/\/$/u, '');
+      if (parent === copied.path || parent.startsWith(`${copied.path}/`)) {
+        this.#options.onError('xi: paste refused: destination is inside the source\n');
+        return true;
+      }
+      const name = !copied.cut && parent === copied.path.slice(0, copied.path.length - copied.name.length).replace(/\/$/u, '') ? `${copied.name} copy` : copied.name;
+      const destination = `${parent}/${name}`;
+      if (destination === copied.path) return true;
+      if (copied.cut) {
+        const relative = this.#options.workspaceRelativePath(destination);
+        if (relative !== undefined) await this.#applyMove(copied.nodeId, relative, tree.model.generation);
+      } else await this.#applyCopy(copied.nodeId, name, tree.model.generation, parent);
       return true;
     }
     if (key === 'm' && !event.ctrl && !event.meta) {
@@ -687,13 +716,13 @@ export class ExplorerController {
     }
   }
 
-  async #applyCopy(nodeId: string, newName: string, generation: number): Promise<void> {
+  async #applyCopy(nodeId: string, newName: string, generation: number, destinationParent?: string): Promise<void> {
     const tree = this.#tree;
     if (tree === undefined) return;
     const node = tree.readNode(nodeId);
     const trimmed = newName.trim();
     if (!this.#operationNode(node, generation) || node.kind === 'symlink' || trimmed.length === 0 || trimmed === '.' || trimmed === '..' || trimmed.includes('/')) return;
-    const parentPath = node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '');
+    const parentPath = destinationParent ?? node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '');
     const to = `${parentPath}/${trimmed}`;
     if (this.#options.workspaceRelativePath(to) === undefined) { this.#options.onError('xi: copy cancelled: destination is outside the workspace\n'); return; }
     const cancellation = new CancellationSource();

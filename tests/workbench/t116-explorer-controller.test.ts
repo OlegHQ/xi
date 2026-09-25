@@ -256,6 +256,23 @@ assert.ok(tree.calls.some((call) => call.startsWith('expand:')), 'T116-EXPLORER-
 assert.ok(tree.calls.some((call) => call.startsWith('watch:')), 'T116-EXPLORER-01e open() watches the first root');
 const directoryNode: ExplorerTreeNode = { id: 'dir', kind: 'directory', name: 'sub', path: '/workspace/sub', relativePath: 'sub', expanded: false };
 tree.nodes.set(directoryNode.id, directoryNode);
+tree.select(fileNode.id);
+await controller.handleKeypress(key('y', 'Y', { shift: true }));
+tree.select(directoryNode.id);
+await controller.handleKeypress(key('p', 'p'));
+assert.ok(filesystem.calls.includes('copy:/workspace/a.txt->/workspace/sub/a.txt'), 'T116-EXPLORER-PASTE-01 Y then p copies into the selected folder');
+await controller.handleKeypress(key('y', 'Y', { shift: true }));
+await controller.handleKeypress(key('p', 'p'));
+assert.match(errors.join(''), /destination is inside the source/u, 'T116-EXPLORER-PASTE-03 copying a folder into itself is refused');
+const movableNode: ExplorerTreeNode = { id: 'move-me', kind: 'file', name: 'move-me.txt', path: '/workspace/move-me.txt', relativePath: 'move-me.txt', expanded: false };
+tree.nodes.set(movableNode.id, movableNode);
+filesystem.existing.add(movableNode.path);
+tree.select(movableNode.id);
+await controller.handleKeypress(key('x', 'x'));
+tree.select(directoryNode.id);
+await controller.handleKeypress(key('p', 'p'));
+assert.ok(filesystem.calls.includes('rename:/workspace/move-me.txt->/workspace/sub/move-me.txt'), 'T116-EXPLORER-PASTE-02 x then p moves into the selected folder');
+filesystem.calls.length = 0;
 assert.equal(controller.selectForContextMenu(directoryNode.id, tree.model.generation)?.mutable, true, 'DEF-1124-05 directory context menu enables file operations');
 assert.equal(controller.selectForContextMenu(rootNode.id, tree.model.generation)?.mutable, false, 'DEF-1124-06 root context menu cannot mutate the workspace');
 

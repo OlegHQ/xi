@@ -187,6 +187,14 @@ def copy_case() -> str:
             if not (workspace / "source.txt").exists() or (workspace / "copy.txt").exists():
                 raise SystemExit("restoring a copy did not remove exactly the new copy, leaving the source untouched")
 
+            before_paste = len(captured)
+            os.write(master, b"Yp")
+            deadline = time.monotonic() + 5
+            while b"XI_EXPLORER_COPY_APPLIED" not in captured[before_paste:] and time.monotonic() < deadline:
+                read_for(master, captured, 0.05)
+            if b"XI_EXPLORER_COPY_APPLIED" not in captured[before_paste:] or (workspace / "source.txt copy").read_text(encoding="utf-8") != "copy me\n":
+                raise SystemExit("Y then p did not paste a copy of the selected file")
+
             os.write(master, b"\x1b")
             read_for(master, captured, 0.2)
             quit_cleanly(child, master, captured)
@@ -195,7 +203,7 @@ def copy_case() -> str:
                 child.kill()
                 child.wait()
             os.close(master)
-    return "copy: apply leaves source and copy both in place with content preserved, restore removes exactly the copy"
+    return "copy: draft and Y/paste preserve content; restore removes exactly the draft copy"
 
 
 def delete_case() -> str:
