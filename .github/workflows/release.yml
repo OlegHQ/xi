@@ -119,7 +119,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF_NAME}"
+          cat > dist/release/NOTES.md <<'NOTES'
+          **macOS / Linux**
+
+          ```sh
+          curl -fsSL https://github.com/OlegHQ/xi/releases/latest/download/install.sh | sh
+          ```
+
+          **Windows PowerShell**
+
+          ```powershell
+          irm https://github.com/OlegHQ/xi/releases/latest/download/install.ps1 | iex
+          ```
+          NOTES
           gh release create "$tag" dist/release/xi-* dist/release/SHA256SUMS dist/release/install.sh dist/release/install.ps1 \
             --draft --verify-tag --title "Xi $tag" \
-            --notes "Install on macOS or Linux: curl -fsSL https://github.com/OlegHQ/xi/releases/latest/download/install.sh | sh
-          Windows PowerShell: irm https://github.com/OlegHQ/xi/releases/latest/download/install.ps1 | iex"
+            --notes-file dist/release/NOTES.md
