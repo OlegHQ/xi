@@ -175,6 +175,20 @@ async function main(): Promise<void> {
     assert.equal(s.text(), 'xb\nyb', 'MOTIONS-17 a macro-recorded Ex substitution replays as an Ex command, not literal keys');
   }
 
+  {
+    const s = session('a\nb\nc\nd');
+    const control = (name: string): OwnedVimKeyEvent => ({ ...event(name), ctrl: true });
+    await type(s, keys('Ggg'));
+    assert.equal(s.cursor(), 0, 'MOTIONS-18 gg returns to the first line');
+    await s.vim.handleKey(control('o'));
+    assert.equal(s.cursor(), 6, 'MOTIONS-19 Ctrl-O traverses to the previous jump');
+    await s.vim.handleKey(control('p'));
+    assert.equal(s.cursor(), 0, 'MOTIONS-20 Ctrl-P traverses forward');
+    await type(s, keys('jG'));
+    await s.vim.handleKey(control('o'));
+    assert.equal(s.cursor(), 2, 'MOTIONS-21 a new jump after a local move records that location');
+  }
+
   console.log('vim-session-motions: all fixtures passed');
 }
 

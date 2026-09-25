@@ -51,6 +51,7 @@ const atLine = (line: number) => {
 let jumps = createVimJumpHistory();
 jumps = expectOk(recordVimJump(jumps, { documentId: snapshot.id, documentVersion: snapshot.version, offset: atLine(1) }, 'manual'));
 jumps = expectOk(recordVimJump(jumps, { documentId: snapshot.id, documentVersion: snapshot.version, offset: atLine(3) }, 'manual'));
+jumps = expectOk(recordVimJump(jumps, { documentId: snapshot.id, documentVersion: snapshot.version, offset: atLine(1) }, 'manual'));
 const movedBack = expectOk(jumpBackward(jumps));
 assert.equal(movedBack.target.offset, atLine(3), 'T030-ORACLE-JUMP-06 Xi jump target matches oracle entry');
 assert.equal(movedBack.state.index, 1, 'T030-ORACLE-JUMP-07 Xi jump index matches the pre-forward position');

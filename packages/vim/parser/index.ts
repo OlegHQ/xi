@@ -645,7 +645,7 @@ function isRecognizedSingleKey(key: string, mode: VimMode): boolean {
   if (key === 'x' || key === 'X' || key === 's' || key === 'S' || key === 'D' || key === 'C'
     || key === '~' || key === 'J' || key === 'g' || key === 'G' || key === 'H' || key === 'M' || key === 'L'
     || key === 'p' || key === 'P' || key === 'gp' || key === 'gP' || key === '.' || key === 'u'
-    || key === 'U' || key === '<C-r>' || key === '<C-o>' || key === '<C-i>' || key === '<C-g>'
+    || key === 'U' || key === '<C-r>' || key === '<C-o>' || key === '<C-i>' || key === '<C-p>' || key === '<C-g>'
     || key === '<C-a>' || key === '<C-x>' || key === '<C-e>' || key === '<C-y>' || key === '<C-d>'
     || key === '<C-u>' || key === '<C-f>' || key === '<C-b>' || key === '<C-]>' || key === '<C-t>'
     || key === '<C-^>' || key === '<C-w>' || key === '<C-c>' || key === '<C-v>' || key === 'K' || key === '"') return true;

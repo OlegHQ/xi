@@ -46,6 +46,7 @@ import {
 import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../src/read-model';
 import type { VimHostCommand, VimInsertOptions } from '../../vim/src/index';
 import { searchVimBufferInteractive } from '../../vim/src/index';
+import { createVimJumpHistory, jumpBackward, jumpForward, recordVimJump, type VimJumpHistory, type VimJumpReason } from '../../vim/src/index';
 import {
   createVimMotionCursor,
   createVimInsertRepeatTarget,
@@ -251,6 +252,15 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     for (const effect of prepared.value.registerEffects) registers = applyRegisterEffect(registers, effect);
   }
   let lastFind: VimLastFind | null = null;
+  let jumpHistory: VimJumpHistory = createVimJumpHistory();
+  function recordJump(from: Utf16Offset, to: Utf16Offset, reason: VimJumpReason): void {
+    if (from === to) return;
+    const current = document.snapshot();
+    const origin = recordVimJump(jumpHistory, { documentId, documentVersion: current.version, offset: from }, reason);
+    if (!origin.ok) return;
+    const destination = recordVimJump(origin.value, { documentId, documentVersion: current.version, offset: to }, reason);
+    if (destination.ok) jumpHistory = destination.value;
+  }
   let searchState: VimSearchState = EMPTY_VIM_SEARCH_STATE;
   // Every interactive search (n/N/*/#/g*/g#/`/`/`?`) runs through this generation
   // counter: starting a new one flips the previous call's abort signal so a stale,
@@ -307,6 +317,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (!extended.ok) return false;
       selections = extended.value;
     } else {
+      recordJump(origin, result.value.outcome.match.cursor, 'search');
       selections = makeNormalSelection(document.snapshot(), result.value.outcome.match.cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
       motionCursor = makeMotionCursor(document.snapshot(), selections);
     }
@@ -336,6 +347,10 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   let commandLineStateCache: { readonly source: string | undefined; readonly cursorOffset: number; readonly kind: VimCommandLineState['kind']; readonly value: VimCommandLineState | undefined } | undefined;
   let lastPublishedCommandLine: VimCommandLineState | undefined;
   function finishMotion(before: SelectionSetSnapshot, beforeMode: VimMode, key: string): void {
+    if (beforeMode === 'normal' && mode === 'normal' && (key === 'G' || ghostMotionKey === 'gg')) {
+      const previous = before.members.find((member) => member.id === before.primaryId) ?? before.members[0];
+      if (previous !== undefined && motionCursor !== undefined) recordJump(previous.head.at.offset, motionCursor.offset, 'command');
+    }
     if (options.motionGhost === true && beforeMode === 'normal' && mode === 'normal' && before !== selections) {
       motionGhost = createVimMotionGhost(document.snapshot(), before, selections, ghostMotionKey ?? key, ghostMotionCount);
       ghostTarget = motionGhost === undefined ? undefined : selections;
@@ -1125,6 +1140,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       const extended = extendVimVisualSelection(current, selections, targets);
       if (extended.ok) selections = extended.value;
     } else {
+      recordJump(origin, match.cursor, 'search');
       selections = makeNormalSelection(current, match.cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
       motionCursor = makeMotionCursor(current, selections);
     }
@@ -1268,6 +1284,20 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
     function executeCommand(command: VimCommandIntent): void | Promise<void> {
       const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
+      if (command.kind === 'single-key' && mode === 'normal' && (command.key === '<C-o>' || command.key === '<C-i>' || command.key === '<C-p>')) {
+        for (let step = 0; step < command.count.value; step += 1) {
+          const moved = command.key === '<C-o>' ? jumpBackward(jumpHistory) : jumpForward(jumpHistory);
+          if (!moved.ok) break;
+          const current = document.snapshot();
+          if (moved.value.target.documentId !== documentId) break;
+          const at = Math.min(moved.value.target.offset, current.lengthUtf16) as Utf16Offset;
+          selections = makeNormalSelection(current, at, (selections.selectionGeneration as number) + 1, selections.primaryId);
+          motionCursor = makeMotionCursor(current, selections);
+          jumpHistory = moved.value.state;
+        }
+        parser = makeParser(mode, selections);
+        return;
+      }
       if (command.kind === 'mode-transition' && isVisualMode(mode)) {
         if (command.to === 'normal') {
           executeCommand({ kind: 'leave-mode', via: 'escape', from: mode, to: 'normal', selections, atMilliseconds: command.atMilliseconds });

@@ -206,7 +206,7 @@ export interface VimJumpEntry {
 }
 
 export interface VimJumpHistory {
-  /** Entries before `index` are behind the current position; entries at/after it are forward candidates. */
+  /** `index` identifies the current entry; an empty history has index zero. */
   readonly entries: readonly VimJumpEntry[];
   readonly index: number;
   readonly sequence: number;
@@ -227,15 +227,15 @@ export function recordVimJump(
   reason: VimJumpReason = 'command',
 ): Result<VimJumpHistory, VimJumpFailure> {
   if (!validTarget(target)) return { ok: false, error: { kind: 'invalid-target' } };
-  const last = state.entries.at(-1);
-  if (last !== undefined && sameTarget(last.target, target)) {
-    return { ok: true, value: Object.freeze({ ...state, index: state.entries.length }) };
+  const current = state.entries[state.index];
+  if (current !== undefined && sameTarget(current.target, target)) {
+    return { ok: true, value: state };
   }
   const sequence = state.sequence + 1;
   if (!Number.isSafeInteger(sequence)) return { ok: false, error: { kind: 'invalid-target' } };
   const entry = Object.freeze({ target, reason, sequence });
-  const entries = Object.freeze([...state.entries.slice(0, state.index), entry]);
-  return { ok: true, value: Object.freeze({ entries, index: entries.length, sequence }) };
+  const entries = Object.freeze([...state.entries.slice(0, state.entries.length === 0 ? 0 : state.index + 1), entry]);
+  return { ok: true, value: Object.freeze({ entries, index: entries.length - 1, sequence }) };
 }
 
 export function jumpBackward(state: VimJumpHistory): Result<{ readonly state: VimJumpHistory; readonly target: VimNavigationTarget }, VimJumpFailure> {
@@ -247,8 +247,8 @@ export function jumpBackward(state: VimJumpHistory): Result<{ readonly state: Vi
 }
 
 export function jumpForward(state: VimJumpHistory): Result<{ readonly state: VimJumpHistory; readonly target: VimNavigationTarget }, VimJumpFailure> {
-  if (state.index >= state.entries.length) return { ok: false, error: { kind: 'nothing-forward' } };
-  const index = state.index;
+  if (state.index >= state.entries.length - 1) return { ok: false, error: { kind: 'nothing-forward' } };
+  const index = state.index + 1;
   const entry = state.entries[index];
   if (entry === undefined) return { ok: false, error: { kind: 'nothing-forward' } };
   return { ok: true, value: Object.freeze({ state: Object.freeze({ ...state, index }), target: entry.target }) };
