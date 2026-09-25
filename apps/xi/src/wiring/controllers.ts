@@ -680,7 +680,13 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
     onExCommand: (source, viewId) => forward.hostCommands.handleWorkbenchCommand(source, viewId),
     onPrefixStateChange: (viewId, state) => forward.inputRouter.schedulePrefixHelp(viewId, state.pendingKeys, state.parserContinuations),
     onCommandLineChange: (state) => forward.inputRouter.handleCommandLineChange(state),
-    onHostCommand: (command, viewId) => forward.hostCommands.handleVimHostCommand(command, viewId),
+    onHostCommand: (command, viewId) => {
+      if (command.kind !== 'open-file' || command.allowMissing !== true) return forward.hostCommands.handleVimHostCommand(command, viewId);
+      const home = process.env.HOME;
+      const target = home !== undefined && (command.target === '~' || command.target.startsWith('~/'))
+        ? `${home}${command.target.slice(1)}` : command.target;
+      return forward.hostCommands.handleVimHostCommand({ ...command, target: filesystem.resolvePath(ctx.workspaceRoot, target) }, viewId);
+    },
     onStateChange: (sessionDocument, state) => {
       const primary = state.selections.members.find((member) => member.id === state.selections.primaryId) ?? state.selections.members[0];
       if (primary === undefined) return;
@@ -1287,6 +1293,24 @@ function createInputAndPointerRouters(
     marker,
     onError: (message) => ctx.deps.statusMessages.publish(message),
     commandRegistry,
+    completeExPath: async (prefix, cancellation) => {
+      const home = process.env.HOME;
+      const expanded = home !== undefined && (prefix === '~' || prefix.startsWith('~/')) ? `${home}${prefix.slice(1)}${prefix === '~' ? '/' : ''}` : prefix;
+      const slash = expanded.lastIndexOf('/');
+      const directory = ctx.filesystem.resolvePath(ctx.workspaceRoot, slash < 0 ? '.' : expanded.slice(0, slash + 1));
+      const fragment = expanded.slice(slash + 1);
+      const insertPrefix = prefix === '~' ? '~/' : prefix.slice(0, prefix.lastIndexOf('/') + 1);
+      // ponytail: cap one-directory completion at 2048 entries; page directory reads if larger folders need completion.
+      const entries = await ctx.filesystem.enumerateDirectory(directory, directory, cancellation, { maxEntries: 2048 });
+      if (!entries.ok) return [];
+      return entries.value.filter((entry) => entry.name.startsWith(fragment))
+        .sort((left, right) => Number(right.kind === 'directory') - Number(left.kind === 'directory') || left.name.localeCompare(right.name))
+        .slice(0, 50).map((entry) => ({
+          label: `${entry.name}${entry.kind === 'directory' ? '/' : ''}`,
+          insertText: `${insertPrefix}${entry.name}${entry.kind === 'directory' ? '/' : ''}`,
+          detail: entry.kind === 'directory' ? 'Directory' : 'File',
+        }));
+    },
     picker,
     explorer: forward.explorerFeature,
     search: forward.searchFeature,

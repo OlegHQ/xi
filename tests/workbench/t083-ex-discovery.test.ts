@@ -90,6 +90,18 @@ assert.equal(separated.position.typedName, 'q', 'EX04-SEPARATOR-01 pipe inside s
 assert.equal(separated.position.segmentStart, 16, 'EX04-SEPARATOR-02 active segment begins after the unescaped command separator');
 const escapedPath = buildExCommandLineReadModel({ source: ':edit foo\\|bar|q', registry });
 assert.equal(escapedPath.position.typedName, 'q', 'EX04-PATH-01 escaped path separator remains argument text');
+const pathLine = new ExCommandLineSession({ registry, source: ':e folder/al' });
+assert.deepEqual(pathLine.pathCompletionInput(), { prefix: 'folder/al', replaceStart: 3, replaceEnd: 12 }, 'EX04-PATH-02 :e exposes its path argument');
+pathLine.setPathCandidates([{ label: 'alpha.txt', insertText: 'folder/alpha.txt', detail: 'File' }, { label: 'alpine/', insertText: 'folder/alpine/', detail: 'Directory' }], 3, 12);
+pathLine.moveSelection(1);
+assert.equal(pathLine.handleInput({ kind: 'key', key: 'Tab' }).kind, 'completion-accepted', 'EX04-PATH-03 Tab accepts the selected path row');
+assert.equal(pathLine.source, ':e folder/alpine/', 'EX04-PATH-04 a directory completion retains its separator for the next component');
+assert.equal(pathLine.readModel().candidates.some((candidate) => candidate.kind === 'argument'), false, 'EX04-PATH-05 stale path rows clear after acceptance');
+assert.equal(new ExCommandLineSession({ registry, source: ':write folder/al' }).pathCompletionInput(), undefined, 'EX04-PATH-06 file path completion stays scoped to :e');
+assert.deepEqual(new ExCommandLineSession({ registry, source: ':e alpha.txt', cursorOffset: 5 }).pathCompletionInput(),
+  { prefix: 'al', replaceStart: 3, replaceEnd: 12 }, 'EX04-PATH-07 completion at the cursor replaces the entire old argument');
+assert.deepEqual(new ExCommandLineSession({ registry, source: ':e! al' }).pathCompletionInput(),
+  { prefix: 'al', replaceStart: 4, replaceEnd: 6 }, 'EX04-PATH-08 force-edit accepts path completion');
 
 const aliasModel = buildExCommandLineReadModel({ source: ':theme', registry, availability: { contexts: [], capabilities: [] } });
 assert.equal(aliasModel.candidates.some((candidate) => candidate.kind === 'alias' && candidate.exact), true, 'EX04-ALIAS-01 exact friendly alias is discoverable');

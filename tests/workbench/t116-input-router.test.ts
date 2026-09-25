@@ -148,6 +148,7 @@ function makeRouter(
   idleTimeout = 250,
   clock: ClockPort = testClock,
   openGitPanel?: () => void,
+  completeExPath?: ConstructorParameters<typeof WorkbenchInputRouter>[0]['completeExPath'],
 ): WorkbenchInputRouter {
   return new WorkbenchInputRouter({
     host: host as never,
@@ -155,6 +156,7 @@ function makeRouter(
     marker: () => {},
     onError: () => {},
     commandRegistry: new CommandRegistry({ nativeExNames: ['q'] }),
+    ...(completeExPath === undefined ? {} : { completeExPath }),
     picker: { isOpen: false, close: async () => {}, open: () => {} },
     explorer,
     search,
@@ -487,4 +489,22 @@ console.log('T116 WorkbenchInputRouter passed leader-open-explorer, command-line
   assert.equal(await selectRouter.dispatchKey(key('s', '\u0013', { ctrl: true })), 'consumed');
   assert.deepEqual(selectVim.submittedCommands, [':write'], 'T036-KEYS-UNIT-01-PART2 [keys.select] reaches Xi visual modes');
   selectRouter.dispose();
+}
+
+{
+  const requests: Array<{ readonly prefix: string; readonly resolve: (rows: readonly { readonly label: string; readonly insertText: string; readonly detail: string }[]) => void }> = [];
+  const router = makeRouter(new FakeExplorer(), new FakeSearch(), new FakeHost(), new FakeSession(), defaultBindings, undefined, true, 250, testClock, undefined,
+    (prefix) => new Promise((resolve) => { requests.push({ prefix, resolve }); }));
+  router.handleCommandLineChange({ source: ':e al', cursorOffset: 5 });
+  await Promise.resolve();
+  router.handleCommandLineChange({ source: ':e be', cursorOffset: 5 });
+  await Promise.resolve();
+  assert.deepEqual(requests.map((request) => request.prefix), ['al', 'be'], 'EX-PATH-STALE-01 each path query uses the current argument');
+  requests[0]!.resolve([{ label: 'alpha.txt', insertText: 'alpha.txt', detail: 'File' }]);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(router.commandLine.read.model?.candidates.some((candidate) => candidate.label === 'alpha.txt'), false, 'EX-PATH-STALE-02 cancelled results never replace newer prompt rows');
+  requests[1]!.resolve([{ label: 'beta.txt', insertText: 'beta.txt', detail: 'File' }]);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(router.commandLine.read.model?.candidates[0]?.label, 'beta.txt', 'EX-PATH-STALE-03 the current path result reaches the prompt');
+  router.dispose();
 }

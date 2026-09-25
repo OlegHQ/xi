@@ -1,4 +1,4 @@
-import type { ClockPort, CommandId, Disposable, DocumentVersion, LineIndex, Utf16Offset, ViewId } from '../../contracts/src/index';
+import { CancellationSource, type CancellationToken, type ClockPort, type CommandId, type Disposable, type DocumentVersion, type LineIndex, type Utf16Offset, type ViewId } from '../../contracts/src/index';
 import type { BufferHost } from '../host';
 import type { WorkbenchSession } from '../session';
 import { CommandRegistry } from '../commands/registry';
@@ -131,6 +131,7 @@ export interface WorkbenchInputRouterOptions {
   /** PTY-visible stderr sink; never writes to `process.stderr` itself. */
   readonly onError: (message: string) => void;
   readonly commandRegistry: CommandRegistry;
+  readonly completeExPath?: (prefix: string, cancellation: CancellationToken) => Promise<readonly { readonly label: string; readonly insertText: string; readonly detail: string }[]>;
   readonly picker: RouterPickerPort;
   readonly explorer: RouterExplorerPort;
   readonly search: RouterSearchPort;
@@ -276,6 +277,9 @@ export class WorkbenchInputRouter implements Disposable {
   #windowPrefixFromPanel = false;
   #lastGitDiffOpen = false;
   #exCommandLineSession: ExCommandLineSession | undefined;
+  #exPathCancellation: CancellationSource | undefined;
+  #exPathPending: Promise<void> | undefined;
+  #exPathRequest: { readonly line: ExCommandLineSession; readonly source: string; readonly cursorOffset: number } | undefined;
   #commandLineWithoutSession = false;
   #searchPromptModel: ReturnType<ExCommandLineSession['readModel']> | undefined;
   readonly #commandLineListeners = new Set<(model: ReturnType<ExCommandLineSession['readModel']> | undefined) => void>();
@@ -414,12 +418,44 @@ export class WorkbenchInputRouter implements Disposable {
       this.#searchPromptModel = searchPromptModel(state.source, state.cursorOffset);
     } else if (this.#exCommandLineSession === undefined) {
       this.#exCommandLineSession = new ExCommandLineSession({ registry: this.#options.commandRegistry, source: state.source, cursorOffset: state.cursorOffset });
-    } else {
+    } else if (this.#exCommandLineSession.source !== state.source || this.#exCommandLineSession.cursorOffset !== state.cursorOffset) {
       this.#exCommandLineSession.setSource(state.source, state.cursorOffset);
     }
     this.commandLine.read.model = this.#searchPromptModel ?? this.#exCommandLineSession?.readModel();
     for (const listener of [...this.#commandLineListeners]) listener(this.commandLine.read.model);
     this.#options.marker('XI_EX_COMMANDLINE_STATE', state);
+    this.#refreshExPathCandidates();
+  }
+
+  #refreshExPathCandidates(): void {
+    const line = this.#exCommandLineSession;
+    if (line !== undefined && this.#exPathRequest?.line === line && this.#exPathRequest.source === line.source
+      && this.#exPathRequest.cursorOffset === line.cursorOffset) return;
+    this.#exPathCancellation?.cancel();
+    this.#exPathCancellation?.dispose();
+    this.#exPathCancellation = undefined;
+    this.#exPathPending = undefined;
+    this.#exPathRequest = line === undefined ? undefined : { line, source: line.source, cursorOffset: line.cursorOffset };
+    const request = line?.pathCompletionInput();
+    const complete = this.#options.completeExPath;
+    if (line === undefined || request === undefined || complete === undefined) return;
+    const source = line.source;
+    const cursorOffset = line.cursorOffset;
+    const cancellation = new CancellationSource();
+    this.#exPathCancellation = cancellation;
+    const pending = Promise.resolve().then(() => complete(request.prefix, cancellation.token)).then((paths) => {
+      if (cancellation.token.isCancelled || this.#exCommandLineSession !== line
+        || line.source !== source || line.cursorOffset !== cursorOffset) return;
+      this.commandLine.read.model = line.setPathCandidates(paths, request.replaceStart, request.replaceEnd);
+      for (const listener of [...this.#commandLineListeners]) listener(this.commandLine.read.model);
+    }).catch((error: unknown) => {
+      if (!cancellation.token.isCancelled) this.#options.onError(`xi: path completion failed: ${error instanceof Error ? error.message : String(error)}`);
+    }).finally(() => {
+      if (this.#exPathCancellation === cancellation) this.#exPathCancellation = undefined;
+      if (this.#exPathPending === pending) this.#exPathPending = undefined;
+      cancellation.dispose();
+    });
+    this.#exPathPending = pending;
   }
 
   isCommandLineActive(): boolean {
@@ -879,6 +915,7 @@ export class WorkbenchInputRouter implements Disposable {
     if (line === undefined) return false;
     const input = toExCommandLineInput(event);
     if (input === undefined) return true;
+    if (input.kind === 'key' && input.key === 'Tab') await this.#exPathPending;
     const result = line.handleInput(input);
     if (result.kind === 'cancel') {
       if (active !== undefined) await active.handleKey(event);
@@ -912,9 +949,15 @@ export class WorkbenchInputRouter implements Disposable {
       cursorOffset: this.commandLine.read.model.cursorOffset,
       kind: 'ex',
     });
+    this.#refreshExPathCandidates();
   }
 
   #closeStandaloneCommandLine(): void {
+    this.#exPathRequest = undefined;
+    this.#exPathCancellation?.cancel();
+    this.#exPathCancellation?.dispose();
+    this.#exPathCancellation = undefined;
+    this.#exPathPending = undefined;
     this.#commandLineWithoutSession = false;
     this.#exCommandLineSession?.dispose();
     this.#exCommandLineSession = undefined;
@@ -926,6 +969,8 @@ export class WorkbenchInputRouter implements Disposable {
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#exPathCancellation?.cancel();
+    this.#exPathCancellation?.dispose();
     this.#prefixHelp.dispose();
     this.#exCommandLineSession?.dispose();
     this.#commandLineListeners.clear();

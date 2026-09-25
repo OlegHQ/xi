@@ -28,6 +28,7 @@ export class ExCommandLineSession {
   #source: string;
   #cursorOffset: number;
   #selectedIndex = 0;
+  #pathCandidates: readonly ExCommandCandidate[] | undefined;
   #disposed = false;
 
   constructor(options: { readonly registry: CommandRegistry; readonly source?: string; readonly cursorOffset?: number; readonly availability?: CommandAvailabilityContext }) {
@@ -47,7 +48,31 @@ export class ExCommandLineSession {
     const context = this.#availability === undefined
       ? { source: this.#source, cursorOffset: this.#cursorOffset, registry: this.#registry }
       : { source: this.#source, cursorOffset: this.#cursorOffset, registry: this.#registry, availability: this.#availability };
-    return buildExCommandLineReadModel(context, this.#selectedIndex);
+    const model = buildExCommandLineReadModel(context, this.#selectedIndex);
+    if (this.#pathCandidates === undefined) return model;
+    return Object.freeze({ ...model, candidates: this.#pathCandidates,
+      selectedIndex: this.#pathCandidates.length === 0 ? 0 : Math.min(this.#selectedIndex, this.#pathCandidates.length - 1) });
+  }
+
+  pathCompletionInput(): { readonly prefix: string; readonly replaceStart: number; readonly replaceEnd: number } | undefined {
+    const position = this.readModel().position;
+    if (!['e', 'ed', 'edi', 'edit'].includes(position.typedName.toLowerCase())
+      || this.#source[position.commandNameEnd + Number(this.#source[position.commandNameEnd] === '!')] !== ' '
+      || this.#cursorOffset > position.argumentEnd) return undefined;
+    let replaceStart = position.argumentStart;
+    while (this.#source[replaceStart] === ' ') replaceStart += 1;
+    if (this.#cursorOffset < replaceStart) return undefined;
+    return { prefix: this.#source.slice(replaceStart, this.#cursorOffset), replaceStart, replaceEnd: position.argumentEnd };
+  }
+
+  setPathCandidates(paths: readonly { readonly label: string; readonly insertText: string; readonly detail: string }[], replaceStart: number, replaceEnd: number): ExCommandLineReadModel {
+    this.#pathCandidates = Object.freeze(paths.map((path): ExCommandCandidate => Object.freeze({
+      kind: 'argument', label: path.label, insertText: path.insertText, detail: path.detail,
+      commandName: undefined, commandId: undefined, alias: undefined, available: true,
+      disabledReason: undefined, exact: false, replaceStart, replaceEnd,
+    })));
+    this.#selectedIndex = 0;
+    return this.readModel();
   }
 
   setSource(source: string, cursorOffset = source.length): ExCommandLineReadModel {
@@ -55,6 +80,7 @@ export class ExCommandLineSession {
     this.#source = source;
     this.#cursorOffset = cursorOffset;
     this.#selectedIndex = 0;
+    this.#pathCandidates = undefined;
     this.assertCursor();
     return this.readModel();
   }
@@ -72,6 +98,7 @@ export class ExCommandLineSession {
       this.#source = `${this.#source.slice(0, this.#cursorOffset)}${input.text}${this.#source.slice(this.#cursorOffset)}`;
       this.#cursorOffset += input.text.length;
       this.#selectedIndex = 0;
+      this.#pathCandidates = undefined;
       return { kind: 'changed', source: this.#source, cursorOffset: this.#cursorOffset };
     }
     switch (input.key) {
@@ -88,6 +115,7 @@ export class ExCommandLineSession {
         this.#source = acceptExCompletion(this.#source, candidate);
         this.#cursorOffset = candidate.replaceStart + candidate.insertText.length;
         this.#selectedIndex = 0;
+        this.#pathCandidates = undefined;
         return { kind: 'completion-accepted', source: this.#source, cursorOffset: this.#cursorOffset, candidate };
       }
       case 'Escape': return { kind: 'cancel', source: this.#source };
@@ -98,10 +126,12 @@ export class ExCommandLineSession {
       case 'Backspace':
         if (this.#cursorOffset > 0) { this.#source = `${this.#source.slice(0, this.#cursorOffset - 1)}${this.#source.slice(this.#cursorOffset)}`; this.#cursorOffset -= 1; }
         this.#selectedIndex = 0;
+        this.#pathCandidates = undefined;
         return { kind: 'changed', source: this.#source, cursorOffset: this.#cursorOffset };
       case 'Delete':
         if (this.#cursorOffset < this.#source.length) this.#source = `${this.#source.slice(0, this.#cursorOffset)}${this.#source.slice(this.#cursorOffset + 1)}`;
         this.#selectedIndex = 0;
+        this.#pathCandidates = undefined;
         return { kind: 'changed', source: this.#source, cursorOffset: this.#cursorOffset };
     }
   }
