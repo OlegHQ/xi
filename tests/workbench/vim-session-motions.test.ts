@@ -189,6 +189,19 @@ async function main(): Promise<void> {
     assert.equal(s.cursor(), 2, 'MOTIONS-21 a new jump after a local move records that location');
   }
 
+  {
+    const s = session('x');
+    await type(s, [...keys('Go'), event('backspace', '\x7f'), ...keys('<Esc>')]);
+    assert.equal(s.text(), 'x', 'MOTIONS-22 Backspace after opening EOF removes the new line without invalidating the Insert change map');
+    await type(s, keys('iY<Esc>'));
+    assert.equal(s.text(), 'Yx', 'MOTIONS-23 the editor remains usable after removing the opened line');
+  }
+  {
+    const s = session('xy');
+    await type(s, [...keys('la'), event('left'), event('delete'), ...keys('<Esc>')]);
+    assert.equal(s.text(), 'x', 'MOTIONS-24 Delete before Insert entry keeps its boundary mapped');
+  }
+
   console.log('vim-session-motions: all fixtures passed');
 }
 

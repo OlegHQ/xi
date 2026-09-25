@@ -54,6 +54,8 @@ const cases: readonly Case[] = [
   { id: 'T022-OPEN-LINE-AUTOINDENT-EMPTY-01', keys: 'o<Esc>', lines: ['  alpha', 'beta'], cursor: { line: 1, byteColumn0: 4 }, options: { autoindent: true, shiftwidth: 2, expandtab: true } },
   { id: 'T022-INSERT-NEWLINE-AUTOINDENT-01', keys: 'oX<CR>Y<Esc>', lines: ['  alpha', 'beta'], cursor: { line: 1, byteColumn0: 4 }, options: { autoindent: true, shiftwidth: 2, expandtab: true } },
   { id: 'T022-INSERT-AUTOINDENT-BACKSPACE-01', keys: 'o<BS><Esc>', lines: ['  alpha', 'beta'], cursor: { line: 1, byteColumn0: 4 }, options: { autoindent: true, backspace: 'indent,eol,start', shiftwidth: 2, expandtab: true } },
+  { id: 'T022-INSERT-OPEN-EOF-BACKSPACE-01', keys: 'Go<BS><Esc>', lines: ['x'], cursor: { line: 1, byteColumn0: 0 } },
+  { id: 'T022-INSERT-DELETE-BEFORE-ENTRY-01', keys: 'a<Left><Del><Esc>', lines: ['xy'], cursor: { line: 1, byteColumn0: 1 } },
   { id: 'T022-INSERT-CTRL-TD-01', keys: 'i<C-T><C-D><Esc>', lines: ['  a'], cursor: { line: 1, byteColumn0: 2 }, options: { autoindent: true, shiftwidth: 2, expandtab: true } },
   { id: 'T022-INSERT-BACKSPACE-EOL-01', keys: 'iX<CR><BS><Esc>', lines: ['abcd'], cursor: { line: 1, byteColumn0: 1 }, options: { backspace: 'eol' } },
   { id: 'T022-INSERT-CTRL-W-01', keys: 'iabc<C-W><Esc>', lines: ['x'], cursor: { line: 1, byteColumn0: 1 } },

@@ -1257,6 +1257,17 @@ function continued(
   kind: 'continued' | 'suspended' | 'resumed' = 'continued',
   undoAction: VimInsertUndoAction = edits.length === 0 ? 'none' : 'continue',
 ): VimInsertTransition {
+  // Plans carry post-edit cursor coordinates. Keep the Insert start boundary in the same
+  // coordinate space when Backspace/Delete (or an edit before the entry point) moves it.
+  let entry = session.entryOffset as number;
+  for (let index = edits.length - 1; index >= 0; index -= 1) {
+    const edit = edits[index];
+    if (edit === undefined) continue;
+    const start = edit.start as number;
+    const end = edit.end as number;
+    if (entry > start) entry = entry <= end ? start + edit.text.length : entry + edit.text.length - (end - start);
+  }
+  if (entry !== (session.entryOffset as number)) session = freezeSession({ ...session, entryOffset: offset(entry) });
   return Object.freeze({ kind, mode: session.mode, session, plan: makePlan(snapshot, edits, session.cursorOffset, undoAction) });
 }
 
