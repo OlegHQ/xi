@@ -7,7 +7,7 @@ site documents the released behavior. Keep this plan until every item is verifie
 1. **Language assets and defaults.** Make grammar assets configurable and bundle the
    supported grammars and highlight queries in source and compiled installs. Add OCaml
    (`.ml`/`.mli`, `ocamllsp`, `ocamlformat`) and finish Ruby (`ruby-lsp`, a working formatter)
-   in the default `languages.toml`. Check startup, syntax, LSP and format-on-save in real
+   in the default `languages.toml`. Check startup, syntax, LSP and opt-in formatting in real
    source and packaged sessions; optional external tools must fail without losing edits.
 2. **Themes and installs.** Bundle a useful set of default themes in the binary and release
    archives, make them discoverable in the picker, retain user theme overrides, and include

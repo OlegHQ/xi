@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { spawn } from 'node:child_process';
 import { parseCliArgs } from '../../apps/xi/src/cli';
+import packageJson from '../../package.json' with { type: 'json' };
 
 type Result = { readonly code: number | null; readonly stdout: string; readonly stderr: string };
 
@@ -19,7 +20,7 @@ assert.deepEqual(parseCliArgs(['--config'], '0.0.1'), { kind: 'error', text: 'xi
 
 const version = await run(['--version']);
 assert.equal(version.code, 0, 'T064-CLI-VERSION-01 exits successfully');
-assert.match(version.stdout, /xi 0\.0\.1/u, 'T064-CLI-VERSION-01 prints pinned application version');
+assert.equal(version.stdout, `xi ${packageJson.version}\n`, 'T064-CLI-VERSION-01 prints package version');
 
 const health = await run(['--health']);
 assert.equal(health.code, 0, 'T064-CLI-HEALTH-01 exits successfully');

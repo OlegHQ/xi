@@ -1,5 +1,8 @@
 # Xi
 
+Read the [Xi website](https://oleghq.github.io/xi/) for installation, language support,
+themes, keys and configuration.
+
 Xi is a keyboard-first terminal code editor built with Bun, strict TypeScript and
 OpenTUI. It owns its Vim engine and combines multiple cursors, LSP, Git, filesystem tools,
 tasks, mouse interaction and a restrained terminal UI.

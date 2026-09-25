@@ -83,6 +83,6 @@ private temporary copy removed on orderly exit. Windows embedded DLLs retain eag
 binding because Windows cannot delete a loaded DLL. Installed Windows packages
 still use lazy binding.
 
-See [T122 evidence](../evidence/T122.md) for startup and first-input measurements,
-upstream test limitations, and exact revision/artifact identity. Diagnostic
-measurements do not certify the full performance release matrix.
+See the [performance contract](../performance.md) for startup and first-input
+requirements. Historical T122 measurements and exact revision identity remain in
+Git history; diagnostic measurements do not certify the full release matrix.

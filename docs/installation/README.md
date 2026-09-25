@@ -22,7 +22,7 @@ the release `SHA256SUMS`, extracts into a temporary directory and replaces
 `~/.local/bin/xi` only after verification succeeds. It requires `curl` or
 `wget`, `tar`, and `sha256sum` or `shasum`. Set `XI_INSTALL_DIR` to choose a
 different user-writable destination, `XI_VERSION` to install a specific tag
-(for example `v0.0.2`), or `XI_REPO` to use another GitHub repository. The
+(for example a published `v`-prefixed tag), or `XI_REPO` to use another GitHub repository. The
 installer consumes published releases; draft releases are available only for
 review in GitHub.
 
@@ -68,12 +68,10 @@ full workbench wires them. Core startup does not require Git, ripgrep, an LSP
 server or Neovim. Neovim is a development oracle only and is not part of the
 package.
 
-The current CLI is a launchable workbench shell with Vim Insert (`i`, `a`, `o`),
-normal motions, common operators (`dw`, `dd`, `yy`), register put (`p`), direct
-deletion/toggle and character replacement commands, Escape, Ctrl-S atomic save,
-native Ex write/quit and `q`/Ctrl-C shutdown. Its release label must remain an editor preview until the
-G6 report proves the complete editing and packaging workflow. Terminal cleanup
-is exercised through the real PTY tests in `tests/distribution/`.
+The installed CLI provides the owned Vim engine, syntax highlighting, optional
+language servers and formatters, Git and filesystem tools, search, tasks and
+multiple selections. Terminal cleanup and editing are exercised through real
+PTY tests in `tests/distribution/` and `tests/e2e/`.
 
 Dependency notices are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), and
 the native library checksums are in [native-assets.sha256](native-assets.sha256).
