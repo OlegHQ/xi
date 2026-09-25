@@ -88,6 +88,8 @@ for (const { os, arch, target } of targets) {
   assert.equal(installed.status, 0, `T064-INSTALL-${target} installs from verified assets: ${installed.stderr}`);
 }
 assert.ok(existsSync(join(installDirectory, 'xi')), 'T064-INSTALL-02 installs executable into the selected user directory');
+assert.ok(existsSync(join(installDirectory, 'xi-support', 'CATPPUCCIN-LICENSE')), 'T064-INSTALL-LICENSE-01 retains the theme attribution after installation');
+assert.ok(existsSync(join(installDirectory, 'xi-support', 'licenses', '@opentui__core', 'LICENSE')), 'T064-INSTALL-LICENSE-02 retains dependency license texts after installation');
 writeFileSync(join(installDirectory, 'xi'), 'existing working binary');
 writeFileSync(join(simulatedRelease, archiveName), 'corrupted archive');
 const arm64Shim = join(releaseDirectory, 'shim-linux-arm64');

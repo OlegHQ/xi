@@ -56,7 +56,8 @@ case "$version" in *[!A-Za-z0-9._+-]*|'') echo "Invalid Xi version: $tag" >&2; e
 
 work=$(mktemp -d)
 candidate=
-trap 'rm -rf "$work"; [ -z "$candidate" ] || rm -f "$candidate"' EXIT HUP INT TERM
+support_candidate=
+trap 'rm -rf "$work"; [ -z "$candidate" ] || rm -f "$candidate"; [ -z "$support_candidate" ] || rm -rf "$support_candidate"' EXIT HUP INT TERM
 archive="xi-$version-$target.tar.gz"
 release_url="$base_url/download/$tag"
 if ! download "$release_url/SHA256SUMS" "$work/SHA256SUMS" ||
@@ -80,8 +81,14 @@ if ! tar -xzf "$work/$archive" -C "$work/unpacked"; then
 fi
 [ -f "$work/unpacked/xi" ] || { echo "Xi executable is missing from the release archive" >&2; exit 1; }
 mkdir -p "$install_dir"
+support_candidate=$(mktemp -d "$install_dir/.xi-support.new.XXXXXX")
+cp -R "$work/unpacked/licenses" "$support_candidate/licenses"
+cp "$work/unpacked/THIRD-PARTY-NOTICES.md" "$work/unpacked/THEMES-LICENSE" "$work/unpacked/CATPPUCCIN-LICENSE" "$support_candidate/"
+rm -rf "$install_dir/xi-support"
+mv "$support_candidate" "$install_dir/xi-support"
+support_candidate=
 candidate="$install_dir/.xi.new.$$"
-trap 'rm -rf "$work"; [ -z "$candidate" ] || rm -f "$candidate"' EXIT HUP INT TERM
+trap 'rm -rf "$work"; [ -z "$candidate" ] || rm -f "$candidate"; [ -z "$support_candidate" ] || rm -rf "$support_candidate"' EXIT HUP INT TERM
 cp "$work/unpacked/xi" "$candidate"
 chmod 755 "$candidate"
 mv -f "$candidate" "$install_dir/xi"

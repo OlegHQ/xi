@@ -238,9 +238,15 @@ def run_tmux() -> str:
             pane_tty_result = subprocess.run(["tmux", "list-panes", "-t", session, "-F", "#{pane_tty}"], capture_output=True, text=True, check=True)
             pane_tty = pane_tty_result.stdout.strip()
             subprocess.run(["tmux", "send-keys", "-t", session, "q"], check=True)
-            time.sleep(1.0)
-            stty = subprocess.run(["stty", "-F", pane_tty], capture_output=True, text=True)
-            if "-icanon" in stty.stdout or "-echo" in stty.stdout:
+            deadline = time.monotonic() + 5
+            while True:
+                stty = subprocess.run(["stty", "-F", pane_tty], capture_output=True, text=True)
+                if stty.returncode != 0 or ("-icanon" not in stty.stdout and "-echo" not in stty.stdout):
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.05)
+            if stty.returncode == 0 and ("-icanon" in stty.stdout or "-echo" in stty.stdout):
                 raise SystemExit(f"quitting under tmux left the pty in raw mode: {stty.stdout!r}")
         finally:
             subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True)

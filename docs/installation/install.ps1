@@ -45,12 +45,22 @@ try {
         New-Item -ItemType Directory -Force -Path $installDir | Out-Null
         $destination = Join-Path $installDir 'xi.exe'
         $candidate = Join-Path $installDir ('.xi-' + [guid]::NewGuid().ToString('N') + '.exe')
+        $support = Join-Path $installDir 'xi-support'
+        $supportCandidate = Join-Path $installDir ('.xi-support-' + [guid]::NewGuid().ToString('N'))
         try {
+            New-Item -ItemType Directory -Path $supportCandidate | Out-Null
+            Copy-Item -LiteralPath (Join-Path $unpacked 'licenses') -Destination (Join-Path $supportCandidate 'licenses') -Recurse
+            foreach ($notice in @('THIRD-PARTY-NOTICES.md', 'THEMES-LICENSE', 'CATPPUCCIN-LICENSE')) {
+                Copy-Item -LiteralPath (Join-Path $unpacked $notice) -Destination $supportCandidate
+            }
+            if (Test-Path -LiteralPath $support) { Remove-Item -LiteralPath $support -Recurse -Force }
+            Move-Item -LiteralPath $supportCandidate -Destination $support
             Copy-Item -LiteralPath $executable -Destination $candidate
             Move-Item -LiteralPath $candidate -Destination $destination -Force
         }
         finally {
             Remove-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $supportCandidate -Recurse -Force -ErrorAction SilentlyContinue
         }
 
         $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')

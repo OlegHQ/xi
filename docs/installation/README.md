@@ -31,6 +31,9 @@ checks `xi.exe --version`, installs it under `$HOME\.local\bin` and adds that
 directory to the user PATH. Set `XI_INSTALL_DIR`, `XI_VERSION`, or `XI_REPO`
 to override those defaults.
 
+Both installers keep theme notices and dependency license texts beside the
+installed executable in `xi-support/`.
+
 The release currently has **no cryptographic signature or provenance
 attestation**. `SHA256SUMS` detects corrupted downloads when obtained from the
 same GitHub release, but does not independently authenticate the release
