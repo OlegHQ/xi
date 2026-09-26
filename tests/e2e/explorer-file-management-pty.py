@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import os
+import fcntl
+import struct
+import termios
+import re
+from terminal_screen import Screen
 import argparse
 import pty
 import select
@@ -32,6 +37,7 @@ class Editor:
     def __init__(self, workspace: Path, source: str = "seed.txt"):
         self.workspace = workspace
         self.master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
         env = os.environ.copy()
         env.update(HOME=str(workspace), TERM="xterm-256color", XI_UI_TEST_MARKERS="1")
         self.child = subprocess.Popen([*COMMAND, source],
@@ -54,7 +60,7 @@ class Editor:
         start = len(self.output)
         self.keys(b" vf")
         self.wait(b"XI_FILES_CURSOR")
-        self.wait(b"NORMAL", start)  # rendered directory header, not just controller markers
+        assert any('NORMAL' in line for line in sidebar(self)), 'Files mode footer was not rendered'
 
     def sync(self) -> None:
         start = len(self.output)
@@ -77,6 +83,60 @@ class Editor:
                 self.child.kill()
                 self.child.wait()
             os.close(self.master)
+
+
+def sidebar(editor: Editor) -> list[str]:
+    screen = Screen(40, 120)
+    screen.feed(re.sub(rb'XI_[A-Z_]+(?: [^\r\n]*)?\r+\n', b'', editor.output))
+    return [screen.row_text(row)[:29] for row in range(1, 39)]
+
+
+def click(editor: Editor, name: str) -> None:
+    lines = sidebar(editor)
+    row = next((index + 1 for index, line in enumerate(lines) if name in line), None)
+    assert row is not None, (name, lines)
+    editor.keys(f"\x1b[<0;10;{row}M\x1b[<0;10;{row}m".encode())
+
+
+def mouse_and_tree_editing() -> None:
+    with tempfile.TemporaryDirectory(prefix="xi-files-tree-") as temporary:
+        workspace = Path(temporary)
+        setup(workspace)
+        (workspace / "apps").mkdir()
+        (workspace / "bench/document").mkdir(parents=True)
+        (workspace / "bench/core").mkdir()
+        (workspace / "bench/manifest.json").write_text('{}')
+        (workspace / "bench/document/alpha.ts").write_text('alpha')
+        (workspace / "bench/document/beta.ts").write_text('beta')
+        editor = Editor(workspace)
+        try:
+            drain(editor.master, editor.output, .5)
+            click(editor, "bench")
+            click(editor, "document")
+            lines = sidebar(editor)
+            assert all(any(name in line for line in lines) for name in ('apps', 'bench', 'core', 'document', 'alpha.ts', 'beta.ts', 'seed.txt')), lines
+            folder_column = next(line.index('document') for line in lines if 'document' in line)
+            child_column = next(line.index('alpha.ts') for line in lines if 'alpha.ts' in line)
+            assert child_column > folder_column, "Vim activation flattened the original tree"
+            click(editor, "alpha.ts")
+            editor.keys(b"dd")
+            assert not any('alpha.ts' in line for line in sidebar(editor)), "dd did not remove its inline draft row"
+            assert (workspace / 'bench/document/alpha.ts').read_text() == 'alpha'
+            editor.keys(b"u")
+            assert any('alpha.ts' in line for line in sidebar(editor)), "Files undo did not restore its tree row"
+            editor.keys(b"onew.ts\x1b")
+            lines = sidebar(editor)
+            assert any('new.ts' in line and line.index('new.ts') == child_column for line in lines), lines
+            assert any('seed.txt' in line for line in lines), "inline insertion replaced the workspace tree"
+            editor.keys(b"u")
+            click(editor, "document")
+            assert not any('alpha.ts' in line for line in sidebar(editor))
+            editor.keys(b">")
+            assert any('alpha.ts' in line for line in sidebar(editor)), "> did not expand selected folder"
+            editor.keys(b"<")
+            assert not any('alpha.ts' in line for line in sidebar(editor)), "< did not collapse selected folder"
+        finally:
+            editor.close()
 
 
 def setup(workspace: Path) -> None:
@@ -191,6 +251,7 @@ def external_destination() -> None:
             editor.close()
 
 
+mouse_and_tree_editing()
 isolated_undo_and_rename()
 registers_and_create()
 trash_and_dirty_refusal()

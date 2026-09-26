@@ -26,8 +26,9 @@ executed or modified.
 
 ## Files editing
 
-Files uses a separate editable directory document and Vim session for each visited
-directory, following mini.files. `dd`, Visual `x`, counts, registers, `p`/`P`, `u`,
+Files keeps the expandable VS Code-style tree, including its mouse controls, indentation,
+icons and decorations. Separate directory documents supply inline Vim editing; mini.files
+is an editing reference, not a layout spec. `dd`, Visual `x`, counts, registers, `p`/`P`, `u`,
 Ctrl-R and repeat run through the owned Vim engine. Directory registers are shared
 between Files documents; their undo histories and the editor's history are separate.
 Deleting a row advances to the following entry. `i` edits a name; `o`/`O` insert a new
@@ -35,8 +36,11 @@ entry row. A trailing `/` creates a directory, and nested new names create paren
 
 Edits are drafts. `=` reviews all visited directory drafts, then `y` or Enter applies
 the plan. Escape cancels review without applying it. In Normal mode, Escape or `q`
-returns focus to the editor and preserves the drafts. `h` goes to the parent directory,
-`l` enters a directory or previews a file, and `L`/Enter opens a file in the editor.
+returns focus to the editor and preserves the drafts. `j`/`k` traverse visible tree rows.
+`h` collapses a folder or selects its parent; `l` expands a folder, enters its children,
+or previews a file. `>` expands and `<` collapses folders in place, including selected
+folders in Visual mode. Clicking a folder toggles it; clicking a file previews it.
+`L`/Enter opens a file in the editor. Pasting on a folder targets that folder.
 Applied deletions go to workspace trash; synchronization resets directory undo history.
 Conflicting destinations, unsafe paths and deleting unsaved editor buffers are refused.
 

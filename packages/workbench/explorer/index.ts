@@ -208,6 +208,7 @@ export class ExplorerController {
   attachTree(tree: ExplorerTreePort, navigation: ExplorerNavigationPort): Disposable {
     this.#tree = tree;
     this.#navigation = navigation;
+    this.#options.editing?.attachTree(tree, async (id) => { tree.select(id); await navigation.handle('toggle'); });
     this.#openGeneration = tree.model.generation;
     return tree.subscribe((model) => {
       this.#options.host.notifySurfaceChange();
@@ -600,10 +601,15 @@ export class ExplorerController {
    * row, then either toggle a container open or preview the file it names. Focus stays in the
    * tree after a click (VS Code single-click semantics); Enter still opens and returns focus. */
   handlePointerActivate(itemId: string, generation: number): boolean {
-    const editing = this.editing;
+    const editing = this.#options.editing;
     if (editing !== undefined) {
-      const match = /^directory-row-(\d+)$/u.exec(itemId);
-      if (match !== null && editing.model.generation === generation) { this.focus(); editing.selectRow(Number(match[1])); }
+      const currentGeneration = editing.active ? editing.generation + (this.#tree?.model.generation ?? 0) : this.#tree?.model.generation;
+      this.focus();
+      if (editing.active && currentGeneration === generation) void editing.selectTreeRow(itemId, true);
+      else if (!editing.active && this.#tree !== undefined && currentGeneration === generation) {
+        const node = this.#tree.readNode(itemId);
+        if (node !== undefined) void editing.open(node.kind === 'root' ? node.path : node.path.slice(0, node.path.lastIndexOf('/')), node.path).then(() => editing.selectTreeRow(itemId, true));
+      }
       return true;
     }
     const tree = this.#tree;
@@ -622,6 +628,8 @@ export class ExplorerController {
    * caller to build a context menu from. */
   selectForContextMenu(itemId: string, generation: number): { readonly nodeId: string; readonly isContainer: boolean; readonly mutable: boolean; readonly expanded: boolean; readonly generation: number } | undefined {
     const tree = this.#tree;
+    const editing = this.editing;
+    if (tree !== undefined && editing !== undefined && generation === tree.model.generation + editing.model.generation) { itemId = editing.treeRows?.find((row) => row.id === itemId)?.nodeId ?? ''; generation = tree.model.generation; }
     if (tree === undefined || tree.model.generation !== generation) return undefined;
     const node = tree.readNode(itemId);
     if (node === undefined || node.kind === 'state') return undefined;
@@ -636,6 +644,8 @@ export class ExplorerController {
     if (tree !== undefined && expectedGeneration !== undefined && tree.model.generation !== expectedGeneration) { this.#options.onError('xi: file operation cancelled: Files tree changed; open the menu again\n'); return; }
     if (tree === undefined || !tree.select(nodeId)) return;
     const node = tree.readNode(nodeId);
+    const editing = this.#options.editing;
+    if (editing !== undefined && node !== undefined) { this.focus(); void (editing.active ? Promise.resolve() : editing.open(node.kind === 'root' ? node.path : node.path.slice(0, node.path.lastIndexOf('/')), node.path)).then(() => editing.contextAction(nodeId, action)); return; }
     if (action === 'open') {
       if (node !== undefined) void this.openNode(node);
     } else if (action === 'toggle') {

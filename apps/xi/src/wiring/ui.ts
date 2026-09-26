@@ -261,7 +261,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     get explorer() {
       const explorerTree = optionalServices.current?.explorerTree;
       return {
-        read: explorerFeature.editing === undefined ? explorerTree ?? loadingExplorer : directoryExplorerRead ??= createDirectoryExplorerRead(explorerFeature.editing),
+        read: explorerFeature.editing === undefined ? explorerTree ?? loadingExplorer : directoryExplorerRead ??= createDirectoryExplorerRead(explorerFeature.editing, explorerTree ?? loadingExplorer),
         isOpen: () => explorerFeature.isVisible && sidebarController.readModel().panel === 'files',
         isFocused: () => explorerFeature.isOpen, visualIds: () => explorerFeature.visualSelectionIds,
         onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
