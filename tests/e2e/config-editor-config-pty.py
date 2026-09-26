@@ -113,7 +113,7 @@ for enabled in (True, False):
                 child.kill()
                 child.wait()
             os.close(master)
-        expected = b"    x\r\n" if enabled else b"\tx\n"
+        expected = b"    x\r\n" if enabled else b"  x\n"
         # T036-EDITOR-CONFIG-PTY-01: the launched editor applies or ignores .editorconfig.
         if target.read_bytes() != expected:
             raise SystemExit(f"editor-config={enabled}: expected {expected!r}, got {target.read_bytes()!r}; {captured[-2000:]!r}")

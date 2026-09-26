@@ -112,7 +112,9 @@ with tempfile.TemporaryDirectory(prefix="xi-builtin-clipboard-pty-") as temporar
     if child.returncode != 0:
         raise SystemExit(f"Xi exited {child.returncode}: {captured[-5000:]!r}")
     result = source.read_text(encoding="utf-8")
-    if result != "onePRIMARY\ntwo\none\n":
+    # Pinned Neovim: EOF linewise put lands at column zero; gg preserves it,
+    # so characterwise p inserts PRIMARY after the first character of one.
+    if result != "oPRIMARYne\ntwo\none\n":
         raise SystemExit(f"x-sel clipboard paste did not reach the document: {result!r}")
 
 print("T036 builtin clipboard-provider PTY passed: x-sel argv semantics reached clipboard and primary registers.")

@@ -110,7 +110,8 @@ with tempfile.TemporaryDirectory(prefix="xi-clipboard-provider-pty-") as tempora
     if child.returncode != 0:
         raise SystemExit(f"Xi exited {child.returncode}: {captured[-5000:]!r}")
     result = source.read_text(encoding="utf-8")
-    if result != "onePRIMARY\ntwo\none\n":
+    # EOF linewise put followed by gg preserves column zero, as in pinned Neovim.
+    if result != "oPRIMARYne\ntwo\none\n":
         raise SystemExit(f"custom clipboard paste did not reach the document: {result!r}")
 
 print("T036 custom clipboard-provider PTY passed: configured yank/paste commands reached + register semantics.")

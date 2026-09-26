@@ -270,7 +270,7 @@ const jump = recordVimMultiPrimaryJump(createVimJumpHistory(), {
 assert.equal(jump.ok, true, 'T077-MC04-10 one multi-command jump update succeeds');
 if (jump.ok) {
   assert.equal(jump.value.entries.length, 1, 'T077-MC04-11 multi-command jump records one entry');
-  assert.equal(jump.value.index, 1, 'T077-MC04-12 jump cursor advances once');
+  assert.equal(jump.value.index, 0, 'T077-MC04-12 jump cursor identifies the sole current entry');
   assert.equal(jump.value.entries[0]?.target.offset, 0, 'T077-MC04-13 jump uses the primary navigation target');
 }
 
