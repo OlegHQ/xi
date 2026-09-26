@@ -87,11 +87,15 @@ try {
   const compressed = new ExplorerTree({ enumerateDirectory: async (path) => ({ ok: true, value: (await list(path)).map((entry) => ({ ...entry, relativePath: entry.path.slice(root.length + 1), hidden: entry.name.startsWith('.') })) }), watchDirectory: async () => ({ ok: true, value: { dispose() {} } }) });
   try {
     const added = compressed.addRoot({ id: 'compressed', path: root, label: root }); assert.ok(added.ok); await compressed.expand(added.value);
-    await compressed.expand(compressed.model.nodes.find((node) => node.path === `${root}/chain`)!.id);
     editor.attachTree(compressed, async (id) => { await compressed.toggleExpanded(id); }); await editor.open(root);
-    assert.ok(rows().some((row) => row.name === 'chain/deep'), 'the original compact folder chain survives Vim activation');
-    await editor.selectTreeRow(pick(`${root}/chain/deep`).id, true);
+    await editor.selectTreeRow(pick(`${root}/chain`).id); await keys('l');
+    assert.ok(rows().some((row) => row.name === 'chain/deep'), 'l expands the original compact folder chain');
+    assert.equal(rows().find(row => row.selected)?.path, `${root}/chain/deep`, 'cursor follows the combined folder row after l');
+    await keys('l');
+    assert.equal(rows().find(row => row.selected)?.path, `${root}/chain/deep`, 'l keeps the compact folder selected while expanding its files');
     assert.ok(rows().some((row) => row.name === 'file.txt' && row.depth === 2));
+    await keys('l'); assert.equal(rows().find(row => row.selected)?.name, 'file.txt', 'l enters visible children without losing the cursor');
+    await keys('hhh'); assert.equal(rows().find(row => row.selected)?.path, root, 'h navigates back through a compact folder parent');
   } finally { compressed.dispose(); }
   console.log('Tree + Vim passed hierarchy/depth, hidden policy, mouse toggles, >/<, cross-folder j, dd/u, inline i/o/O, Visual x, named register folder paste, safe review, Neovim paging and Visual paging');
 } finally { editor.dispose(); tree.dispose(); await rm(root, { recursive: true, force: true }); }

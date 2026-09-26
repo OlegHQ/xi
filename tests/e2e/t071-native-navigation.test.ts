@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { runOracleFixture, verifyOracleBundle } from '../oracle/oracle-runner';
 import { asIdentifier, type DocumentId, type ViewId } from '../../packages/primitives/src/index';
 import { TextFileDocument } from '../../packages/document/src/index';
 import { createOwnedVimSession } from '../../packages/workbench/vim-session/index';
@@ -47,6 +48,16 @@ assert.equal(vim.handleKey(event('w', '\u0017', { ctrl: true })), true, 'T071-CW
 assert.equal(vim.handleKey(event('g')), true, 'T071-CW-01 Ctrl-W g keeps its nested prefix pending');
 assert.equal(vim.handleKey(event('f')), true, 'T071-CW-01 Ctrl-W gf completes the nested file command');
 assert.deepEqual(commands.pop(), { kind: 'open-file', target: 'src/other.ts', split: true }, 'T071-CW-01 Ctrl-W gf requests a split file open');
+
+for (const [name, action] of [['left', 'focus-left'], ['right', 'focus-right'], ['up', 'focus-up'], ['down', 'focus-down']] as const) {
+  vim.handleKey(event('w', '\u0017', { ctrl: true }));
+  assert.equal(vim.handleKey(event(name, '')), true);
+  assert.deepEqual(commands.pop(), { kind: 'window', action, count: 1 }, `Ctrl-W ${name} emits the matching focus intent`);
+}
+const oracle = await verifyOracleBundle();
+const arrows = await runOracleFixture({ id: 'WINDOW-ARROW-ALIASES', title: 'Ctrl-W arrow focus', purpose: 'Verify arrow aliases switch native windows and retain their independent cursors.', modes: ['normal'], lines: ['one', 'two'], steps: [{ label: 'left-pane', keys: '<C-w>vj' }, { label: 'right-pane', keys: '<C-w><Right>' }, { label: 'left-again', keys: '<C-w><Left>' }] }, oracle.binaryPath);
+assert.equal(arrows.snapshots[1]!.cursor.line, 1);
+assert.equal(arrows.snapshots[2]!.cursor.line, 2);
 
 assert.equal(vim.handleKey(event(']', ']', { ctrl: true })), true, 'T071-TAG-01 direct tag key is consumed even when no provider is installed');
 assert.deepEqual(commands.pop(), { kind: 'open-tag', name: 'src/other.ts', split: false }, 'T071-TAG-01 Ctrl-] emits the bounded word under the cursor');

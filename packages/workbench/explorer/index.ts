@@ -166,7 +166,12 @@ export class ExplorerController {
       const root = rootId === undefined ? undefined : this.#tree?.readNode(rootId);
       const view = this.#options.session.views().find((value) => value.viewId === this.#options.session.activeViewId);
       const path = view === undefined ? undefined : this.#options.session.buffer(view.bufferId)?.path;
-      if (root !== undefined) await this.#options.editing?.open(path === undefined || !path.startsWith(`${root.path}/`) ? root.path : path.slice(0, path.lastIndexOf('/')), path);
+      const editing = this.#options.editing;
+      if (root !== undefined && editing !== undefined) {
+        await editing.open(path === undefined || !path.startsWith(`${root.path}/`) ? root.path : path.slice(0, path.lastIndexOf('/')), path);
+        // A scratch buffer or hidden first entry has no visible editable row.
+        if (!editing.treeRows?.some(row => row.selected)) await editing.selectTreeRow(root.id);
+      }
     })().finally(() => { this.#editingReady = undefined; });
     return this.#editingReady;
   }

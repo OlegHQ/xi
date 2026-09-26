@@ -10,6 +10,7 @@ export interface ExplorerBufferTreeRow {
   readonly id: string; readonly nodeId: string | undefined; readonly name: string; readonly path: string;
   readonly kind: ExplorerBufferSource['kind'] | 'root' | 'state'; readonly depth: number; readonly expanded: boolean;
   readonly bufferPath: string; readonly line: number | undefined; readonly selected: boolean; readonly visual: boolean;
+  readonly cursorColumn?: number;
 }
 interface BufferTreeNode { readonly id: string; readonly path: string; readonly name: string; readonly kind: ExplorerBufferTreeRow['kind']; readonly expanded: boolean; readonly children?: readonly string[] }
 interface BufferTree {
@@ -118,10 +119,16 @@ export class ExplorerBufferController {
       for (let index = 1; index < node.name.split('/').length; index += 1) { path = path.slice(0, path.lastIndexOf('/')); compressed.set(path, node); }
     }
     const visibleChild = (path: string): BufferTreeNode | undefined => visible.get(path) ?? compressed.get(path);
+    const selectedPath = active.rows[active.selectedIndex]?.sourcePath;
     const result: ExplorerBufferTreeRow[] = [];
     const visit = (node: BufferTreeNode, depth: number, bufferPath: string, line?: number, name = node.name, id = node.id): void => {
-      const selected = this.#selectedRoot === undefined ? bufferPath === active.directoryPath && line === active.selectedIndex : node.id === this.#selectedRoot;
-      result.push({ id, nodeId: node.id, name, path: node.path, kind: node.kind, depth, expanded: node.expanded, bufferPath, line, selected, visual: bufferPath === active.directoryPath && line !== undefined && active.visualIndices.includes(line) });
+      let labelPrefix = 0;
+      if (line === undefined && bufferPath === active.directoryPath && node.kind !== 'root') {
+        const index = active.rows.findIndex(row => row.sourcePath === node.path);
+        if (index >= 0) { line = index; const label = active.rows[index]!.name; labelPrefix = Math.max(0, node.name.lastIndexOf('/') + 1); name = `${node.name.slice(0, labelPrefix)}${label}`; }
+      }
+      const selected = this.#selectedRoot === undefined ? (bufferPath === active.directoryPath && line === active.selectedIndex) || (selectedPath !== undefined && compressed.get(selectedPath)?.id === node.id) : node.id === this.#selectedRoot;
+      result.push({ id, nodeId: node.id, name, path: node.path, kind: node.kind, depth, expanded: node.expanded, bufferPath, line, selected, cursorColumn: active.cursorColumn + labelPrefix, visual: bufferPath === active.directoryPath && line !== undefined && active.visualIndices.includes(line) });
       if (!node.expanded || (node.kind !== 'root' && node.kind !== 'directory')) return;
       const buffer = this.#buffers.get(node.path);
       if (buffer === undefined) {
@@ -281,9 +288,10 @@ export class ExplorerBufferController {
     }
     if (this.#selectedRoot !== undefined && normal && ['d', 'x', 'c', 'i', 'a', 'I', 'A', 's', 'S', 'C', 'D', 'r'].includes(key)) return 'handled';
     const selectedRoot = this.#selectedRoot;
+    const windowCommand = buffer.session.prefixHelp.pendingKeys[0] === '<C-w>';
     this.#selectedRoot = undefined;
     const result = await (this.#current ?? buffer).session.handleKey(event);
-    if (selectedRoot !== undefined && (this.#current ?? buffer).session.prefixHelp.pendingKeys.length > 0) this.#selectedRoot = selectedRoot;
+    if (selectedRoot !== undefined && (windowCommand || (this.#current ?? buffer).session.prefixHelp.pendingKeys.length > 0)) this.#selectedRoot = selectedRoot;
     this.#clampCursor();
     this.#publish();
     return result === 'quit' ? 'close' : 'handled';
@@ -323,7 +331,11 @@ export class ExplorerBufferController {
     }
     if (key === 'h' || name.toLowerCase() === 'left') {
       if (container && row.expanded && row.nodeId !== undefined) { await this.#toggleTree?.(row.nodeId); this.#publish(); }
-      else { const parent = rows.find((value) => value.path === row.bufferPath); if (parent !== undefined) await this.selectTreeRow(parent.id); }
+      else {
+        let parent = rows.find((value) => value.path === row.bufferPath);
+        for (let index = selected - 1; parent === undefined && index >= 0; index -= 1) { const candidate = rows[index]!; if (candidate.depth < row.depth && row.path.startsWith(`${candidate.path}/`)) parent = candidate; }
+        if (parent !== undefined) await this.selectTreeRow(parent.id);
+      }
       return true;
     }
     if (container && (key === 'l' || key === 'L' || name.toLowerCase() === 'right' || name.toLowerCase() === 'enter' || name.toLowerCase() === 'return')) {

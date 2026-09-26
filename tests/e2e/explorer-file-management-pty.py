@@ -34,13 +34,13 @@ def drain(master: int, output: bytearray, seconds: float) -> None:
 
 
 class Editor:
-    def __init__(self, workspace: Path, source: str = "seed.txt"):
+    def __init__(self, workspace: Path, source: str | None = "seed.txt"):
         self.workspace = workspace
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
         env = os.environ.copy()
         env.update(HOME=str(workspace), TERM="xterm-256color", XI_UI_TEST_MARKERS="1")
-        self.child = subprocess.Popen([*COMMAND, source],
+        self.child = subprocess.Popen([*COMMAND, *([] if source is None else [source])],
                                      cwd=workspace, env=env, stdin=slave, stdout=slave, stderr=slave)
         os.close(slave)
         self.output = bytearray()
@@ -101,6 +101,41 @@ def click(editor: Editor, name: str) -> None:
     row = next((index + 1 for index, line in enumerate(lines) if name in line), None)
     assert row is not None, (name, lines)
     editor.keys(f"\x1b[<0;10;{row}M\x1b[<0;10;{row}m".encode())
+
+
+def startup_focus_cursor() -> None:
+    with tempfile.TemporaryDirectory(prefix="xi-files-focus-") as temporary:
+        workspace = Path(temporary)
+        setup(workspace)
+        (workspace / '.a-hidden').mkdir()
+        (workspace / 'chain/deep').mkdir(parents=True)
+        (workspace / 'chain/deep/file.txt').write_text('nested')
+        editor = Editor(workspace, None)
+        try:
+            drain(editor.master, editor.output, .5)
+            start = len(editor.output)
+            editor.keys(b"\x17\x1b[D")
+            editor.wait(b'XI_FILES_CURSOR', start)
+            drain(editor.master, editor.output, .3)
+            assert 'Files' in terminal_screen(editor).row_text(40), 'Ctrl-W Left did not focus Files'
+            assert b'\x1b[48;2;30;36;48m/' in editor.output[start:], 'startup tree has no visible cursor on its root'
+            editor.keys(b'\x17\x1b[C')
+            assert 'Files' not in terminal_screen(editor).row_text(40), 'Ctrl-W Right did not return to the editor'
+            start = len(editor.output)
+            editor.keys(b'\x17h')
+            assert b'\x1b[48;2;30;36;48m/' in editor.output[start:], 'tree cursor disappeared on returning focus'
+            editor.keys(b'jl')
+            assert any('chain/deep' in line for line in sidebar(editor)), 'l did not expand the compact directory chain'
+            start = len(editor.output)
+            editor.keys(b'l')
+            assert any('file.txt' in line for line in sidebar(editor)), 'l did not expand the directory contents'
+            assert b'\x1b[48;2;30;36;48md' in editor.output[start:], 'compact directory expansion lost its visible cursor'
+            start = len(editor.output)
+            editor.keys(b'l')
+            assert b'\x1b[48;2;30;36;48mf' in editor.output[start:], 'l did not place its cursor on the child file'
+            assert not any('.a-hidden' in line for line in sidebar(editor)), 'focus exposed a hidden entry'
+        finally:
+            editor.close()
 
 
 def mouse_and_tree_editing() -> None:
@@ -285,6 +320,7 @@ def external_destination() -> None:
             editor.close()
 
 
+startup_focus_cursor()
 mouse_and_tree_editing()
 isolated_undo_and_rename()
 registers_and_create()

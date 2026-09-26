@@ -60,9 +60,13 @@ export function hostWindowAction(
     }
   }
   switch (key) {
+    case '<Left>':
     case 'h': return 'focus-left';
+    case '<Down>':
     case 'j': return 'focus-down';
+    case '<Up>':
     case 'k': return 'focus-up';
+    case '<Right>':
     case 'l': return 'focus-right';
     case 'w': return 'focus-next';
     case 'W': return 'focus-previous';

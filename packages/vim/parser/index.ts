@@ -109,7 +109,7 @@ const DIGITS = Object.freeze(Array.from('0123456789'));
 const MOTION_KEYS = Object.freeze(Array.from('hl0^$|+_-jkwWbBeEgE%(){}[];,:nN*#fFtT`\'/?HMLG').concat(['<Left>', '<Right>', '<Up>', '<Down>', '<Home>', '<End>', '<PageUp>', '<PageDown>', '<C-b>', '<C-f>', '<C-d>', '<C-u>', '<CR>', '<Space>']));
 const G_KEYS = Object.freeze(['g', 'j', 'k', '0', '^', '$', '_', 'm', 'M', ';', ',', '*', '#', '?', 'e', 'E', 'J', 'I', 'R', 'U', 'u', '~', 'q', 'w', 'r', 'v', 'V', 'x', 'X', '<', '>', '%', 'd', 'f', 'F', 'h', 'l', 'n', 'N', 'p', 'P', 't', 'T', 'a', 'A', 'o', 'O', 's', 'S', 'c', 'C', 'D', 'K', ']', '<C-]>', '<', '>', '<C-a>', '<C-x>']);
 const Z_KEYS = Object.freeze(['z', 't', 'b', '<CR>', '<Space>', '=', 'f', 'F', 'o', 'O', 'H', 'L', 'M', 'w', 'W', 'h', 'l', 'z']);
-const CTRL_W_KEYS = Object.freeze(['h', 'j', 'k', 'l', 't', 'w', 'W', 'b', 'B', 'p', 'P', 'n', 'o', 'O', 'c', 'q', 'v', 'T', 'g', 'f', 'F', ']', '}', '=', '+', '-', '<', '>', '_', '|', 's', 'S', 'x', 'X', 'r', 'R']);
+const CTRL_W_KEYS = Object.freeze(['<Left>', '<Down>', '<Up>', '<Right>', 'h', 'j', 'k', 'l', 't', 'w', 'W', 'b', 'B', 'p', 'P', 'n', 'o', 'O', 'c', 'q', 'v', 'T', 'g', 'f', 'F', ']', '}', '=', '+', '-', '<', '>', '_', '|', 's', 'S', 'x', 'X', 'r', 'R']);
 const CTRL_W_G_KEYS = Object.freeze(['f', 'F', ']', '}', 't', 'T', 'g', 'G', '+', '-', '<', '>', '_', '|']);
 /** Helix-style one-line docs for the g/z/Ctrl-W continuations the engine implements (Vim meanings). */
 const G_DOCS = Object.freeze([
