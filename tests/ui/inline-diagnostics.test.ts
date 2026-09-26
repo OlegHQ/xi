@@ -67,3 +67,42 @@ try {
   assert.doesNotMatch(inlineDiagnosticLines(document.snapshot(), [problem], 0, 60, 10, 4, 0, 10, 0, 'disable', 'disable').map(line => line.text).join('\n'), /2322/u, 'T036-INLINE-DIAGNOSTICS-FILTER-06 disable suppresses inline diagnostics');
 } finally { setup.renderer.destroy(); session.dispose(); }
 console.log('inline diagnostics: visible messages, wrapping, noneditable hit maps, clearing, stale versions and bounded hostile payload pass');
+
+// Markers remain visible even when all message text is disabled or cannot fit.
+for (const [gutters, ascii, width] of [
+  [['diagnostics', 'spacer', 'line-numbers'], false, 60],
+  [['line-numbers', 'spacer', 'diagnostics'], false, 100],
+  [['diagnostics', 'spacer', 'line-numbers'], true, 100],
+  [['line-numbers'], false, 100],
+] as const) {
+  const gutterSession = new WorkbenchSession({ workspaceId: 'gutter-test' });
+  assert.ok(gutterSession.openBuffer(document, { path: '/test.ts' }).ok);
+  const warning: Problem = { ...problem, id: 'warning', severity: 2, range: { ...problem.range, startLine: 1, endLine: 1 } };
+  let visible: readonly Problem[] = [{ ...problem, severity: 4 }, problem, warning];
+  const gutterSetup = await createTestRenderer({ width, height: 25, bufferedOutput: 'memory' });
+  const gutterViewport = new WorkbenchRenderable(gutterSetup.renderer.root.ctx, {
+    workbench: gutterSession, gutters, ascii, editorDiagnostics: () => visible,
+    inlineDiagnosticsCursorLine: 'disable', inlineDiagnosticsOtherLines: 'disable', endOfLineDiagnostics: 'disable',
+  });
+  gutterSetup.renderer.root.add(gutterViewport);
+  try {
+    gutterViewport.syncAnchors();
+    await gutterSetup.renderOnce();
+    const rows = gutterSetup.captureCharFrame().split('\n');
+    const errorRow = rows.find(row => row.includes('const x')) ?? '';
+    const warningRow = rows.find(row => row.includes('const next')) ?? '';
+    if (gutters.includes('diagnostics' as never)) {
+      assert.ok(errorRow.includes(ascii ? 'E' : '●'), 'GUTTER-DIAGNOSTICS-01 highest severity icon shows with inline text disabled');
+      assert.ok(warningRow.includes(ascii ? 'W' : '▲'), 'GUTTER-DIAGNOSTICS-02 off-cursor warning icon stays visible in narrow and reordered gutters');
+    } else {
+      assert.doesNotMatch(errorRow + warningRow, /[●▲]/u, 'GUTTER-DIAGNOSTICS-03 omitting diagnostics from the configured layout hides icons');
+    }
+    visible = [{ ...problem, documentVersion: 999 }, { ...warning, documentVersion: 999 }];
+    gutterViewport.refresh();
+    await gutterSetup.renderOnce();
+    assert.doesNotMatch(gutterSetup.captureCharFrame(), /[●▲]/u, 'GUTTER-DIAGNOSTICS-04 stale diagnostics clear gutter icons');
+  } finally {
+    gutterSetup.renderer.destroy();
+    gutterSession.dispose();
+  }
+}

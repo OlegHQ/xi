@@ -13,7 +13,7 @@ function document(name: string, text: string): TextFileDocument {
 
 const current = document('word-current', 'alpha al\n');
 const other = document('word-other', 'alphabet alpine\n');
-const provider = createWordCompletionProvider(() => [current.snapshot(), other.snapshot()], 2);
+const provider = createWordCompletionProvider(() => [current.snapshot(), other.snapshot()]);
 const request: WorkbenchCompletionRequest = {
   documentId: String(current.id),
   documentVersion: Number(current.version),

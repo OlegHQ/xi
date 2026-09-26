@@ -180,12 +180,15 @@ async function renderAt(width: number, height: number, options: { readonly ascii
 
 async function testIndentGuides(): Promise<void> {
   const rendered = await renderAt(100, 20, {
-    text: 'root\n    child\n        grandchild\n',
+    text: 'root\n    child with spaces\n        grandchild with spaces\n',
     indentGuides: { render: true, character: '|', skipLevels: 0 },
   });
   const lines = rendered.chars.split('\n');
   assert.ok(lines.some(line => line.indexOf('|') >= 0 && line.indexOf('child') > line.indexOf('|')), 'T036-INDENT-GUIDES-UNIT-01 configured guide paints before an indented visible line');
   assert.ok(lines.some(line => line.indexOf('|') >= 0 && line.indexOf('grandchild') > line.indexOf('|')), 'T036-INDENT-GUIDES-UNIT-01-PART2 configured guide paints in deeper indentation');
+  for (const line of lines.filter(line => line.includes('with spaces'))) {
+    assert.equal(line.slice(line.indexOf('child')).includes('|'), false, 'indent guides never replace spaces inside source text');
+  }
   rendered.setup.renderer.destroy();
   const skipped = await renderAt(100, 20, {
     text: 'root\n    child\n        grandchild\n',

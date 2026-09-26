@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import fcntl
+import struct
+import termios
 import os
 import pty
 import re
@@ -151,3 +154,80 @@ with tempfile.TemporaryDirectory(prefix="xi-t036-xi-metadata-pty-") as temporary
         raise SystemExit(f"Xi exited {child.returncode}\n{captured[-8000:]!r}")
 
 print("T036 production PTY passed canonical xi metadata, runtime settings, xi.sidebar, and xi.aliases")
+
+
+# Default indentation, literal symbols and multi-selection through a real PTY.
+
+
+def run(arguments, keys):
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+    env = dict(os.environ, TERM='xterm-256color', XI_UI_TEST_MARKERS='1', HOME=temporary,
+               XDG_CONFIG_HOME=f'{temporary}/config', XDG_STATE_HOME=f'{temporary}/state')
+    command = [os.environ['XI_TEST_BINARY']] if 'XI_TEST_BINARY' in os.environ else ['bun', 'run', 'apps/xi/src/main.ts']
+    child = subprocess.Popen([*command, *arguments], cwd=ROOT, env=env,
+                             stdin=slave, stdout=slave, stderr=slave)
+    os.close(slave)
+    transcript = bytearray()
+
+    def drain(seconds):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if not select.select([master], [], [], .02)[0]:
+                continue
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            transcript.extend(chunk)
+
+    try:
+        deadline = time.monotonic() + 10
+        while b'XI_WORKBENCH_READY' not in transcript and time.monotonic() < deadline:
+            drain(.1)
+        assert b'XI_WORKBENCH_READY' in transcript, 'editor ready'
+        for key in keys:
+            os.write(master, key)
+            drain(.2)
+        child.wait(timeout=5)
+        assert child.returncode == 0, transcript[-2000:]
+        return transcript
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        os.close(master)
+
+
+with tempfile.TemporaryDirectory(prefix='xi-tutorial-') as temporary:
+    path = Path(temporary) / 'practice.txt'
+    path.write_text('one\ntwo\n')
+    run([str(path)], [b'>', b':w\r', b'<', b'i<', b'\t', b'\x1b[Z', b'>', b'\x1b', b':wq\r'])
+    assert path.read_text() == '<>one\ntwo\n', path.read_text()
+    # Check actual indentation, including whole-line Tab with cursor after text.
+    path.write_text('one\ntwo\n')
+    run([str(path)], [b'>', b':wq\r'])
+    assert path.read_text() == '  one\ntwo\n', path.read_text()
+    run([str(path)], [b'<', b'A', b'\t', b'\x1b', b':wq\r'])
+    assert path.read_text() == '  one\ntwo\n', path.read_text()
+    run([str(path)], [b'A', b'\x1b[Z', b'\x1b', b':wq\r'])
+    assert path.read_text() == 'one\ntwo\n', path.read_text()
+    # Select-mode mappings operate on the selected lines.
+    run([str(path)], [b'Vj', b'>', b':wq\r'])
+    assert path.read_text() == '  one\n  two\n', path.read_text()
+    run([str(path)], [b'Vj', b'<', b':wq\r'])
+    assert path.read_text() == 'one\ntwo\n', path.read_text()
+    # Leader bindings add a second cursor; simultaneous insertion reaches disk.
+    run([str(path)], [b' xb', b'iX', b'\x1b', b':wq\r'])
+    assert path.read_text() == 'Xone\nXtwo\n', path.read_text()
+    path.write_text('berry apple berry\n')
+    run([str(path)], [b'\x1bn', b'\x1bn', b'cgrape', b'\x1b', b':wq\r'])
+    assert path.read_text() == 'grape apple grape\n', path.read_text()
+    saved = Path(temporary) / 'tutorial.txt'
+    transcript = run(['--tutor'], [f':w {saved}\r'.encode(), b':q\r'])
+    assert 'Xi tutorial' in saved.read_text()
+    assert 'MULTIPLE CURSORS' in saved.read_text()
+    assert b'tutorial' in transcript, 'tutorial rendered in terminal'
+print('Tutorial, indentation, symbols and multiple selections passed real CLI PTY')

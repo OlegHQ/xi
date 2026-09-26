@@ -2,7 +2,7 @@ import { asCellColumn, asLineIndex, asUtf16Offset, CancellationSource, type Inpu
 import type { CanonicalInputEvent } from '../../contracts/src/index';
 import type { DocumentEdit, DocumentReadPort, DocumentSnapshot, TextFileDocument } from '../../document/src/index';
 import { createDocumentAnchor, DocumentChangeMap } from '../../document/src/index';
-import { mapSelectionSet, updateSelectionSet, type SelectionSetSnapshot, type SelectionMemberInput } from '../../selections/src/index';
+import { createSelectionSet, mapSelectionSet, updateSelectionSet, type SelectionSetSnapshot, type SelectionMemberInput } from '../../selections/src/index';
 import {
   createVimMotionGhost,
   convertVimVisualSelection,
@@ -45,6 +45,7 @@ import {
 } from '../../vim/src/entrypoints/launch';
 import type { WorkbenchReadPort, WorkbenchViewSnapshot } from '../src/read-model';
 import type { VimHostCommand, VimInsertOptions } from '../../vim/src/index';
+import { prepareVimTextTransform, type VimNormalizedOperatorRange } from '../../vim/src/index';
 import { searchVimBufferInteractive } from '../../vim/src/index';
 import { createVimJumpHistory, jumpBackward, jumpForward, recordVimJump, type VimJumpHistory, type VimJumpReason } from '../../vim/src/index';
 import {
@@ -87,7 +88,7 @@ import type { OwnedVimKeyEvent, OwnedVimSessionOptions, OwnedVimSession, VimPref
 export type { OwnedVimKeyEvent, OwnedVimSessionOptions, OwnedVimSession, VimPrefixHelpState, VimCommandLineState, VimSearchHighlightState } from './types';
 import { hostTarget, hostWindowAction, isHostTokenCharacter } from './host-commands';
 import { parseXiSelectionCommand, selectionModeFor, SELECTION_COMMANDS, PATTERN_SELECTION_COMMANDS, SELECTION_HISTORY_LIMIT, type XiSelectionCommandInput } from './selection-commands';
-import { addPointerCaret, pointerVisualCursor, pointerWordRange } from './pointer';
+import { addPointerCaret, pointerNormalEndpointMember, pointerVisualCursor, pointerWordRange } from './pointer';
 import { commitPlan, makeInsertSelections, mapExternalInsertSession, INSERT_GROUP } from './insert-plan';
 import {
   applyRegisterEffect as applyRegisterEffectToBank,
@@ -387,7 +388,8 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   let lastInsertedText = '';
   let pendingChangeOperatorMotion: { readonly motionKey: string; readonly linewise: boolean } | undefined;
   let changeRepeatTarget: { readonly motionKey: string; readonly text: string; readonly linewise: boolean } | undefined;
-  let lastRepeatKind: 'engine' | 'change' = 'engine';
+  let lastRepeatKind: 'engine' | 'change' | 'indent' = 'engine';
+  let indentRepeat: { key: '>' | '<'; count: number } | undefined;
   // Macro record/playback (T130). Starting a recording is exposed through
   // beginMacroRecording (see the leader-key wiring in apps/xi/src/main.ts) rather than
   // through the parser's own 'q'+register literal-command, because bare 'q' in Normal mode
@@ -1578,6 +1580,10 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (command.kind === 'single-key' && (mode === 'visual-character' || mode === 'visual-line') && (command.key === '*' || command.key === '#')) {
         return executeVisualStarHash(command.key, mode);
       }
+      if (command.kind === 'single-key' && isVisualMode(mode) && (command.key === '>' || command.key === '<')) {
+        executeIndent(command.key);
+        return;
+      }
       if (command.kind === 'single-key' && isVisualMode(mode) && (command.key === 'd' || command.key === 'x' || command.key === 'c' || command.key === 'y')) {
         executeVisualOperator(command.key === 'x' ? 'd' : command.key);
         return;
@@ -1701,7 +1707,83 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       }
     }
 
+    function executeIndent(key: '>' | '<', command?: Extract<VimCommandIntent, { readonly kind: 'operator-motion' | 'operator-line' | 'operator-text-object' }>, lineCount?: number): void {
+      const current = document.snapshot();
+      const ranges: { id: SelectionSetSnapshot['primaryId']; range: VimNormalizedOperatorRange }[] = [];
+      if (command?.kind === 'operator-line' || lineCount !== undefined) {
+        for (const member of selections.members) {
+          const at = member.head.at.offset;
+          const normalized = normalizeVimOperatorRange(current, {
+            origin: { documentVersion: current.version, offset: at },
+            target: { documentVersion: current.version, offset: at },
+            direction: 'forward', motionKind: 'linewise', inclusive: true,
+            motionKey: key, operator: 'yank', lineCount: lineCount ?? (command?.kind === 'operator-line' ? command.count.value : 1),
+          });
+          if (!normalized.ok) return;
+          ranges.push({ id: member.id, range: normalized.value });
+        }
+      } else {
+        const motion = command === undefined ? undefined : motionInvocation(
+          command.kind === 'operator-text-object' ? command.textObject : command.motion,
+          command.operatorCount.value * command.motionCount.value,
+        );
+        if (motion === null) return;
+        const prepared = prepareVimMultiOperator({ snapshot: current, selections, operator: 'yank',
+          ...(motion === undefined ? {} : { motion }),
+          ...(command?.kind === 'operator-motion' && command.force !== undefined ? { force: command.force } : {}),
+          state: { mode: 'normal', repeatTarget: null }, failurePolicy: 'reject-command' });
+        if (!prepared.ok) return;
+        for (const member of prepared.value.members) {
+          if (member.plan != null) ranges.push({ id: member.id, range: member.plan.range });
+        }
+      }
+      const editsByStart = new Map<number, DocumentEdit>();
+      for (const member of ranges) {
+        const prepared = prepareVimTextTransform({ snapshot: current, range: member.range, operator: key, options: options.insertOptions ?? {} });
+        if (!prepared.ok) return;
+        for (const edit of prepared.value.transaction?.edits ?? []) editsByStart.set(edit.start as number, edit);
+      }
+      const edits = [...editsByStart.values()].sort((a, b) => (a.start as number) - (b.start as number));
+      if (edits.length > 0) {
+        if (!document.beginUndoGroup(OPERATOR_GROUP, 'vim').ok) return;
+        const committed = document.commit({ documentId: current.id, expectedVersion: current.version, edits, origin: 'vim', undoGroup: OPERATOR_GROUP });
+        document.endUndoGroup(OPERATOR_GROUP);
+        if (!committed.ok) return;
+        notifyCommitted(committed, options.onDocumentChange);
+      }
+      const after = document.snapshot();
+      const members = ranges.map(member => {
+        const at = mapOffsetThroughCommit(current, edits, member.range.start);
+        let cursor = at as number;
+        while (cursor < after.lengthUtf16) {
+          const character = after.slice(offset(cursor), offset(cursor + 1));
+          if (!character.ok || (character.value !== ' ' && character.value !== '\t')) break;
+          cursor += 1;
+        }
+        const normal = makeNormalSelection(after, offset(cursor), 0, member.id).members[0]!;
+        if (normal.kind !== 'normal-cursor') throw new Error('indent-normal-cursor');
+        return pointerNormalEndpointMember(normal);
+
+      });
+      const updated = createSelectionSet(after, { members, primaryId: selections.primaryId, selectionGeneration: (selections.selectionGeneration as number) + 1 });
+      if (updated.ok) selections = updated.value.selectionSet;
+      mode = 'normal';
+      motionCursor = makeMotionCursor(after, selections);
+      parser = makeParser(mode, selections);
+      const first = ranges[0]?.range;
+      if (first !== undefined) {
+        const start = current.lineIndexAt(first.start);
+        const end = current.lineIndexAt(offset(Math.max(first.start as number, (first.end as number) - 1)));
+        indentRepeat = { key, count: start.ok && end.ok ? (end.value as number) - (start.value as number) + 1 : 1 };
+        lastRepeatKind = 'indent';
+      }
+    }
+
     function executeOperator(command: Extract<VimCommandIntent, { readonly kind: 'operator-motion' | 'operator-line' | 'operator-text-object' }>): void {
+      if (command.operator.key === '>' || command.operator.key === '<') {
+        executeIndent(command.operator.key, command);
+        return;
+      }
       const operator = coreOperator(command.operator.name);
       if (operator === null) return;
       if (command.kind === 'operator-line') {
@@ -1915,6 +1997,10 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (primary === undefined || primary.kind !== 'normal-cursor' || selections.members.length !== 1) return;
       // changeRepeatTarget carries no recorded count of its own (unlike the engine's
       // operator/insert targets below), so an explicit override or the Vim default of 1 apply.
+      if (lastRepeatKind === 'indent' && indentRepeat !== undefined) {
+        executeIndent(indentRepeat.key, undefined, providedCount ?? indentRepeat.count);
+        return;
+      }
       const explicitCount = providedCount ?? 1;
 
       if (lastRepeatKind === 'change' && changeRepeatTarget !== undefined) {
@@ -2080,6 +2166,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     }
 
     function executeVisualOperator(key: 'd' | 'c' | 'y'): void {
+      const group = key === 'c' ? INSERT_GROUP : OPERATOR_GROUP;
       const beforeCursor = selections.members.find((member) => member.id === selections.primaryId)?.anchor.at.offset ?? offset(0);
       const prepared = prepareVimMultiOperator({
         snapshot: document.snapshot(),
@@ -2091,15 +2178,29 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       });
       if (!prepared.ok) return;
       if (prepared.value.transaction !== null) {
-        const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
+        const opened = document.beginUndoGroup(group, 'vim');
         if (!opened.ok) return;
-        const committed = document.commit({ documentId: prepared.value.transaction.documentId, expectedVersion: prepared.value.transaction.expectedVersion, edits: prepared.value.transaction.edits, origin: 'vim', undoGroup: OPERATOR_GROUP,
+        const committed = document.commit({ documentId: prepared.value.transaction.documentId, expectedVersion: prepared.value.transaction.expectedVersion, edits: prepared.value.transaction.edits, origin: 'vim', undoGroup: group,
           selectionHistory: { before: { vimCursor: beforeCursor }, after: { vimCursor: prepared.value.cursorOffsets.find((member) => member.id === selections.primaryId)?.offset ?? 0 } } });
-        if (!committed.ok || !document.endUndoGroup(OPERATOR_GROUP).ok) return;
+        if (!committed.ok) { document.endUndoGroup(group); return; }
+        if (key === 'c') undoOpen = true;
+        else if (!document.endUndoGroup(group).ok) return;
         notifyCommitted(committed, options.onDocumentChange);
       }
       for (const effect of prepared.value.registerEffects) registers = applyRegisterEffect(registers, effect);
       const primary = prepared.value.cursorOffsets.find((member) => member.id === selections.primaryId) ?? prepared.value.cursorOffsets[0];
+      if (key === 'c') {
+        const entered = beginVimMultiInsert(document.snapshot(), prepared.value.cursorOffsets.map(member => ({ id: member.id, cursorOffset: member.offset })), 'i', options.insertOptions ?? {});
+        if (!entered.ok) return;
+        commitPlan(document, entered.value.plan, undoOpen, value => { undoOpen = value; }, options.onDocumentChange);
+        insert = entered.value.session;
+        mode = insert.mode;
+        selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
+        motionCursor = undefined;
+        parser = makeParser(mode, selections);
+        if (prepared.value.cursorOffsets.length === 1) beginInsertRecording('i'); else insertEntryKey = undefined;
+        return;
+      }
       mode = 'normal';
       selections = makeNormalSelection(document.snapshot(), primary?.offset ?? offset(0), (selections.selectionGeneration as number) + 1, selections.primaryId);
       motionCursor = makeMotionCursor(document.snapshot(), selections);

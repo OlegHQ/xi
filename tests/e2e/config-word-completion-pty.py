@@ -37,14 +37,14 @@ def run_case(enabled: bool) -> bool:
         config.write_text(
             "schema-version = 1\n[editor]\nauto-format = false\ncompletion-timeout = 0\n"
             "[editor.word-completion]\n"
-            f"enable = {'true' if enabled else 'false'}\ntrigger-length = 3\n",
+            f"enable = {'true' if enabled else 'false'}\n",
             encoding="utf-8",
         )
         source = root / "main.txt"
         source.write_text("alphabet alpine\n", encoding="utf-8")
         master, slave = pty.openpty()
         environment = os.environ.copy()
-        environment.update({"HOME": temporary, "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
+        environment.update({"HOME": temporary, "XDG_CONFIG_HOME": str(root / ".config"), "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
         child = subprocess.Popen(
             ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(source)],
             cwd=ROOT,
@@ -60,7 +60,7 @@ def run_case(enabled: bool) -> bool:
             if not read_until(master, captured, lambda: b"XI_WORKBENCH_READY" in captured, 8):
                 raise SystemExit(f"Xi did not reach the workbench: {captured[-4000:]!r}")
             os.write(master, b"i")
-            for version, key in enumerate(b"alp", 2):
+            for version, key in enumerate(b"al", 2):
                 os.write(master, bytes((key,)))
                 marker = f'XI_SYNTAX_STATE {{"documentId":"xi-launch-document","version":{version}'.encode()
                 if not read_until(master, captured, lambda: marker in captured, 3):

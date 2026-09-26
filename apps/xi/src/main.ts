@@ -14,6 +14,7 @@ import { createThemeWiring, themeStateDirectory } from './wiring/theme';
 import { createControllers, id, type Controllers } from './wiring/controllers';
 import { wireControllerPanels } from './wiring/pointer';
 import { buildWorkbenchUiOptions } from './wiring/ui';
+import { tutorial } from './tutorial';
 import packageJson from '../../../package.json' with { type: 'json' };
 
 const XI_VERSION = packageJson.version;
@@ -89,7 +90,7 @@ async function main(): Promise<void> {
   const themeWiringPromise = createThemeWiring(filesystem, statusMessages).then(value => { startupTrace('theme-wiring-ready'); return value; });
   const documentPromise = recoveryDirectoryReady.then((ready) => {
     if (!ready.ok) statusMessages.publish(`xi: cannot prepare recovery storage: ${ready.error.message}`);
-    return openDocument(openTextDocument, persistence, filesystem, editorConfigByPath, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages, startupConfigPromise);
+    return openDocument(openTextDocument, persistence, filesystem, editorConfigByPath, filePath?.path, id<DocumentId>('xi-launch-document'), statusMessages, startupConfigPromise, false, action.tutor === true ? tutorial : undefined);
   }).then(value => { startupTrace('document-opened'); return value; });
   const themeWiring = await themeWiringPromise;
   const document = await documentPromise;
@@ -258,13 +259,14 @@ async function openDocument(
   statusMessages: StatusMessageController,
   startupConfigPromise: ReturnType<typeof loadStartupXiConfig>,
   mustExist = false,
+  initialText = '',
 ): Promise<TextFileDocument | undefined> {
   if (path === undefined) {
     const configured = (await startupConfigPromise).config?.editor.defaultLineEnding;
     const defaultLineEnding = configured === undefined || configured === 'native'
       ? process.platform === 'win32' ? 'crlf' : 'lf'
       : configured;
-    const opened = openTextDocument(documentId, new TextEncoder().encode(''), 41027, { defaultLineEnding: defaultLineEnding as LineEnding });
+    const opened = openTextDocument(documentId, new TextEncoder().encode(initialText), 41027, { defaultLineEnding: defaultLineEnding as LineEnding });
     if (opened.kind !== 'editable') throw new Error(`xi cannot edit this input: ${opened.kind}`);
     return opened.document;
   }

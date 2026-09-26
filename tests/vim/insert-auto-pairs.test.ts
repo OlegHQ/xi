@@ -101,3 +101,10 @@ function enter(doc: TextFileDocument, options: VimInsertOptions = {}) {
 }
 
 console.log('insert-auto-pairs: all assertions passed');
+
+{
+  const doc = document('INSERT-ANGLE-BRACKETS', '');
+  let session = typeKey(doc, enter(doc), '<');
+  session = typeKey(doc, session, '>');
+  assert.equal(source(doc), '<>', 'INSERT-ANGLE-01 literal angle brackets are printable text');
+}

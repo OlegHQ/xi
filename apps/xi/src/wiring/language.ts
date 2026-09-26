@@ -133,7 +133,7 @@ function resolveLanguageServerConfig(deps: LanguageWiringDeps, resolvedLanguageI
   return { name: 'typescript', command: 'typescript-language-server', args: ['--stdio'], rootMarkers: ['tsconfig.json', 'package.json', '.git'] };
 }
 
-function createLspNotificationHandlers(deps: LanguageWiringDeps) {
+function createLspNotificationHandlers(deps: LanguageWiringDeps, onProgressEnd: () => void) {
   return {
     onWindowMessage: (message: { readonly type: 1 | 2 | 3 | 4; readonly message: string }) => {
       if (!deps.displayLspMessages) return;
@@ -141,6 +141,7 @@ function createLspNotificationHandlers(deps: LanguageWiringDeps) {
       deps.statusMessages.publish(`LSP: ${message.message}`, message.type <= 2 ? 'error' : 'info');
     },
     onProgress: (event: { readonly token: string | number; readonly value: unknown }) => {
+      if (event.value !== null && typeof event.value === 'object' && 'kind' in event.value && event.value.kind === 'end') onProgressEnd();
       if (!deps.displayLspProgressMessages) return;
       const value = event.value !== null && typeof event.value === 'object' && !Array.isArray(event.value) ? event.value as Record<string, unknown> : undefined;
       const title = typeof value?.title === 'string' ? value.title : 'LSP';
@@ -386,7 +387,7 @@ export function createLanguageWiring(deps: LanguageWiringDeps): LanguageWiring {
     const language = await import('../../../../packages/services/src/entrypoints/language');
     if (!deps.lspEnabled()) return;
     presentation = new language.LanguagePresentationFeatures();
-    const notificationHandlers = createLspNotificationHandlers(deps);
+    const notificationHandlers = createLspNotificationHandlers(deps, () => activeConnection.completionFeature.refreshCompletionAfterProgress());
     languageSession = new language.LanguageServerRouter({
       resolveServer: (resolvedLanguageId) => resolveLanguageServerConfig(deps, resolvedLanguageId),
       sessionKey: (serverConfig, document) => `${serverConfig.name}\u0000${workspaceLspRootForDocument(deps.filesystem, deps.workspaceRoot, deps.workspaceLspRoots, document.uri)}`,

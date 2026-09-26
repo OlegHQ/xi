@@ -3,6 +3,7 @@ import { asIdentifier, type DocumentId, type ViewId } from '../../packages/primi
 import type { Disposable, Result } from '../../packages/contracts/src/index';
 import { positionToOffset } from '../../packages/document/src/index';
 import { TextFileDocument } from '../../packages/document/src/index';
+import { SignatureController } from '../../packages/services/language/signature';
 import { CompletionController } from '../../packages/services/language/completion';
 import { expandSnippet, SnippetSession } from '../../packages/services/language/snippets';
 import { WorkbenchSession } from '../../packages/workbench/session/index';
@@ -439,6 +440,8 @@ const surfaceController = new CompletionSnippetController({
 });
 const surfaceCompletion = new FakeCompletionController();
 const surfaceSignature = new FakeSignatureController();
+const signatureLabels: Array<string | undefined> = [];
+const earlySignatureRead = surfaceController.signatureRead.subscribe(model => { signatureLabels.push(model.label); });
 const completionStates: string[] = [];
 const earlyCompletionRead = surfaceController.completionRead.subscribe(model => { completionStates.push(model.state); });
 surfaceController.openCompletion();
@@ -465,6 +468,8 @@ surfaceController.openSignature();
 surfaceSignature.emit();
 await new Promise<void>((resolve) => setImmediate(resolve));
 assert.equal(surfaceWakes, 2, 'T116-CLOSED-OVERLAYS-03 an open signature still wakes the surface');
+assert.equal(signatureLabels.at(-1), 'map(fn)', 'a signature subscriber mounted before lazy LSP initialization receives the live label');
+earlySignatureRead.dispose();
 surfaceController.closeSignature();
 wakeSubscription.dispose();
 await surfaceController.dispose();
@@ -495,3 +500,65 @@ assert.equal(unavailableAutomatic.isCompletionOpen, false, 'T116-AUTO-UNAVAILABL
 await unavailableAutomatic.dispose();
 
 console.log('T116 CompletionSnippetController passed plan-overlap-rejection, stale-response-drop and escape-close fixtures');
+
+// Ruby LSP can return no core globals until its startup index finishes.
+{
+  const doc = document(id<DocumentId>('completion-indexing'), '$stdo');
+  const session = new WorkbenchSession({ workspaceId: 'completion-indexing' });
+  const viewId = id<ViewId>('completion-indexing-view');
+  session.openBuffer(doc, { viewId, path: '/workspace/main.rb' });
+  const host = new BufferHost(session, doc, { openDocument: async () => undefined, workspaceRelativePath: () => undefined, marker: () => {}, launchViewId: viewId });
+  host.createSession(doc, viewId);
+  await host.activeSession()?.handleKey(key('A', 'A'));
+  let indexed = false;
+  let requests = 0;
+  const completion = new CompletionController();
+  const controller = new CompletionSnippetController({ host, session, marker: () => {}, onError: () => {}, fileUri: path => `file://${path}`, positionToOffset, ensureLanguage: async () => {}, ensureOptionalServices: async () => {}, getSnippetSupport: () => undefined });
+  controller.attachLanguage(new ReadyLanguageSession(), completion, { complete: async () => {
+    requests += 1;
+    return { ok: true, value: { isIncomplete: false, items: indexed ? [{ id: 'stdout', label: '$stdout' }] : [] } };
+  } }, new FakeSignatureController());
+  controller.openCompletion('character');
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(controller.isCompletionOpen, false);
+  indexed = true;
+  controller.refreshCompletionAfterProgress();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(completion.model.items[0]?.label, '$stdout', 'index completion retries the unchanged empty automatic request');
+  controller.refreshCompletionAfterProgress();
+  assert.equal(requests, 2, 'a successful menu is not repeatedly retriggered by progress');
+  indexed = false;
+  controller.openCompletion('retrigger');
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(controller.isCompletionOpen, false, 'empty incomplete-list retriggers cannot leave a blank popup');
+  controller.cancelPendingCompletion();
+  indexed = true;
+  controller.refreshCompletionAfterProgress();
+  assert.equal(requests, 3, 'a cancelled automatic request stays closed after indexing');
+  indexed = false;
+  controller.openCompletion('character');
+  await new Promise<void>(resolve => setImmediate(resolve));
+  await host.activeSession()?.handleKey(key('x', 'x'));
+  indexed = true;
+  controller.refreshCompletionAfterProgress();
+  assert.equal(requests, 4, 'edited documents cannot revive an old completion request');
+  await controller.dispose();
+  completion.dispose();
+  await host.dispose();
+  session.dispose();
+}
+
+{
+  await host.activeSession()?.handleKey(key('i', 'i'));
+  const signature = new SignatureController({ request: async () => ({ ok: true, value: { signatures: [], activeSignature: 0, activeParameter: undefined } }) });
+  const controller = new CompletionSnippetController({ host, session, marker: () => {}, onError: () => {}, fileUri: path => `file://${path}`, positionToOffset, ensureLanguage: async () => {}, ensureOptionalServices: async () => {}, getSnippetSupport: () => undefined });
+  controller.attachLanguage(new ReadyLanguageSession(), new CompletionController(), { complete: async () => ({ ok: true, value: { items: [], isIncomplete: false } }) }, signature);
+  controller.openSignature(true);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(controller.isSignatureOpen, false, 'empty automatic signature help closes instead of covering source code');
+  controller.openSignature();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(controller.signatureRead.model.message, 'No signature help', 'an explicit request retains its empty-result explanation');
+  await controller.dispose();
+  signature.dispose();
+}

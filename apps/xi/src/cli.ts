@@ -5,15 +5,16 @@ export type CliAction =
   | { readonly kind: 'help'; readonly text: string }
   | { readonly kind: 'version'; readonly text: string }
   | { readonly kind: 'health'; readonly text: string }
-  | { readonly kind: 'launch'; readonly fileArgument: string | undefined; readonly configPath?: string }
+  | { readonly kind: 'launch'; readonly fileArgument: string | undefined; readonly configPath?: string; readonly tutor?: true }
   | { readonly kind: 'error'; readonly text: string };
 
-const HELP_TEXT = 'Xi editor\n\nUsage: xi [options] [file[:line]]\n\nOptions:\n  -c, --config PATH  Use an explicit config file\n  --help             Show this help\n  --version          Show the version\n  --health           Check the local runtime\n';
+const HELP_TEXT = 'Xi editor\n\nUsage: xi [options] [file[:line]]\n\nOptions:\n  -c, --config PATH  Use an explicit config file\n  --tutor            Open the interactive tutorial\n  --help             Show this help\n  --version          Show the version\n  --health           Check the local runtime\n';
 
 export function parseCliArgs(argv: readonly string[], version: string): CliAction {
   if (argv.includes('--help') || argv.includes('-h')) return { kind: 'help', text: HELP_TEXT };
   if (argv.includes('--version') || argv.includes('-v')) return { kind: 'version', text: `xi ${version}\n` };
   if (argv.includes('--health')) return { kind: 'health', text: `xi ${version} health: OpenTUI workbench available\n` };
+  const tutor = argv.includes('--tutor');
   let configPath: string | undefined;
   let fileArgument: string | undefined;
   for (let index = 0; index < argv.length; index += 1) {
@@ -33,7 +34,8 @@ export function parseCliArgs(argv: readonly string[], version: string): CliActio
     }
     if (argument !== undefined && !argument.startsWith('-') && fileArgument === undefined) fileArgument = argument;
   }
-  return { kind: 'launch', fileArgument, ...(configPath === undefined ? {} : { configPath }) };
+  if (tutor && fileArgument !== undefined) return { kind: 'error', text: 'xi: --tutor cannot be combined with a file\n' };
+  return { kind: 'launch', fileArgument, ...(tutor ? { tutor: true } : {}), ...(configPath === undefined ? {} : { configPath }) };
 }
 
 export interface ResolvedFileArgument {

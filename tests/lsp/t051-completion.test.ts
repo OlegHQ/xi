@@ -26,9 +26,11 @@ assert.equal(stale.publish(old, request, { isIncomplete: false, items: [{ id: 'o
 stale.dispose(); newline.dispose(); controller.dispose();
 
 const requests: string[] = [];
+const contexts: unknown[] = [];
 const server = new LanguageServerCompletionProvider({
-  async request<Response>(method: string): Promise<Response> {
+  async request<Response>(method: string, params?: unknown): Promise<Response> {
     requests.push(method);
+    if (method === 'textDocument/completion') contexts.push((params as { context: unknown }).context);
     if (method === 'textDocument/completion') return { isIncomplete: true, items: [{ label: 'map', kind: 2, filterText: 'mapAlias', sortText: '0001', preselect: true, detail: 'method', documentation: { kind: 'markdown', value: 'map docs' }, insertText: 'map' }, { label: 'filter', textEdit: { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, newText: 'filter' }, additionalTextEdits: [{ range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } }, newText: 'import x from "x";\n' }] }, { label: 'insert-replace', textEdit: { insert: { start: { line: 0, character: 2 }, end: { line: 0, character: 3 } }, replace: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, newText: 'whole' } }] } as Response;
     return { label: 'map', documentation: 'resolved docs' } as Response;
   },
@@ -50,6 +52,9 @@ if (list.ok) {
   if (resolved.ok) assert.equal(resolved.value.textEdit?.newText, 'map', 'T051-LSP-03 resolve preserves the original insertion edit');
 }
 assert.deepEqual(requests, ['textDocument/completion', 'completionItem/resolve']);
+await server.complete({ ...request, trigger: 'character' });
+await server.complete({ ...request, trigger: 'retrigger' });
+assert.deepEqual(contexts, [{ triggerKind: 1 }, { triggerKind: 1 }, { triggerKind: 3 }], 'identifier typing uses Invoked; only incomplete lists use Retrigger');
 
 const overlap = new CompletionController();
 const overlapSerial = overlap.begin(request);

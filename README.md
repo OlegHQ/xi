@@ -16,6 +16,7 @@ bun run apps/xi/src/main.ts path/to/file
 ```sh
 bun install --frozen-lockfile
 bun run xi -- path/to/file
+bun run xi -- --tutor
 ```
 
 Initialize submodules before the first install:

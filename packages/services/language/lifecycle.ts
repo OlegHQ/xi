@@ -325,6 +325,8 @@ export class LanguageServerSession implements Disposable {
   readonly #lifecycleCancellation = new CancellationSource();
   readonly #failureWaiters = new Set<(change: LanguageTransportStateChange) => void>();
   readonly #pullDiagnostics: PullDiagnosticStore<PullDiagnosticItem>;
+  readonly #activeDiagnosticPulls = new Set<string>();
+  readonly #pendingDiagnosticPulls = new Set<string>();
   readonly #maxDocumentUtf16: number;
   #state: LanguageServerSessionState = 'stopped';
   #transport: LanguageTransport | undefined;
@@ -515,6 +517,7 @@ export class LanguageServerSession implements Disposable {
       if (sync !== undefined) {
         void sync.openDocument(document).then((result) => {
           if (!result.ok) this.recordProtocolIssue(result.error.message);
+          else this.schedulePullDiagnostics(document.uri);
         });
       }
     } else {
@@ -557,6 +560,7 @@ export class LanguageServerSession implements Disposable {
     }));
     this.#options.diagnostics?.markDocumentGeneration(uri, change.after);
     if (this.#state !== 'ready') this.activate();
+    else this.schedulePullDiagnostics(uri);
     return { ok: true, value: undefined };
   }
 
@@ -586,9 +590,18 @@ export class LanguageServerSession implements Disposable {
   }
 
   /** Request methods are available only after initialization; startup remains asynchronous. */
-  request<Response>(method: string, params?: unknown, cancellation?: CancellationToken): Promise<Response> {
-    if (this.#transport === undefined || this.#state !== 'ready') return Promise.reject(new Error('language server is not ready'));
-    return this.#transport.request<Response>(method, params, cancellation);
+  async request<Response>(method: string, params?: unknown, cancellation?: CancellationToken): Promise<Response> {
+    const transport = this.#transport;
+    if (transport === undefined || this.#state !== 'ready') throw new Error('language server is not ready');
+    const uri = asRecord(asRecord(params)?.textDocument)?.uri;
+    // Position-sensitive requests must observe edits accepted before this request.
+    if (typeof uri === 'string' && this.#documents.has(uri)) {
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      const flushed = await this.#sync?.flushDocument(uri);
+      if (flushed !== undefined && !flushed.ok) throw new Error(flushed.error.message);
+      if (this.#transport !== transport || this.#state !== 'ready') throw new Error('language server changed while synchronizing the document');
+    }
+    return transport.request<Response>(method, params, cancellation);
   }
 
   /** Send a client notification only after the server has reached ready. */
@@ -702,6 +715,7 @@ export class LanguageServerSession implements Disposable {
         this.#readyAt = this.#options.clock.monotonicMilliseconds();
         await this.replayState(transport);
         this.transition('ready');
+        for (const uri of this.#documents.keys()) this.schedulePullDiagnostics(uri);
         void this.scheduleHealthyReset(this.#readyAt);
         const failure = await this.waitForTransportFailure();
         if (this.#lifecycleCancellation.token.isCancelled) return;
@@ -818,6 +832,25 @@ export class LanguageServerSession implements Disposable {
     });
   }
 
+  private schedulePullDiagnostics(uri: string): void {
+    if (!this.supportsRequest('textDocument/diagnostic', uri)) return;
+    this.#pendingDiagnosticPulls.add(uri);
+    if (this.#activeDiagnosticPulls.has(uri)) return;
+    this.#activeDiagnosticPulls.add(uri);
+    void (async () => {
+      try {
+        while (this.#pendingDiagnosticPulls.delete(uri) && this.#state === 'ready' && this.#documents.has(uri)) {
+          // Defer synchronization and RPC work off the input stack; coalesce edits while one pull is active.
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
+          await this.refreshPullDiagnostics(uri, this.#lifecycleCancellation.token);
+        }
+      } finally {
+        this.#activeDiagnosticPulls.delete(uri);
+        this.#pendingDiagnosticPulls.delete(uri);
+      }
+    })();
+  }
+
   private async requestPullDiagnostics(
     uri: string,
     previousResultId: string | undefined,
@@ -830,6 +863,9 @@ export class LanguageServerSession implements Disposable {
     if (document === undefined) return { ok: false, error: { kind: 'unavailable', message: 'diagnostic document is closed' } };
     if (!this.supportsRequest('textDocument/diagnostic', uri)) return { ok: false, error: { kind: 'unavailable', message: 'document diagnostic pull is not advertised' } };
     const version = document.version;
+    const flushed = await this.#sync?.flushDocument(uri);
+    if (flushed !== undefined && !flushed.ok) return { ok: false, error: { kind: 'failed', message: flushed.error.message } };
+    if (this.#documents.get(uri)?.version !== version || this.#transport !== transport) return { ok: false, error: { kind: 'stale', message: 'document changed before diagnostic pull' } };
     let response: Result<unknown, PullDiagnosticProviderFailure>;
     try {
       response = { ok: true, value: await this.request<unknown>('textDocument/diagnostic', {
@@ -930,6 +966,9 @@ export class LanguageServerSession implements Disposable {
       if (selector !== undefined) this.#dynamicSelectors.set(registration.id, selector);
     }
     this.publishCapabilitiesChange();
+    if (parsed.registrations.some(entry => entry.method === 'textDocument/diagnostic')) {
+      for (const uri of this.#documents.keys()) this.schedulePullDiagnostics(uri);
+    }
   }
 
   private unregisterCapabilities(params: unknown): void {

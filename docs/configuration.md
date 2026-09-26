@@ -89,6 +89,31 @@ without it, workspace loading still follows the workspace-trust policy.
 [`config/default.toml`](../config/default.toml) is the built-in configuration and Xi-owned
 keymap in both source and packaged launches. The compiler retains conditional fallbacks
 for profile-specific motion trail, legacy wrap, and automatic platform clipboard selection.
+Xi intentionally differs from Helix defaults: open-buffer word completion starts after
+two characters, cursor-line diagnostics include hints,
+and end-of-line diagnostic text is disabled. These keep completion useful while placing
+diagnostic details beneath the active line, as in the Ruby tutorial references.
+The diagnostic gutter always shows severity-colored icons on affected lines, independent
+of inline filters: errors `●`, warnings `▲`, information `●`, and hints `○`.
+Indentation guides are off by default. `[editor.indent-guides]` controls their
+`render`, `character`, and `skip-levels`; enabled guides mark leading indentation only.
+Remove `"diagnostics"` from `editor.gutters.layout` to hide these markers;
+`editor.inline-diagnostics.cursor-line` and `other-lines` control message text only.
+If LSP returns an empty automatic completion while indexing, Xi retries when the server
+finishes reporting progress, provided the document and cursor are still unchanged.
+Further input or dismissing completion cancels that retry.
+
+The default keymap indents with `>` / `<` in Normal and Select modes and
+Tab / Shift-Tab in Insert mode. Insert-mode `<` and `>` remain printable.
+Alt+Up/Down adds cursors, Alt+n adds the next matching word, Alt+a selects
+all matches, and Alt+o keeps the primary selection. `Space x` opens the
+selection command menu in Normal mode. Run `xi --tutor` for editable exercises
+covering these bindings, editing, search and saving.
+
+Ruby files also indent common line-oriented blocks and align a typed standalone `end`
+with its opener, without requiring LSP. Opener lookup is bounded to 128 lines and 8 Ki
+UTF-16 units; multiline strings and heredocs still need syntax-tree indentation queries.
+
 Vim motions, operators, registers, and mode keys follow the [Vim parity contract](vim.md)
 rather than this keymap. In a checkout, copy `config/default.toml` to
 `~/.config/xi/config.toml` to start from the full defaults, or create a smaller file with

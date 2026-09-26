@@ -515,3 +515,11 @@ console.log('T116 WorkbenchInputRouter passed leader-open-explorer, command-line
   assert.equal(router.commandLine.read.model?.candidates[0]?.label, 'beta.txt', 'EX-PATH-STALE-03 the current path result reaches the prompt');
   router.dispose();
 }
+
+{
+  const { canonicalKeyToken } = await import('../../packages/workbench/input/key-token');
+  assert.equal(canonicalKeyToken(key('tab', '\u001b[Z', { shift: true })), '<s-tab>', 'KEYS-SHIFT-TAB-01 Shift Tab has its own binding token');
+  assert.equal(canonicalKeyToken(key('<', '<', { shift: true })), '<', 'KEYS-ANGLE-01 shifted punctuation stays literal');
+  const { keyName } = await import('../../packages/workbench/vim-session/helpers');
+  assert.equal(keyName(key('tab', '\u001b[Z', { shift: true })), '<S-Tab>', 'Shift Tab remains distinct when passed to Vim');
+}

@@ -21,7 +21,7 @@ const specs: Readonly<Record<SuiteId, SuiteSpec>> = {
     roots: ['tests/architecture', 'tests/config', 'tests/document', ...standaloneUnitFixtures.map((name) => `tests/document/${name}`), 'tests/layout', 'tests/persistence', 'tests/platform', 'tests/selections', 'tests/workbench'],
     selectors: { contributions: ['tests/architecture/t091-lifecycle.test.ts', 'tests/workbench/t090-contributions.test.ts'] },
   },
-  vim: { fixtureRoot: 'tests/fixtures/vim', roots: ['tests/vim', 'tests/oracle'], selectors: { config: ['tests/vim/insert-auto-pairs.test.ts', 'tests/vim/insert-smarttab.test.ts', 'tests/vim/t022/t022-insert.test.ts'] } },
+  vim: { fixtureRoot: 'tests/fixtures/vim', roots: ['tests/vim', 'tests/oracle'], selectors: { config: ['tests/vim/ruby-indent.test.ts', 'tests/vim/insert-auto-pairs.test.ts', 'tests/vim/insert-smarttab.test.ts', 'tests/vim/t022/t022-insert.test.ts'] } },
   services: {
     fixtureRoot: 'tests/fixtures/services',
     roots: ['tests/files', 'tests/formatting', 'tests/git', 'tests/lsp', 'tests/search', 'tests/services', 'tests/syntax', 'tests/tasks'],

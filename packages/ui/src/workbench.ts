@@ -37,7 +37,7 @@ import { LIGHT_WORKBENCH_THEME, ASCII_WORKBENCH_THEME, DARK_WORKBENCH_THEME, typ
 import { helixThemeColor, themeColor } from '../theme/color-input';
 import { verticalWheelDelta } from './panel-pointer';
 import { diagnosticColor, type Problem } from '../problems/index';
-import { endOfLineDiagnosticLines, inlineDiagnosticLines, type DiagnosticLine, type EndOfLineDiagnostic, type InlineDiagnosticsFilter } from '../problems/inline';
+import { gutterDiagnostic, endOfLineDiagnosticLines, inlineDiagnosticLines, type DiagnosticLine, type EndOfLineDiagnostic, type InlineDiagnosticsFilter } from '../problems/inline';
 
 export interface WorkbenchLayout {
   readonly compact: boolean;
@@ -475,12 +475,12 @@ export class WorkbenchRenderable extends Renderable {
     this.#maxWrap = options.maxWrap ?? 20;
     this.#maxIndentRetain = options.maxIndentRetain ?? 40;
     this.#wrapIndicator = options.wrapIndicator ?? '';
-    this.#inlineDiagnosticsCursorLine = options.inlineDiagnosticsCursorLine ?? 'warning';
+    this.#inlineDiagnosticsCursorLine = options.inlineDiagnosticsCursorLine ?? 'hint';
     this.#inlineDiagnosticsOtherLines = options.inlineDiagnosticsOtherLines ?? 'disable';
     this.#inlineDiagnosticsPrefixLen = options.inlineDiagnosticsPrefixLen ?? 1;
     this.#inlineDiagnosticsMaxWrap = options.inlineDiagnosticsMaxWrap ?? 20;
     this.#inlineDiagnosticsMinDiagnosticWidth = options.inlineDiagnosticsMinDiagnosticWidth ?? 40;
-    this.#endOfLineDiagnostics = options.endOfLineDiagnostics ?? 'hint';
+    this.#endOfLineDiagnostics = options.endOfLineDiagnostics ?? 'disable';
     this.#inlineDiagnosticsMaxDiagnostics = options.inlineDiagnosticsMaxDiagnostics ?? 10;
     this.#cursorShape = options.cursorShape ?? { normal: 'block', insert: 'block', select: 'block' };
     this.#cursorLine = options.cursorLine;
@@ -1010,7 +1010,7 @@ export class WorkbenchRenderable extends Renderable {
       }
       this.#lastPaintStats = paintStats ?? this.#lastPaintStats;
       this.paintIndentGuides(buffer, frame, geometry.editorX, geometry.editorTop);
-      this.paintDiagnostics(buffer, frame, diagnosticLines, endOfLineLines, geometry.editorX, geometry.editorTop, diagnosticOffset);
+      this.paintDiagnostics(buffer, frame, diagnosticLines, endOfLineLines, geometry.editorX, geometry.editorTop, diagnosticOffset, diagnostics, Number(view.document.version));
       this.paintCodeActionHints(buffer, frame, view, geometry.editorX, geometry.editorTop);
       this.paintWhitespace(buffer, frame, geometry.editorX, geometry.editorTop, view.document.lineCount);
       this.#lastCurrentSyntax = snapshotSyntaxRowsIfCurrent(frame, syntaxRead, this.#lastCurrentSyntax) ?? this.#lastCurrentSyntax;
@@ -1150,7 +1150,7 @@ export class WorkbenchRenderable extends Renderable {
       }
       this.#paneLastFrames.set(pane.viewId, Object.freeze({ layout: geometry, frame, view }));
       this.paintIndentGuides(buffer, frame, pane.x, pane.y);
-      this.paintDiagnostics(buffer, frame, diagnosticLines, endOfLineLines, pane.x, pane.y, diagnosticOffset);
+      this.paintDiagnostics(buffer, frame, diagnosticLines, endOfLineLines, pane.x, pane.y, diagnosticOffset, diagnostics, Number(view.document.version));
       this.paintCodeActionHints(buffer, frame, view, pane.x, pane.y);
       this.paintWhitespace(buffer, frame, pane.x, pane.y, view.document.lineCount);
       this.#paneLastPresentations.set(pane.viewId, presentation);
@@ -1192,11 +1192,14 @@ export class WorkbenchRenderable extends Renderable {
     for (let rowIndex = 0; rowIndex < frame.rows.length; rowIndex += 1) {
       const row = frame.rows[rowIndex]!;
       if (row.kind !== 'text' || row.lineIndex === null || row.wrapIndex !== 0) continue;
-      const maxLevel = Math.floor((row.displayEndCell - row.displayStartCell) / 4);
-      for (let level = this.#indentGuides.skipLevels + 1; level <= maxLevel; level += 1) {
-        const displayColumn = level * 4 - 1;
-        const cellIndex = row.cells.findIndex(cell => cell.target?.kind === 'text' && cell.target.displayCellColumn === displayColumn && (cell.role === 'glyph' || cell.role === 'tab-fill') && cell.text === ' ');
-        if (cellIndex >= 0) buffer.drawText(this.#indentGuides.character, x + cellIndex, y + rowIndex, this.#muted, this.#background);
+      for (let cellIndex = 0; cellIndex < row.cells.length; cellIndex += 1) {
+        const cell = row.cells[cellIndex]!;
+        if (cell.target?.kind === 'gutter') continue;
+        if (cell.target?.kind !== 'text' || cell.text !== ' ' || (cell.role !== 'glyph' && cell.role !== 'tab-fill')) break;
+        const column = Number(cell.target.displayCellColumn);
+        if (column % 4 === 3 && Math.floor(column / 4) >= this.#indentGuides.skipLevels) {
+          buffer.drawText(this.#indentGuides.character, x + cellIndex, y + rowIndex, this.#muted, this.#background);
+        }
       }
     }
   }
@@ -1227,8 +1230,7 @@ export class WorkbenchRenderable extends Renderable {
     }
   }
 
-  private paintDiagnostics(buffer: OptimizedBuffer, frame: VisibleFrame, lines: readonly DiagnosticLine[], endOfLineLines: readonly EndOfLineDiagnostic[], x: number, y: number, diagnosticOffset: number): void {
-    let diagnosticIndex = 0;
+  private paintDiagnostics(buffer: OptimizedBuffer, frame: VisibleFrame, lines: readonly DiagnosticLine[], endOfLineLines: readonly EndOfLineDiagnostic[], x: number, y: number, diagnosticOffset: number, problems: readonly Problem[], documentVersion: number): void {
     const cursorColumns = new Map<number, number[]>();
     for (const selection of frame.selections) {
       const point = selection.head.position;
@@ -1277,11 +1279,15 @@ export class WorkbenchRenderable extends Renderable {
         buffer.fillRect(x, y + row, frame.widthCells, 1, this.#background);
         buffer.drawText(this.#ascii ? line.text.replace(/[└├]─/u, '+-').replace('│', '|') : line.text, x + line.column, y + row, color, this.#background);
       } else if (screen.lineIndex !== null) {
-        if (this.#editorDiagnostics !== undefined && this.#gutters.includes('diagnostics')) buffer.drawText(screen.cells[0]?.text ?? ' ', x + diagnosticOffset, y + row, this.#muted, this.#background);
-        while (diagnosticIndex < lines.length && lines[diagnosticIndex]!.problem.range.startLine < Number(screen.lineIndex)) diagnosticIndex++;
-        const candidate = lines[diagnosticIndex];
-        const line = candidate?.problem.range.startLine === Number(screen.lineIndex) ? candidate : undefined;
-        if (line !== undefined && this.#gutters.includes('diagnostics')) buffer.drawText(line.problem.severity === 1 ? 'E' : line.problem.severity === 2 ? 'W' : line.problem.severity === 3 ? 'I' : 'H', x + diagnosticOffset, y + row, resolvePaintColor(diagnosticColor(this.#theme, line.problem.severity), this.#colorMode), this.#background);
+        if (!this.#gutters.includes('diagnostics')) continue;
+        buffer.drawText(screen.cells[diagnosticOffset]?.text ?? ' ', x + diagnosticOffset, y + row, this.#muted, this.#background);
+        const problem = screen.wrapIndex === 0 ? gutterDiagnostic(problems, Number(screen.lineIndex), documentVersion) : undefined;
+        if (problem !== undefined) {
+          const severity = problem.severity ?? 1;
+          const icon = this.#ascii ? severity === 1 ? 'E' : severity === 2 ? 'W' : severity === 3 ? 'I' : 'H'
+            : severity === 1 ? '●' : severity === 2 ? '▲' : severity === 3 ? '●' : '○';
+          buffer.drawText(icon, x + diagnosticOffset, y + row, resolvePaintColor(diagnosticColor(this.#theme, severity), this.#colorMode), this.#background);
+        }
       }
     }
   }

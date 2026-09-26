@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix="xi-indent-guides-pty-") as temporary:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 14, 100, 0, 0))
     environment = os.environ.copy()
-    environment.update({"HOME": temporary, "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
+    environment.update({"HOME": temporary, "XDG_CONFIG_HOME": str(root / ".config"), "TERM": "xterm-256color", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
         ["bun", "run", "apps/xi/src/main.ts", str(source)],
         cwd=ROOT,

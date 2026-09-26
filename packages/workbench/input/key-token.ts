@@ -24,5 +24,5 @@ export function canonicalKeyToken(event: OwnedVimKeyEvent): string {
   const bareKey = isNamed ? namedKey : (event.raw.length === 1 && !event.ctrl && !event.meta && !event.option ? event.raw : lowerName);
   if (event.ctrl) return `<c-${bareKey.length === 1 ? bareKey.toLowerCase() : bareKey}>`;
   if (event.meta || event.option) return `<m-${bareKey.length === 1 ? bareKey.toLowerCase() : bareKey}>`;
-  return isNamed ? `<${bareKey}>` : bareKey;
+  return isNamed ? `<${event.shift ? 's-' : ''}${bareKey}>` : bareKey;
 }

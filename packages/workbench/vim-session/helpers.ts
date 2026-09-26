@@ -204,7 +204,7 @@ export function keyName(event: OwnedVimKeyEvent): string {
     case 'linefeed': return '<NL>';
     case 'space': return '<Space>';
     case 'backspace': return '<BS>';
-    case 'tab': return '<Tab>';
+    case 'tab': return event.shift ? '<S-Tab>' : '<Tab>';
     case 'delete': return '<Del>';
     case 'arrowleft':
     case 'left': return '<Left>';

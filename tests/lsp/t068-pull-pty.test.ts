@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { CancellationSource, type ClockPort, type Disposable, type PlatformFailure, type ProcessHandle, type ProcessInput, type ProcessPort, type ProcessSpec, type Result } from '../../packages/contracts/src/index';
 import { ContentLengthFrameDecoder, encodeContentLengthFrame } from '../../packages/services/language/framing';
 import { DiagnosticStore, LanguageServerSession } from '../../packages/services/language';
+import { TextFileDocument } from '../../packages/document/src/index';
+import { asIdentifier, asUndoGroupId, type DocumentId } from '../../packages/primitives/src/index';
 import type { LanguageServerConfig } from '../../packages/services/config';
 
 type JsonRecord = Record<string, unknown>;
@@ -27,6 +29,8 @@ class FakePullProcess implements ProcessHandle {
   #resolveExit!: (result: Result<{ readonly code: number | null; readonly signal: string | null }, PlatformFailure>) => void;
   #finished = false;
   #documentPulls = 0;
+  holdDiagnosticResponses = false;
+  readonly heldDiagnosticResponses: JsonRecord[] = [];
 
   constructor() {
     this.exit = new Promise((resolve) => { this.#resolveExit = resolve; });
@@ -54,13 +58,15 @@ class FakePullProcess implements ProcessHandle {
     const method = message.method;
     const id = message.id;
     if (method === 'initialize' && Object.hasOwn(message, 'id')) {
-      void this.send({ jsonrpc: '2.0', id, result: { capabilities: { diagnosticProvider: { workspaceDiagnostics: true } } } });
+      void this.send({ jsonrpc: '2.0', id, result: { capabilities: { textDocumentSync: 2, diagnosticProvider: { workspaceDiagnostics: true } } } });
     } else if (method === 'textDocument/diagnostic' && Object.hasOwn(message, 'id')) {
       this.#documentPulls += 1;
       const params = message.params as JsonRecord;
       const textDocument = params.textDocument as JsonRecord;
       const previous = params.previousResultId;
-      void this.send({ jsonrpc: '2.0', id, result: previous === 'doc-r1' ? { kind: 'unchanged', resultId: 'doc-r1' } : { kind: 'full', resultId: `doc-r${this.#documentPulls}`, items: [diagnostic(`${String(textDocument.uri)} current`)] } });
+      const response = { jsonrpc: '2.0', id, result: previous === 'doc-r1' ? { kind: 'unchanged', resultId: 'doc-r1' } : { kind: 'full', resultId: `doc-r${this.#documentPulls}`, items: [diagnostic(`${String(textDocument.uri)} current`)] } };
+      if (this.holdDiagnosticResponses) this.heldDiagnosticResponses.push(response);
+      else void this.send(response);
     } else if (method === 'workspace/diagnostic' && Object.hasOwn(message, 'id')) {
       const params = message.params as JsonRecord;
       const previous = Array.isArray(params.previousResultIds) ? params.previousResultIds : [];
@@ -73,6 +79,8 @@ class FakePullProcess implements ProcessHandle {
           : { uri, kind: 'full', resultId: `workspace-${uri}`, items: [diagnostic(`${uri} workspace`)] };
       });
       void this.send({ jsonrpc: '2.0', id, result: { items } });
+    } else if (method === 'textDocument/completion' && Object.hasOwn(message, 'id')) {
+      void this.send({ jsonrpc: '2.0', id, result: [] });
     } else if (method === 'shutdown' && Object.hasOwn(message, 'id')) {
       void this.send({ jsonrpc: '2.0', id, result: null });
     } else if (method === 'exit') {
@@ -113,14 +121,15 @@ assert.equal(session.openDocument({ uri: firstUri, languageId: 'typescript', ver
 assert.equal(session.openDocument({ uri: secondUri, languageId: 'typescript', version: 1, text: 'const second = 2;\n' }).ok, true);
 assert.equal((await session.waitForReady()).ok, true, 'T068-PTY-01 pull-capable server reaches ready');
 
+await waitFor(() => diagnostics.model.all.length === 2, 'automatic diagnostic pulls publish both documents on ready');
 const first = await session.refreshPullDiagnostics(firstUri);
 assert.equal(first.ok, true, 'T068-PTY-01 document pull request uses the live JSON-RPC transport');
 assert.equal(first.ok && first.value.resultId, 'doc-r1');
-assert.equal(diagnostics.model.all.length, 1, 'T068-PTY-01 pull diagnostics enter the shared Problems owner');
+assert.equal(diagnostics.model.all.length, 2, 'T068-PTY-01 pull diagnostics enter the shared Problems owner');
 const unchanged = await session.refreshPullDiagnostics(firstUri);
 assert.equal(unchanged.ok, true, 'T068-RESULT-ID-02 unchanged server response is accepted');
 assert.equal(unchanged.ok && unchanged.value.items[0]?.message, `${firstUri} current`, 'T068-RESULT-ID-02 unchanged response reuses the prior item');
-assert.equal(diagnostics.model.all.length, 1, 'T068-RESULT-ID-02 pull refresh replaces the same server source without duplication');
+assert.equal(diagnostics.model.all.length, 2, 'T068-RESULT-ID-02 pull refresh replaces the same server source without duplication');
 
 const workspace = await session.refreshWorkspacePullDiagnostics();
 assert.equal(workspace.ok, true, 'T068-WORKSPACE-02 workspace pull uses advertised workspace diagnostics');
@@ -137,6 +146,47 @@ await waitFor(() => diagnostics.diagnosticsFor(firstUri)[0]?.message === 'push d
 const afterPush = await session.refreshPullDiagnostics(firstUri);
 assert.equal(afterPush.ok, true, 'T068-SOURCE-01 pull refresh remains available after push delivery');
 assert.equal(diagnostics.diagnosticsFor(firstUri).length, 1, 'T068-SOURCE-01 push and pull share one per-server source instead of duplicating');
+
+
+// A delayed pull must not build a request backlog or publish a report for an older edit.
+const docId = asIdentifier<DocumentId>('pull-edit-document', 'pull-edit-document');
+const group = asUndoGroupId('pull-edit-group');
+assert(docId.ok && group.ok);
+const created = TextFileDocument.create(docId.value, 'const edit = 1;\n', ['lf'], 'lf');
+assert(created.ok);
+const editDocument = created.value;
+const editUri = 'file:///workspace/edit.ts';
+currentProcess.holdDiagnosticResponses = true;
+assert(session.openDocument({ uri: editUri, documentId: String(editDocument.id), languageId: 'typescript', version: editDocument.version, text: 'const edit = 1;\n' }).ok);
+await waitFor(() => currentProcess.heldDiagnosticResponses.length === 1, 'opening a document automatically pulls diagnostics');
+for (let index = 0; index < 20; index += 1) {
+  const committed = editDocument.commit({ documentId: editDocument.id, expectedVersion: editDocument.version,
+    edits: [{ start: 0 as never, end: 0 as never, text: ' ' }], origin: 'vim', undoGroup: group.value });
+  assert(committed.ok && committed.value.kind === 'committed');
+  assert(session.changeDocument(committed.value.change).ok);
+}
+assert.equal(currentProcess.heldDiagnosticResponses.length, 1, 'edits coalesce behind one active document pull');
+await currentProcess.send(currentProcess.heldDiagnosticResponses.shift()!);
+await waitFor(() => currentProcess.heldDiagnosticResponses.length === 1, 'edits schedule one fresh pull after the stale response');
+assert.equal(diagnostics.diagnosticsFor(editUri).length, 0, 'late pre-edit diagnostics never reach the Problems owner');
+const lastChange = currentProcess.writes.map(message => message.method).lastIndexOf('textDocument/didChange');
+const lastPull = currentProcess.writes.map(message => message.method).lastIndexOf('textDocument/diagnostic');
+assert(lastChange >= 0 && lastChange < lastPull, 'didChange is flushed before pulling the new document version');
+await currentProcess.send(currentProcess.heldDiagnosticResponses.shift()!);
+await waitFor(() => diagnostics.diagnosticsFor(editUri).length === 1, 'current diagnostics publish automatically after edits');
+currentProcess.holdDiagnosticResponses = false;
+const writeStart = currentProcess.writes.length;
+const completionEdit = editDocument.commit({ documentId: editDocument.id, expectedVersion: editDocument.version,
+  edits: [{ start: 0 as never, end: 0 as never, text: '$stdou' }], origin: 'vim', undoGroup: group.value });
+assert(completionEdit.ok && completionEdit.value.kind === 'committed');
+assert(session.changeDocument(completionEdit.value.change).ok);
+// No timer yield: incomplete-list retriggers run immediately after committing input.
+await session.request('textDocument/completion', { textDocument: { uri: editUri }, position: { line: 0, character: 6 } });
+const completionWrites = currentProcess.writes.slice(writeStart).map(message => message.method);
+assert(completionWrites.indexOf('textDocument/didChange') >= 0
+  && completionWrites.indexOf('textDocument/didChange') < completionWrites.indexOf('textDocument/completion'),
+  'completion retriggers synchronize didChange before sending the new cursor position');
+session.closeDocument(editUri);
 
 await session.restart();
 assert.equal(diagnostics.model.all.length, 0, 'T068-RESTART-02 server restart clears old push/pull diagnostics');

@@ -1,3 +1,4 @@
+import { rubyBlockOpener, rubyEndIndent } from './ruby-indent';
 import type {
   DocumentId,
   DocumentSnapshot,
@@ -41,6 +42,8 @@ export interface VimInsertRegisterPayload {
 export interface VimInsertOptions {
   readonly backspace?: string;
   readonly autoindent?: boolean;
+  /** Language indentation for Ruby tutorial blocks; independent of LSP availability. */
+  readonly languageIndent?: 'ruby';
   /** Helix editor.continue-comments; returns the comment prefix for a new line. */
   readonly continueComments?: boolean;
   readonly commentContinuation?: (snapshot: DocumentSnapshot, lineStart: number, cursorOffset: number) => string | undefined;
@@ -55,6 +58,7 @@ export interface VimInsertOptions {
 export interface NormalizedVimInsertOptions {
   readonly backspace: readonly VimBackspaceOption[];
   readonly autoindent: boolean;
+  readonly languageIndent?: 'ruby';
   readonly continueComments: boolean;
   readonly commentContinuation?: (snapshot: DocumentSnapshot, lineStart: number, cursorOffset: number) => string | undefined;
   readonly expandtab: boolean;
@@ -709,6 +713,23 @@ function insertPayload(
   if (payload.length === 0) return success(continued(snapshot, session, [], kind));
   if (!(allowCarriageReturn ? isUnicodeScalarText(payload) : isWellFormed(payload))) return failure('invalid-input');
   const current = (session.cursorOffset as number) - base;
+  if (session.mode === 'insert' && session.options.languageIndent === 'ruby' && payload === 'd' && !allowCarriageReturn
+    && base === lineStart && /^[ \t]*en$/u.test(source.slice(0, current))
+    && /^[ \t]*$/u.test(source.slice(current))) {
+    const prefix = source.slice(0, current);
+    const indent = rubyEndIndent(snapshot, lineStart);
+    if (indent !== undefined && indent !== prefix.slice(0, -2)) {
+      const text = `${indent}end`;
+      const recordedStart = Math.max(0, Number(session.entryOffset) - lineStart);
+      const oldIndentLength = prefix.length - 2;
+      const replacementStart = recordedStart <= oldIndentLength ? Math.min(recordedStart, indent.length)
+        : indent.length + Math.min(2, recordedStart - oldIndentLength);
+      const next = freezeSession({ ...session, cursorOffset: offset(lineStart + text.length),
+        ...appendRepeat(removeRepeatSuffix(session, prefix.slice(recordedStart)), text.slice(replacementStart)),
+        autoIndentSpan: null, autoIndentLineHasContent: true, desiredColumn: null });
+      return success(continued(snapshot, next, [makeEdit(lineStart, base + current, text)], kind));
+    }
+  }
   const result = session.mode === 'insert' || payload.includes('\n')
     ? insertionEdit(current, payload)
     : session.mode === 'replace'
@@ -822,6 +843,11 @@ function insertNewline(snapshot: DocumentSnapshot, source: string, base: number,
     const read = readLeadingIndentBounded(snapshot, lineStart);
     if (read === undefined) return failure('snapshot-read-failed');
     indent = read;
+    if (session.options.languageIndent === 'ruby' && base === lineStart
+      && rubyBlockOpener(source.slice(0, cursor))) {
+      const cells = displayColumn(indent, 0, indent.length, session.options.tabstop);
+      indent = indentText(cells + (session.options.shiftwidth || session.options.tabstop), session.options);
+    }
   }
   const comment = session.options.continueComments
     ? session.options.commentContinuation?.(snapshot, lineStart, base + cursor) ?? ''
@@ -1343,6 +1369,7 @@ function normalizeOptions(options: VimInsertOptions): NormalizedVimInsertOptions
   if (![shiftwidth, tabstop, softtabstop].every((value) => Number.isSafeInteger(value) && value >= 0)
     || tabstop === 0 || shiftwidth > 256 || tabstop > 256 || softtabstop > 256) return undefined;
   if (options.autoindent !== undefined && typeof options.autoindent !== 'boolean') return undefined;
+  if (options.languageIndent !== undefined && options.languageIndent !== 'ruby') return undefined;
   if (options.continueComments !== undefined && typeof options.continueComments !== 'boolean') return undefined;
   if (options.commentContinuation !== undefined && typeof options.commentContinuation !== 'function') return undefined;
   if (options.expandtab !== undefined && typeof options.expandtab !== 'boolean') return undefined;
@@ -1353,6 +1380,7 @@ function normalizeOptions(options: VimInsertOptions): NormalizedVimInsertOptions
   return Object.freeze({
     backspace: Object.freeze(['indent', 'eol', 'start'].filter((value): value is VimBackspaceOption => backspaceSet.has(value))),
     autoindent: options.autoindent ?? false,
+    ...(options.languageIndent === undefined ? {} : { languageIndent: options.languageIndent }),
     continueComments: options.continueComments ?? true,
     ...(options.commentContinuation === undefined ? {} : { commentContinuation: options.commentContinuation }),
     expandtab: options.expandtab ?? false,
@@ -1739,7 +1767,7 @@ function textKey(key: string): string | undefined {
     '<C-r>': '\u0012', '<C-s>': '\u0013', '<C-t>': '\u0014', '<C-u>': '\u0015', '<C-v>': '\u0016',
     '<C-w>': '\u0017', '<C-x>': '\u0018', '<C-y>': '\u0019', '<C-z>': '\u001a',
   };
-  const value = named[key] ?? (key.startsWith('<') ? undefined : key);
+  const value = named[key] ?? (key.length > 1 && key.startsWith('<') ? undefined : key);
   if (value === undefined || value.length === 0 || !isWellFormed(value)) return undefined;
   return firstGrapheme(value);
 }

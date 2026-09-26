@@ -1,10 +1,10 @@
 /** Terminal bytes ESC + one printable character that arrive in a single read.
  *
  * OpenTUI's parser (pinned 0.5.11) turns ESC + [a-zA-Z0-9] into a meta chord and leaves
- * every other ESC-prefixed pair as a nameless key, so a stalled read that merged the user's
+ * some other ESC-prefixed pairs as nameless keys, so a stalled read that merged the user's
  * Escape with the next keystroke (`iX<Esc>:q`) silently dropped both. Per Neovim's `i_ALT`
  * rule an unmapped Alt chord is Escape followed by the key, which is also exactly what was
- * typed here; the UI adapter owns event normalization, so the split happens before dispatch.
+ * typed here. Parsed Alt chords reach keymaps; the router splits unmapped chords.
  */
 export interface CoalescedKeyLike {
   readonly name: string;
@@ -30,6 +30,8 @@ export function splitCoalescedEscape<T extends CoalescedKeyLike>(event: T): read
     const escape = { ...event, name: 'escape', sequence: ESC, raw: ESC, ctrl: false, meta: false, option: false, shift: false };
     return [escape, escape];
   }
+  // Parsed Alt chords must reach configurable keymaps; Vim splits unmapped chords itself.
+  if ((event.meta || event.option) && event.name.length > 0) return undefined;
   // A real escape sequence introducer (CSI '[', SS3 'O', DCS/OSC) is never split.
   if (character === '[' || character === 'O' || code < 0x20 || code === 0x7f) return undefined;
   const escape = { ...event, name: 'escape', sequence: ESC, raw: ESC, ctrl: false, meta: false, option: false, shift: false };

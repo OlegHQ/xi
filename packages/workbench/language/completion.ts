@@ -112,7 +112,7 @@ export interface CompletionProviderPort {
 export type WordCompletionDocumentSource = () => readonly DocumentSnapshot[];
 
 /** Bounded lexical fallback matching Helix's open-buffer word completion. */
-export function createWordCompletionProvider(readDocuments: WordCompletionDocumentSource, triggerLength = 7): CompletionProviderPort {
+export function createWordCompletionProvider(readDocuments: WordCompletionDocumentSource, triggerLength = 2): CompletionProviderPort {
   return {
     async complete(request, cancellation): Promise<Result<WorkbenchCompletionList, WorkbenchCompletionFailure>> {
       const cancelled = (): boolean => cancellation?.isCancelled ?? false;
@@ -266,7 +266,6 @@ export interface CompletionSnippetControllerOptions {
 const UNAVAILABLE_COMPLETION_MODEL: CompletionModelRead['model'] = Object.freeze({ state: 'error', items: Object.freeze([]), selectedId: undefined, documentation: undefined, documentationOffset: 0, message: 'No language server available' });
 const LOADING_COMPLETION_MODEL: CompletionModelRead['model'] = Object.freeze({ state: 'loading', items: Object.freeze([]), selectedId: undefined, documentation: undefined, documentationOffset: 0, message: undefined });
 const UNAVAILABLE_SIGNATURE_MODEL: SignatureModelRead['model'] = Object.freeze({ state: 'error', label: undefined, documentation: undefined, activeParameter: undefined, message: 'No language server available' });
-const NOOP_DISPOSABLE: Disposable = Object.freeze({ dispose: () => {} });
 
 /**
  * Owns the Completion and Signature-help overlay panels and the active snippet-session
@@ -307,12 +306,14 @@ export class CompletionSnippetController {
   #completionRead: CompletionModelRead | undefined;
   readonly #completionReadListeners = new Set<(model: CompletionModelRead['model']) => void>();
   #signatureRead: SignatureModelRead | undefined;
+  readonly #signatureReadListeners = new Set<(model: SignatureModelRead['model']) => void>();
   /** Guards against an infinite `ensureLanguage().then(() => openCompletion/openSignature())`
    * microtask loop when no language applies to the current file: `ensureLanguage` is a memoized,
    * already-resolved promise in that case, so without this guard the retry would re-enter with
    * the same unresolved controller/session forever (F1-1). Reset once a request attempt starts
    * fresh (open) or completes/closes. */
   #completionEnsureRetried = false;
+  #emptyAutomaticRequest: WorkbenchCompletionRequest | undefined;
   #signatureEnsureRetried = false;
   #signatureAutomaticPending = false;
   #signatureAutomaticOpen = false;
@@ -324,8 +325,18 @@ export class CompletionSnippetController {
 
   get isCompletionOpen(): boolean { return this.#completionOpen; }
   cancelPendingCompletion(): void {
+    this.#emptyAutomaticRequest = undefined;
     if (this.#completionDelayTimer !== undefined) clearTimeout(this.#completionDelayTimer);
     this.#completionDelayTimer = undefined;
+  }
+  /** A server may finish indexing after returning an empty automatic list. */
+  refreshCompletionAfterProgress(): void {
+    const previous = this.#emptyAutomaticRequest;
+    this.#emptyAutomaticRequest = undefined;
+    const current = this.#currentCompletionRequest('character');
+    if (previous !== undefined && current !== undefined && this.isInsertMode(this.#activeMode())
+      && previous.documentId === current.documentId && previous.documentVersion === current.documentVersion
+      && previous.selectionGeneration === current.selectionGeneration) this.openCompletion('character');
   }
   isCompletionPreviewActiveFor(documentId: DocumentId): boolean { return this.#previewApplyingDocumentId === String(documentId) || this.#previewRestoringDocumentId === String(documentId) || this.#completionPreview?.request.documentId === String(documentId) || this.#unrevertedPreviews.get(String(documentId))?.active === true; }
   get isSignatureOpen(): boolean { return this.#signatureOpen; }
@@ -355,7 +366,7 @@ export class CompletionSnippetController {
           ? UNAVAILABLE_SIGNATURE_MODEL
           : Object.freeze({ state: model.state, label: signature?.label, documentation: self.#options.displaySignatureHelpDocs !== false ? signature?.documentation : undefined, activeParameter: model.activeParameter, message: model.message });
       },
-      subscribe: (listener) => self.#signature?.subscribe(() => listener(self.signatureRead.model)) ?? NOOP_DISPOSABLE,
+      subscribe: (listener) => { self.#signatureReadListeners.add(listener); return { dispose: () => { self.#signatureReadListeners.delete(listener); } }; },
     };
     return this.#signatureRead;
   }
@@ -385,10 +396,13 @@ export class CompletionSnippetController {
     if (this.#completionOpen) for (const listener of this.#completionReadListeners) listener(this.completionRead.model);
     const signatureSubscription = signature.subscribe((model) => {
       if (this.#signatureOpen) {
+        if (this.#signatureAutomaticOpen && (model.state === 'idle' || model.state === 'error')) this.closeSignature();
+        for (const listener of this.#signatureReadListeners) listener(this.signatureRead.model);
         this.#options.host.notifySurfaceChange();
         this.#options.marker('XI_SIGNATURE_STATE', { state: model.state, signatures: model.signatures.length, documentation: this.signatureRead.model.documentation !== undefined, message: model.message });
       }
     });
+    if (this.#signatureOpen) for (const listener of this.#signatureReadListeners) listener(this.signatureRead.model);
     return { completionSubscription, signatureSubscription };
   }
 
@@ -579,7 +593,11 @@ export class CompletionSnippetController {
           ? { ...list, items: list.items.filter((item) => item.insertTextFormat !== 'snippet') }
           : list;
         if (!path) list = { ...list, items: filterCompletionItems(list.items, this.#completionFragment(request)) };
-        if (trigger === 'character' && list.items.length === 0) { this.closeCompletion(); return; }
+        if (trigger !== 'invoked' && list.items.length === 0) {
+          this.closeCompletion();
+          if (!path && provider !== undefined) this.#emptyAutomaticRequest = request;
+          return;
+        }
         controller.publish(this.#completionSerial, request, list);
       } else if (wordProvider !== undefined && this.#options.wordCompletion !== false) {
         const words = await wordProvider.complete(request, cancellation.token);
@@ -866,6 +884,7 @@ export class CompletionSnippetController {
     this.#disposed = true;
     this.cancelPendingCompletion();
     this.#completionReadListeners.clear();
+    this.#signatureReadListeners.clear();
     this.#previewOperation += 1;
     this.#completionCancellation?.cancel();
     this.#signatureCancellation?.cancel();

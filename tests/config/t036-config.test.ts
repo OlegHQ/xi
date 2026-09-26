@@ -122,7 +122,13 @@ const expectedFocusedPanelLeaders = {
   'git-panel': { ...expectedPanelLeader, o: 'panel.outline.toggle', f: 'panel.files.focus', g: 'panel.git.focus' },
   'diff-panel': expectedPanelLeader,
 };
+const expectedMultiBindings = { '<M-n>': 'selection.add-next-match', '<M-s>': 'selection.skip-next-match', '<M-a>': 'selection.select-all-matches', '<M-Up>': 'selection.add-above', '<M-Down>': 'selection.add-below', '<M-o>': 'selection.keep-primary' };
 const expectedBindings = [
+  ...['normal', 'select'].flatMap(mode => Object.entries(expectedMultiBindings).map(([key, command]) => [`${mode}:${key}`, command] as const)),
+  ['normal:>', 'macro:[">",">"]'], ['normal:<', 'macro:["<lt>","<lt>"]'],
+  ['select:>', 'macro:[">"]'], ['select:<', 'macro:["<lt>"]'],
+  ['insert:<Tab>', 'macro:["<C-t>"]'], ['insert:<S-Tab>', 'macro:["<C-d>"]'],
+  ...Object.entries({ a: 'selection.add-above', b: 'selection.add-below', n: 'selection.add-next-match', s: 'selection.skip-next-match', m: 'selection.select-all-matches', l: 'selection.split-lines', o: 'selection.keep-primary', u: 'selection.undo' }).map(([key, command]) => [`normal:<Space> x ${key}`, command] as const),
   ...['normal', 'select'].flatMap(mode => Object.entries(expectedViewBindings).map(([key, command]) => [`${mode}:${key}`, command] as const)),
   ...Object.entries(expectedNormalLeader).map(([key, command]) => [`normal:<Space> ${key}`, command] as const),
   ...Object.entries({ p: 'panel.problems.focus', f: 'panel.files.focus', s: 'panel.search.focus', g: 'panel.git.focus', o: 'panel.outline.focus', d: 'git.diff' }).map(([key, command]) => [`normal:<Space> v ${key}`, command] as const),
@@ -232,11 +238,11 @@ assert.equal(initial.value.editor.mouse.enabled, true, 'T036-CONFIG-12 Helix edi
 assert.equal(initial.value.editor.lineNumber, 'absolute', 'T036-CONFIG-13 Helix line-number default is retained');
 assert.equal(initial.value.editor.lineNumberMinWidth, 3, 'T036-GUTTER-MIN-WIDTH-01 Helix line-number minimum width default is retained');
 assert.deepEqual(initial.value.editor.gutters, ['diagnostics', 'spacer', 'line-numbers', 'spacer', 'diff'], 'T036-GUTTERS-01 Helix default gutter layout is retained');
-assert.deepEqual(initial.value.editor.indentGuides, { render: false, character: '│', skipLevels: 0 }, 'T036-INDENT-GUIDES-01 Helix indent-guide defaults are retained');
+assert.deepEqual(initial.value.editor.indentGuides, { render: false, character: '│', skipLevels: 0 }, 'T036-INDENT-GUIDES-01 Indentation guides are disabled by default');
 assert.deepEqual(initial.value.editor.whitespace.render, { default: false, space: false, nbsp: false, nnbsp: false, tab: false, newline: false }, 'T036-WHITESPACE-01 Helix whitespace render defaults are retained');
 assert.deepEqual(initial.value.editor.whitespace.characters, { space: '·', nbsp: '⍽', nnbsp: '␣', tab: '→', tabpad: ' ', newline: '⏎' }, 'T036-WHITESPACE-CHARACTERS-01 Helix whitespace character defaults are retained');
 assert.deepEqual(initial.value.editor.smartTab, { enable: true, supersedeMenu: false }, 'T036-SMART-TAB-01 Helix smart-tab defaults are retained');
-assert.deepEqual(initial.value.editor.wordCompletion, { enable: true, triggerLength: 7 }, 'T036-WORD-COMPLETION-DEFAULT-01 Helix word-completion defaults are retained');
+assert.deepEqual(initial.value.editor.wordCompletion, { enable: true, triggerLength: 2 }, 'T036-WORD-COMPLETION-DEFAULT-01 Xi word completion suggests open-buffer words after two characters');
 assert.deepEqual(initial.value.editor.autoPairs, { '(': ')', '{': '}', '[': ']', '"': '"', "'": "'", '`': '`' }, 'T036-AUTO-PAIRS-DEFAULT-01 Helix standard auto-pairs are retained');
 assert.equal(initial.value.editor.editorConfig, true, 'T036-EDITOR-CONFIG-01 Helix editor-config default is retained');
 assert.equal(initial.value.editor.statusline.separator, '│', 'T036-STATUSLINE-SEPARATOR-01 Helix statusline separator default is retained');
@@ -265,10 +271,10 @@ assert.equal(initial.value.editor.wrap, false, 'T036-CONFIG-14 Helix soft-wrap d
 assert.equal(initial.value.editor.softWrapMaxWrap, 20, 'T036-SOFT-WRAP-MAX-01 Helix soft-wrap max-wrap default is retained');
 assert.equal(initial.value.editor.softWrapMaxIndentRetain, 40, 'T036-SOFT-WRAP-INDENT-01 Helix soft-wrap max-indent-retain default is retained');
 assert.equal(initial.value.editor.wrapIndicator, '↪ ', 'T036-WRAP-INDICATOR-01 Helix soft-wrap wrap-indicator default is retained');
-assert.equal(initial.value.editor.inlineDiagnosticsCursorLine, 'warning', 'T036-INLINE-DIAGNOSTICS-FILTER-01 Helix master cursor-line diagnostic filter default is warning');
+assert.equal(initial.value.editor.inlineDiagnosticsCursorLine, 'hint', 'T036-INLINE-DIAGNOSTICS-FILTER-01 Xi displays cursor-line diagnostics down to hint severity');
 assert.equal(compileConfig([{ name: 'stable-inline-diagnostics-default', kind: 'user', fileName: 'stable-inline-diagnostics-default.toml', source: '[editor.inline-diagnostics]\ncursor-line = "disable"\n' }]).ok, true, 'T036-INLINE-DIAGNOSTICS-FILTER-MASTER-DEFAULT-01 explicit stable disable remains accepted');
 assert.equal(initial.value.editor.inlineDiagnosticsOtherLines, 'disable', 'T036-INLINE-DIAGNOSTICS-FILTER-01-PART2 Helix other-lines diagnostic filter default is retained');
-assert.equal(initial.value.editor.endOfLineDiagnostics, 'hint', 'T036-END-OF-LINE-DIAGNOSTICS-01 Helix master end-of-line-diagnostics default is hint');
+assert.equal(initial.value.editor.endOfLineDiagnostics, 'disable', 'T036-END-OF-LINE-DIAGNOSTICS-01 Xi disables end-of-line text in favor of cursor-line details');
 assert.equal(compileConfig([{ name: 'stable-end-of-line-default', kind: 'user', fileName: 'stable-end-of-line-default.toml', source: '[editor]\nend-of-line-diagnostics = "disable"\n' }]).ok, true, 'T036-END-OF-LINE-DIAGNOSTICS-MASTER-DEFAULT-01 explicit stable disable remains accepted');
 assert.equal(initial.value.editor.inlineDiagnosticsPrefixLen, 1, 'T036-INLINE-DIAGNOSTICS-PREFIX-LEN-01 Helix prefix-len default is retained');
 assert.equal(initial.value.editor.inlineDiagnosticsMaxWrap, 20, 'T036-INLINE-DIAGNOSTICS-MAX-WRAP-01 Helix max-wrap default is retained');
@@ -924,3 +930,12 @@ if (withPython.ok) {
 }
 
 console.log('T036 config passed TOML diagnostics, schema validation, provenance merge, atomic last-good reload, profile isolation, executable trust, language and theme fixtures');
+
+{
+  const binding = (mode: string, token: string) => initial.value.bindings.find((entry) => entry.mode === mode && entry.keys.length === 1 && entry.keys[0] === token)?.commandId;
+  assert.equal(binding('normal', '>'), 'macro:[">",">"]', 'KEYS-INDENT-DEFAULT-01 Normal greater-than indents a line');
+  assert.equal(binding('normal', '<'), 'macro:["<lt>","<lt>"]', 'KEYS-UNINDENT-DEFAULT-01 Normal less-than unindents a line');
+  assert.equal(binding('insert', '<Tab>'), 'macro:["<C-t>"]', 'KEYS-TAB-DEFAULT-01 Insert Tab indents');
+  assert.equal(binding('insert', '<S-Tab>'), 'macro:["<C-d>"]', 'KEYS-SHIFT-TAB-DEFAULT-01 Insert Shift Tab unindents');
+  assert.equal(binding('select', '<M-n>'), 'selection.add-next-match', 'KEYS-MULTI-DEFAULT-01 next match remains available in Select mode');
+}

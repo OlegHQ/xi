@@ -39,3 +39,7 @@ function run(args: readonly string[]): Promise<Result> {
     child.on('close', (code) => resolve({ code, stdout, stderr }));
   });
 }
+
+assert.deepEqual(parseCliArgs(['--tutor'], '0.0.1'), { kind: 'launch', fileArgument: undefined, tutor: true }, 'tutorial opens an untitled practice buffer');
+assert.equal(parseCliArgs(['--tutor', 'file.txt'], '0.0.1').kind, 'error', 'tutorial cannot overwrite a requested file');
+assert.match(help.stdout, /--tutor/u, 'CLI help advertises the tutorial');

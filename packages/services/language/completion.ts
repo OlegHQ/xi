@@ -32,7 +32,7 @@ export class LanguageServerCompletionProvider implements CompletionProvider {
       const response = await this.#session.request<unknown>('textDocument/completion', {
         textDocument: { uri: request.uri },
         position: { line: request.position.line, character: request.position.utf16 },
-        context: { triggerKind: request.trigger === 'character' ? 2 : request.trigger === 'retrigger' ? 3 : 1 },
+        context: { triggerKind: request.trigger === 'retrigger' ? 3 : 1 },
       }, cancellation);
       const record = asRecord(response);
       const values = Array.isArray(response) ? response : Array.isArray(record?.items) ? record.items : response === null ? [] : undefined;

@@ -20,6 +20,25 @@ function allows(problem: Problem, filter: InlineDiagnosticsFilter): boolean {
   return (problem.severity ?? 1) <= threshold;
 }
 
+/** Gutter visibility is independent of inline-message filters and available message width. */
+export function gutterDiagnostic(problems: readonly Problem[], line: number, documentVersion: number): Problem | undefined {
+  let low = 0;
+  let high = problems.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (problems[mid]!.range.startLine < line) low = mid + 1;
+    else high = mid;
+  }
+  let result: Problem | undefined;
+  for (let index = low; index < problems.length; index += 1) {
+    const problem = problems[index]!;
+    if (problem.range.startLine !== line) break;
+    if (problem.documentVersion !== undefined && problem.documentVersion !== documentVersion) continue;
+    if (result === undefined || (problem.severity ?? 1) < (result.severity ?? 1)) result = problem;
+  }
+  return result;
+}
+
 export interface EndOfLineDiagnostic {
   readonly problem: Problem;
   readonly text: string;

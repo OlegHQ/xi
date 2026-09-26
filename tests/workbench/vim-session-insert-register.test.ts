@@ -194,3 +194,38 @@ async function main(): Promise<void> {
 }
 
 void main();
+
+// Production session wiring must apply the existing indentation plans, not just parse them.
+{
+  const { mkdtemp, writeFile, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { promisify } = await import('node:util');
+  const { execFile } = await import('node:child_process');
+  const runOracle = promisify(execFile);
+  const directory = await mkdtemp(join(tmpdir(), 'xi-indent-oracle-'));
+  try {
+    for (const keys of ['>>j.', 'Vj>', '>j', '>>u', '>>j.uu']) {
+      const target = session('one\ntwo\n', { insertOptions: { shiftwidth: 2, tabstop: 2, expandtab: true } });
+      await type(target, [...keys].map(key => event(key)));
+      const path = join(directory, 'indent.txt');
+      await writeFile(path, 'one\ntwo\n');
+      await runOracle('.artifacts/oracle/nvim-linux-arm64/bin/nvim', ['--headless', '--clean', '-u', 'NONE', path,
+        '-c', 'set shiftwidth=2 tabstop=2 expandtab', '-c', `normal! ${keys}`, '-c', 'wq']);
+      assert.equal(target.text(), await readFile(path, 'utf8'), `indent ${keys} agrees with pinned Neovim`);
+      assert.equal(target.mode(), 'normal', `indent ${keys} returns to Normal`);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+{
+  const target = session('berry apple berry\n');
+  await target.vim.submitCommandLine(':Xi selection.select-all-matches berry');
+  await type(target, [...'cgrape'].map(key => event(key)));
+  await target.vim.handleKey(event('Escape', '\x1b'));
+  assert.equal(target.text(), 'grape apple grape\n', 'multi-selection change inserts at every selected range');
+  await target.vim.handleKey(event('u'));
+  assert.equal(target.text(), 'berry apple berry\n', 'multi-selection change and insertion share one undo step');
+}

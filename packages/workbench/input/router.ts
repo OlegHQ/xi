@@ -5,6 +5,7 @@ import { CommandRegistry } from '../commands/registry';
 import { ExCommandLineSession, type ExCommandLineInput } from '../commands/ex-command-line';
 import { PrefixHelpController, buildPrefixHelpReadModel, type PrefixHelpBinding, type PrefixHelpReadModel, type PrefixHelpRequest } from '../commands/prefix-help';
 import type { OwnedVimKeyEvent, VimPrefixHelpState } from '../vim-session';
+import { SELECTION_COMMANDS } from '../vim-session/selection-commands';
 import { canonicalKeyToken } from './key-token';
 import { executeViewCommand, isViewCommandId } from './view-commands';
 
@@ -543,6 +544,16 @@ export class WorkbenchInputRouter implements Disposable {
    * continue down the stack; every other overlay entry treats "open" as "this key is mine".
    */
   dispatchKey(event: OwnedVimKeyEvent): RouterDispatchOutcome | Promise<RouterDispatchOutcome> {
+    if ((event.meta || event.option) && !event.ctrl && event.raw !== '\x1b') {
+      const viewId = this.#options.session.activeViewId;
+      const mode = viewId === undefined ? 'normal' : this.#options.session.readView(viewId)?.session.mode ?? 'normal';
+      if (this.#resolveBoundCommand(mode, event) === undefined) {
+        const first = this.dispatchKey({ name: 'Escape', raw: '\x1b', shift: false, ctrl: false, meta: false, option: false });
+        const plain = { ...event, raw: event.name, meta: false, option: false };
+        return first instanceof Promise ? first.then(result => result === 'quit' ? result : this.dispatchKey(plain)) : first === 'quit' ? first : this.dispatchKey(plain);
+      }
+    }
+
     const o = this.#options;
     o.completion.cancelPendingCompletion?.();
     if (event.raw !== 'v' || event.ctrl || event.meta || event.option) o.host.activeSession()?.clearMotionGhost();
@@ -691,6 +702,8 @@ export class WorkbenchInputRouter implements Disposable {
    * handling (item DOC-INPUT-BINDINGS). Only single-key (non-chord) bindings resolve here;
    * multi-key chord config bindings are out of scope for this fast path. */
   #resolveBoundCommand(mode: string, event: OwnedVimKeyEvent): string | undefined {
+    // Configured macros replay literal keys, including the key bound to the macro itself.
+    if (this.#configuredMacroDepth > 0) return undefined;
     const token = canonicalKeyToken(event);
     const lookupToken = token.startsWith('<') ? token.toLowerCase() : token;
     return this.#bindings.get(`${mode}\u0000${lookupToken}`);
@@ -752,6 +765,10 @@ export class WorkbenchInputRouter implements Disposable {
   async #executeWorkbenchCommandId(commandId: string): Promise<boolean | 'quit'> {
     const { picker, explorer, search, problems, overlays, workspaceEdits } = this.#options;
     if (commandId === 'noop') return true;
+    if (SELECTION_COMMANDS.has(commandId)) {
+      const result = await this.#options.host.activeSession()?.submitCommandLine(`:Xi ${commandId}`);
+      return result === 'quit' ? 'quit' : true;
+    }
     if (commandId.startsWith('sequence:')) {
       const commands = decodeBindingPayload(commandId.slice('sequence:'.length));
       if (commands === undefined) return false;
@@ -1026,7 +1043,7 @@ function configuredMacroKeyEvent(token: string): OwnedVimKeyEvent | undefined {
   const meta = modifiers.has('m');
   if (parts.some((part) => !['c', 's', 'a', 'm'].includes(part.toLowerCase()))) return undefined;
   const names: Record<string, string> = {
-    space: 'Space', esc: 'Escape', enter: 'Enter', ret: 'Enter', tab: 'Tab', bs: 'Backspace', del: 'Delete',
+    lt: '<', space: 'Space', esc: 'Escape', enter: 'Enter', ret: 'Enter', tab: 'Tab', bs: 'Backspace', del: 'Delete',
     up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', home: 'Home', end: 'End', pageup: 'PageUp', pagedown: 'PageDown', insert: 'Insert',
   };
   const name = names[key.toLowerCase()] ?? key;

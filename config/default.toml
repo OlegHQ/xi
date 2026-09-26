@@ -64,11 +64,11 @@ default-yank-register = '"'
 insert-final-newline = true
 trim-final-newlines = false
 trim-trailing-whitespace = false
-end-of-line-diagnostics = "hint"
+end-of-line-diagnostics = "disable"
 
 [editor.word-completion]
 enable = true
-trigger-length = 7
+trigger-length = 2
 
 [editor.workspace-trust]
 level = "servers"
@@ -129,7 +129,7 @@ max-indent-retain = 40
 wrap-indicator = "↪ "
 
 [editor.inline-diagnostics]
-cursor-line = "warning"
+cursor-line = "hint"
 other-lines = "disable"
 prefix-len = 1
 max-wrap = 20
@@ -180,16 +180,36 @@ hidden = true
 follow-symlinks = false
 
 [keys.normal]
+"A-n" = "selection.add-next-match"
+"A-s" = "selection.skip-next-match"
+"A-a" = "selection.select-all-matches"
+"A-Up" = "selection.add-above"
+"A-Down" = "selection.add-below"
+"A-o" = "selection.keep-primary"
+">" = "@>>"
+"<" = "@<lt><lt>"
 "<C-Up>" = "view.scroll-up"
 "<C-Down>" = "view.scroll-down"
 "<C-d>" = "view.half-page-down"
 "<C-u>" = "view.half-page-up"
 
 [keys.select]
+"A-n" = "selection.add-next-match"
+"A-s" = "selection.skip-next-match"
+"A-a" = "selection.select-all-matches"
+"A-Up" = "selection.add-above"
+"A-Down" = "selection.add-below"
+"A-o" = "selection.keep-primary"
+">" = "@>"
+"<" = "@<lt>"
 "<C-Up>" = "view.scroll-up"
 "<C-Down>" = "view.scroll-down"
 "<C-d>" = "view.half-page-down"
 "<C-u>" = "view.half-page-up"
+
+[keys.insert]
+Tab = "@<C-t>"
+"S-Tab" = "@<C-d>"
 
 [keys.normal.space]
 q = "macro.record"
@@ -211,6 +231,16 @@ m = "editor.mouse.toggle"
 w = "editor.wrap.toggle"
 p = "editor.markdown-preview.toggle"
 r = "search.replace"
+
+[keys.normal.space.x]
+a = "selection.add-above"
+b = "selection.add-below"
+n = "selection.add-next-match"
+s = "selection.skip-next-match"
+m = "selection.select-all-matches"
+l = "selection.split-lines"
+o = "selection.keep-primary"
+u = "selection.undo"
 
 [keys.normal.space.v]
 p = "panel.problems.focus"

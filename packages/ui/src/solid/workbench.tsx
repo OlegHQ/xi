@@ -1019,7 +1019,14 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         maxRows: 10,
         background: props.theme.surface,
         foreground: props.theme.foreground,
-        bounds: (width, height) => popupBoundsInEditor(width, height, props.viewport.cursorCell, { width: Math.max(1, Math.min(100, width - 2)), height: 8 }, 'above', options.sidebar?.().width, options.sidebar?.().visible !== false),
+        bounds: (width, height) => {
+          const rows = formatSignatureLines(options.signature!.read.model, Math.max(1, Math.min(100, width - 2)), 8);
+          const border = popupBorderVisible(options.popupBorder, 'popup') ? 2 : 0;
+          return popupBoundsInEditor(width, height, props.viewport.cursorCell, {
+            width: Math.min(100, Math.max(16, ...rows.map(row => [...row].length + 2)) + border),
+            height: Math.max(1, rows.length) + border,
+          }, 'above', options.sidebar?.().width, options.sidebar?.().visible !== false);
+        },
         zIndex: 115,
         border: popupBorderVisible(options.popupBorder, 'popup'),
       }, scopeColors('ui.popup'))}

@@ -311,6 +311,17 @@ export class LanguageDocumentSync {
     return this.closeDocument(uri);
   }
 
+  /** Flush this document before a version-sensitive service request. */
+  flushDocument(uri: string): Promise<Result<void, LanguageSyncFailure>> {
+    const state = this.#documents.get(uri);
+    if (state === undefined || state.closeRequested) return Promise.resolve(failure('closed-document', `document ${uri} is closed`));
+    if (state.flushTimer !== undefined) {
+      clearTimeout(state.flushTimer);
+      state.flushTimer = undefined;
+    }
+    return this.enqueue(() => this.flushState(state));
+  }
+
   /** Wait for all accepted notifications, useful for lifecycle and deterministic tests. */
   async whenIdle(): Promise<void> {
     await this.#tail;

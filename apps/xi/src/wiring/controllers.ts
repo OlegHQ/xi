@@ -658,6 +658,7 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
       const tabstop = settings?.tabWidth ?? (typeof settings?.indentSize === 'number' ? settings.indentSize : indent?.tabWidth ?? 2);
       const shiftwidth = settings?.indentSize === 'tab' ? tabstop : settings?.indentSize ?? (indent?.unit === '\t' ? tabstop : languageWidth);
       return { ...baseInsertOptions, tabstop, shiftwidth, softtabstop: shiftwidth,
+        ...(languageId === 'ruby' && autoindent ? { languageIndent: 'ruby' as const } : {}),
         expandtab: settings?.indentStyle === undefined ? indent?.unit !== '\t' : settings.indentStyle === 'space' };
     },
     openDocument: async (path, documentId, mustExist) => (path === undefined ? undefined : await forward.directoryDraftController.openDocumentIfDirectory(path, documentId)) ?? deps.openDocumentAt(path, documentId, mustExist),
@@ -1155,7 +1156,7 @@ function createCompletionAndWorkspaceEdits(
     completionTimeoutMs: ctx.startupConfig?.editor.completionTimeout ?? 250,
     completionTriggerLen: ctx.startupConfig?.editor.completionTriggerLen ?? 2,
     wordCompletion: ctx.startupConfig?.editor.wordCompletion.enable ?? true,
-    wordCompletionProvider: createWordCompletionProvider(() => [...host.documents.values()].map((document) => document.snapshot()), ctx.startupConfig?.editor.wordCompletion.triggerLength ?? 7),
+    wordCompletionProvider: createWordCompletionProvider(() => [...host.documents.values()].map((document) => document.snapshot()), ctx.startupConfig?.editor.wordCompletion.triggerLength ?? 2),
     pathCompletion: ctx.startupConfig?.editor.pathCompletion ?? true,
     pathCompletionProvider: createPathCompletionProvider(filesystem, workbench, workspaceRoot),
     previewCompletionInsert: ctx.startupConfig?.editor.previewCompletionInsert ?? true,
