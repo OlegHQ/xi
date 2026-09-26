@@ -1063,7 +1063,8 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         rowIds: state => state?.items.map(item => item.id) ?? [],
         selectedId: state => state?.items[state.selectedIndex]?.id,
         onMouse: (event, row) => {
-          if (event.type !== 'down') return false;
+          if ((event.type === 'move' || event.type === 'over') && event.source === undefined) { options.contextMenu?.select(row); return true; }
+          if (event.type !== 'down' || event.button !== 0) return false;
           const item = options.contextMenu?.state?.items[row];
           if (item === undefined) options.contextMenu?.dismiss();
           else options.contextMenu?.activate(item.id);

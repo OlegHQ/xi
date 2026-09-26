@@ -3,6 +3,7 @@
 rejects a disabled action, and its enabled action does what the equivalent click does."""
 from __future__ import annotations
 
+import argparse
 import fcntl
 import json
 import os
@@ -15,8 +16,13 @@ import tempfile
 import termios
 import time
 from pathlib import Path
+from terminal_screen import Screen
 
 ROOT = Path(__file__).resolve().parents[2]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--binary', type=Path)
+arguments = parser.parse_args()
+COMMAND = [str(arguments.binary.resolve())] if arguments.binary else ['bun', 'run', str(ROOT / 'apps/xi/src/main.ts')]
 PANEL_POINTER = re.compile(rb"XI_PANEL_POINTER (\{[^\r\n]*\})")
 EXPLORER_REFRESH = re.compile(rb"XI_EXPLORER_REFRESH (\{[^\r\n]*\})")
 
@@ -117,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
     environment = os.environ.copy()
     environment.update({"TERM": "xterm-256color", "HOME": temporary, "XDG_CONFIG_HOME": "", "XI_UI_TEST_MARKERS": "1"})
     child = subprocess.Popen(
-        ["bun", "run", str(ROOT / "apps/xi/src/main.ts"), str(source)],
+        [*COMMAND, str(source)],
         cwd=str(workspace),
         env=environment,
         stdin=slave,
@@ -153,6 +159,24 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
         # "Open" is the first, disabled item at this menu's top row. Clicking it must be a
         # no-op and must leave the menu available for keyboard activation of the selected,
         # enabled Collapse item.
+        # Mouse motion changes selection without activating the hovered item.
+        before_hover = len(captured)
+        os.write(master, mouse(35, 8, 5))
+        read_for(master, captured, 0.2)
+        terminal = Screen(40, 120)
+        terminal.feed(re.sub(rb'XI_[A-Z_]+(?: [^\r\n]*)?\r+\n', b'', captured))
+        assert '› New file' in terminal.row_text(5), 'mouse hover did not highlight the menu row'
+        assert b'XI_FILES_CURSOR' not in captured[before_hover:], 'hover activated an action instead of selecting it'
+        os.write(master, mouse(35, 8, 3))
+        read_for(master, captured, 0.1)
+        terminal = Screen(40, 120)
+        terminal.feed(re.sub(rb'XI_[A-Z_]+(?: [^\r\n]*)?\r+\n', b'', captured))
+        assert '› New file' in terminal.row_text(5), 'disabled hover stole the enabled selection'
+        os.write(master, mouse(35, 8, 4))
+        read_for(master, captured, 0.1)
+        terminal = Screen(40, 120)
+        terminal.feed(re.sub(rb'XI_[A-Z_]+(?: [^\r\n]*)?\r+\n', b'', captured))
+        assert '› Collapse' in terminal.row_text(4), 'hover did not return selection to Collapse'
         before_enter = len(captured)
         os.write(master, mouse(0, 5, 3))
         os.write(master, mouse(0, 5, 3, "m"))
@@ -241,4 +265,4 @@ with tempfile.TemporaryDirectory(prefix="xi-t129-context-menu-") as temporary:
                 child.wait()
         os.close(master)
 
-print("T129-CONTEXT-MENU-PTY-01 pass: production right-click menu activates file and folder actions by mouse, rejects a disabled action and dismisses outside clicks")
+print("T129-CONTEXT-MENU-PTY-01 pass: production right-click menu highlights hovered rows, skips disabled hover and activates file and folder actions by mouse, rejects a disabled action and dismisses outside clicks")
