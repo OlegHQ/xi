@@ -34,9 +34,14 @@ between Files documents; their undo histories and the editor's history are separ
 Deleting a row advances to the following entry. `i` edits a name; `o`/`O` insert a new
 entry row. A trailing `/` creates a directory, and nested new names create parents.
 
-Edits are drafts. `=` reviews all visited directory drafts, then `y` or Enter applies
-the plan. Escape cancels review without applying it. In Normal mode, Escape or `q`
-returns focus to the editor and preserves the drafts. `j`/`k` traverse visible tree rows.
+Edits are drafts. `=` opens a themed confirmation dialog for all visited directory
+drafts, with Cancel selected. Tab or the arrow keys choose Apply; Enter activates the
+selected button, and `y` applies directly.
+Escape cancels review without applying it. In Normal mode, Escape or `q`
+returns focus to the editor and preserves the drafts. Files mode appears in the main
+status line; a red theme token marks pending changes and the review hint appears only
+while drafts are modified. `j`/`k` traverse visible tree rows. Ctrl-U/Ctrl-D move and scroll
+by half the Files viewport; a count sets the distance for subsequent half-page commands.
 `h` collapses a folder or selects its parent; `l` expands a folder, enters its children,
 or previews a file. `>` expands and `<` collapses folders in place, including selected
 folders in Visual mode. Clicking a folder toggles it; clicking a file previews it.

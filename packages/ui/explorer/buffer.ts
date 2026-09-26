@@ -11,12 +11,10 @@ export function createDirectoryExplorerRead(read: Pick<ExplorerBufferController,
     const original = new Map(base.nodes.map((node) => [node.id, node]));
     const node = (id: string, name: string, path: string, kind: ExplorerNode['kind'], depth = 0): ExplorerNode => ({ id, name, path, kind, depth, rootId: base.roots[0] ?? '', parentId: undefined, relativePath: name, expanded: false, hidden: false, ignored: false, loadState: 'ready', children: [], stableIdentity: id, sizeBytes: undefined, modifiedMilliseconds: undefined, permissions: undefined, symlinkTarget: undefined, git: undefined, message: kind === 'state' ? name : undefined });
     const nodes = rows.map((row) => ({ ...(row.nodeId === undefined ? undefined : original.get(row.nodeId)) ?? node(row.id, row.name, row.path, row.kind, row.depth), id: row.id, name: row.name, depth: row.depth, expanded: row.expanded }));
-    const review = editing.reviewLines?.map((line, index) => node(`directory-review-${index}`, line, editing.directoryPath, 'state')) ?? [];
-    const selectedId = editing.reviewLines === undefined ? rows.find((row) => row.selected)?.id : review[editing.selectedIndex]?.id;
-    nodes.push(...review, node('directory-footer', editing.prompt, editing.directoryPath, 'state'));
+    const selectedId = rows.find((row) => row.selected)?.id;
     return { ...base, generation: editing.generation + base.generation, nodes, selectedId,
       visibleRows: nodes.map((value) => ({ nodeId: value.id, depth: value.depth, kind: value.kind, selected: value.id === selectedId })),
-      edit: { mode: editing.mode, cursorColumn: editing.cursorColumn, visualIds: rows.filter((row) => row.visual).map((row) => row.id) },
+      edit: { mode: editing.mode, cursorColumn: editing.cursorColumn, visualIds: rows.filter((row) => row.visual).map((row) => row.id), dirty: editing.dirty, prompt: editing.prompt, ...(editing.scroll === undefined ? {} : { scroll: editing.scroll }), pendingIds: rows.filter((row) => row.line !== undefined && (row.nodeId === undefined || row.path !== `${row.bufferPath}/${row.name}`)).map((row) => row.id), ...(editing.reviewLines === undefined ? {} : { review: { lines: editing.reviewLines, selectedIndex: editing.selectedIndex, confirm: editing.reviewConfirm, busy: editing.busy } }) },
     };
   };
   let generation = -1; let cached: ExplorerReadModel;

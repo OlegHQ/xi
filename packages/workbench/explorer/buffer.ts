@@ -27,6 +27,9 @@ export interface ExplorerBufferModel {
   readonly visualIndices: readonly number[];
   readonly prompt: string;
   readonly reviewLines: readonly string[] | undefined;
+  readonly scroll: { readonly generation: number; readonly offset: number } | undefined;
+  readonly reviewConfirm: boolean;
+  readonly busy: boolean;
 }
 export interface ExplorerBufferOptions {
   readonly root: string;
@@ -60,6 +63,11 @@ export class ExplorerBufferController {
   #generation = 0;
   #review: ExplorerDirectoryOperationPlan | undefined;
   #reviewIndex = 0;
+  #reviewConfirm = false;
+  #viewportRows = 1;
+  #viewportTop = 0;
+  #scroll: ExplorerBufferModel['scroll'];
+  #scrollRows: number | undefined;
   #busy = false;
   #disposed = false;
 
@@ -68,7 +76,7 @@ export class ExplorerBufferController {
   get active(): boolean { return this.#current !== undefined; }
   get model(): ExplorerBufferModel {
     const buffer = this.#current;
-    if (buffer === undefined) return { generation: this.#generation, directoryPath: this.#options.root, mode: 'normal', dirty: false, rows: [], selectedIndex: 0, cursorColumn: 0, visualIndices: [], prompt: '', reviewLines: undefined };
+    if (buffer === undefined) return { generation: this.#generation, directoryPath: this.#options.root, mode: 'normal', dirty: false, rows: [], selectedIndex: 0, cursorColumn: 0, visualIndices: [], prompt: '', reviewLines: undefined, scroll: this.#scroll, reviewConfirm: false, busy: this.#busy };
     const view = buffer.session.readView(buffer.viewId)!;
     const primary = view.selections.members.find((member) => member.id === view.selections.primaryId)!;
     const position = offsetToPosition(view.document, primary.head.at.offset, 'utf-16');
@@ -86,7 +94,14 @@ export class ExplorerBufferController {
     const visualIndices = view.session.mode.startsWith('visual') ? Array.from({ length: to - from + 1 }, (_, index) => from + index) : [];
     return { generation: this.#generation, directoryPath: buffer.path, mode: view.session.mode, dirty: [...this.#buffers.values()].some((value) => value.document.isDirty), rows, selectedIndex: this.#review === undefined ? at.line : this.#reviewIndex, cursorColumn: Math.max(0, at.character - parsed.prefixLength), visualIndices,
       reviewLines: this.#review?.operations.map((operation) => operation.kind === 'trash' ? `Trash ${operation.sourcePath}` : operation.kind === 'create' ? `Create ${operation.destinationPath}${operation.directory ? '/' : ''}` : `${operation.kind === 'copy' ? 'Copy' : 'Move'} ${operation.sourcePath} → ${operation.destinationPath}`),
-      prompt: this.#review === undefined ? buffer.session.commandLine?.source ?? `${view.session.mode.toUpperCase()} · = review changes` : `Apply ${this.#review.operations.length} operations? y / Enter · Esc cancel` };
+      scroll: this.#scroll, reviewConfirm: this.#reviewConfirm, busy: this.#busy,
+      prompt: buffer.session.commandLine?.source ?? '' };
+  }
+  setViewportRows(rows: number, offset = 0): void { if (Number.isSafeInteger(rows) && rows > 0) this.#viewportRows = rows; if (Number.isSafeInteger(offset) && offset >= 0) this.#viewportTop = offset; }
+  async reviewAction(action: 'apply' | 'cancel'): Promise<void> {
+    if (this.#busy || this.#review === undefined) return;
+    if (action === 'apply') await this.#apply();
+    else { this.#review = undefined; this.#publish(); }
   }
   attachTree(tree: BufferTree, toggle: (id: string) => Promise<void>): void { this.#tree = tree; this.#toggleTree = toggle; }
   get treeRows(): readonly ExplorerBufferTreeRow[] | undefined {
@@ -218,13 +233,35 @@ export class ExplorerBufferController {
     const plain = !event.ctrl && !event.meta && !event.option;
     const key = event.raw || event.name;
     if (this.#review !== undefined) {
-      if (plain && (key === 'y' || event.name.toLowerCase() === 'enter' || event.name.toLowerCase() === 'return')) await this.#apply();
+      if (plain && key === 'y') await this.reviewAction('apply');
+      else if (plain && ['enter', 'return'].includes(event.name.toLowerCase())) await this.reviewAction(this.#reviewConfirm ? 'apply' : 'cancel');
+      else if (plain && ['tab', 'left', 'right'].includes(event.name.toLowerCase())) { this.#reviewConfirm = !this.#reviewConfirm; this.#publish(); }
       else if (key === '\x1b' || key === 'n' || event.name.toLowerCase() === 'escape') { this.#review = undefined; this.#publish(); }
       else if (key === 'j' || key === 'k') { this.#reviewIndex = Math.max(0, Math.min(this.#review.operations.length - 1, this.#reviewIndex + (key === 'j' ? 1 : -1))); this.#publish(); }
       return 'handled';
     }
     const view = buffer.session.readView(buffer.viewId)!;
     const normal = view.session.mode === 'normal' && buffer.session.prefixHelp.pendingKeys.length === 0 && !buffer.session.commandLineActive;
+    if (this.#tree !== undefined && event.ctrl && !event.meta && !event.option && (view.session.mode === 'normal' || view.session.mode.startsWith('visual')) && !buffer.session.commandLineActive && (['u', 'd'].includes(event.name.toLowerCase()) || key === '\x04' || key === '\x15')) {
+      const prefix = buffer.session.prefixHelp.pendingKeys.join('');
+      if (prefix !== '' && !/^\d+$/u.test(prefix)) return 'handled';
+      if (prefix !== '') { this.#scrollRows = Number(prefix); buffer.session.cancelPendingOperator(); }
+      const down = event.name.toLowerCase() === 'd' || key === '\x04';
+      const distance = this.#scrollRows ?? Math.max(1, Math.floor(this.#viewportRows / 2));
+      const offset = Math.max(0, this.#viewportTop + (down ? distance : -distance));
+      if (view.session.mode.startsWith('visual')) {
+        const model = this.model;
+        const line = Math.max(0, Math.min(view.document.lineCount - 1, model.selectedIndex + (down ? distance : -distance)));
+        buffer.session.setCursorPosition(line, this.#options.parseLine(directoryLine(view.document, line).text).prefixLength + model.cursorColumn);
+        this.#clampCursor(); this.#publish();
+      } else {
+        const rows = this.treeRows ?? []; const selected = rows.findIndex((row) => row.selected);
+        const target = rows[Math.max(0, Math.min(rows.length - 1, selected + (down ? distance : -distance)))];
+        if (target !== undefined) await this.selectTreeRow(target.id);
+      }
+      this.#scroll = { generation: (this.#scroll?.generation ?? 0) + 1, offset }; this.#publish();
+      return 'handled';
+    }
     if (normal && plain && key === '=') { this.review(); return 'handled'; }
     if (normal && plain && (key === 'q' || key === '\x1b' || event.name.toLowerCase() === 'escape')) {
       return 'close';
@@ -243,8 +280,10 @@ export class ExplorerBufferController {
       return 'handled';
     }
     if (this.#selectedRoot !== undefined && normal && ['d', 'x', 'c', 'i', 'a', 'I', 'A', 's', 'S', 'C', 'D', 'r'].includes(key)) return 'handled';
+    const selectedRoot = this.#selectedRoot;
     this.#selectedRoot = undefined;
     const result = await (this.#current ?? buffer).session.handleKey(event);
+    if (selectedRoot !== undefined && (this.#current ?? buffer).session.prefixHelp.pendingKeys.length > 0) this.#selectedRoot = selectedRoot;
     this.#clampCursor();
     this.#publish();
     return result === 'quit' ? 'close' : 'handled';
@@ -304,6 +343,7 @@ export class ExplorerBufferController {
     else {
       this.#review = compiled.value.operations.length === 0 ? undefined : compiled.value;
       this.#reviewIndex = 0;
+      this.#reviewConfirm = false;
       this.#options.marker('XI_FILES_REVIEW', { operations: compiled.value.operations });
     }
     this.#publish();
@@ -313,6 +353,7 @@ export class ExplorerBufferController {
     const plan = this.#review;
     if (plan === undefined) return;
     this.#busy = true;
+    this.#publish();
     try {
       if (!await this.#options.apply(plan)) return;
       let path = this.#current?.path ?? this.#options.root;

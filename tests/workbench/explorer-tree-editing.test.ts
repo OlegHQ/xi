@@ -7,6 +7,7 @@ import { ExplorerTree } from '../../packages/services/files/index';
 import { compileDirectoryBuffers, parseDirectoryBufferLine } from '../../packages/services/files/directory-buffer';
 import { escapeDirectoryName } from '../../packages/services/files/directory-draft';
 import { createDirectoryExplorerRead } from '../../packages/ui/explorer/buffer';
+import { runOracleFixture, verifyOracleBundle } from '../oracle/oracle-runner';
 
 const root = await mkdtemp(join(tmpdir(), 'xi-tree-editing-'));
 const list = async (path: string) => (await readdir(path, { withFileTypes: true })).sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name)).map((entry) => ({ name: entry.name, path: `${path}/${entry.name}`, kind: entry.isDirectory() ? 'directory' as const : 'file' as const }));
@@ -14,13 +15,14 @@ const tree = new ExplorerTree({ enumerateDirectory: async (path) => ({ ok: true,
 const errors: string[] = [];
 const editor = new ExplorerBufferController({ root, list: async (path) => ({ ok: true, value: await list(path) }), encodeName: escapeDirectoryName, parseLine: parseDirectoryBufferLine, compile: (buffers, sources) => compileDirectoryBuffers(root, buffers, sources), apply: async () => true, openFile: async () => {}, notify: () => {}, marker: () => {}, error: (message) => errors.push(message) });
 const ui = createDirectoryExplorerRead(editor, tree);
-async function keys(source: string): Promise<void> { for (const raw of source) await editor.handleKey({ name: raw === '\x1b' ? 'escape' : raw.toLowerCase(), raw, ctrl: false, shift: false, meta: false, option: false }); }
+async function keys(source: string): Promise<void> { for (const raw of source) await editor.handleKey({ name: raw === '\x1b' ? 'escape' : raw === '\r' ? 'enter' : raw.toLowerCase(), raw, ctrl: false, shift: false, meta: false, option: false }); }
 const rows = () => editor.treeRows!;
 const pick = (path: string) => { const row = rows().find((value) => value.path === path); assert.ok(row, `visible tree path ${path}`); return row; };
 try {
   await mkdir(`${root}/apps`); await mkdir(`${root}/bench/document`, { recursive: true }); await mkdir(`${root}/bench/core`);
   await mkdir(`${root}/chain/deep`, { recursive: true }); await writeFile(`${root}/chain/deep/file.txt`, 'chain');
   await writeFile(`${root}/seed.txt`, 'seed'); await writeFile(`${root}/.secret`, 'hidden');
+  for (let index = 0; index < 60; index += 1) await writeFile(`${root}/z${String(index).padStart(2, '0')}.txt`, '');
   await writeFile(`${root}/bench/manifest.json`, '{}');
   await writeFile(`${root}/bench/document/alpha.ts`, 'alpha'); await writeFile(`${root}/bench/document/beta.ts`, 'beta');
   const added = tree.addRoot({ id: 'workspace', path: root, label: root }); assert.ok(added.ok);
@@ -29,7 +31,7 @@ try {
   const document = tree.model.nodes.find((node) => node.path === `${root}/bench/document`)!; await tree.expand(document.id);
   editor.attachTree(tree, async (id) => { await tree.toggleExpanded(id); });
   await editor.open(`${root}/bench/document`, `${root}/bench/document/alpha.ts`);
-  assert.deepEqual(ui.model.visibleRows.map((row) => row.depth), tree.model.visibleRows.map((row) => row.depth).concat(0), 'directory editing keeps the existing tree indentation');
+  assert.deepEqual(ui.model.visibleRows.map((row) => row.depth), tree.model.visibleRows.map((row) => row.depth), 'directory editing keeps the existing tree indentation');
   assert.ok(rows().some((row) => row.path === `${root}/apps`) && rows().some((row) => row.path === `${root}/bench/core`), 'other branches remain visible');
   assert.ok(!rows().some((row) => row.name === '.secret'), 'hidden file policy stays in the tree');
   assert.equal(pick(`${root}/bench/document/alpha.ts`).depth, 3);
@@ -53,6 +55,33 @@ try {
   assert.ok(rows().some((row) => row.path === `${root}/bench/manifest.json`), 'Vim edits preserve expanded sibling branches');
   await keys('='); assert.ok(editor.model.reviewLines?.some((line) => line.includes('/apps/new.txt')));
   assert.ok(ui.model.nodes.some((node) => node.path === `${root}/bench/core`), 'review does not replace the tree with a directory list');
+  assert.ok(!ui.model.nodes.some(node => node.id === 'directory-footer' || node.id.startsWith('directory-review-')), 'mode and confirmation do not occupy tree rows');
+  await keys('\r'); assert.equal(editor.model.reviewLines, undefined, 'Enter defaults to cancel without changing files');
+  assert.ok(editor.model.dirty, 'cancel preserves draft edits');
+  editor.setViewportRows(8); await keys('gg');
+  const first = rows().findIndex(row => row.selected);
+  await editor.handleKey({ name: 'd', raw: '\x04', ctrl: true, shift: false, meta: false, option: false });
+  assert.equal(rows().findIndex(row => row.selected), first + 4, 'Ctrl-D uses half of the Files viewport and traverses branches');
+  await editor.handleKey({ name: 'u', raw: '\x15', ctrl: true, shift: false, meta: false, option: false });
+  assert.equal(rows().findIndex(row => row.selected), first, 'Ctrl-U returns through the visible tree');
+  const oracle = await verifyOracleBundle();
+  const steps = [{ label: 'start', keys: 'gg' }, { label: 'half-down', keys: '<C-d>' }, { label: 'half-up', keys: '<C-u>' }, { label: 'counted-down', keys: '3<C-d>' }, { label: 'remembered-up', keys: '<C-u>' }];
+  const reference = await runOracleFixture({ id: 'FILES-TREE-PAGING', title: 'Vim half-page movement adapted to visible tree rows', purpose: 'Check Ctrl-D/Ctrl-U cursor distance, viewport offset, counted distance and retained scroll amount.', modes: ['normal'], lines: rows().map(row => row.name), steps }, oracle.binaryPath);
+  editor.setViewportRows(reference.snapshots[0]!.geometry.windowHeight); await keys('gg');
+  for (let index = 1; index < steps.length; index += 1) {
+    if (index === 3) await keys('3');
+    const down = index === 1 || index === 3;
+    await editor.handleKey({ name: down ? 'd' : 'u', raw: down ? '\x04' : '\x15', ctrl: true, shift: false, meta: false, option: false });
+    const expected = reference.snapshots[index]!;
+    assert.equal(rows().findIndex(row => row.selected) + 1, expected.cursor.line, `${steps[index]!.label}: tree cursor agrees with pinned Neovim`);
+    const scroll = editor.model.scroll; assert.ok(scroll);
+    assert.equal(scroll.offset + 1, (expected.view as { readonly topline: number }).topline, `${steps[index]!.label}: viewport offset agrees with pinned Neovim`);
+    editor.setViewportRows(expected.geometry.windowHeight, editor.model.scroll?.offset);
+  }
+  await editor.selectTreeRow(pick(`${root}/bench/document/alpha.ts`).id); const anchor = editor.model.selectedIndex; await keys('V1');
+  await editor.handleKey({ name: 'd', raw: '\x04', ctrl: true, shift: false, meta: false, option: false });
+  assert.equal(editor.model.mode, 'visual', 'counted Ctrl-D preserves Visual mode');
+  assert.deepEqual(editor.model.visualIndices, [anchor, anchor + 1], 'Visual paging extends its original anchor');
   assert.equal(errors.length, 0);
   await keys('\x1b');
   const compressed = new ExplorerTree({ enumerateDirectory: async (path) => ({ ok: true, value: (await list(path)).map((entry) => ({ ...entry, relativePath: entry.path.slice(root.length + 1), hidden: entry.name.startsWith('.') })) }), watchDirectory: async () => ({ ok: true, value: { dispose() {} } }) });
@@ -64,5 +93,5 @@ try {
     await editor.selectTreeRow(pick(`${root}/chain/deep`).id, true);
     assert.ok(rows().some((row) => row.name === 'file.txt' && row.depth === 2));
   } finally { compressed.dispose(); }
-  console.log('Tree + Vim passed hierarchy/depth, hidden policy, mouse toggles, >/<, cross-folder j, dd/u, inline i/o/O, Visual x, named register folder paste and review');
+  console.log('Tree + Vim passed hierarchy/depth, hidden policy, mouse toggles, >/<, cross-folder j, dd/u, inline i/o/O, Visual x, named register folder paste, safe review, Neovim paging and Visual paging');
 } finally { editor.dispose(); tree.dispose(); await rm(root, { recursive: true, force: true }); }

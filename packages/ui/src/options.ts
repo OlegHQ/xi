@@ -176,7 +176,7 @@ export interface OpenTuiWorkbenchOptions {
   readonly picker?: {
     readonly read: PickerReadPort;
     readonly isOpen: () => boolean;
-    readonly onViewportRows?: (rows: number) => void;
+    readonly onViewportRows?: (rows: number, offset: number) => void;
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
     /** Helix-style preview of the selected file entry (title + leading lines), if any. */
     readonly preview?: () => { readonly title: string; readonly lines: readonly string[]; readonly selectedLine?: number; readonly startLine?: number } | undefined;
@@ -187,6 +187,8 @@ export interface OpenTuiWorkbenchOptions {
     readonly isOpen: () => boolean;
     readonly isFocused?: () => boolean;
     readonly visualIds?: () => readonly string[];
+    readonly onViewportRows?: (rows: number, offset: number) => void;
+    readonly onReviewAction?: (action: 'apply' | 'cancel') => void;
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
     readonly prompt?: () => string | undefined;
   };

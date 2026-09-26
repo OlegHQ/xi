@@ -11,6 +11,7 @@ export interface StatusSurfaceSpec {
   readonly read: StatusMessageReadPort;
   readonly theme: WorkbenchTheme;
   readonly commandLineOpen: () => boolean;
+  readonly aboveStatusLine?: () => boolean;
   readonly subscribe?: ((listener: () => void) => Disposable) | undefined;
   readonly setTheme: (setter: (theme: WorkbenchTheme) => void) => Disposable;
 }
@@ -27,10 +28,11 @@ export function StatusSurface(props: StatusSurfaceSpec): JSX.Element {
     version();
     return !props.commandLineOpen() && message() !== undefined;
   };
+  const row = () => { version(); return Math.max(0, dimensions().height - (props.aboveStatusLine?.() === true ? 2 : 1)); };
   onCleanup(() => { themeSubscription.dispose(); subscription.dispose(); surfaceSubscription?.dispose(); });
 
   return (
-    <box position="absolute" left={0} top={Math.max(0, dimensions().height - 1)} width="100%" height={1}
+    <box position="absolute" left={0} top={row()} width="100%" height={1}
       zIndex={130} visible={visible()} backgroundColor={helixThemeColor(theme(), 'ui.statusline', 'bg', theme().background)}>
       <text width="100%" height={1} wrapMode="none"
         fg={readableTextColor(message()?.kind === 'error' ? helixThemeColor(theme(), 'error', 'fg', theme().error) : helixThemeColor(theme(), 'ui.statusline', 'fg', theme().foreground), helixThemeColor(theme(), 'ui.statusline', 'bg', theme().background), theme().foreground)}>

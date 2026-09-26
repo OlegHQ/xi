@@ -2,7 +2,7 @@
 import { useTerminalDimensions } from '@opentui/solid';
 import type { JSX } from '@opentui/solid';
 import type { MouseEvent } from '@opentui/core/renderer';
-import { Index, createSignal, onCleanup } from 'solid-js';
+import { Index, createMemo, createSignal, onCleanup } from 'solid-js';
 import { readableTextColor } from '../../theme/readability';
 import { sidebarTheme } from '../../theme/sidebar';
 import type { Disposable } from '../../../contracts/src/index';
@@ -17,6 +17,7 @@ export interface ChromeSurfaceSpec {
   readonly workbench: WorkbenchReadPort;
   readonly theme: WorkbenchTheme;
   readonly fileLabel: string;
+  readonly filesStatus?: () => { readonly mode: string; readonly prompt?: string; readonly dirty: boolean; readonly focused: boolean } | undefined;
   readonly ascii?: boolean;
   readonly gitBranch?: () => string | undefined;
   readonly statusline?: { readonly left: readonly string[]; readonly center: readonly string[]; readonly right: readonly string[]; readonly separator: string; readonly mode: { readonly normal: string; readonly insert: string; readonly select: string }; readonly diagnostics: readonly ('hint' | 'info' | 'warning' | 'error')[]; readonly workspaceDiagnostics: readonly ('hint' | 'info' | 'warning' | 'error')[] };
@@ -195,18 +196,19 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
   const statusLine = () => {
     version();
     const view = spec.workbench.activeViewId === undefined ? undefined : spec.workbench.readView(spec.workbench.activeViewId);
-    const mode = view?.session.mode;
+    const files = spec.filesStatus?.();
+    const mode = files?.focused ? files.mode : view?.session.mode;
     const modeLabel = mode === 'insert'
       ? spec.statusline?.mode.insert ?? 'INSERT'
-      : mode === 'visual'
+      : mode?.startsWith('visual')
         ? spec.statusline?.mode.select ?? 'SELECT'
         : spec.statusline?.mode.normal ?? 'NORMAL';
     const branch = spec.gitBranch?.();
     const width = Math.max(1, dimensions().width);
     const statusline = spec.statusline;
-    const left = statusline === undefined ? `${modeLabel}   ${spec.fileLabel}${branch === undefined ? '' : ` (${branch})`}` : statuslineArea(statusline.left, view, modeLabel, branch);
-    const center = statusline === undefined ? '' : statuslineArea(statusline.center, view, modeLabel, branch);
-    const rightContent = statusline === undefined ? `${view?.selections.members.length ?? 0} cursor${(view?.selections.members.length ?? 0) === 1 ? '' : 's'}` : statuslineArea(statusline.right, view, modeLabel, branch);
+    const left = files?.focused && files.prompt ? files.prompt : (files?.focused ? `${modeLabel}  Files` : statusline === undefined ? `${modeLabel}   ${spec.fileLabel}${branch === undefined ? '' : ` (${branch})`}` : statuslineArea(statusline.left, view, modeLabel, branch)) + (files?.dirty ? `  ${files.focused ? '● = review changes' : '● Files changes · = review changes'}` : '');
+    const center = files?.focused || statusline === undefined ? '' : statuslineArea(statusline.center, view, modeLabel, branch);
+    const rightContent = files?.focused ? '' : statusline === undefined ? `${view?.selections.members.length ?? 0} cursor${(view?.selections.members.length ?? 0) === 1 ? '' : 's'}` : statuslineArea(statusline.right, view, modeLabel, branch);
     const right = `${rightContent}${spec.workspaceTrustRestricted?.() === true ? spec.ascii === true ? ' [!] ' : ' [⚠] ' : ''}`;
     const cells = Array.from({ length: width }, () => ' ');
     const write = (text: string, start: number): void => { let index = Math.max(0, start); for (const cell of text) { if (index >= cells.length) break; cells[index] = cell; index += 1; } };
@@ -215,7 +217,8 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
     write(right, Math.max(0, width - Array.from(right).length - 1));
     return cells.join('');
   };
-  const statusScope = () => statuslineThemeScope(spec.colorModes === true, spec.workbench.activeViewId === undefined ? undefined : spec.workbench.readView(spec.workbench.activeViewId)?.session.mode);
+  const statusScope = () => statuslineThemeScope(spec.colorModes === true, spec.filesStatus?.()?.focused ? spec.filesStatus?.()?.mode : spec.workbench.activeViewId === undefined ? undefined : spec.workbench.readView(spec.workbench.activeViewId)?.session.mode);
+  const statusParts = createMemo(() => { const text = statusLine(); const label = spec.filesStatus?.()?.focused ? '● = review changes' : '● Files changes · = review changes'; const start = spec.filesStatus?.()?.dirty ? text.indexOf(label) : -1; const end = start < 0 ? 0 : Math.min(text.length, start + label.length); return start < 0 ? { before: text, pending: '', after: '' } : { before: text.slice(0, start), pending: text.slice(start, end), after: text.slice(end) }; });
   const strips = () => { version(); return bufferlineVisible() ? spec.tabStrips?.(dimensions().width, dimensions().height) ?? [{ viewId: undefined, x: layout().editorX, y: 0, width: layout().editorWidth }] : []; };
   const tabContent = (width: number, viewId?: string) => {
     version();
@@ -274,7 +277,7 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
         <text fg={color('ui.popup', 'fg', theme().foreground)}><span style={attributes('ui.popup')}>Problems 0   Output   Tasks</span></text>
       </box>
       <box position="absolute" left={0} top={layout().statusRow} width="100%" height={1} backgroundColor={color(statusScope(), 'bg', color('ui.statusline', 'bg', theme().surface))}>
-        <text fg={readableTextColor(color(statusScope(), 'fg', color('ui.statusline', 'fg', theme().foreground)), color(statusScope(), 'bg', color('ui.statusline', 'bg', theme().surface)), theme().foreground)}><span style={attributes(statusScope())}>{statusLine()}</span></text>
+        <text fg={readableTextColor(color(statusScope(), 'fg', color('ui.statusline', 'fg', theme().foreground)), color(statusScope(), 'bg', color('ui.statusline', 'bg', theme().surface)), theme().foreground)}><span style={attributes(statusScope())}>{statusParts().before}</span><span style={{ fg: color('error', 'fg', theme().error), bold: true }}>{statusParts().pending}</span><span style={attributes(statusScope())}>{statusParts().after}</span></text>
       </box>
     </box>
   );

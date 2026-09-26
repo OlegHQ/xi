@@ -263,8 +263,8 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       return {
         read: explorerFeature.editing === undefined ? explorerTree ?? loadingExplorer : directoryExplorerRead ??= createDirectoryExplorerRead(explorerFeature.editing, explorerTree ?? loadingExplorer),
         isOpen: () => explorerFeature.isVisible && sidebarController.readModel().panel === 'files',
-        isFocused: () => explorerFeature.isOpen, visualIds: () => explorerFeature.visualSelectionIds,
-        onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
+        onViewportRows: (rows: number, offset: number) => explorerFeature.editing?.setViewportRows(rows, offset), onReviewAction: (action: 'apply' | 'cancel') => { void explorerFeature.editing?.reviewAction(action); },
+        isFocused: () => explorerFeature.isOpen, visualIds: () => explorerFeature.visualSelectionIds, onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
         prompt: () => explorerFeature.promptText,
       };
     },

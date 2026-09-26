@@ -60,7 +60,7 @@ class Editor:
         start = len(self.output)
         self.keys(b" vf")
         self.wait(b"XI_FILES_CURSOR")
-        assert any('NORMAL' in line for line in sidebar(self)), 'Files mode footer was not rendered'
+        assert 'Files' in terminal_screen(self).row_text(40), 'Files mode was not rendered in the main status line'
 
     def sync(self) -> None:
         start = len(self.output)
@@ -85,9 +85,14 @@ class Editor:
             os.close(self.master)
 
 
-def sidebar(editor: Editor) -> list[str]:
+def terminal_screen(editor: Editor) -> Screen:
     screen = Screen(40, 120)
     screen.feed(re.sub(rb'XI_[A-Z_]+(?: [^\r\n]*)?\r+\n', b'', editor.output))
+    return screen
+
+
+def sidebar(editor: Editor) -> list[str]:
+    screen = terminal_screen(editor)
     return [screen.row_text(row)[:29] for row in range(1, 39)]
 
 
@@ -103,6 +108,8 @@ def mouse_and_tree_editing() -> None:
         workspace = Path(temporary)
         setup(workspace)
         (workspace / "apps").mkdir()
+        for index in range(60):
+            (workspace / f'z{index:02}.txt').write_text('')
         (workspace / "bench/document").mkdir(parents=True)
         (workspace / "bench/core").mkdir()
         (workspace / "bench/manifest.json").write_text('{}')
@@ -119,7 +126,10 @@ def mouse_and_tree_editing() -> None:
             child_column = next(line.index('alpha.ts') for line in lines if 'alpha.ts' in line)
             assert child_column > folder_column, "Vim activation flattened the original tree"
             click(editor, "alpha.ts")
+            assert 'review changes' not in terminal_screen(editor).row_text(40), 'clean Files showed a review hint'
+            assert not any('NORMAL' in line for line in sidebar(editor)), 'mode leaked into the tree'
             editor.keys(b"dd")
+            assert 'review changes' in terminal_screen(editor).row_text(40), 'dirty Files lost its status hint'
             assert not any('alpha.ts' in line for line in sidebar(editor)), "dd did not remove its inline draft row"
             assert (workspace / 'bench/document/alpha.ts').read_text() == 'alpha'
             editor.keys(b"u")
@@ -135,6 +145,30 @@ def mouse_and_tree_editing() -> None:
             assert any('alpha.ts' in line for line in sidebar(editor)), "> did not expand selected folder"
             editor.keys(b"<")
             assert not any('alpha.ts' in line for line in sidebar(editor)), "< did not collapse selected folder"
+            editor.keys(b">joconfirmed.ts\x1b=")
+            screen = terminal_screen(editor)
+            assert any('Review 1 Files change' in screen.row_text(row) for row in range(1, 41)), 'confirmation dialog did not render'
+            assert any('[ Cancel ]' in screen.row_text(row) and '[ Apply changes ]' in screen.row_text(row) for row in range(1, 41)), 'confirmation choices missing'
+            editor.keys(b"\r")
+            assert not (workspace / 'bench/document/confirmed.ts').exists(), 'default Enter applied destructive changes'
+            editor.keys(b"=\x1b[<0;110;2M\x1b[<0;110;2m")
+            assert not (workspace / 'bench/document/confirmed.ts').exists(), 'outside click applied changes'
+            editor.keys(b"=")
+            screen = terminal_screen(editor)
+            button_row = next(row for row in range(1, 41) if '[ Apply changes ]' in screen.row_text(row))
+            column = screen.row_text(button_row).index('[ Apply changes ]') + 2
+            start = len(editor.output)
+            editor.keys(f"\x1b[<0;{column};{button_row}M\x1b[<0;{column};{button_row}m".encode())
+            editor.wait(b'XI_FILES_APPLIED', start)
+            drain(editor.master, editor.output, .3)
+            assert (workspace / 'bench/document/confirmed.ts').exists(), 'Apply dialog button did not synchronize the draft'
+            assert 'review changes' not in terminal_screen(editor).row_text(40), 'applied changes left a review hint'
+            editor.keys(b'gg\x04')
+            assert not any(str(workspace)[:15] in line for line in sidebar(editor)), 'Ctrl-D did not scroll the Files viewport'
+            editor.keys(b'\x15')
+            assert any('bench' in line for line in sidebar(editor)), 'Ctrl-U did not scroll back through the tree'
+            editor.keys(b'3\x04\x15')
+            assert any('bench' in line for line in sidebar(editor)), 'counted half-page movement did not return'
         finally:
             editor.close()
 
@@ -256,4 +290,4 @@ isolated_undo_and_rename()
 registers_and_create()
 trash_and_dirty_refusal()
 external_destination()
-print("Files management PTY passed: isolated undo, rename/cancel/collision, dd/p move, named yy/p copy, o/O creates, trash, dirty-buffer refusal and external destination preservation")
+print("Files management PTY passed: mouse tree, main status mode/dirty hint, modal Cancel/Apply/outside click, viewport Ctrl-U/Ctrl-D, isolated undo, rename/cancel/collision, dd/p move, named yy/p copy, o/O creates, trash, dirty-buffer refusal and external destination preservation")

@@ -83,7 +83,8 @@ export interface RowsSurfaceSpec<T> {
   readonly onScroll?: (delta: number) => void;
   readonly headerRows?: number;
   readonly footerRows?: number;
-  readonly onViewportRows?: (rows: number) => void;
+  readonly onViewportRows?: (rows: number, offset: number) => void;
+  readonly scrollTo?: (model: T) => { readonly generation: number; readonly offset: number } | undefined;
   readonly totalRows?: (model: T) => number;
   readonly selectedId?: (model: T) => string | undefined;
   readonly selectedIndex?: (model: T) => number;
@@ -118,6 +119,7 @@ export function RowsSurface<T>(spec: RowsSurfaceSpec<T>): JSX.Element {
   const [hoveredId, setHoveredId] = createSignal<string>();
   const hitMap = new PanelHitMap();
   const scroll = new PanelScroll();
+  let scrollGeneration = -1;
   const headerRows = Math.max(0, spec.headerRows ?? 0);
   const footerRows = Math.max(0, spec.footerRows ?? 0);
   let box!: BoxRenderable;
@@ -172,8 +174,10 @@ export function RowsSurface<T>(spec: RowsSurfaceSpec<T>): JSX.Element {
     const current = model();
     const total = spec.totalRows?.(current) ?? 0;
     const viewport = viewportRows();
-    spec.onViewportRows?.(viewport);
+    const request = spec.scrollTo?.(current);
+    if (request !== undefined && request.generation !== scrollGeneration) { scrollGeneration = request.generation; scroll.scrollBy(request.offset - scroll.offset, total, viewport); }
     if (spec.selectedIndex !== undefined) scroll.follow(spec.selectedId?.(current), () => spec.selectedIndex!(current), total, viewport);
+    spec.onViewportRows?.(viewport, scroll.offset);
     const offset = spec.panel === undefined ? 0 : scroll.offset;
     const rowLimit = Math.min(spec.maxRows, Math.max(0, size.height));
     const rowIds = spec.rowIds?.(current, offset, rowLimit) ?? [];

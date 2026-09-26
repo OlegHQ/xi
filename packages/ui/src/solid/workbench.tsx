@@ -467,7 +467,8 @@ function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, 
       segments: clipSegments([
         { text: `${'  '.repeat(visible.depth)}${chevron} `, foreground: theme.muted },
         { text: `${icon.glyph} `, foreground: iconColor(theme, icon.color) },
-        ...(selected && focused && model.edit !== undefined ? directoryNameSegments(visible.label ?? node.name, model.edit.cursorColumn, theme) : [{ text: visible.label ?? node.name, foreground: selected ? theme.foreground : (node.kind === 'directory' || node.kind === 'root' ? helixThemeColor(theme, 'ui.text.directory', 'fg', theme.foreground) : theme.foreground), bold: selected || visual, ...(directoryStyle === undefined ? {} : { style: directoryStyle }) }]),
+        ...(selected && focused && model.edit !== undefined ? directoryNameSegments(visible.label ?? node.name, model.edit.cursorColumn, theme) : [{ text: visible.label ?? node.name, foreground: model.edit?.pendingIds?.includes(node.id) ? helixThemeColor(theme, 'error', 'fg', theme.error) : selected ? theme.foreground : (node.kind === 'directory' || node.kind === 'root' ? helixThemeColor(theme, 'ui.text.directory', 'fg', theme.foreground) : theme.foreground), bold: selected || visual, ...(directoryStyle === undefined ? {} : { style: directoryStyle }) }]),
+        ...(model.edit?.pendingIds?.includes(node.id) ? [{ text: ' ●', foreground: helixThemeColor(theme, 'error', 'fg', theme.error) }] : []),
         ...(node.git === undefined ? [] : [{ text: ` ${node.git.label}`, foreground: gitColor, ...(gitStyle === undefined ? {} : { style: gitStyle }) }]),
         ...(suffix.length === 0 ? [] : [{ text: suffix, foreground: node.loadState === 'permission-denied' ? theme.error : theme.muted }]),
       ], width),
@@ -652,6 +653,9 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
     };
   })();
   const explorerRead = deferredRead(() => options.explorer?.read, EMPTY_EXPLORER_MODEL, options.subscribeSurfaceChanges);
+  const [explorerModel, setExplorerModel] = createSignal(explorerRead.model);
+  const explorerSubscription = explorerRead.subscribe(model => setExplorerModel(model));
+  onCleanup(() => explorerSubscription.dispose());
   const explorerSurface = {
     read: explorerRead,
     isOpen: () => options.explorer?.isOpen() === true,
@@ -676,6 +680,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         workbench={props.workbench}
         theme={props.theme}
         fileLabel={props.fileLabel}
+        filesStatus={() => { const edit = options.explorer?.read.model.edit; return edit === undefined ? undefined : { mode: edit.mode, prompt: edit.prompt ?? '', dirty: edit.dirty === true, focused: options.explorer?.isFocused?.() === true }; }}
         tabStrips={(width, height) => props.viewport.getTabStrips(width, height)}
         {...(options.gitBranch === undefined ? {} : { gitBranch: options.gitBranch })}
         {...(options.statusline === undefined ? {} : { statusline: options.statusline })}
@@ -701,9 +706,13 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         read={options.statusMessage.read}
         theme={props.theme}
         commandLineOpen={() => options.commandLine?.isOpen() === true}
+        aboveStatusLine={() => options.explorer?.isFocused?.() === true && options.explorer?.read.model.edit !== undefined}
         subscribe={options.subscribeSurfaceChanges}
         setTheme={props.themeBridge.bind}
       />}
+      <box position="absolute" left={0} top={0} width="100%" height="100%" zIndex={105}
+        visible={explorerModel().edit?.review !== undefined}
+        onMouse={(event: MouseEvent) => { event.preventDefault(); event.stopPropagation(); if (event.type === 'down' && event.button === 0) options.explorer?.onReviewAction?.('cancel'); }} />
       {rows({
         read: explorerSurface.read,
         isOpen: () => options.sidebar?.().visible !== false && explorerSurface.isOpen() && (dimensions().width >= 100 || options.explorer?.isFocused?.() !== false),
@@ -713,6 +722,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
           return explorerRows(model, width, maxRows, offset, hoveredId, visualIds === undefined || visualIds.length === 0 ? undefined : new Set(visualIds), props.themeBridge.current() === ASCII_WORKBENCH_THEME, sidebarTheme(props.themeBridge.current()), options.explorer?.isFocused?.() !== false);
         },
         maxRows: Number.MAX_SAFE_INTEGER,
+        onViewportRows: (count, offset) => options.explorer?.onViewportRows?.(count, offset), scrollTo: model => model.edit?.scroll,
         background: props.theme.surface,
         foreground: props.theme.foreground,
         bounds: (width, height) => getExplorerBounds(width, height, options.sidebar?.()),
@@ -726,6 +736,48 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         selectedIndex: model => model.visibleRows.findIndex(row => row.nodeId === model.selectedId),
         zIndex: 20,
       }, sidebarColors)}
+      {rows({
+        read: explorerSurface.read,
+        isOpen: () => explorerSurface.read.model.edit?.review !== undefined,
+        format: () => [],
+        formatRows: (model, width, height) => {
+          const review = model.edit?.review;
+          if (review === undefined) return [];
+          const theme = props.themeBridge.current();
+          const root = model.nodes.find(node => node.kind === 'root')?.path;
+          const capacity = Math.max(0, height - 5);
+          const start = Math.max(0, Math.min(review.selectedIndex, review.lines.length - capacity));
+          return [
+            { text: `Review ${review.lines.length} Files change${review.lines.length === 1 ? '' : 's'}`, foreground: theme.foreground, bold: true },
+            { text: 'Nothing is applied until you confirm.', foreground: theme.muted },
+            ...review.lines.slice(start, start + capacity).map((line, index) => ({ text: (root === undefined ? line : line.replaceAll(`${root}/`, '')).slice(0, width), foreground: line.startsWith('Trash ') ? helixThemeColor(theme, 'error', 'fg', theme.error) : theme.foreground, background: start + index === review.selectedIndex ? theme.surfaceActive : theme.surface })),
+            { text: review.lines.length > capacity ? `Showing ${start + 1}–${Math.min(review.lines.length, start + capacity)} of ${review.lines.length} · j/k scroll` : '', foreground: theme.muted },
+            { text: 'Tab / ← → choose · Enter confirm · Esc cancel', foreground: theme.muted },
+            { segments: [{ text: '[ Cancel ]', foreground: review.confirm ? theme.foreground : theme.accent, style: { bg: review.confirm ? theme.surface : theme.surfaceActive }, bold: !review.confirm }, { text: '   ', foreground: theme.foreground }, { text: review.busy ? '[ Applying… ]' : '[ Apply changes ]', foreground: helixThemeColor(theme, 'error', 'fg', theme.error), style: { bg: review.confirm ? theme.surfaceActive : theme.surface }, bold: review.confirm }] },
+          ];
+        },
+        maxRows: 18,
+        background: props.theme.surface,
+        foreground: props.theme.foreground,
+        bounds: (width, height) => {
+          const base = getDirectoryReviewBounds(width, height);
+          const panelWidth = Math.min(88, base.width);
+          const panelHeight = Math.min(base.height, (explorerSurface.read.model.edit?.review?.lines.length ?? 0) + 7);
+          return { width: panelWidth, height: panelHeight, left: Math.max(0, Math.floor((width - panelWidth) / 2)), top: Math.max(0, Math.floor((height - panelHeight) / 2)) };
+        },
+        zIndex: 106,
+        border: true,
+        onMouse: (event, row, column) => {
+          const review = explorerSurface.read.model.edit?.review;
+          const height = Math.min(18, getDirectoryReviewBounds(dimensions().width, dimensions().height).height - 2, (review?.lines.length ?? 0) + 5);
+          const buttonRow = Math.min(review?.lines.length ?? 0, Math.max(0, height - 5)) + 4;
+          if (event.type === 'down' && event.button === 0 && row === buttonRow && !review?.busy) {
+            if (column >= 0 && column < 10) options.explorer?.onReviewAction?.('cancel');
+            else if (column >= 13 && column < 30) options.explorer?.onReviewAction?.('apply');
+          }
+          return true;
+        },
+      }, scopeColors('ui.popup'))}
       {options.picker !== undefined && rows({
         read: options.picker.read,
         isOpen: options.picker.isOpen,
@@ -738,7 +790,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         panel: 'picker',
         generation: model => model.generation,
         rowIds: pickerRowIds,
-        onViewportRows: count => options.picker?.onViewportRows?.(count),
+        onViewportRows: (count, offset) => options.picker?.onViewportRows?.(count, offset),
         onPointer: event => forwardPanelPointer(options.picker?.onPointer, event, props.requestFrame),
         headerRows: 1,
         footerRows: 1,
