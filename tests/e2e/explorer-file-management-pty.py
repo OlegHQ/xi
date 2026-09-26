@@ -169,6 +169,13 @@ def mouse_and_tree_editing() -> None:
             assert (workspace / 'bench/document/alpha.ts').read_text() == 'alpha'
             editor.keys(b"u")
             assert any('alpha.ts' in line for line in sidebar(editor)), "Files undo did not restore its tree row"
+            editor.keys(b"Vd")
+            assert not any('alpha.ts' in line for line in sidebar(editor)), "Visual d did not delete"
+            editor.keys(b"u")
+            assert any('alpha.ts' in line for line in sidebar(editor)), "Visual d undo did not restore"
+            assert 'review changes' not in terminal_screen(editor).row_text(40), "Visual undo remained dirty"
+            editor.keys(b"=")
+            assert 'duplicate destination' not in '\n'.join(terminal_screen(editor).row_text(row) for row in range(1,41)), "undo created duplicate destinations"
             editor.keys(b"onew.ts\x1b")
             lines = sidebar(editor)
             assert any('new.ts' in line and line.index('new.ts') == child_column for line in lines), lines
@@ -326,4 +333,4 @@ isolated_undo_and_rename()
 registers_and_create()
 trash_and_dirty_refusal()
 external_destination()
-print("Files management PTY passed: mouse tree, main status mode/dirty hint, modal Cancel/Apply/outside click, viewport Ctrl-U/Ctrl-D, isolated undo, rename/cancel/collision, dd/p move, named yy/p copy, o/O creates, trash, dirty-buffer refusal and external destination preservation")
+print("Files management PTY passed: mouse tree, Visual d/u and clean review, main status mode/dirty hint, modal Cancel/Apply/outside click, viewport Ctrl-U/Ctrl-D, isolated undo, rename/cancel/collision, dd/p move, named yy/p copy, o/O creates, trash, dirty-buffer refusal and external destination preservation")

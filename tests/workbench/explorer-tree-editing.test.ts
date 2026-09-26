@@ -46,6 +46,10 @@ try {
   await keys('j'); assert.equal(rows().find((row) => row.selected)?.name, 'alpha.ts', 'j crosses into expanded child rows');
   await keys('dd'); assert.equal(rows().find((row) => row.selected)?.name, 'beta.ts', 'inline delete selects next sibling');
   assert.ok(!rows().some((row) => row.name === 'alpha.ts')); await keys('u'); assert.ok(rows().some((row) => row.name === 'alpha.ts'));
+  await keys('Vd'); assert.ok(!rows().some(row => row.name === 'alpha.ts')); await keys('u');
+  assert.ok(rows().some(row => row.name === 'alpha.ts'), 'Visual d undo restores file');
+  assert.equal(editor.model.dirty, false, 'Visual d undo restores clean history');
+  await keys('='); assert.equal(errors.length, 0, 'undo leaves no duplicate destinations');
   await keys('irename-\x1b'); assert.ok(rows().some((row) => row.name === 'rename-alpha.ts' && row.depth === 3), 'i renames inline at the same tree depth');
   await keys('uVjx'); assert.ok(!rows().some((row) => row.name === 'alpha.ts' || row.name === 'beta.ts')); await keys('u');
   await keys('"ayy'); await editor.selectTreeRow(pick(`${root}/apps`).id); await keys('"ap');
@@ -97,5 +101,5 @@ try {
     await keys('l'); assert.equal(rows().find(row => row.selected)?.name, 'file.txt', 'l enters visible children without losing the cursor');
     await keys('hhh'); assert.equal(rows().find(row => row.selected)?.path, root, 'h navigates back through a compact folder parent');
   } finally { compressed.dispose(); }
-  console.log('Tree + Vim passed hierarchy/depth, hidden policy, mouse toggles, >/<, cross-folder j, dd/u, inline i/o/O, Visual x, named register folder paste, safe review, Neovim paging and Visual paging');
+  console.log('Tree + Vim passed hierarchy/depth, hidden policy, mouse toggles, >/<, cross-folder j, dd/u, Visual d/u clean review, inline i/o/O, Visual x, named register folder paste, safe review, Neovim paging and Visual paging');
 } finally { editor.dispose(); tree.dispose(); await rm(root, { recursive: true, force: true }); }

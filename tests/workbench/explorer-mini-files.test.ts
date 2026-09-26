@@ -45,6 +45,8 @@ const steps = [
   { label: 'visual-final-entry', keys: 'V' },
   { label: 'visual-delete-eof', keys: 'x' },
   { label: 'undo-visual', keys: 'u' },
+  { label: 'visual-d-final-entry', keys: 'Vd' },
+  { label: 'undo-visual-d', keys: 'u' },
   { label: 'redo-visual', keys: '<C-r>' },
   { label: 'paste-visual-register', keys: 'p' },
   { label: 'counted-delete', keys: 'gg2dd' },
