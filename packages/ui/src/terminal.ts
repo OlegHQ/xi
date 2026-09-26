@@ -342,7 +342,7 @@ export async function runOpenTuiWorkbench(
     requestFrame(true);
   });
   options.registerViewportConfig?.((config) => { viewport.updateViewportConfig(config); requestFrame(true); });
-  const pendingKeys: KeyEvent[] = [];
+  const pendingKeys: (KeyEvent | { readonly pasteBytes: Uint8Array })[] = [];
   let pendingKeyHead = 0;
   let drainingKeys = false;
   // Admit input before mounting the declarative shell. Solid can paint a usable viewport
@@ -360,8 +360,8 @@ export async function runOpenTuiWorkbench(
     drainKeys();
   });
   renderer.keyInput.on('paste', (event: PasteEvent) => {
-    options.onPaste?.(event.bytes);
-    requestFrame();
+    pendingKeys.push({ pasteBytes: event.bytes });
+    drainKeys();
   });
   await mountSolidRoot(renderer, [createWorkbenchAppNode({
     workbench,
@@ -384,6 +384,12 @@ export async function runOpenTuiWorkbench(
       if (event === undefined) break;
       let result: void | Promise<void>;
       try {
+        if ('pasteBytes' in event) {
+          // Paste must follow preceding asynchronous mode changes, just like keys.
+          options.onPaste?.(event.pasteBytes);
+          refreshAfterKey();
+          continue;
+        }
         result = processKeypress(event);
       } catch {
         renderer.destroy();

@@ -732,7 +732,7 @@ function prepareLinePut(context: VimPutContext, value: VimRegisterValue): Result
   // Plain `p`/`P` land on the first non-blank of the first pasted line, not
   // its last inserted byte; `gp`/`gP` still land just past the paste.
   const firstLine = value.lines[0] ?? '';
-  const firstNonBlank = after + (firstLine.length - firstLine.replace(/^[ \t]+/, '').length);
+  const firstNonBlank = after + (!beforeLine && after === context.snapshot.lengthUtf16 ? 1 : 0) + (firstLine.length - firstLine.replace(/^[ \t]+/, '').length);
   const targetCursor = context.command === 'gp' || context.command === 'gP' ? insertedEnd : firstNonBlank;
   return { ok: true, value: Object.freeze({ edits: Object.freeze([{ start: after as Utf16Offset, end: after as Utf16Offset, text: payload }]), cursor: targetCursor as Utf16Offset, insertedStart: after as Utf16Offset, insertedEnd: insertedEnd as Utf16Offset, register: value }) };
 }

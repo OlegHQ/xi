@@ -53,6 +53,8 @@ export type {
   WorkbenchPickerMode,
 } from '../../picker';
 export { ExplorerController } from '../../explorer';
+export { ExplorerBufferController } from '../../explorer/buffer';
+export type { ExplorerBufferModel } from '../../explorer/buffer';
 export type {
   ExplorerControllerOptions,
   ExplorerFileOperationsPort,

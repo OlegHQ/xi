@@ -1,3 +1,4 @@
+import { createDirectoryExplorerRead } from '../../../../packages/ui/src/entrypoints/explorer';
 import type { ViewId } from '../../../../packages/primitives/src/entrypoints/launch';
 import type { DirectoryDraftReadPort, DirectoryDraftReadModel } from '../../../../packages/ui/src/entrypoints/launch';
 import { LIGHT_WORKBENCH_THEME, type WorkbenchTheme } from '../../../../packages/ui/src/entrypoints/theme';
@@ -181,7 +182,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     mouseMode, jobControlDisposables, workbench, picker, pickerModel, explorerFeature, searchFeature, gitPanelFeature, gitDiffFeature, diagnostics, problemsFeature, taskWiring, directoryDraftController, overlayFeature, completionFeature,
     fileIndexStarter, pickerPreview, statusMessages,
   } = controllers;
-  const { renderer, themeWiring, marker, startupTrace, installJobControl } = deps; const loadingExplorer = pendingExplorerRead(explorerFeature); const themeVariants = resolveThemeVariants(controllers, themeWiring); const colorMode = resolveStartupColorMode(controllers, marker); const options: RelaxedWorkbenchUiOptions = {
+  const { renderer, themeWiring, marker, startupTrace, installJobControl } = deps; const loadingExplorer = pendingExplorerRead(explorerFeature); const themeVariants = resolveThemeVariants(controllers, themeWiring); const colorMode = resolveStartupColorMode(controllers, marker); let directoryExplorerRead: ReturnType<typeof createDirectoryExplorerRead> | undefined; const options: RelaxedWorkbenchUiOptions = {
     renderer,
     startupTrace,
     colorMode, undercurl: controllers.startupConfig?.editor.undercurl ?? false,
@@ -260,7 +261,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
     get explorer() {
       const explorerTree = optionalServices.current?.explorerTree;
       return {
-        read: explorerTree ?? loadingExplorer,
+        read: explorerFeature.editing === undefined ? explorerTree ?? loadingExplorer : directoryExplorerRead ??= createDirectoryExplorerRead(explorerFeature.editing),
         isOpen: () => explorerFeature.isVisible && sidebarController.readModel().panel === 'files',
         isFocused: () => explorerFeature.isOpen, visualIds: () => explorerFeature.visualSelectionIds,
         onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),

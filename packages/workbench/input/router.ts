@@ -52,6 +52,7 @@ export interface RouterPickerPort {
 }
 
 export interface RouterExplorerPort {
+  handlePaste?(bytes: Uint8Array): void;
   readonly isOpen: boolean;
   open(): void;
   close(): void;
@@ -540,7 +541,7 @@ export class WorkbenchInputRouter implements Disposable {
     // The leader key is global even while a navigational panel is focused: it is how users
     // reach terminal controls such as mouse-mode toggle without first dismissing the panel.
     const activeMode = o.session.activeViewId === undefined ? undefined : o.session.readView(o.session.activeViewId)?.session.mode;
-    if ((event.raw === ' ' && activeMode === 'normal') || this.#leaderPending) return finishOverlay(this.handleKeypress(event));
+    if ((event.raw === ' ' && activeMode === 'normal' && o.overlayExplorer?.capturesTextInput?.() !== true) || this.#leaderPending) return finishOverlay(this.handleKeypress(event));
     if (o.overlayContextMenu?.open === true) return finishOverlay(o.overlayContextMenu.handleKey(event));
     if (this.isCommandLineActive()) return finishOverlay(this.handleCommandLineKeypress(event));
     if (this.#jumpLabels !== undefined) return finishOverlay(this.#handleJumpLabelKeypress(event));
@@ -548,7 +549,7 @@ export class WorkbenchInputRouter implements Disposable {
     if (o.overlayPicker?.isOpen() === true) return finishOverlay(o.overlayPicker.onKeypress(event));
     // Window commands belong to the Vim prefix parser. A sidebar must not consume the
     // prefix or its continuation (in particular Ctrl-W s/v while a diff is open).
-    const startsWindowPrefix = activeMode === 'normal' && event.ctrl && event.name.toLowerCase() === 'w';
+    const startsWindowPrefix = activeMode === 'normal' && event.ctrl && event.name.toLowerCase() === 'w' && o.overlayExplorer?.capturesTextInput?.() !== true;
     if (startsWindowPrefix && (o.overlayExplorer?.isOpen() === true || o.overlaySearch?.isOpen() === true || o.overlayGit?.isOpen() === true)) {
       this.#windowPrefixFromPanel = true;
     }
@@ -688,6 +689,7 @@ export class WorkbenchInputRouter implements Disposable {
   }
 
   handlePaste(bytes: Uint8Array): void {
+    if (this.#options.explorer.isOpen) { this.#options.explorer.handlePaste?.(bytes); return; }
     if (this.#options.overlayGitDiff?.isReadOnly?.() === true || this.#gitPanelFocused) return;
     const { explorer, search, problems, overlays, picker, host } = this.#options;
     // Pasting while a text-input overlay/panel is focused is not handled here.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise dd and Visual row deletion in the launched Files tree."""
+"""Exercise Vim directory drafts, isolated undo and reviewed trash in the launched Files panel."""
 from __future__ import annotations
 
 import os
@@ -49,17 +49,16 @@ def run_case(files: dict[str, bytes], keys: bytes, removed: tuple[str, ...]) -> 
             drain(master, output, 0.5)
             before = len(output)
             os.write(master, keys)
+            drain(master, output, 0.3)
+            assert all((workspace / name).exists() for name in removed), "draft deletion touched disk before synchronization"
+            os.write(master, b"=y")
             deadline = time.monotonic() + 8
             while time.monotonic() < deadline and any((workspace / name).exists() for name in removed):
                 drain(master, output, 0.05)
             assert all(not (workspace / name).exists() for name in removed), f"keys {keys!r} did not trash {removed}: {output[before:][-3000:]!r}"
             assert files["seed.txt"] == (workspace / "seed.txt").read_bytes(), "editing Files changed the open buffer"
-            os.write(master, b"u")
-            deadline = time.monotonic() + 8
-            while time.monotonic() < deadline and any(not (workspace / name).exists() for name in removed):
-                drain(master, output, 0.05)
-            assert all((workspace / name).read_bytes() == files[name] for name in removed), "one u did not restore all selected files"
-            os.write(master, b"\x1b:qa!\r")
+            wait_for(master, output, b"XI_FILES_APPLIED")
+            os.write(master, b"q:qa!\r")
             deadline = time.monotonic() + 5
             while child.poll() is None and time.monotonic() < deadline:
                 drain(master, output, 0.05)
@@ -71,6 +70,6 @@ def run_case(files: dict[str, bytes], keys: bytes, removed: tuple[str, ...]) -> 
             os.close(master)
 
 
-run_case({"seed.txt": b"seed\n", "victim.txt": b"victim\n"}, b"jjdd", ("victim.txt",))
-run_case({"a.txt": b"a\n", "b.txt": b"b\n", "seed.txt": b"seed\n"}, b"ggjvjx", ("a.txt", "b.txt"))
-print("Explorer Vim rows PTY passed: dd and Visual x trash entries; one u restores each operation")
+run_case({"seed.txt": b"seed\n", "victim.txt": b"victim\n"}, b"Gdd", ("victim.txt",))
+run_case({"a.txt": b"a\n", "b.txt": b"b\n", "seed.txt": b"seed\n"}, b"ggVjx", ("a.txt", "b.txt"))
+print("Explorer Vim rows PTY passed: dd and Visual x stage edits and trash only on confirmed synchronization")

@@ -5,6 +5,7 @@ import type { VimMode } from '../../vim/src/entrypoints/launch';
 import type { WorkbenchReadPort } from '../src/read-model';
 import type { VimHostCommand, VimInsertOptions, VimJumpHistory, VimNavigationTarget } from '../../vim/src/index';
 import type { PointerSelectionIntent } from '../../vim/src/entrypoints/launch';
+import type { VimRegisterBank } from '../../vim/src/entrypoints/launch';
 import type { PrefixHelpParserContinuation } from '../commands/prefix-help';
 
 export interface OwnedVimKeyEvent {
@@ -17,6 +18,8 @@ export interface OwnedVimKeyEvent {
 }
 
 export interface OwnedVimSessionOptions {
+  /** Registers shared by related directory buffers; undo remains document-local. */
+  readonly registers?: { readonly read: () => VimRegisterBank; readonly write: (bank: VimRegisterBank) => void };
   readonly viewId: ViewId;
   /** Xi profile: preserve the last motion for explicit Visual adoption. */
   readonly motionGhost?: boolean;

@@ -419,7 +419,13 @@ function outlineRows(model: OutlineReadPort['model'], width: number, maxRows: nu
   return rows;
 }
 
-function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, offset: number, hoveredId: string | undefined, visualIds: ReadonlySet<string> | undefined, ascii: boolean, theme: WorkbenchTheme): readonly SurfaceRow[] {
+function directoryNameSegments(name: string, column: number, theme: WorkbenchTheme): readonly SurfaceRowSegment[] {
+  const scalar = name.codePointAt(column);
+  const cursor = scalar === undefined ? ' ' : String.fromCodePoint(scalar);
+  return [{ text: name.slice(0, column), foreground: theme.foreground }, { text: cursor, style: { fg: theme.surfaceActive, bg: theme.foreground } }, { text: name.slice(column + (scalar === undefined ? 0 : cursor.length)), foreground: theme.foreground }];
+}
+
+function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, offset: number, hoveredId: string | undefined, visualIds: ReadonlySet<string> | undefined, ascii: boolean, theme: WorkbenchTheme, focused: boolean): readonly SurfaceRow[] {
   const rows: SurfaceRow[] = [];
   if (model.visibleRows.length === 0 && rows.length < maxRows) {
     rows.push({
@@ -433,10 +439,10 @@ function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, 
     const node = model.nodes.find(candidate => candidate.id === visible.nodeId);
     if (node === undefined) continue;
     const selected = visible.nodeId === model.selectedId;
-    const visual = visualIds?.has(visible.nodeId) === true;
+    const visual = visualIds?.has(visible.nodeId) === true || model.edit?.visualIds.includes(visible.nodeId) === true;
     const background = selected ? theme.surfaceActive : (visual || visible.nodeId === hoveredId) ? theme.selectionSecondary ?? theme.surfaceActive : theme.surface;
     if (node.kind === 'state') {
-      rows.push({ text: `${'  '.repeat(visible.depth)}${node.message ?? node.name}`, foreground: theme.error, background });
+      rows.push({ text: `${'  '.repeat(visible.depth)}${node.message ?? node.name}`, foreground: model.edit === undefined ? theme.error : theme.muted, background });
       continue;
     }
     const expandable = node.kind === 'directory' || node.kind === 'root' || node.kind === 'symlink';
@@ -461,7 +467,7 @@ function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, 
       segments: clipSegments([
         { text: `${'  '.repeat(visible.depth)}${chevron} `, foreground: theme.muted },
         { text: `${icon.glyph} `, foreground: iconColor(theme, icon.color) },
-        { text: visible.label ?? node.name, foreground: selected ? theme.foreground : (node.kind === 'directory' || node.kind === 'root' ? helixThemeColor(theme, 'ui.text.directory', 'fg', theme.foreground) : theme.foreground), bold: selected || visual, ...(directoryStyle === undefined ? {} : { style: directoryStyle }) },
+        ...(selected && focused && model.edit !== undefined ? directoryNameSegments(visible.label ?? node.name, model.edit.cursorColumn, theme) : [{ text: visible.label ?? node.name, foreground: selected ? theme.foreground : (node.kind === 'directory' || node.kind === 'root' ? helixThemeColor(theme, 'ui.text.directory', 'fg', theme.foreground) : theme.foreground), bold: selected || visual, ...(directoryStyle === undefined ? {} : { style: directoryStyle }) }]),
         ...(node.git === undefined ? [] : [{ text: ` ${node.git.label}`, foreground: gitColor, ...(gitStyle === undefined ? {} : { style: gitStyle }) }]),
         ...(suffix.length === 0 ? [] : [{ text: suffix, foreground: node.loadState === 'permission-denied' ? theme.error : theme.muted }]),
       ], width),
@@ -704,7 +710,7 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
         format: (model, width, maxRows, offset) => formatExplorerLines(model, width, maxRows, false, offset, props.themeBridge.current() === ASCII_WORKBENCH_THEME),
         formatRows: (model, width, maxRows, offset, hoveredId) => {
           const visualIds = options.explorer?.visualIds?.();
-          return explorerRows(model, width, maxRows, offset, hoveredId, visualIds === undefined || visualIds.length === 0 ? undefined : new Set(visualIds), props.themeBridge.current() === ASCII_WORKBENCH_THEME, sidebarTheme(props.themeBridge.current()));
+          return explorerRows(model, width, maxRows, offset, hoveredId, visualIds === undefined || visualIds.length === 0 ? undefined : new Set(visualIds), props.themeBridge.current() === ASCII_WORKBENCH_THEME, sidebarTheme(props.themeBridge.current()), options.explorer?.isFocused?.() !== false);
         },
         maxRows: Number.MAX_SAFE_INTEGER,
         background: props.theme.surface,

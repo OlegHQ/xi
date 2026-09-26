@@ -835,6 +835,16 @@ export class NodeFilesystemPort implements FilesystemPort {
     }
   }
 
+  async createDirectoryExclusive(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
+    if (cancellation.isCancelled) return cancelled();
+    try {
+      await fs.mkdir(path);
+      return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
+    } catch (error: unknown) {
+      return { ok: false, error: platformFailure(error, 'create-directory') };
+    }
+  }
+
   /** Create a config file once without replacing an existing file or racing another process. */
   async createFileIfMissing(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
     if (cancellation.isCancelled) return cancelled();
@@ -871,7 +881,8 @@ export class NodeFilesystemPort implements FilesystemPort {
   async removePath(path: string, recursive: boolean, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> {
     if (cancellation.isCancelled) return cancelled();
     try {
-      await fs.rm(path, { recursive, force: false });
+      if (!recursive && (await fs.lstat(path)).isDirectory()) await fs.rmdir(path);
+      else await fs.rm(path, { recursive, force: false });
       return cancellation.isCancelled ? cancelled() : { ok: true, value: undefined };
     } catch (error: unknown) {
       return { ok: false, error: platformFailure(error, 'remove') };

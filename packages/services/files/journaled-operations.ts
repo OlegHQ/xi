@@ -12,6 +12,8 @@ export const FILE_OPERATION_CONTRACT_VERSION = 1 as const;
 
 /** Filesystem primitives needed by the service. Implementations are injected. */
 export interface JournaledFilesystemPort extends FilesystemPort {
+  createFileExclusive?(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
+  createDirectoryExclusive?(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
   makeDirectory(path: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
   renamePath(from: string, to: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
   copyPath(from: string, to: string, cancellation: CancellationToken): Promise<Result<void, PlatformFailure>>;
@@ -55,7 +57,7 @@ export type FileOperationFailure =
 
 export interface FileOperationStep {
   readonly id: string;
-  readonly kind: 'move' | 'copy';
+  readonly kind: 'move' | 'copy' | 'create-file' | 'create-directory';
   readonly operationKind: DirectoryOperation['kind'];
   readonly from: string;
   readonly to: string;
@@ -261,10 +263,10 @@ export class JournaledFilesystemOperations {
     const sources = new Set<string>();
     const destinations = new Set<string>();
     for (const operation of plan.operations) {
-      const sourcePath = operation.kind === 'rename' || operation.kind === 'copy' || operation.kind === 'trash' ? operation.sourcePath : '';
+      const sourcePath = operation.sourcePath;
       if (!isWithin(plan.directoryPath, sourcePath)) return invalidPlan('operation escapes the reviewed directory', operation.kind);
-      sources.add(canonicalPath(sourcePath));
-      if (operation.kind === 'rename' || operation.kind === 'copy') {
+      if (operation.kind !== 'create') sources.add(canonicalPath(sourcePath));
+      if (operation.kind === 'rename' || operation.kind === 'copy' || operation.kind === 'create') {
         if (!isWithin(plan.directoryPath, operation.destinationPath)) return invalidPlan('destination escapes the reviewed directory', operation.kind);
         const destination = canonicalPath(operation.destinationPath);
         if (destinations.has(destination)) return conflict(operation.destinationPath, 'duplicate operation destination');
@@ -275,6 +277,12 @@ export class JournaledFilesystemOperations {
     for (const operation of plan.operations) {
       const sourcePath = operation.sourcePath;
       const key = canonicalPath(sourcePath);
+      if (operation.kind === 'create') {
+        const destination = await this.fingerprint(operation.destinationPath, cancellation);
+        if (!destination.ok) return destination;
+        if (destination.value !== undefined) return conflict(operation.destinationPath, 'create destination is already occupied');
+        continue;
+      }
       if (!fingerprints.has(key)) {
         const source = await this.fingerprint(sourcePath, cancellation);
         if (!source.ok) return source;
@@ -355,6 +363,14 @@ export class JournaledFilesystemOperations {
   }
 
   private async executeStep(step: FileOperationStep, cancellation: CancellationToken): Promise<Result<{ readonly method: FileOperationStep['method']; readonly after: FileFingerprint }, { readonly path: string; readonly message: string }>> {
+    if (step.kind === 'create-file' || step.kind === 'create-directory') {
+      const create = step.kind === 'create-file' ? this.#filesystem.createFileExclusive : this.#filesystem.createDirectoryExclusive;
+      if (create === undefined) return localFailure(step.to, 'exclusive entry creation is unavailable');
+      const created = await create.call(this.#filesystem, step.to, cancellation);
+      if (!created.ok) return localFailure(step.to, platformMessage(created.error));
+      const after = await this.requireFingerprint(step.to, cancellation);
+      return after.ok ? { ok: true, value: { method: 'copy', after: after.value } } : after;
+    }
     const source = await this.fingerprint(step.from, cancellation);
     if (!source.ok) return localFailure(step.from, failureMessage(source.error));
     if (source.value === undefined || !sameContent(source.value, step.expected)) return localFailure(step.from, 'source changed externally after preflight');
@@ -387,6 +403,9 @@ export class JournaledFilesystemOperations {
   }
 
   private async reconcileStep(step: FileOperationStep, cancellation: CancellationToken): Promise<Result<{ readonly method: FileOperationStep['method']; readonly after: FileFingerprint }, { readonly path: string; readonly message: string }>> {
+    // A crash before a create's completion record cannot prove ownership of an existing
+    // destination. Exclusive creation refuses it rather than adopting external data.
+    if (step.kind === 'create-file' || step.kind === 'create-directory') return this.executeStep(step, cancellation);
     const source = await this.fingerprint(step.from, cancellation);
     if (!source.ok) return localFailure(step.from, failureMessage(source.error));
     const destination = await this.fingerprint(step.to, cancellation);
@@ -409,6 +428,13 @@ export class JournaledFilesystemOperations {
     const destination = await this.fingerprint(step.to, cancellation);
     if (!destination.ok) return localFailure(step.to, failureMessage(destination.error));
     if (destination.value === undefined) return localFailure(step.to, 'applied destination disappeared; restore stopped to preserve external changes');
+    if (step.kind === 'create-file' || step.kind === 'create-directory') {
+      if (step.after === undefined || destination.value.kind !== step.after.kind || destination.value.device !== step.after.device || destination.value.inode !== step.after.inode || (step.kind === 'create-file' && !sameFingerprint(destination.value, step.after))) return localFailure(step.to, 'created entry changed externally; restore stopped');
+      // Child steps legitimately change a created directory's mtime. A nonrecursive
+      // remove still refuses external children; inode identity refuses replacement.
+      const removed = await this.#filesystem.removePath(step.to, false, cancellation);
+      return removed.ok ? { ok: true, value: undefined } : localFailure(step.to, platformMessage(removed.error));
+    }
     if (step.after === undefined || !sameContent(destination.value, step.after)) return localFailure(step.to, 'applied destination changed externally; restore stopped without clobbering it');
     const source = await this.fingerprint(step.from, cancellation);
     if (!source.ok) return localFailure(step.from, failureMessage(source.error));
@@ -525,6 +551,11 @@ function makeSteps(
   const steps: InternalStep[] = [];
   let number = 0;
   const renameOperations = plan.operations.filter((operation): operation is Extract<DirectoryOperation, { readonly kind: 'rename' }> => operation.kind === 'rename');
+  for (const operation of plan.operations) {
+    if (operation.kind !== 'create') continue;
+    const expected: FileFingerprint = { path: operation.destinationPath, kind: operation.directory ? 'directory' : 'file', sizeBytes: 0, modifiedMilliseconds: 0, device: undefined, inode: undefined, contentHash: undefined };
+    steps.push(step(`create-${number += 1}`, operation.directory ? 'create-directory' : 'create-file', 'create', operation.sourcePath, operation.destinationPath, expected));
+  }
   // Copies consume the reviewed source before any rename or trash step can
   // move it. This also makes a legal copy-plus-rename plan deterministic.
   for (const operation of plan.operations) {
@@ -613,7 +644,7 @@ function isFingerprint(value: unknown): value is FileFingerprint {
 function isStep(value: unknown): value is FileOperationStep {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
-  return typeof record.id === 'string' && (record.kind === 'move' || record.kind === 'copy') && typeof record.operationKind === 'string'
+  return typeof record.id === 'string' && (record.kind === 'move' || record.kind === 'copy' || record.kind === 'create-file' || record.kind === 'create-directory') && typeof record.operationKind === 'string'
     && typeof record.from === 'string' && typeof record.to === 'string' && typeof record.sourcePath === 'string'
     && isFingerprint(record.expected) && typeof record.completed === 'boolean'
     && (record.method === undefined || record.method === 'rename' || record.method === 'copy-delete' || record.method === 'copy')

@@ -71,6 +71,7 @@ export interface DirectoryDraftRow {
 }
 
 export type DirectoryOperation =
+  | { readonly kind: 'create'; readonly rowId: string; readonly sourcePath: string; readonly destinationPath: string; readonly directory: boolean }
   | {
     readonly kind: 'rename';
     readonly rowId: string;

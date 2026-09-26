@@ -312,6 +312,13 @@ function makeEdits(
   for (const item of range.ranges) {
     let start = item.start as number;
     let end = item.end as number;
+    if (operator === 'delete' && range.kind === 'linewise' && end === snapshot.lengthUtf16 && start > 0 && end > start) {
+      const last = snapshot.slice((end - 1) as Utf16Offset, end as Utf16Offset);
+      if (!last.ok) return null;
+      // A final nonempty line has no following separator. Remove the preceding
+      // separator with the edit, while leaving the register's line payload unchanged.
+      if (last.value !== '\n') start -= 1;
+    }
     if (operator === 'change' && range.kind === 'linewise') {
       start = range.insertionOffset as number;
       if (end > start) {

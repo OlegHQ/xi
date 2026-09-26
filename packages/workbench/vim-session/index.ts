@@ -408,6 +408,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
   function handleKey(event: OwnedVimKeyEvent): boolean | 'quit' | Promise<boolean | 'quit'> {
     if (disposed) return true;
+    registers = options.registers?.read() ?? registers;
     // Neovim `:help i_ALT` / `:help <M-`: an unmapped Alt/Meta chord is processed as <Esc>
     // followed by the plain key. Xi has no Vim-level <M-...> mappings (config bindings resolve
     // earlier in the input router), so every chord that reaches here splits. This also makes
@@ -429,12 +430,14 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     if (canHandleSynchronously(event, key)) {
       const result = handleSynchronousKey(event, key);
       finishMotion(before, beforeMode, key);
+      options.registers?.write(registers);
       options.onStateChange?.({ selections, mode });
       publishAuxiliaryState();
       return result;
     }
     return handleKeyInternal(event).then((result) => {
       finishMotion(before, beforeMode, key);
+      options.registers?.write(registers);
       options.onStateChange?.({ selections, mode });
       publishAuxiliaryState();
       return result;
@@ -695,7 +698,8 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
     if (!opened.ok) return false;
     const current = document.snapshot();
-    const committed = document.commit({ documentId: current.id, expectedVersion: current.version, edits: planned.value.edits, origin: 'vim', undoGroup: OPERATOR_GROUP });
+    const committed = document.commit({ documentId: current.id, expectedVersion: current.version, edits: planned.value.edits, origin: 'vim', undoGroup: OPERATOR_GROUP,
+      selectionHistory: { before: { vimCursor: primary.anchor.at.offset }, after: { vimCursor: planned.value.edits[0]?.start ?? primary.anchor.at.offset } } });
     if (!committed.ok || !document.endUndoGroup(OPERATOR_GROUP).ok) return false;
     notifyCommitted(committed, options.onDocumentChange);
     selections = makeNormalSelection(document.snapshot(), planned.value.cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
@@ -724,11 +728,13 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
   }
 
   function storeClipboardTextAndPut(text: string, registerName: VimRegisterName, command: 'p' | 'P', count = 1): boolean {
+    registers = options.registers?.read() ?? registers;
     const linewise = text.endsWith('\n');
     const stored = registers.write({ name: registerName, value: { lines: (linewise ? text.slice(0, -1) : text).split('\n'), type: linewise ? 'linewise' : 'characterwise' } });
     if (!stored.ok) { message(`xi: clipboard paste failed: ${stored.error.kind}\n`); return true; }
     registers = stored.value;
     executePut(command, registerName, count);
+    options.registers?.write(registers);
     return true;
   }
 
@@ -1562,8 +1568,8 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (command.kind === 'single-key' && (mode === 'visual-character' || mode === 'visual-line') && (command.key === '*' || command.key === '#')) {
         return executeVisualStarHash(command.key, mode);
       }
-      if (command.kind === 'single-key' && isVisualMode(mode) && (command.key === 'd' || command.key === 'c' || command.key === 'y')) {
-        executeVisualOperator(command.key);
+      if (command.kind === 'single-key' && isVisualMode(mode) && (command.key === 'd' || command.key === 'x' || command.key === 'c' || command.key === 'y')) {
+        executeVisualOperator(command.key === 'x' ? 'd' : command.key);
         return;
       }
       if (command.kind === 'single-key' && mode === 'normal' && command.key === '.') {
@@ -1618,12 +1624,17 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
         const searchCommand: VimSearchCommand = command.key === '*' ? 'star' : command.key === '#' ? 'hash' : command.key === 'n' ? 'next' : 'previous';
         return runSearchCommand(searchCommand, command.count.value).then(() => undefined);
       }
-      if (command.kind === 'single-key' && mode === 'normal' && command.key === 'u') {
+      if (command.kind === 'single-key' && mode === 'normal' && (command.key === 'u' || command.key === '<C-r>')) {
+        let cursor = selections.members[0]?.anchor.at.offset ?? offset(0);
         for (let count = 0; count < command.count.value; count += 1) {
-          const undone = document.undo();
+          const undone = command.key === 'u' ? document.undo() : document.redo();
           if (!undone.ok) break;
+          const edit = undone.value.change.edits[0];
+          if (edit !== undefined) cursor = Math.min(document.snapshot().lengthUtf16, edit.start + (command.key === 'u' && edit.text.startsWith('\n') ? 1 : 0)) as Utf16Offset;
+          const restored = undone.value.restoredSelection;
+          if (restored !== undefined && restored !== null && typeof restored === 'object' && !Array.isArray(restored) && 'vimCursor' in restored && typeof restored.vimCursor === 'number') cursor = restored.vimCursor as Utf16Offset;
         }
-        selections = makeNormalSelection(document.snapshot(), selections.members[0]?.anchor.at.offset ?? offset(0), (selections.selectionGeneration as number) + 1, selections.primaryId);
+        selections = makeNormalSelection(document.snapshot(), cursor, (selections.selectionGeneration as number) + 1, selections.primaryId);
         motionCursor = makeMotionCursor(document.snapshot(), selections);
         parser = makeParser(mode, selections);
       }
@@ -2059,6 +2070,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     }
 
     function executeVisualOperator(key: 'd' | 'c' | 'y'): void {
+      const beforeCursor = selections.members.find((member) => member.id === selections.primaryId)?.anchor.at.offset ?? offset(0);
       const prepared = prepareVimMultiOperator({
         snapshot: document.snapshot(),
         selections,
@@ -2071,7 +2083,8 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (prepared.value.transaction !== null) {
         const opened = document.beginUndoGroup(OPERATOR_GROUP, 'vim');
         if (!opened.ok) return;
-        const committed = document.commit({ documentId: prepared.value.transaction.documentId, expectedVersion: prepared.value.transaction.expectedVersion, edits: prepared.value.transaction.edits, origin: 'vim', undoGroup: OPERATOR_GROUP });
+        const committed = document.commit({ documentId: prepared.value.transaction.documentId, expectedVersion: prepared.value.transaction.expectedVersion, edits: prepared.value.transaction.edits, origin: 'vim', undoGroup: OPERATOR_GROUP,
+          selectionHistory: { before: { vimCursor: beforeCursor }, after: { vimCursor: prepared.value.cursorOffsets.find((member) => member.id === selections.primaryId)?.offset ?? 0 } } });
         if (!committed.ok || !document.endUndoGroup(OPERATOR_GROUP).ok) return;
         notifyCommitted(committed, options.onDocumentChange);
       }
@@ -2095,7 +2108,8 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (plan.transaction !== null) {
         const opened = document.beginUndoGroup(group, 'vim');
         if (!opened.ok) return;
-        const committed = document.commit({ documentId: plan.transaction.documentId, expectedVersion: plan.transaction.expectedVersion, edits: plan.transaction.edits, origin: 'vim', undoGroup: group });
+        const committed = document.commit({ documentId: plan.transaction.documentId, expectedVersion: plan.transaction.expectedVersion, edits: plan.transaction.edits, origin: 'vim', undoGroup: group,
+          selectionHistory: { before: { vimCursor: selections.members.find((member) => member.id === selections.primaryId)?.anchor.at.offset ?? 0 }, after: { vimCursor: plan.mode === 'insert' ? plan.cursorOffset : mapOffsetThroughCommit(beforeSnapshot, plan.transaction.edits, plan.cursorOffset) } } });
         if (!committed.ok) { document.endUndoGroup(group); return; }
         if (plan.mode === 'insert') { undoOpen = true; } else if (!document.endUndoGroup(group).ok) return;
         notifyCommitted(committed, options.onDocumentChange);

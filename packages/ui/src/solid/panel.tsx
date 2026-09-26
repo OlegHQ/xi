@@ -32,8 +32,8 @@ export interface SurfaceRow {
 }
 
 export interface SurfaceThemeStyle {
-  readonly fg?: string;
-  readonly bg?: string;
+  readonly fg?: UiColor;
+  readonly bg?: UiColor;
   readonly modifiers?: readonly string[];
   readonly underline?: { readonly color?: string; readonly style?: string };
 }

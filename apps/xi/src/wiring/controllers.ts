@@ -24,6 +24,7 @@ import {
   createWordCompletionProvider,
   DiffViewController,
   ExplorerController,
+  ExplorerBufferController,
   GitPanelController,
   LanguageOverlayController,
   PickerController,
@@ -43,7 +44,7 @@ import {
   scrollViewBy,
   DirectoryDraftController,
 } from '../../../../packages/workbench/src/entrypoints/launch';
-import { DirectoryDraft, JournaledFilesystemOperations, type DirectoryOperationPlan } from '../../../../packages/services/src/entrypoints/files';
+import { DirectoryDraft, JournaledFilesystemOperations, compileDirectoryBuffers, parseDirectoryBufferLine, escapeDirectoryName, type DirectoryOperationPlan } from '../../../../packages/services/src/entrypoints/files';
 import { toExplorerGitDecoration, createGitDecorationPort } from '../../../../packages/services/src/entrypoints/git-decorations';
 import { resolveFormatOnSave, resolveFormatterSelection } from '../../../../packages/services/src/entrypoints/config';
 import type { CompiledConfig, EditorConfigProperties, LanguageConfig, LanguageServerConfig, loadStartupXiConfig } from '../../../../packages/services/src/entrypoints/config';
@@ -837,6 +838,63 @@ function createOptionalServicesAndPicker(
 
 /** The explorer tree controller and the directory-draft ("directory as editable text")
  * controller, both crash-recoverable via the same journaled filesystem operations. */
+function createExplorerEditing(ctx: BuildContext, forward: ForwardRefs, host: BufferHost, workbench: WorkbenchSession, operations: JournaledFilesystemOperations): ExplorerBufferController {
+  const { filesystem, workspaceRoot, marker } = ctx;
+  const error = (message: string): void => { ctx.deps.statusMessages.publish(message); marker('XI_FILES_ERROR', { message }); };
+  return new ExplorerBufferController({
+    root: workspaceRoot, encodeName: escapeDirectoryName, parseLine: parseDirectoryBufferLine,
+    onHostCommand: (command) => { const viewId = workbench.activeViewId; if (viewId !== undefined) return forward.hostCommands.handleVimHostCommand(command, viewId); },
+    compile: (buffers, sources) => compileDirectoryBuffers(workspaceRoot, buffers, sources),
+    list: async (path) => {
+      const cancellation = new CancellationSource();
+      try {
+        const within = await filesystem.isWithinRealWorkspace(workspaceRoot, path, cancellation.token);
+        if (!within.ok || !within.value) return { ok: false, error: 'directory resolves outside the workspace' };
+        // ponytail: bound one directory buffer to 2048 rows; add paged directory documents
+        // when larger listings need editable buffers.
+        const entries = await filesystem.enumerateDirectory(path, workspaceRoot, cancellation.token, { maxEntries: 2048 });
+        if (!entries.ok) return { ok: false, error: entries.error.message };
+        return { ok: true, value: entries.value.filter((entry) => entry.name !== '.xi' && entry.name !== '.xi-trash').sort((left, right) => Number(right.kind === 'directory') - Number(left.kind === 'directory') || left.name.localeCompare(right.name)).map((entry) => ({ name: entry.name, path: `${path.replace(/\/$/u, '')}/${entry.name}`, kind: entry.kind })) };
+      } finally { cancellation.dispose(); }
+    },
+    apply: async (plan) => {
+      const cancellation = new CancellationSource();
+      try {
+        for (const operation of plan.operations) {
+          if (operation.kind !== 'copy' && operation.kind !== 'create' && workbench.buffers().some((buffer) => buffer.dirty && buffer.path !== undefined && (buffer.path === operation.sourcePath || buffer.path.startsWith(`${operation.sourcePath}/`)))) {
+            error('xi: file operation refused: source has unsaved open buffers'); return false;
+          }
+          const paths = operation.kind === 'trash' ? [operation.sourcePath] : operation.kind === 'create' ? [operation.destinationPath] : [operation.sourcePath, operation.destinationPath];
+          for (const path of paths) {
+            let existing = path;
+            let stat = await filesystem.stat(existing, cancellation.token);
+            while (!stat.ok && stat.error.code === 'ENOENT' && existing !== workspaceRoot && existing.startsWith(`${workspaceRoot}/`)) {
+              existing = filesystem.directoryPath(existing); stat = await filesystem.stat(existing, cancellation.token);
+            }
+            const inside = await filesystem.isWithinRealWorkspace(workspaceRoot, existing, cancellation.token);
+            if (!inside.ok || !inside.value) { error('xi: file operation refused: path resolves outside the workspace'); return false; }
+          }
+        }
+        const applied = await operations.apply(plan, cancellation.token);
+        if (!applied.ok) { error(`xi: Files synchronization failed: ${applied.error.kind}${'message' in applied.error ? `: ${applied.error.message}` : ''}${applied.error.kind === 'partial' ? `; journal: ${applied.error.journal.journalPath}` : ''}`); return false; }
+        for (const operation of plan.operations) {
+          if (operation.kind !== 'rename') continue;
+          for (const buffer of workbench.buffers()) {
+            if (buffer.path === operation.sourcePath) workbench.renameBufferPath(buffer.bufferId, operation.destinationPath);
+            else if (buffer.path?.startsWith(`${operation.sourcePath}/`) === true) workbench.renameBufferPath(buffer.bufferId, `${operation.destinationPath}${buffer.path.slice(operation.sourcePath.length)}`);
+          }
+        }
+        return true;
+      } finally { cancellation.dispose(); }
+    },
+    openFile: async (path, close) => {
+      const opened = await host.openBufferAtPath(path, { preview: !close });
+      if (opened !== undefined && close) { host.promoteBuffer(opened.bufferId, opened.viewId); forward.explorerFeature.close(); }
+    },
+    notify: () => host.notifySurfaceChange(), error, marker,
+  });
+}
+
 function createExplorerAndDirectory(
   ctx: BuildContext,
   forward: ForwardRefs,
@@ -851,6 +909,7 @@ function createExplorerAndDirectory(
   // Also used by the explorer controller below for crash-recoverable rename/copy/trash.
   const journaledFileOperations = new JournaledFilesystemOperations(filesystem, { trashRoot: `${workspaceRoot}/.xi-trash` });
   const explorerFeature = new ExplorerController({
+    editing: createExplorerEditing(ctx, forward, host, workbench, journaledFileOperations),
     host,
     session: workbench,
     filesystem,

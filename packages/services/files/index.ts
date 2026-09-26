@@ -937,6 +937,9 @@ function failure(kind: ExplorerFailure['kind'], path: string, message: string): 
 
 const neverCancelledToken: CancellationToken = Object.freeze({ isCancelled: false, onCancel: () => Object.freeze({ dispose() {} }) });
 
+export { compileDirectoryBuffers, parseDirectoryBufferLine } from './directory-buffer';
+export type { DirectoryBufferInput, DirectoryBufferSource } from './directory-buffer';
+
 export {
   DIRECTORY_DRAFT_CONTRACT_VERSION,
   DirectoryDraft,

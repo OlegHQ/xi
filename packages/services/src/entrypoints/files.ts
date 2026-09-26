@@ -5,6 +5,8 @@
  * `initializeOptionalServices`.
  */
 export { DirectoryDraft } from '../../files/directory-draft';
+export { escapeDirectoryName } from '../../files/directory-draft';
+export { compileDirectoryBuffers, parseDirectoryBufferLine } from '../../files/directory-buffer';
 export type {
   DirectoryDraftAnchor,
   DirectoryDraftEntryKind,

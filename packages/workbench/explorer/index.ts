@@ -1,6 +1,8 @@
+import type { ExplorerDirectoryOperationPlan } from './operations';
 import { CancellationSource, type CancellationToken, type ClockPort, type Disposable, type DocumentId, type PlatformFailure, type Result, type ViewId } from '../../contracts/src/index';
 import type { OwnedVimKeyEvent } from '../vim-session';
 import type { BufferHost } from '../host';
+import type { ExplorerBufferController } from './buffer';
 
 export type { OwnedVimKeyEvent as ExplorerKeyEvent };
 
@@ -79,20 +81,7 @@ export interface ExplorerFileOperationsPort {
   isWithinRealWorkspace(root: string, path: string, cancellation: CancellationToken): Promise<Result<boolean, PlatformFailure>>;
 }
 
-/** Mirrors `packages/services/files/directory-draft`'s `DirectoryOperation`/`DirectoryOperationPlan`
- * shapes structurally -- workbench cannot import `packages/services`, not even types. */
-export type ExplorerDirectoryOperation =
-  | { readonly kind: 'rename'; readonly rowId: string; readonly sourceId: string; readonly from: string; readonly to: string; readonly sourcePath: string; readonly destinationPath: string }
-  | { readonly kind: 'trash'; readonly rowId: string; readonly sourceId: string; readonly sourcePath: string }
-  | { readonly kind: 'copy'; readonly rowId: string; readonly sourceId: string; readonly sourcePath: string; readonly destinationPath: string };
-
-export interface ExplorerDirectoryOperationPlan {
-  readonly contractVersion: 1;
-  readonly directoryPath: string;
-  readonly baseGeneration: number;
-  readonly operations: readonly ExplorerDirectoryOperation[];
-}
-
+export type { ExplorerDirectoryOperation, ExplorerDirectoryOperationPlan } from './operations';
 /** Narrow port onto `packages/services/files`'s `JournaledFilesystemOperations`: the
  * durable, crash-recoverable move/copy/trash executor already used by
  * `packages/workbench/directory` and `main.ts`, so explorer file operations get the same
@@ -103,6 +92,7 @@ export interface ExplorerJournaledOperationsPort {
 }
 
 export interface ExplorerControllerOptions {
+  readonly editing?: ExplorerBufferController;
   readonly host: BufferHost;
   readonly session: ExplorerSessionPort;
   readonly filesystem: ExplorerFileOperationsPort;
@@ -142,6 +132,7 @@ const EMPTY_VISUAL_IDS: readonly string[] = Object.freeze([]);
  * them (they are loaded lazily, on first use of any panel).
  */
 export class ExplorerController {
+  #editingReady: Promise<void> | undefined;
   #open = false;
   #visible = false;
   #loadError: string | undefined;
@@ -168,6 +159,20 @@ export class ExplorerController {
     this.#options = options;
   }
 
+  #ensureEditing(): Promise<void> {
+    if (this.#options.editing === undefined || this.#options.editing.active) return Promise.resolve();
+    this.#editingReady ??= (async () => {
+      const rootId = this.#tree?.model.roots[0];
+      const root = rootId === undefined ? undefined : this.#tree?.readNode(rootId);
+      const view = this.#options.session.views().find((value) => value.viewId === this.#options.session.activeViewId);
+      const path = view === undefined ? undefined : this.#options.session.buffer(view.bufferId)?.path;
+      if (root !== undefined) await this.#options.editing?.open(path === undefined || !path.startsWith(`${root.path}/`) ? root.path : path.slice(0, path.lastIndexOf('/')), path);
+    })().finally(() => { this.#editingReady = undefined; });
+    return this.#editingReady;
+  }
+
+  get editing(): ExplorerBufferController | undefined { return this.#options.editing?.active === true ? this.#options.editing : undefined; }
+
   get isOpen(): boolean { return this.#open; }
   get isVisible(): boolean { return this.#visible; }
   toggleIncludeHidden(): void { if (this.#tree?.setIncludeHidden !== undefined) this.#tree.setIncludeHidden(!(this.#tree.model.includeHidden ?? false)); }
@@ -183,7 +188,7 @@ export class ExplorerController {
     return from < 0 || to < 0 ? EMPTY_VISUAL_IDS : rows.slice(Math.min(from, to), Math.max(from, to) + 1).map((row) => row.nodeId);
   }
   /** True while a filter/rename/copy/delete prompt owns typed characters, so `:` must stay here. */
-  get capturesTextInput(): boolean { return this.#filtering || this.#renameDraft !== undefined || this.#copyDraft !== undefined || this.#moveDraft !== undefined || this.#createDraft !== undefined || this.#deleteConfirm !== undefined; }
+  get capturesTextInput(): boolean { return this.editing !== undefined || this.#filtering || this.#renameDraft !== undefined || this.#copyDraft !== undefined || this.#moveDraft !== undefined || this.#createDraft !== undefined || this.#deleteConfirm !== undefined; }
   /** The in-progress rename/copy/create/delete prompt, painted on the panel's footer row. */
   get promptText(): string | undefined {
     if (this.#renameDraft !== undefined) return `Rename: ${this.#renameDraft.text}`;
@@ -278,6 +283,7 @@ export class ExplorerController {
       });
       void tree.watchRoot('workspace', this.#cancellation.token);
     }
+    void this.#ensureEditing().catch((error: unknown) => this.#options.onError(`xi: Files could not open: ${String(error)}\n`));
     this.#options.marker('XI_EXPLORER_OPEN', { selectedId: tree.model.selectedId });
   }
 
@@ -308,6 +314,11 @@ export class ExplorerController {
     const tree = this.#tree;
     const navigation = this.#navigation;
     const key = event.name.toLowerCase();
+    if (this.#options.editing !== undefined) {
+      await this.#ensureEditing();
+      if (await this.#options.editing.handleKey(event) === 'close') this.close();
+      return true;
+    }
     if (this.#deleteConfirm !== undefined) {
       const confirmed = key === 'y' || key === 'd';
       const nodeIds = this.#deleteConfirm.nodeIds;
@@ -589,6 +600,12 @@ export class ExplorerController {
    * row, then either toggle a container open or preview the file it names. Focus stays in the
    * tree after a click (VS Code single-click semantics); Enter still opens and returns focus. */
   handlePointerActivate(itemId: string, generation: number): boolean {
+    const editing = this.editing;
+    if (editing !== undefined) {
+      const match = /^directory-row-(\d+)$/u.exec(itemId);
+      if (match !== null && editing.model.generation === generation) { this.focus(); editing.selectRow(Number(match[1])); }
+      return true;
+    }
     const tree = this.#tree;
     if (tree === undefined || tree.model.generation !== generation) return true;
     const node = tree.readNode(itemId);
@@ -638,9 +655,12 @@ export class ExplorerController {
   }
 
   dispose(): void {
+    this.#options.editing?.dispose();
     this.#clearPendingG();
     this.#cancellation.dispose();
   }
+
+  handlePaste(bytes: Uint8Array): void { this.editing?.handlePaste(bytes); }
 
   #clearPendingG(): void {
     this.#pendingG = false;

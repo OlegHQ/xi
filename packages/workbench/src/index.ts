@@ -280,6 +280,8 @@ export type {
   HostNavigationPort,
 } from '../commands/host-commands';
 export { DirectoryDraftController } from '../directory/index';
+export { ExplorerBufferController } from '../explorer/buffer';
+export type { ExplorerBufferModel, ExplorerBufferOptions, ExplorerBufferSource } from '../explorer/buffer';
 export type {
   DirectoryDraftControllerOptions,
   DirectoryDraftEntryInput,

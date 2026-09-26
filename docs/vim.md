@@ -23,3 +23,23 @@ Search uses Xi's owned Vim dialect with explicit cancellation and zero-width pro
 The pinned binary, runtime hashes and generated inventory live under `tests/oracle` and
 `docs/compatibility`. Personal `~/.config/nvim` is research data only and must not be
 executed or modified.
+
+## Files editing
+
+Files uses a separate editable directory document and Vim session for each visited
+directory, following mini.files. `dd`, Visual `x`, counts, registers, `p`/`P`, `u`,
+Ctrl-R and repeat run through the owned Vim engine. Directory registers are shared
+between Files documents; their undo histories and the editor's history are separate.
+Deleting a row advances to the following entry. `i` edits a name; `o`/`O` insert a new
+entry row. A trailing `/` creates a directory, and nested new names create parents.
+
+Edits are drafts. `=` reviews all visited directory drafts, then `y` or Enter applies
+the plan. Escape cancels review without applying it. In Normal mode, Escape or `q`
+returns focus to the editor and preserves the drafts. `h` goes to the parent directory,
+`l` enters a directory or previews a file, and `L`/Enter opens a file in the editor.
+Applied deletions go to workspace trash; synchronization resets directory undo history.
+Conflicting destinations, unsafe paths and deleting unsaved editor buffers are refused.
+
+`tests/workbench/explorer-mini-files.test.ts` compares text and cursor checkpoints
+against pinned mini.files on the pinned Neovim development oracle. This verifies the
+covered commands rather than claiming every Neovim command or mini.files feature.

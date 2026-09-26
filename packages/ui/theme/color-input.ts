@@ -31,7 +31,7 @@ export function helixThemeColor(theme: WorkbenchTheme, scope: string, channel: '
   return themeColor(helixThemeStyle(theme, scope)?.[channel] ?? fallback, channel);
 }
 
-export function helixTextAttributes(style: HelixThemeStyle | undefined): HelixTextAttributes {
+export function helixTextAttributes(style: Pick<HelixThemeStyle, 'modifiers' | 'underline'> | undefined): HelixTextAttributes {
   const modifiers = style?.modifiers;
   const candidate = style?.underline?.style;
   const underlineStyle: UnderlineStyle | undefined = candidate === 'line' || candidate === 'curl' || candidate === 'dashed'
