@@ -53,7 +53,7 @@ export interface OwnedVimSessionOptions {
   readonly jumps?: {
     readonly read: () => VimJumpHistory;
     readonly write: (history: VimJumpHistory) => void;
-    readonly activate: (target: VimNavigationTarget) => boolean;
+    readonly activate: (target: VimNavigationTarget) => boolean | Promise<boolean>;
   };
   readonly initialLine?: number;
   readonly initialSelections?: SelectionSetSnapshot;

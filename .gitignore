@@ -12,3 +12,4 @@ coverage/
 __pycache__/
 *.py[cod]
 .claude/worktrees/
+.xi/

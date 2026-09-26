@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   // Loading OpenTUI can occupy the event loop while its native module is evaluated.
   // Let the launch document and config settle before loading the UI for either path.
   const vimSession = import('../../../packages/workbench/src/entrypoints/launch');
-  const [{ PersistenceService }, { NodeFilesystemPort, NodeProcessPort, createNodeClock, installJobControl, xiRecoveryStateDirectory, xiRecoveryJournalPath }, { openTextDocument, openTextDocumentChunks, TextFileDocument, positionToOffset }] = await Promise.all([persistenceModule, platformModule, documentModule]);
+  const [{ PersistenceService, loadJumpHistory, saveJumpHistory }, { NodeFilesystemPort, NodeProcessPort, createNodeClock, installJobControl, xiRecoveryStateDirectory, xiRecoveryJournalPath, xiJumpHistoryPath }, { openTextDocument, openTextDocumentChunks, TextFileDocument, positionToOffset }] = await Promise.all([persistenceModule, platformModule, documentModule]);
   startupTrace('base-modules');
   const filesystem = new NodeFilesystemPort();
   const recoveryDirectory = xiRecoveryStateDirectory(process.env);
@@ -69,6 +69,8 @@ async function main(): Promise<void> {
       TextFileDocument.create(documentId, text, lineEndings, defaultLineEnding, hasUtf8Bom, seed, textIntent),
   }, journalPathForPath);
   const configCancellation = new CancellationSource();
+  const jumpHistoryPath = xiJumpHistoryPath(process.env);
+  const jumpHistoryPromise = loadJumpHistory(filesystem, jumpHistoryPath, configCancellation.token);
   const recoveryDirectoryReady = filesystem.makePrivateDirectory(recoveryDirectory, configCancellation.token);
   // Owns every feature-reported status/error message from here on, including ones raised
   // before the renderer exists (recovery notices below): the OpenTUI status row picks up
@@ -116,7 +118,6 @@ async function main(): Promise<void> {
     const builtinClipboard = createOpenTuiClipboardPort();
     const clipboard = createConfiguredClipboardPort((await startupConfigPromise).config?.editor.clipboardProvider ?? { kind: 'builtin', name: 'platform' }, builtinClipboard, NodeProcessPort, process.cwd(), createOpenTuiTermcodeClipboardPort());
     clipboardRef.value = clipboard;
-
     const controllers = await createControllers({
       filesystem,
       userConfigPath: `${themeStateDirectory()}/config.toml`,
@@ -129,7 +130,7 @@ async function main(): Promise<void> {
       createClock: createNodeClock,
       positionToOffset,
       statusMessages,
-      openDocumentAt: (path, documentId) => openDocument(openTextDocument, persistence, filesystem, editorConfigByPath, path, documentId, statusMessages, startupConfigPromise),
+      openDocumentAt: (path, documentId, mustExist) => openDocument(openTextDocument, persistence, filesystem, editorConfigByPath, path, documentId, statusMessages, startupConfigPromise, mustExist),
       editorConfigForPath: (path) => editorConfigByPath.get(path),
       marker,
       xiUiTestMarkersEnabled: XI_UI_TEST_MARKERS_ENABLED,
@@ -142,11 +143,12 @@ async function main(): Promise<void> {
       clipboard,
       workspaceTrust,
     });
-
+    const restoredJumps = await jumpHistoryPromise;
+    if (restoredJumps.ok) controllers.host.restoreJumpHistory(restoredJumps.value);
+    else statusMessages.publish(`xi: ${restoredJumps.error.message}`);
     wireControllerPanels(controllers);
     const reloadOnUsr1 = (): void => { void controllers.reloadConfig(); };
     process.on('SIGUSR1', reloadOnUsr1);
-
     try {
       startupTrace('renderer-call');
       await runOpenTuiWorkbench(controllers.workbench, filePath?.label ?? '[No Name]', buildWorkbenchUiOptions(controllers, {
@@ -162,11 +164,13 @@ async function main(): Promise<void> {
     }
     marker('XI_TEARDOWN', { step: 'workbench-returned' });
     process.off('SIGUSR1', reloadOnUsr1);
+    if (restoredJumps.ok) {
+      const saved = await saveJumpHistory(filesystem, jumpHistoryPath, controllers.host.exportJumpHistory(), configCancellation.token);
+      if (!saved.ok) process.stderr.write(`xi: cannot save jump history: ${saved.error.message}\n`);
+    }
     await teardownControllers(controllers, persistence, marker);
     await clipboard.dispose();
     statusMessages.dispose();
-    // Bun can retain the PTY stdin reference after OpenTUI has restored the terminal. Every
-    // Xi-owned disposable is closed above, so finish the successful process boundary here.
     process.exit(0);
   } catch (error) {
     await clipboardRef.value?.dispose();
@@ -176,7 +180,6 @@ async function main(): Promise<void> {
     throw error;
   }
 }
-
 /** Every disposable `createControllers` constructed, torn down in the order main() used
  * before this extraction. Mechanical split out of `main()` to stay under
  * ARCH-APP-FUNCTION-LENGTH-01's line budget; no ordering or behavior change. */
@@ -254,6 +257,7 @@ async function openDocument(
   documentId: DocumentId,
   statusMessages: StatusMessageController,
   startupConfigPromise: ReturnType<typeof loadStartupXiConfig>,
+  mustExist = false,
 ): Promise<TextFileDocument | undefined> {
   if (path === undefined) {
     const configured = (await startupConfigPromise).config?.editor.defaultLineEnding;
@@ -266,6 +270,13 @@ async function openDocument(
   }
   const cancellation = new CancellationSource();
   try {
+    if (mustExist) {
+      const existing = await filesystem.stat(path, cancellation.token);
+      if (!existing.ok) {
+        statusMessages.publish(`xi: cannot jump to ${path}: ${existing.error.message}`);
+        return undefined;
+      }
+    }
     const config = (await startupConfigPromise).config;
     if (config?.editor.editorConfig !== false) {
       const properties = await readEditorConfig(filesystem, path, cancellation.token);
@@ -282,7 +293,7 @@ async function openDocument(
       ...(lineEnding === undefined ? {} : { editorConfigLineEnding: lineEnding }),
     });
     if (!opened.ok) {
-      if (opened.error.kind === 'not-found') {
+      if (opened.error.kind === 'not-found' && !mustExist) {
         const empty = openTextDocument(documentId, new Uint8Array(), 41027, { defaultLineEnding: defaultLineEnding as LineEnding });
         if (empty.kind !== 'editable') throw new Error(`xi cannot edit this input: ${empty.kind}`);
         return empty.document;

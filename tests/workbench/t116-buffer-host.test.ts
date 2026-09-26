@@ -179,3 +179,47 @@ for (const preview of [false, true]) {
   assert.equal(scratchHost.sessions.has(launchViewId), false);
   scratchHost.dispose();
 }
+
+// A new host has different document IDs and opens remembered files only on demand.
+{
+  const key = (name: string, ctrl = false) => ({ name, raw: name, shift: false, option: false, ctrl, meta: false });
+  const first = document(id<DocumentId>('persist-first'), 'one\ntwo\nthree');
+  const workspace = new WorkbenchSession({ workspaceId: 'persist-first' });
+  assert.ok(workspace.openBuffer(first, { viewId: launchViewId, path: '/workspace/a.txt' }).ok);
+  const old = new BufferHost(workspace, first, { openDocument: async (_path, id) => document(id, 'next\nlast'), workspaceRelativePath: path => path, marker: () => {}, launchViewId });
+  await old.createSession(first, launchViewId).handleKey(key('G'));
+  await old.openBufferAtPath('/workspace/b.txt');
+  await old.activeSession()!.handleKey(key('G'));
+  const saved = old.exportJumpHistory();
+  old.dispose();
+  const fresh = document(id<DocumentId>('persist-new'), 'one\ntwo\nthree');
+  const restarted = new WorkbenchSession({ workspaceId: 'persist-new' });
+  assert.ok(restarted.openBuffer(fresh, { viewId: launchViewId, path: '/workspace/a.txt' }).ok);
+  let opens = 0;
+  const host = new BufferHost(restarted, fresh, { openDocument: async (_path, id) => { opens++; return document(id, 'next\nlast'); }, workspaceRelativePath: () => undefined, marker: () => {}, launchViewId });
+  host.createSession(fresh, launchViewId);
+  host.restoreJumpHistory(saved);
+  assert.equal(opens, 0, 'restoring history does not eagerly open files');
+  await host.activeSession()!.handleKey(key('o', true));
+  assert.equal(restarted.buffers().find(b => b.viewIds.includes(restarted.activeViewId!))?.path, '/workspace/b.txt');
+  assert.equal(restarted.readView(restarted.activeViewId!)?.selections.members[0]?.head.at.offset, 5, 'restart restores last file and line');
+  await host.activeSession()!.handleKey(key('tab'));
+  assert.equal(restarted.activeViewId, launchViewId, 'Ctrl-I returns to the launch file');
+  await host.activeSession()!.handleKey(key('o', true));
+  assert.equal(opens, 1, 'repeated restored jumps reuse an existing buffer outside the workspace');
+  assert.ok(host.exportJumpHistory().length <= 100);
+  host.dispose();
+}
+
+// Launching without a file still starts after the restored list; changed files clamp.
+{
+  const scratch = document(id<DocumentId>('jump-scratch'), '');
+  const workspace = new WorkbenchSession({ workspaceId: 'jump-scratch' });
+  assert.ok(workspace.openBuffer(scratch, { viewId: launchViewId }).ok);
+  const host = new BufferHost(workspace, scratch, { openDocument: async (_path, id) => document(id, 'short'), workspaceRelativePath: path => path, marker: () => {}, launchViewId });
+  host.createSession(scratch, launchViewId);
+  host.restoreJumpHistory([{ path: '/workspace/changed.txt', line: 100, columnUtf16: 100 }]);
+  await host.activeSession()!.handleKey({ name: 'o', raw: '\x0f', shift: false, option: false, ctrl: true, meta: false });
+  assert.equal(workspace.readView(workspace.activeViewId!)?.selections.members[0]?.head.at.offset, 4, 'no-file restart restores newest jump and clamps changed files');
+  host.dispose();
+}

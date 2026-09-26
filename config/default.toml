@@ -209,6 +209,7 @@ d = "diagnostics.pick"
 e = "panel.problems.focus"
 m = "editor.mouse.toggle"
 w = "editor.wrap.toggle"
+p = "editor.markdown-preview.toggle"
 r = "search.replace"
 
 [keys.normal.space.v]

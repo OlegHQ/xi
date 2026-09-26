@@ -58,3 +58,29 @@ again and refuses a file that appeared after review instead of overwriting it.
 `tests/workbench/explorer-mini-files.test.ts` compares text and cursor checkpoints
 against pinned mini.files on the pinned Neovim development oracle. This verifies the
 covered commands rather than claiming every Neovim command or mini.files feature.
+
+## Markdown preview
+
+In Markdown files, `Space p` toggles OpenTUI's rendered Markdown viewer in place of the
+source pane. Headings, emphasis, lists, links, fenced code and tables use OpenTUI's native
+Markdown component. Preview is remembered per buffer and works in split panes.
+
+Vim motions, search, Visual selections and yanks still operate on the original document.
+Vertical motions scroll the preview; `gg` and `G` reach its start and end. Rendered cells
+and source selections need not coincide. Mouse selection belongs to the Markdown viewer.
+Insert and Replace modes show the source; returning to Normal restores preview.
+`Space p` restores the source without changing its text or undo history.
+
+UI and render failures appear in a dialog rather than being printed over the terminal.
+The preview dialog offers `Space p` to return to the source. The general UI dialog includes
+the error and a retry button. Process-level fatal failures still restore the terminal and
+exit through the crash handler.
+
+## Jump history
+
+Jump history survives normal editor exits. Xi stores up to 100 file locations in
+`$XDG_STATE_HOME/xi/jumps.json` (default `~/.local/state/xi/jumps.json`). After
+reopening, `Ctrl+O` returns to the last session's locations, opening files as needed;
+`Ctrl+I` moves forward. Lines and columns are clamped if a file has become shorter.
+Missing files report a status message; another `Ctrl+O` continues to older entries.
+This saves navigation locations, not unsaved buffer contents.

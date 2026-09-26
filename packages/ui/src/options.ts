@@ -23,6 +23,8 @@ import type { ContextMenuStore } from './context-menu';
 import type { WorkbenchPointerEvent, WorkbenchTheme } from './workbench';
 
 export interface OpenTuiWorkbenchOptions {
+  readonly scheduleMarkdownPreview?: (task: () => void) => Disposable;
+  readonly isMarkdownPreview?: (viewId: string) => boolean;
   readonly comparison?: import('../git/editor').ComparisonReadPort;
   /** Renderer creation may begin while the application composes its workbench. */
   readonly renderer?: Promise<CliRenderer>;

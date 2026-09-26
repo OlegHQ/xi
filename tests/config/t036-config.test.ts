@@ -112,7 +112,7 @@ const expectedNormalLeader = {
   q: 'macro.record', Y: `macro:${JSON.stringify(['"', '+', 'y', 'y'])}`, c: 'config.open', s: 'sidebar.toggle', f: 'files.pick', b: 'buffers.pick',
   ';': 'command.pick', '/': 'search.workspace', o: 'files.edit-directory', O: 'files.edit-buffer-directory',
   t: 'theme.pick', k: 'lsp.hover', a: 'lsp.code-action', d: 'diagnostics.pick',
-  e: 'panel.problems.focus', m: 'editor.mouse.toggle', w: 'editor.wrap.toggle', r: 'search.replace',
+  e: 'panel.problems.focus', m: 'editor.mouse.toggle', w: 'editor.wrap.toggle', p: 'editor.markdown-preview.toggle', r: 'search.replace',
 };
 const expectedPanelLeader = { s: 'sidebar.toggle', l: 'panel.preview', o: 'panel.open', q: 'panel.close' };
 const expectedFocusedPanelLeaders = {

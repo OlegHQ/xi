@@ -1,4 +1,4 @@
-import { CancellationSource, type CancellationToken, type ClockPort, type CommandId, type Disposable, type DocumentVersion, type LineIndex, type Utf16Offset, type ViewId } from '../../contracts/src/index';
+import { CancellationSource, type CancellationToken, type ClockPort, type CommandId, type Disposable, type DocumentId, type DocumentVersion, type LineIndex, type Utf16Offset, type ViewId } from '../../contracts/src/index';
 import type { BufferHost } from '../host';
 import type { WorkbenchSession } from '../session';
 import { CommandRegistry } from '../commands/registry';
@@ -236,7 +236,7 @@ const WORKBENCH_COMMAND_DOCS: Readonly<Record<string, string>> = Object.freeze({
   'config.reload': 'Reload config', 'search.workspace': 'Global search in workspace folder', 'search.replace': 'Search and replace in workspace',
   'files.edit-directory': 'Edit working directory as a buffer', 'files.edit-buffer-directory': "Edit current file's directory as a buffer",
   'lsp.hover': 'Show docs for item under cursor', 'lsp.code-action': 'Perform code action', 'lsp.references': 'Goto references',
-  'lsp.rename': 'Rename symbol', 'editor.goto-word': 'Jump to a two-character label', 'editor.mouse.toggle': 'Toggle mouse', 'editor.wrap.toggle': 'Toggle soft wrap',
+  'lsp.rename': 'Rename symbol', 'editor.goto-word': 'Jump to a two-character label', 'editor.mouse.toggle': 'Toggle mouse', 'editor.wrap.toggle': 'Toggle soft wrap', 'editor.markdown-preview.toggle': 'Toggle Markdown preview',
   'panel.files.focus': 'Focus files', 'panel.search.focus': 'Focus search', 'panel.git.focus': 'Focus git changes',
   'panel.outline.focus': 'Focus outline', 'panel.outline.toggle': 'Toggle outline', 'panel.problems.focus': 'Open problems',
   'panel.preview': 'Preview selected item', 'panel.open': 'Open selected item', 'panel.close': 'Close panel',
@@ -262,6 +262,7 @@ export class WorkbenchInputRouter implements Disposable {
   #scrolloff: number | undefined;
   #jumpLabelAlphabet: readonly string[];
   #jumpLabels: JumpLabelState | undefined;
+  readonly #markdownPreviewBuffers = new Set<DocumentId>();
   #leaderPending = false;
   #leaderKeys: readonly string[] = Object.freeze([]);
   #macroRegisterPending = false;
@@ -325,6 +326,12 @@ export class WorkbenchInputRouter implements Disposable {
 
   get prefixHelp(): PrefixHelpController { return this.#prefixHelp; }
   get leaderPending(): boolean { return this.#leaderPending; }
+
+  isMarkdownPreview(viewId: string): boolean {
+    const view = this.#options.session.readView(viewId as ViewId);
+    return view !== undefined && view.session.mode !== 'insert' && view.session.mode !== 'replace'
+      && this.#markdownPreviewBuffers.has(view.document.id);
+  }
 
   jumpLabelAnnotations(documentId: string, documentVersion: number): readonly JumpLabelState['annotations'][number][] {
     const labels = this.#jumpLabels;
@@ -809,6 +816,20 @@ export class WorkbenchInputRouter implements Disposable {
       }
       case 'editor.goto-word': this.openJumpLabels(); return true;
       case 'sidebar.toggle': this.#options.toggleSidebar?.(); return true;
+      case 'editor.markdown-preview.toggle': {
+        const viewId = this.#options.session.activeViewId;
+        const view = viewId === undefined ? undefined : this.#options.session.readView(viewId);
+        const path = view === undefined ? undefined : this.#options.session.buffer(view.document.id)?.path;
+        if (view === undefined || path === undefined || !/\.(?:md|markdown|mdown|mkd|mkdn)$/iu.test(path)) {
+          this.#options.onError('Markdown preview requires a Markdown file');
+          return true;
+        }
+        const enabled = !this.#markdownPreviewBuffers.delete(view.document.id);
+        if (enabled) this.#markdownPreviewBuffers.add(view.document.id);
+        this.#options.marker('XI_MARKDOWN_PREVIEW', { enabled });
+        this.#options.host.notifySurfaceChange();
+        return true;
+      }
       case 'editor.wrap.toggle': this.#options.marker('XI_WRAP', { enabled: this.#options.toggleWrap?.() }); return true;
       case 'editor.mouse.toggle': {
         const enabled = this.#options.toggleMouseMode();

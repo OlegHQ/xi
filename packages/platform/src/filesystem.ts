@@ -7,6 +7,10 @@ export function xiRecoveryStateDirectory(environment: Readonly<Record<string, st
   return join(stateHome !== undefined && isAbsolute(stateHome) ? stateHome : join(environment.HOME ?? process.cwd(), '.local/state'), 'xi', 'recovery');
 }
 
+export function xiJumpHistoryPath(environment: Readonly<Record<string, string | undefined>>): string {
+  return join(dirname(xiRecoveryStateDirectory(environment)), 'jumps.json');
+}
+
 export function xiRecoveryJournalPath(path: string, directory: string): string {
   return join(directory, `${createHash('sha256').update(path).digest('hex')}.json`);
 }

@@ -548,6 +548,7 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     return commandLine === undefined
       && !(!isInsertMode(mode) && key === ':' && parser.pending.kind === 'none')
       && !(event.ctrl && (key === 's' || key === 'S'))
+      && !(mode === 'normal' && options.jumps !== undefined && ((event.ctrl && ['o', 'i', 'p'].includes(key.toLowerCase())) || key === '<Tab>'))
       && !(mode === 'normal' && key === 'q')
       && !(mode === 'normal' && event.ctrl && (key === 'c' || key === 'C'))
       && !((mode === 'normal' || isVisualMode(mode)) && isSearchTriggerKey(key))
@@ -1293,23 +1294,32 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
 
     function executeCommand(command: VimCommandIntent): void | Promise<void> {
       const primary = selections.members.find((member) => member.id === selections.primaryId) ?? selections.members[0];
-      if (command.kind === 'single-key' && mode === 'normal' && (command.key === '<C-o>' || command.key === '<C-i>' || command.key === '<C-p>')) {
-        for (let step = 0; step < command.count.value; step += 1) {
-          const moved = command.key === '<C-o>' ? jumpBackward(options.jumps?.read() ?? jumpHistory) : jumpForward(options.jumps?.read() ?? jumpHistory);
-          if (!moved.ok) break;
-          const current = document.snapshot();
-          if (moved.value.target.documentId !== documentId) {
-            if (options.jumps?.activate(moved.value.target) !== true) break;
-          } else {
-            const at = Math.min(moved.value.target.offset, current.lengthUtf16) as Utf16Offset;
-            selections = makeNormalSelection(current, at, (selections.selectionGeneration as number) + 1, selections.primaryId);
-            motionCursor = makeMotionCursor(current, selections);
+      if (command.kind === 'single-key' && mode === 'normal' && (command.key === '<C-o>' || command.key === '<C-i>' || command.key === '<Tab>' || command.key === '<C-p>')) {
+        const navigate = (start: number): void | Promise<void> => {
+          for (let step = start; step < command.count.value; step += 1) {
+            const moved = command.key === '<C-o>' ? jumpBackward(options.jumps?.read() ?? jumpHistory) : jumpForward(options.jumps?.read() ?? jumpHistory);
+            if (!moved.ok) break;
+            const current = document.snapshot();
+            if (options.jumps !== undefined || moved.value.target.documentId !== documentId) {
+              const activated = options.jumps?.activate(moved.value.target);
+              if (activated instanceof Promise) return activated.then((ok) => {
+                jumpHistory = moved.value.state;
+                options.jumps?.write(jumpHistory);
+                if (ok) return navigate(step + 1);
+                parser = makeParser(mode, selections);
+              });
+              if (activated !== true) break;
+            } else {
+              const at = Math.min(moved.value.target.offset, current.lengthUtf16) as Utf16Offset;
+              selections = makeNormalSelection(current, at, (selections.selectionGeneration as number) + 1, selections.primaryId);
+              motionCursor = makeMotionCursor(current, selections);
+            }
+            jumpHistory = moved.value.state;
+            options.jumps?.write(jumpHistory);
           }
-          jumpHistory = moved.value.state;
-          options.jumps?.write(jumpHistory);
-        }
-        parser = makeParser(mode, selections);
-        return;
+          parser = makeParser(mode, selections);
+        };
+        return navigate(0);
       }
       if (command.kind === 'mode-transition' && isVisualMode(mode)) {
         if (command.to === 'normal') {

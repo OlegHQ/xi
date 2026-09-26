@@ -87,6 +87,7 @@ export interface WorkbenchPointerEvent {
 }
 
 export interface WorkbenchRenderableOptions extends RenderableOptions<WorkbenchRenderable> {
+  readonly isMarkdownPreview?: (viewId: string) => boolean;
   readonly comparison?: ComparisonReadPort;
   readonly workbench: WorkbenchReadPort;
   /** Helix-compatible line/cell padding around the cursor while following it. */
@@ -448,6 +449,7 @@ export class WorkbenchRenderable extends Renderable {
   #lastCurrentSyntax: CurrentSyntaxSnapshot | undefined;
   #lastPaintStats: MotionPaintStats | undefined;
   #pointerFrameId: number | undefined;
+  readonly #isMarkdownPreview: WorkbenchRenderableOptions['isMarkdownPreview'];
   /** Screen cell (0-based) of the active view's primary cursor as of the last paint, for
    * anchoring popups (hover, completion, signature) next to it. */
   #cursorCell: { readonly x: number; readonly y: number } | undefined;
@@ -461,6 +463,7 @@ export class WorkbenchRenderable extends Renderable {
     };
     super(ctx, renderOptions);
     this.#workbench = options.workbench;
+    this.#isMarkdownPreview = options.isMarkdownPreview;
     this.#scrolloff = options.scrolloff ?? 0;
     this.#lineNumber = options.lineNumber ?? 'absolute';
     this.#lineNumberMinWidth = options.lineNumberMinWidth ?? 3;
@@ -653,6 +656,14 @@ export class WorkbenchRenderable extends Renderable {
     const layoutRead = this.#workbench.readLayout?.();
     if (layoutRead?.split.root?.kind === 'split') return this.#collectPanes(geometry, layoutRead).panes.map(pane => ({ viewId: pane.viewId, x: pane.x, y: pane.y - 1, width: pane.width }));
     return [{ viewId: String(this.#workbench.activeViewId ?? ''), x: geometry.editorX, y: 0, width: geometry.editorWidth }];
+  }
+  getEditorPanes(width: number, height: number): readonly { readonly viewId: string; readonly x: number; readonly y: number; readonly width: number; readonly height: number }[] {
+    const sidebar = this.#sidebar?.();
+    const geometry = calculateWorkbenchLayout(width, height, this.#showBottomPanel, sidebar?.width, sidebar?.visible !== false, this.bufferlineVisible());
+    if (geometry.compact) return [];
+    const layout = this.#workbench.readLayout?.();
+    if (layout?.split.root?.kind === 'split' && width >= 80) return this.#collectPanes(geometry, layout).panes;
+    return [{ viewId: String(this.#workbench.activeViewId ?? ''), x: geometry.editorX, y: geometry.editorTop, width: geometry.editorWidth, height: geometry.editorHeight }];
   }
   private bufferlineVisible(): boolean {
     if (this.#bufferline === 'always') return true;
@@ -904,6 +915,15 @@ export class WorkbenchRenderable extends Renderable {
       return;
     }
     this.#comparisonPaint = undefined;
+    if (activeViewId !== undefined && this.#isMarkdownPreview?.(String(activeViewId)) === true
+      && !(splitRoot?.kind === 'split' && this.width >= 80) && !geometry.compact) {
+      buffer.fillRect(geometry.editorX, geometry.editorTop, geometry.editorWidth, geometry.editorHeight, this.#background);
+      this.#lastFrame = undefined;
+      this.#cursorCell = undefined;
+      this.ctx.setCursorPosition(0, 0, false);
+      return;
+    }
+
     const relativeLineNumberCursor = view === undefined ? undefined : this.relativeLineNumberCursor(view);
     const cursorLine = view === undefined ? undefined : this.cursorLine(view);
     const diagnostics = view === undefined ? [] : this.#editorDiagnostics?.(view.document.id) ?? [];
@@ -1040,6 +1060,17 @@ export class WorkbenchRenderable extends Renderable {
     for (const pane of panes) {
       const view = this.#workbench.readView(pane.viewId as import('../../contracts/src/index').ViewId);
       if (view === undefined) continue;
+      if (this.#isMarkdownPreview?.(pane.viewId) === true) {
+        buffer.fillRect(pane.x, pane.y, pane.width, pane.height, this.#background);
+        this.#paneFrames.delete(pane.viewId);
+        this.#paneLastFrames.delete(pane.viewId);
+        if (String(this.#workbench.activeViewId) === pane.viewId) {
+          this.#cursorCell = undefined;
+          this.ctx.setCursorPosition(0, 0, false);
+        }
+        continue;
+      }
+
       let paneLayout = this.#paneLayouts.get(pane.viewId);
       if (paneLayout === undefined) {
         paneLayout = new ViewportLayout();

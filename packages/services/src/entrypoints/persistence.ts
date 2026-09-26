@@ -10,3 +10,5 @@ export type {
   SaveFileOptions,
   SaveFileResult,
 } from '../../persistence';
+
+export { loadJumpHistory, saveJumpHistory } from '../../persistence/jumps';

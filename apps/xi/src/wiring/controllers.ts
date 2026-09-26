@@ -79,7 +79,7 @@ export interface ControllersDeps {
   readonly NodeProcessPort: typeof NodeProcessPort;
   readonly createClock: typeof createNodeClock;
   readonly positionToOffset: typeof import('../../../../packages/document/src/entrypoints/launch').positionToOffset;
-  readonly openDocumentAt: (path: string | undefined, documentId: DocumentId) => Promise<TextFileDocument | undefined>;
+  readonly openDocumentAt: (path: string | undefined, documentId: DocumentId, mustExist?: boolean) => Promise<TextFileDocument | undefined>;
   readonly editorConfigForPath: (path: string) => EditorConfigProperties | undefined;
   readonly marker: (name: string, payload?: unknown) => void;
   readonly xiUiTestMarkersEnabled: boolean;
@@ -134,6 +134,7 @@ export interface Controllers {
   readonly syntaxResultSubscription: Disposable;
   readonly mouseMode: { readonly registered: (toggle: () => boolean) => void; readonly toggle: () => boolean };
   readonly wrapMode: { readonly registered: (toggle: () => boolean) => void; readonly toggle: () => boolean };
+  readonly scheduleMarkdownPreview: (task: () => void) => Disposable;
   readonly jobControlDisposables: Disposable[];
   /** Helix-style picker preview: leading lines of a file, read once in the background and
    * cached; `undefined` while loading (a surface change re-renders once it lands). */
@@ -659,7 +660,7 @@ function createHostController(ctx: BuildContext, forward: ForwardRefs, workbench
       return { ...baseInsertOptions, tabstop, shiftwidth, softtabstop: shiftwidth,
         expandtab: settings?.indentStyle === undefined ? indent?.unit !== '\t' : settings.indentStyle === 'space' };
     },
-    openDocument: async (path, documentId) => (path === undefined ? undefined : await forward.directoryDraftController.openDocumentIfDirectory(path, documentId)) ?? deps.openDocumentAt(path, documentId),
+    openDocument: async (path, documentId, mustExist) => (path === undefined ? undefined : await forward.directoryDraftController.openDocumentIfDirectory(path, documentId)) ?? deps.openDocumentAt(path, documentId, mustExist),
     workspaceRelativePath: (path) => filesystem.workspaceRelativePath(workspaceRoot, path),
     marker,
     launchViewId: id<ViewId>('xi-launch-view'),
@@ -1720,7 +1721,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     syntaxResultSubscription,
     mouseMode,
     wrapMode,
-    jobControlDisposables,
+    jobControlDisposables, scheduleMarkdownPreview: task => clock.schedule(0, task),
     fileIndexStarter,
     pickerPreview: createPickerPreview(ctx, host, workbench, diagnostics),
     editorDiagnostics: documentId => {

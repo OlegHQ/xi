@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { useTerminalDimensions, type JSX } from '@opentui/solid';
 import type { MouseEvent } from '@opentui/core/renderer';
-import { createSignal, onCleanup } from 'solid-js';
+import { ErrorBoundary, For, Suspense, createSignal, lazy, onCleanup } from 'solid-js';
 import type { Disposable } from '../../../contracts/src/index.ts';
 import type { WorkbenchReadPort, ExCommandLineReadModel } from '../../../workbench/src/index.ts';
 import type { WorkbenchRenderable } from '../workbench';
@@ -48,11 +48,12 @@ import {
 export interface WorkbenchAppProps {
   readonly workbench: WorkbenchReadPort;
   readonly fileLabel: string;
-  readonly viewport: Pick<WorkbenchRenderable, 'cursorCell' | 'forwardPointerEvent' | 'getTabStrips'>;
+  readonly viewport: Pick<WorkbenchRenderable, 'cursorCell' | 'forwardPointerEvent' | 'getTabStrips' | 'getEditorPanes'>;
   readonly options: OpenTuiWorkbenchOptions;
   readonly theme: WorkbenchTheme;
   readonly themeBridge: SolidThemeBridge<WorkbenchTheme>;
   readonly requestFrame: () => void;
+  readonly subscribeFrame?: (listener: () => void) => Disposable;
 }
 
 export function popupBorderVisible(policy: 'none' | 'popup' | 'menu' | 'all' | undefined, kind: 'popup' | 'menu'): boolean {
@@ -592,10 +593,25 @@ function ContextMenuBackdrop(props: { readonly store: NonNullable<OpenTuiWorkben
     }} />;
 }
 
+const MarkdownPreview = lazy(() => import('./markdown-preview'));
+
 export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
   const dimensions = useTerminalDimensions();
   const options = props.options;
   const panelProps = visibilitySubscription(options);
+  const [previewPanes, setPreviewPanes] = createSignal<ReturnType<WorkbenchRenderable['getEditorPanes']>>([]);
+  let previewGeometry = '';
+  const updatePreview = () => {
+    const size = dimensions();
+    const panes = props.viewport.getEditorPanes(size.width, size.height).filter(pane => options.scheduleMarkdownPreview !== undefined && options.isMarkdownPreview?.(pane.viewId) === true);
+    const key = panes.map(pane => `${pane.viewId}:${pane.x}:${pane.y}:${pane.width}:${pane.height}`).join('|');
+    if (key !== previewGeometry) { previewGeometry = key; setPreviewPanes(panes); }
+  };
+  const previewWake = options.subscribeSurfaceChanges?.(updatePreview);
+  const previewFrames = props.subscribeFrame?.(updatePreview);
+  onCleanup(() => { previewWake?.dispose(); previewFrames?.dispose(); });
+  updatePreview();
+
   const scopeColors = (scope: string, headerScope?: string, selectedScope?: string) => (theme: WorkbenchTheme) => {
     const selected = selectedScope ?? (scope === 'ui.menu' ? 'ui.menu.selected' : 'ui.selection.primary');
     const style = helixThemeStyle(theme, scope);
@@ -676,6 +692,16 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
 
   return (
     <box position="absolute" left={0} top={0} width="100%" height="100%">
+      <For each={previewPanes()}>{pane =>
+        <ErrorBoundary fallback={(error: unknown) => <box position="absolute" left={pane.x} top={pane.y} width={pane.width} height={pane.height} zIndex={150} backgroundColor={props.theme.background} padding={1} flexDirection="column">
+          <text content="Markdown preview failed · Space p: return to source" fg={props.theme.error} />
+          <text content={error instanceof Error ? error.message : String(error)} fg={props.theme.foreground} wrapMode="word" />
+        </box>}>
+          <Suspense fallback={<box position="absolute" left={pane.x} top={pane.y} width={pane.width} height={pane.height} backgroundColor={props.theme.background}><text content="Loading Markdown preview…" fg={props.theme.muted} /></box>}>
+            <MarkdownPreview pane={pane} workbench={props.workbench} theme={props.themeBridge} requestFrame={props.requestFrame} subscribeFrame={props.subscribeFrame} schedule={options.scheduleMarkdownPreview!} />
+          </Suspense>
+        </ErrorBoundary>
+      }</For>
       <ChromeSurface
         workbench={props.workbench}
         theme={props.theme}

@@ -12,7 +12,10 @@ Xi owns Vim modes, motions, operators, registers, repeat, search, and undo. Pres
 | `Space /` | Search the workspace. |
 | `Space t` | Preview and select a theme. |
 | `Space w` | Toggle soft wrap. |
+| `Space p` | Toggle rendered Markdown preview for the current Markdown file. |
 | `Space Shift+Y` | Copy the current line to the system clipboard. |
 | `"+p` / `"+P` | Put from the system clipboard through Vim registers. |
 
 Terminal bracketed paste puts text in Normal mode and inserts it atomically in Insert mode. Xi also accepts user keybindings in `config.toml`; see [configuration](docs/configuration.html) for the exact syntax and priority.
+
+Markdown preview uses OpenTUI’s native renderer. Vim navigation, Visual selection and yank still use the source document; vertical motions scroll the viewer, and `gg`/`G` reach its ends. Insert or Replace temporarily shows the source. Rendered cells and source selections may differ.

@@ -276,6 +276,7 @@ export async function runOpenTuiWorkbench(
     },
   });
   const viewport = new WorkbenchRenderable(renderer.root.ctx, {
+    ...(options.isMarkdownPreview === undefined ? {} : { isMarkdownPreview: options.isMarkdownPreview }),
     workbench,
     ...(options.editorDiagnostics === undefined ? {} : { editorDiagnostics: options.editorDiagnostics }),
     ...(options.virtualAnnotations === undefined ? {} : { virtualAnnotations: options.virtualAnnotations }),
@@ -363,6 +364,7 @@ export async function runOpenTuiWorkbench(
     pendingKeys.push({ pasteBytes: event.bytes });
     drainKeys();
   });
+  const frameListeners = new Set<() => void>();
   await mountSolidRoot(renderer, [createWorkbenchAppNode({
     workbench,
     fileLabel,
@@ -370,6 +372,7 @@ export async function runOpenTuiWorkbench(
     options,
     theme: viewport.theme,
     themeBridge: solidTheme,
+    subscribeFrame: listener => { frameListeners.add(listener); return { dispose: () => { frameListeners.delete(listener); } }; },
     requestFrame,
   })], viewport.forwardPointerEvent.bind(viewport));
   options.startupTrace?.('shell-mounted');
@@ -450,12 +453,12 @@ export async function runOpenTuiWorkbench(
 
   const prepareFrame = async (): Promise<void> => {
     viewport.syncAnchors();
+    for (const listener of frameListeners) listener();
     // An overlay may have owned the hardware cursor in the preceding frame.
     renderer.setCursorPosition(0, 0, false);
   };
   renderer.setFrameCallback(prepareFrame);
 
-  renderer.on('render:error', () => renderer.destroy());
   renderer.on('resize', () => requestFrame());
   let ready = false;
   renderer.on('frame', () => {

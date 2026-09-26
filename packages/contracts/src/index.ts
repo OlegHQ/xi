@@ -317,3 +317,10 @@ export interface SyntaxRead {
 export interface SyntaxReadPort {
   readSyntax(documentId: DocumentId): SyntaxRead | undefined;
 }
+
+/** Stable jump location on disk; lines and UTF-16 columns are zero-based. */
+export interface PersistedJumpLocation {
+  readonly path: string;
+  readonly line: number;
+  readonly columnUtf16: number;
+}

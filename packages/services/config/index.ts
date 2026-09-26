@@ -59,7 +59,7 @@ export interface ConfigCommandCatalog {
 export const DEFAULT_COMMAND_CATALOG: ConfigCommandCatalog = Object.freeze({
   commandIds: Object.freeze([
     'files.pick', 'buffers.pick', 'diagnostics.pick', 'command.pick', 'search.workspace', 'search.replace', 'files.edit-directory', 'files.edit-buffer-directory', 'theme.pick',
-    'lsp.hover', 'lsp.code-action', 'lsp.references', 'lsp.rename', 'editor.goto-word', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'panel.outline.toggle', 'panel.problems.focus', 'panel.preview', 'panel.open', 'panel.close', 'panel.expand-all', 'panel.include-hidden', 'panel.include-ignored', 'git.diff', 'editor.mouse.toggle', 'editor.wrap.toggle', 'sidebar.toggle', 'macro.record',
+    'lsp.hover', 'lsp.code-action', 'lsp.references', 'lsp.rename', 'editor.goto-word', 'panel.files.focus', 'panel.search.focus', 'panel.git.focus', 'panel.outline.focus', 'panel.outline.toggle', 'panel.problems.focus', 'panel.preview', 'panel.open', 'panel.close', 'panel.expand-all', 'panel.include-hidden', 'panel.include-ignored', 'git.diff', 'editor.mouse.toggle', 'editor.wrap.toggle', 'editor.markdown-preview.toggle', 'sidebar.toggle', 'macro.record',
     'selection.add-above', 'selection.add-below', 'selection.add-next-match', 'selection.skip-next-match',
     'selection.select-all-matches', 'selection.split-lines', 'selection.select-regex', 'selection.keep-matching',
     'selection.remove-primary', 'selection.keep-primary', 'selection.rotate-primary-next', 'selection.rotate-primary-previous',
