@@ -102,7 +102,7 @@ class FakeTree implements ExplorerTreePort {
   }
 
   get model(): ExplorerTreeModel {
-    return { generation: this.#generation, roots: [...this.nodes.values()].filter((node) => node.kind === 'root').map((node) => node.id), selectedId: this.#selectedId, filter: this.#filter, includeHidden: this.#includeHidden, includeIgnored: this.#includeIgnored, state: 'ready', visibleRows: [] };
+    return { generation: this.#generation, roots: [...this.nodes.values()].filter((node) => node.kind === 'root').map((node) => node.id), selectedId: this.#selectedId, filter: this.#filter, includeHidden: this.#includeHidden, includeIgnored: this.#includeIgnored, state: 'ready', visibleRows: [...this.nodes.values()].map((node) => ({ nodeId: node.id })) };
   }
   subscribe(listener: (model: ExplorerTreeModel) => void) {
     this.#listeners.add(listener);
@@ -135,6 +135,15 @@ class FakeJournaledOperations implements ExplorerJournaledOperationsPort {
   #trashCounter = 0;
   constructor(private readonly fs: FakeFileOperations, private readonly trashDirectory: string) {}
   async apply(plan: ExplorerDirectoryOperationPlan, _cancellation: CancellationToken): Promise<Result<{ readonly journal: unknown }, { readonly kind: string; readonly message?: string }>> {
+    if (plan.operations.length > 1) {
+      const entries: unknown[] = [];
+      for (const operation of plan.operations) {
+        const applied = await this.apply({ ...plan, operations: [operation] }, _cancellation);
+        if (!applied.ok) return applied;
+        entries.push(applied.value.journal);
+      }
+      return { ok: true, value: { journal: { kind: 'batch', entries } } };
+    }
     const operation = plan.operations[0];
     if (operation === undefined) return { ok: false, error: { kind: 'invalid-plan', message: 'empty plan' } };
     if (operation.kind === 'rename') {
@@ -158,6 +167,10 @@ class FakeJournaledOperations implements ExplorerJournaledOperationsPort {
   }
   async restoreApplied(journal: unknown, _cancellation: CancellationToken): Promise<Result<unknown, { readonly kind: string; readonly message?: string }>> {
     const entry = journal as { readonly kind: string; readonly from: string; readonly to: string };
+    if (entry.kind === 'batch') {
+      for (const item of [...(journal as { readonly entries: readonly unknown[] }).entries].reverse()) await this.restoreApplied(item, _cancellation);
+      return { ok: true, value: undefined };
+    }
     if (entry.kind === 'copy') {
       this.fs.calls.push(`remove:${entry.to}`);
       this.fs.existing.delete(entry.to);
@@ -350,6 +363,45 @@ filesystem.calls.length = 0;
 await controller.handleKeypress(key('u', 'u'));
 assert.ok(filesystem.calls.some((call) => call.startsWith('rename:') && call.endsWith('->/workspace/b.txt')), 'T116-EXPLORER-05a restore renames the trashed path back');
 assert.ok(markers.some((entry) => entry.name === 'XI_EXPLORER_RESTORE_APPLIED'), 'T116-EXPLORER-05b a restore-applied marker was emitted');
+
+filesystem.calls.length = 0;
+await controller.handleKeypress(key('d', 'd'));
+await controller.handleKeypress(key('d', 'd'));
+assert.equal(filesystem.existing.has('/workspace/b.txt'), false, 'T116-EXPLORER-DD-01 dd moves the selected row to trash');
+await controller.handleKeypress(key('u', 'u'));
+assert.equal(filesystem.existing.has('/workspace/b.txt'), true, 'T116-EXPLORER-DD-02 u restores a dd deletion');
+
+const visualA: ExplorerTreeNode = { id: 'visual-a', kind: 'file', name: 'visual-a.txt', path: '/workspace/visual-a.txt', relativePath: 'visual-a.txt', expanded: false, parentId: rootNode.id };
+const visualB: ExplorerTreeNode = { id: 'visual-b', kind: 'file', name: 'visual-b.txt', path: '/workspace/visual-b.txt', relativePath: 'visual-b.txt', expanded: false, parentId: rootNode.id };
+const visualTree = new FakeTree([rootNode, visualA, visualB], visualA.id);
+filesystem.existing.add(visualA.path);
+filesystem.existing.add(visualB.path);
+const visualNavigation: ExplorerNavigationPort = {
+  handle: async (action) => {
+    if (action === 'down') return visualTree.select(visualB.id);
+    if (action === 'up') return visualTree.select(visualA.id);
+    return true;
+  },
+  dispose: () => {},
+};
+const visualController = new ExplorerController({
+  host, session, filesystem, fileOperations, clock: testClock,
+  marker: (name, payload) => { markers.push({ name, payload }); },
+  onError: (message) => { errors.push(message); },
+  workspaceRelativePath: (path) => path.startsWith('/workspace/') ? path.slice('/workspace/'.length) : undefined,
+  trashDirectory: '/workspace/.xi-trash', ensureServices: async () => {},
+});
+visualController.attachTree(visualTree, visualNavigation);
+visualController.open();
+await visualController.handleKeypress(key('v', 'v'));
+await visualController.handleKeypress(key('j', 'j'));
+assert.deepEqual(visualController.visualSelectionIds, [visualA.id, visualB.id], 'T116-EXPLORER-VISUAL-01 v j selects two visible rows');
+await visualController.handleKeypress(key('x', 'x'));
+assert.equal(filesystem.existing.has(visualA.path), false, 'T116-EXPLORER-VISUAL-02 x trashes the first selected file');
+assert.equal(filesystem.existing.has(visualB.path), false, 'T116-EXPLORER-VISUAL-03 x trashes the second selected file');
+await visualController.handleKeypress(key('u', 'u'));
+assert.equal(filesystem.existing.has(visualA.path) && filesystem.existing.has(visualB.path), true, 'T116-EXPLORER-VISUAL-04 one u restores both files');
+visualController.dispose();
 
 // DEF-1124: stale prompts do not mutate disk; the context menu routes Move through the same
 // workspace-relative prompt and journal path as keyboard actions.

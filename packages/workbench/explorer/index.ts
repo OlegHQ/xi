@@ -28,7 +28,7 @@ export interface ExplorerTreeModel {
   readonly includeHidden?: boolean;
   readonly includeIgnored?: boolean;
   readonly state: string;
-  readonly visibleRows: readonly unknown[];
+  readonly visibleRows: readonly { readonly nodeId: string }[];
 }
 
 /** Narrow port onto `packages/services/files`'s `ExplorerTree`: only the members `main()`
@@ -131,6 +131,8 @@ interface ExplorerDraft {
   readonly generation: number;
 }
 
+const EMPTY_VISUAL_IDS: readonly string[] = Object.freeze([]);
+
 /**
  * Owns the Explorer panel's state and key handling: open/filtering/pending-`g`/rename-copy-
  * delete drafts and the in-memory undo journal. Moved out of `apps/xi/src/main.ts`'s `main()`
@@ -153,7 +155,8 @@ export class ExplorerController {
   #moveDraft: ExplorerDraft | undefined;
   #pendingCtrlW = false;
   #pendingZ = false;
-  #deleteConfirm: { readonly nodeId: string; readonly generation: number } | undefined;
+  #deleteConfirm: { readonly nodeIds: readonly string[]; readonly generation: number } | undefined;
+  #visualAnchorId: string | undefined;
   #fileClipboard: { readonly nodeId: string; readonly path: string; readonly name: string; readonly cut: boolean } | undefined;
   readonly #undoJournal: { readonly kind: 'rename' | 'copy' | 'delete'; readonly from: string; readonly to: string; readonly journal: unknown }[] = [];
   #tree: ExplorerTreePort | undefined;
@@ -170,6 +173,15 @@ export class ExplorerController {
   toggleIncludeHidden(): void { if (this.#tree?.setIncludeHidden !== undefined) this.#tree.setIncludeHidden(!(this.#tree.model.includeHidden ?? false)); }
   toggleIncludeIgnored(): void { if (this.#tree?.setIncludeIgnored !== undefined) this.#tree.setIncludeIgnored(!(this.#tree.model.includeIgnored ?? false)); }
   get loadError(): string | undefined { return this.#loadError; }
+  get visualSelectionIds(): readonly string[] {
+    const rows = this.#tree?.model.visibleRows;
+    const anchor = this.#visualAnchorId;
+    const current = this.#tree?.model.selectedId;
+    if (rows === undefined || anchor === undefined || current === undefined) return EMPTY_VISUAL_IDS;
+    const from = rows.findIndex((row) => row.nodeId === anchor);
+    const to = rows.findIndex((row) => row.nodeId === current);
+    return from < 0 || to < 0 ? EMPTY_VISUAL_IDS : rows.slice(Math.min(from, to), Math.max(from, to) + 1).map((row) => row.nodeId);
+  }
   /** True while a filter/rename/copy/delete prompt owns typed characters, so `:` must stay here. */
   get capturesTextInput(): boolean { return this.#filtering || this.#renameDraft !== undefined || this.#copyDraft !== undefined || this.#moveDraft !== undefined || this.#createDraft !== undefined || this.#deleteConfirm !== undefined; }
   /** The in-progress rename/copy/create/delete prompt, painted on the panel's footer row. */
@@ -178,7 +190,10 @@ export class ExplorerController {
     if (this.#copyDraft !== undefined) return `Copy as sibling name: ${this.#copyDraft.text}`;
     if (this.#moveDraft !== undefined) return `Move to (workspace path): ${this.#moveDraft.text}`;
     if (this.#createDraft !== undefined) return `New ${this.#createDraft.directory ? 'folder' : 'file'}: ${this.#createDraft.text}`;
-    if (this.#deleteConfirm !== undefined) return `Move ${this.#tree?.readNode(this.#deleteConfirm.nodeId)?.name ?? 'entry'} to trash? y/n`;
+    if (this.#deleteConfirm !== undefined) return this.#deleteConfirm.nodeIds.length === 1
+      ? `Move ${this.#tree?.readNode(this.#deleteConfirm.nodeIds[0] ?? '')?.name ?? 'entry'} to trash? y/n`
+      : `Move ${this.#deleteConfirm.nodeIds.length} entries to trash? y/n`;
+    if (this.#visualAnchorId !== undefined) return `VISUAL · ${this.visualSelectionIds.length} rows`;
     return undefined;
   }
 
@@ -270,6 +285,7 @@ export class ExplorerController {
     this.#open = false;
     this.#filtering = false;
     this.#createDraft = undefined;
+    this.#visualAnchorId = undefined;
     this.#pendingCtrlW = false;
     this.#pendingZ = false;
     this.#clearPendingG();
@@ -293,11 +309,11 @@ export class ExplorerController {
     const navigation = this.#navigation;
     const key = event.name.toLowerCase();
     if (this.#deleteConfirm !== undefined) {
-      const confirmed = key === 'y';
-      const nodeId = this.#deleteConfirm.nodeId;
+      const confirmed = key === 'y' || key === 'd';
+      const nodeIds = this.#deleteConfirm.nodeIds;
       const generation = this.#deleteConfirm.generation;
       this.#deleteConfirm = undefined;
-      if (confirmed) await this.#applyDelete(nodeId, generation);
+      if (confirmed) await this.#applyDelete(nodeIds, generation);
       return true;
     }
     if (this.#createDraft !== undefined) {
@@ -344,7 +360,10 @@ export class ExplorerController {
       return true;
     }
     if (key === 'escape' || event.raw === '') {
-      if (this.#filtering || tree.model.filter.length > 0) {
+      if (this.#visualAnchorId !== undefined) {
+        this.#visualAnchorId = undefined;
+        this.#options.host.notifySurfaceChange();
+      } else if (this.#filtering || tree.model.filter.length > 0) {
         this.#filtering = false;
         tree.setFilter('');
       } else {
@@ -365,6 +384,18 @@ export class ExplorerController {
       if (!event.ctrl && !event.meta && !event.option && event.raw.length === 1 && event.raw >= ' ' && event.raw !== '') {
         tree.setFilter(`${tree.model.filter}${event.raw}`);
       }
+      return true;
+    }
+    if (key === 'v' && !event.ctrl && !event.meta && !event.option) {
+      this.#visualAnchorId = this.#visualAnchorId === undefined ? tree.model.selectedId : undefined;
+      this.#options.host.notifySurfaceChange();
+      return true;
+    }
+    if (this.#visualAnchorId !== undefined && (key === 'x' || key === 'd') && !event.ctrl && !event.meta && !event.option) {
+      const ids = this.visualSelectionIds;
+      this.#visualAnchorId = undefined;
+      this.#options.host.notifySurfaceChange();
+      if (ids.length > 0) await this.#applyDelete(ids, tree.model.generation);
       return true;
     }
     if (key === '/' || event.raw === '/') {
@@ -470,7 +501,7 @@ export class ExplorerController {
     }
     if (key === 'd' && !event.ctrl && !event.meta) {
       const node = tree.model.selectedId === undefined ? undefined : tree.readNode(tree.model.selectedId);
-      if (node !== undefined && node.kind !== 'root') this.#deleteConfirm = { nodeId: node.id, generation: tree.model.generation };
+      if (node !== undefined && node.kind !== 'root') this.#deleteConfirm = { nodeIds: [node.id], generation: tree.model.generation };
       return true;
     }
     if (key === 'u' && !event.ctrl && !event.meta) {
@@ -602,7 +633,7 @@ export class ExplorerController {
       else if (action === 'move' && node.kind !== 'symlink') this.#moveDraft = { nodeId, text: '', generation: tree.model.generation };
       else if (action === 'copy' && node.kind !== 'symlink') this.#copyDraft = { nodeId, text: node.name, generation: tree.model.generation };
       else if (action === 'duplicate' && node.kind !== 'symlink') this.#copyDraft = { nodeId, text: `${node.name} copy`, generation: tree.model.generation };
-      else if (action === 'trash') this.#deleteConfirm = { nodeId, generation: tree.model.generation };
+      else if (action === 'trash') this.#deleteConfirm = { nodeIds: [nodeId], generation: tree.model.generation };
     }
   }
 
@@ -781,26 +812,45 @@ export class ExplorerController {
     } finally { cancellation.dispose(); }
   }
 
-  async #applyDelete(nodeId: string, generation: number): Promise<void> {
+  async #applyDelete(nodeIds: readonly string[], generation: number): Promise<void> {
     const tree = this.#tree;
     if (tree === undefined) return;
-    const node = tree.readNode(nodeId);
-    if (!this.#operationNode(node, generation)) return;
-    const dirtyUnder = this.#options.session.buffers().some((buffer) => buffer.dirty === true && buffer.path !== undefined && (buffer.path === node.path || buffer.path.startsWith(`${node.path}/`)));
-    if (dirtyUnder) { this.#options.onError(`xi: cannot delete ${node.name}: it has unsaved open buffers\n`); return; }
-    const parentPath = node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '');
+    // ponytail: keep one filesystem journal bounded; split larger selections into smaller
+    // batches if users need more than 256 entries at once.
+    if (nodeIds.length > 256) { this.#options.onError('xi: delete refused: select at most 256 entries\n'); return; }
+    const candidates = nodeIds.map((id) => tree.readNode(id)).filter((node) => node?.kind !== 'root' && node?.kind !== 'state');
+    if (candidates.some((node) => !this.#operationNode(node, generation))) return;
+    const nodes = candidates.filter((node): node is ExplorerTreeNode => node !== undefined);
+    const selectedPaths = new Set(nodes.map((node) => node.path));
+    const roots = nodes.filter((node) => {
+      let parent = node.parentId === undefined ? undefined : tree.readNode(node.parentId);
+      while (parent !== undefined) {
+        if (selectedPaths.has(parent.path)) return false;
+        parent = parent.parentId === undefined ? undefined : tree.readNode(parent.parentId);
+      }
+      return true;
+    });
+    if (roots.length === 0) return;
+    const dirtyUnder = roots.find((node) => this.#options.session.buffers().some((buffer) => buffer.dirty === true && buffer.path !== undefined && (buffer.path === node.path || buffer.path.startsWith(`${node.path}/`))));
+    if (dirtyUnder !== undefined) { this.#options.onError(`xi: cannot delete ${dirtyUnder.name}: it has unsaved open buffers\n`); return; }
+    const rootId = tree.model.roots[0];
+    const workspacePath = rootId === undefined ? undefined : tree.readNode(rootId)?.path;
+    if (workspacePath === undefined) return;
+    const parentPath = roots[0]!.path.slice(0, roots[0]!.path.length - roots[0]!.name.length).replace(/\/$/u, '');
+    const oneDirectory = roots.every((node) => node.path.slice(0, node.path.length - node.name.length).replace(/\/$/u, '') === parentPath);
+    const directoryPath = oneDirectory ? parentPath : workspacePath;
     const cancellation = new CancellationSource();
     try {
-      if (!await this.#confirmRealWorkspacePath(node.path, cancellation.token, 'delete')) return;
-      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath: parentPath, baseGeneration: generation, operations: [
-        { kind: 'trash', rowId: node.id, sourceId: node.id, sourcePath: node.path },
-      ] };
+      for (const node of roots) if (!await this.#confirmRealWorkspacePath(node.path, cancellation.token, 'delete')) return;
+      if (tree.model.generation !== generation) { this.#options.onError('xi: delete cancelled: Files tree changed; start again\n'); return; }
+      const plan: ExplorerDirectoryOperationPlan = { contractVersion: 1, directoryPath, baseGeneration: generation, operations: roots.map((node) =>
+        ({ kind: 'trash', rowId: node.id, sourceId: node.id, sourcePath: node.path })) };
       const result = await this.#options.fileOperations.apply(plan, cancellation.token);
       if (!result.ok) { this.#options.onError(`xi: delete failed: ${result.error.message ?? result.error.kind}\n`); return; }
-      this.#undoJournal.push({ kind: 'delete', from: node.path, to: node.path, journal: result.value.journal });
-      this.#options.marker('XI_EXPLORER_DELETE_APPLIED', { from: node.path });
-      const parentRelative = this.#options.workspaceRelativePath(parentPath);
-      if (parentRelative !== undefined) void tree.reveal('workspace', parentRelative, this.#cancellation.token);
+      this.#undoJournal.push({ kind: 'delete', from: roots[0]!.path, to: roots[0]!.path, journal: result.value.journal });
+      for (const node of roots) this.#options.marker('XI_EXPLORER_DELETE_APPLIED', { from: node.path });
+      const relative = this.#options.workspaceRelativePath(directoryPath);
+      if (relative !== undefined) void tree.reveal('workspace', relative, this.#cancellation.token);
     } finally {
       cancellation.dispose();
     }

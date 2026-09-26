@@ -186,6 +186,7 @@ export interface OpenTuiWorkbenchOptions {
     readonly read: ExplorerReadPort;
     readonly isOpen: () => boolean;
     readonly isFocused?: () => boolean;
+    readonly visualIds?: () => readonly string[];
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
     readonly prompt?: () => string | undefined;
   };

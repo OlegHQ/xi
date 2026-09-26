@@ -262,7 +262,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
       return {
         read: explorerTree ?? loadingExplorer,
         isOpen: () => explorerFeature.isVisible && sidebarController.readModel().panel === 'files',
-        isFocused: () => explorerFeature.isOpen,
+        isFocused: () => explorerFeature.isOpen, visualIds: () => explorerFeature.visualSelectionIds,
         onPointer: (event: PointerPanelEvent) => pointerRouter.handlePanelPointer(event),
         prompt: () => explorerFeature.promptText,
       };

@@ -7,7 +7,7 @@ Before this ticket, apps/xi/src/main.ts's handleExplorerKeypress had no rename/c
 action at all -- filesystem.renamePath/copyPath/removePath existed only as unused service
 capabilities. This exercises the real, new Explorer keybindings: 'r' (rename draft, pre-filled
 with the current name), 'y' (copy draft, pre-filled with the current name), 'd' (delete --
-requires an explicit 'y' confirmation keystroke; anything else cancels with zero filesystem
+requires an explicit 'y' or second 'd' confirmation keystroke; anything else cancels with zero filesystem
 effect), and 'u' (restore/undo the most recently applied operation from an in-memory,
 session-scoped journal). Delete never permanently removes a file: it moves it into
 <workspace>/.xi-trash/ (a same-filesystem rename, so it is atomic and genuinely reversible),
@@ -259,7 +259,7 @@ def delete_case() -> str:
                 child.kill()
                 child.wait()
             os.close(master)
-    return "delete: requires explicit 'y' confirmation (no single keystroke deletes), moves to .xi-trash with content preserved, restores exactly"
+    return "delete: requires explicit 'y' or second 'd' confirmation, moves to .xi-trash with content preserved, restores exactly"
 
 
 def delete_dirty_buffer_case() -> str:
