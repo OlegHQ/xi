@@ -120,9 +120,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF_NAME}"
-          cat > dist/release/NOTES.md <<NOTES
-          Xi ${GITHUB_REF_NAME} adds native Markdown previews with Space p and keeps Ctrl+O/Ctrl+I jump history across editor restarts.
-
+          printf 'Xi %s adds native Markdown previews with Space p and keeps Ctrl+O/Ctrl+I jump history across editor restarts.\n\n' "$tag" > dist/release/NOTES.md
+          cat >> dist/release/NOTES.md <<'NOTES'
           **macOS / Linux**
 
           ```sh
