@@ -18,12 +18,27 @@ export function parseDirectoryBufferLine(text: string): { readonly id: string | 
   return { id: match?.[1], name: text.slice(match?.[0].length ?? 0), prefixLength: match?.[0].length ?? 0 };
 }
 
-export function compileDirectoryBuffers(root: string, buffers: readonly DirectoryBufferInput[], sources: readonly DirectoryBufferSource[]):
+export function compileDirectoryBuffers(root: string, buffers: readonly DirectoryBufferInput[], sources: readonly DirectoryBufferSource[], suggestNames = false):
   { readonly ok: true; readonly value: DirectoryOperationPlan } | { readonly ok: false; readonly error: string } {
   const indexed = new Map(sources.map((source) => [source.id, source]));
   const destinations = new Map<string, { readonly id: string | undefined; readonly directory: boolean }>();
   const occurrences = new Map<string, string[]>();
   const creates = new Map<string, boolean>();
+  const reserved = new Set(sources.map(source => source.path));
+  const unchanged = new Set<string>();
+  if (suggestNames) for (const buffer of buffers) {
+    const text = buffer.snapshot.slice(0 as Utf16Offset, buffer.snapshot.lengthUtf16 as Utf16Offset);
+    if (!text.ok) return { ok: false, error: 'directory text could not be read' };
+    for (const line of text.value.split('\n')) {
+      const row = parseDirectoryBufferLine(line);
+      const decoded = decodeDirectoryName(row.name);
+      if (!decoded.ok) continue;
+      const name = decoded.value.replace(/\/$/u, '');
+      const path = `${buffer.path.replace(/\/$/u, '')}/${name}`;
+      reserved.add(path);
+      if (row.id !== undefined && indexed.get(row.id)?.path === path) unchanged.add(path);
+    }
+  }
   for (const buffer of buffers) {
     const text = buffer.snapshot.slice(0 as Utf16Offset, buffer.snapshot.lengthUtf16 as Utf16Offset);
     if (!text.ok) return { ok: false, error: 'directory text could not be read' };
@@ -36,9 +51,21 @@ export function compileDirectoryBuffers(root: string, buffers: readonly Director
       const directory = decoded.value.endsWith('/');
       const name = directory ? decoded.value.slice(0, -1) : decoded.value;
       if (name.length === 0 || name.includes('\0') || name.startsWith('/') || name.split('/').some((part) => part === '' || part === '.' || part === '..')) return { ok: false, error: `${buffer.path}:${line + 1}: invalid entry name` };
-      const path = `${buffer.path.replace(/\/$/u, '')}/${name}`;
+      let path = `${buffer.path.replace(/\/$/u, '')}/${name}`;
       if (!path.startsWith(`${root.replace(/\/$/u, '')}/`)) return { ok: false, error: 'destination is outside the workspace' };
-      if (destinations.has(path)) return { ok: false, error: `duplicate destination: ${path}` };
+      if (suggestNames && (destinations.has(path) || (unchanged.has(path) && (row.id === undefined || indexed.get(row.id)?.path !== path)))) {
+        let attempt = 1;
+        const original = path;
+        do { path = directoryCopyName(original, attempt++, directory || (row.id !== undefined && indexed.get(row.id)?.kind === 'directory')); } while (reserved.has(path));
+        reserved.add(path);
+      }
+      if (destinations.has(path)) {
+        const previousId = destinations.get(path)?.id;
+        const current = row.id === undefined ? undefined : indexed.get(row.id);
+        const previous = previousId === undefined ? undefined : indexed.get(previousId);
+        const source = current !== undefined && current.path !== path ? current : previous !== undefined && previous.path !== path ? previous : undefined;
+        return { ok: false, error: `${source === undefined ? 'Create' : `Rename ${source.path} →`} ${path}: duplicate destination; choose another name` };
+      }
       if (row.id !== undefined && !indexed.has(row.id)) return { ok: false, error: 'entry identity was modified; undo that edit' };
       destinations.set(path, { id: row.id, directory });
       if (row.id !== undefined) occurrences.set(row.id, [...(occurrences.get(row.id) ?? []), path]);
@@ -75,4 +102,14 @@ export function compileDirectoryBuffers(root: string, buffers: readonly Director
   for (const [path, directory] of [...creates].sort(([left], [right]) => left.split('/').length - right.split('/').length)) operations.push({ kind: 'create', rowId: `new-${operations.length}`, sourcePath: path, destinationPath: path, directory });
   if (operations.length > 256) return { ok: false, error: 'synchronize at most 256 operations at once' };
   return { ok: true, value: { contractVersion: 1, directoryPath: root, baseGeneration: 0, operations } };
+}
+
+/** A deterministic proposal; review shows this exact path before any filesystem effect. */
+export function directoryCopyName(path: string, attempt: number, directory = false): string {
+  const slash = path.lastIndexOf('/');
+  const name = path.slice(slash + 1);
+  const dot = directory ? -1 : name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const extension = dot > 0 ? name.slice(dot) : '';
+  return `${path.slice(0, slash + 1)}${stem} (copy${attempt === 1 ? '' : ` ${attempt}`})${extension}`;
 }

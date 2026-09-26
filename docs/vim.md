@@ -35,19 +35,25 @@ Deleting a row advances to the following entry. `i` edits a name; `o`/`O` insert
 entry row. A trailing `/` creates a directory, and nested new names create parents.
 
 Edits are drafts. `=` opens a themed confirmation dialog for all visited directory
-drafts, with Cancel selected. Tab or the arrow keys choose Apply; Enter activates the
-selected button, and `y` applies directly.
+drafts, with Cancel selected. Tab or the arrow keys choose Cancel, Discard all or Apply; Enter
+activates the selected button, and `y` applies directly. Discard all resets pending Files
+edits in every visited directory without changing disk. Occupied destinations receive a free name
+such as `file (copy).txt`, shown in review before Apply; existing files are preserved.
+Invalid or unsafe operations block Apply. Rename previews name both original and destination paths.
 Escape cancels review without applying it. In Normal mode, Escape or `q`
 returns focus to the editor and preserves the drafts. Files mode appears in the main
 status line; a red theme token marks pending changes and the review hint appears only
-while drafts are modified. `j`/`k` traverse visible tree rows. Ctrl-U/Ctrl-D move and scroll
+while drafts are modified. Pending rows use a themed `*` marker. Space opens the leader
+menu in Files Normal mode and inserts a space during filename editing. `j`/`k` traverse
+visible tree rows. Ctrl-U/Ctrl-D move and scroll
 by half the Files viewport; a count sets the distance for subsequent half-page commands.
 `h` collapses a folder or selects its parent; `l` expands a folder, enters its children,
 or previews a file. `>` expands and `<` collapses folders in place, including selected
 folders in Visual mode. Clicking a folder toggles it; clicking a file previews it.
 `L`/Enter opens a file in the editor. Pasting on a folder targets that folder.
 Applied deletions go to workspace trash; synchronization resets directory undo history.
-Conflicting destinations, unsafe paths and deleting unsaved editor buffers are refused.
+Unsafe paths and deleting unsaved editor buffers are refused. Apply checks destinations
+again and refuses a file that appeared after review instead of overwriting it.
 
 `tests/workbench/explorer-mini-files.test.ts` compares text and cursor checkpoints
 against pinned mini.files on the pinned Neovim development oracle. This verifies the

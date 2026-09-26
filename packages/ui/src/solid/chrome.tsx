@@ -206,7 +206,7 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
     const branch = spec.gitBranch?.();
     const width = Math.max(1, dimensions().width);
     const statusline = spec.statusline;
-    const left = files?.focused && files.prompt ? files.prompt : (files?.focused ? `${modeLabel}  Files` : statusline === undefined ? `${modeLabel}   ${spec.fileLabel}${branch === undefined ? '' : ` (${branch})`}` : statuslineArea(statusline.left, view, modeLabel, branch)) + (files?.dirty ? `  ${files.focused ? '● = review changes' : '● Files changes · = review changes'}` : '');
+    const left = files?.focused && files.prompt ? files.prompt : (files?.focused ? `${modeLabel}  Files` : statusline === undefined ? `${modeLabel}   ${spec.fileLabel}${branch === undefined ? '' : ` (${branch})`}` : statuslineArea(statusline.left, view, modeLabel, branch)) + (files?.dirty ? `  ${files.focused ? '= review changes' : 'Files changes · = review changes'}` : '');
     const center = files?.focused || statusline === undefined ? '' : statuslineArea(statusline.center, view, modeLabel, branch);
     const rightContent = files?.focused ? '' : statusline === undefined ? `${view?.selections.members.length ?? 0} cursor${(view?.selections.members.length ?? 0) === 1 ? '' : 's'}` : statuslineArea(statusline.right, view, modeLabel, branch);
     const right = `${rightContent}${spec.workspaceTrustRestricted?.() === true ? spec.ascii === true ? ' [!] ' : ' [⚠] ' : ''}`;
@@ -218,7 +218,7 @@ export function ChromeSurface(spec: ChromeSurfaceSpec & { readonly setTheme: (se
     return cells.join('');
   };
   const statusScope = () => statuslineThemeScope(spec.colorModes === true, spec.filesStatus?.()?.focused ? spec.filesStatus?.()?.mode : spec.workbench.activeViewId === undefined ? undefined : spec.workbench.readView(spec.workbench.activeViewId)?.session.mode);
-  const statusParts = createMemo(() => { const text = statusLine(); const label = spec.filesStatus?.()?.focused ? '● = review changes' : '● Files changes · = review changes'; const start = spec.filesStatus?.()?.dirty ? text.indexOf(label) : -1; const end = start < 0 ? 0 : Math.min(text.length, start + label.length); return start < 0 ? { before: text, pending: '', after: '' } : { before: text.slice(0, start), pending: text.slice(start, end), after: text.slice(end) }; });
+  const statusParts = createMemo(() => { const text = statusLine(); const label = spec.filesStatus?.()?.focused ? '= review changes' : 'Files changes · = review changes'; const start = spec.filesStatus?.()?.dirty ? text.indexOf(label) : -1; const end = start < 0 ? 0 : Math.min(text.length, start + label.length); return start < 0 ? { before: text, pending: '', after: '' } : { before: text.slice(0, start), pending: text.slice(start, end), after: text.slice(end) }; });
   const strips = () => { version(); return bufferlineVisible() ? spec.tabStrips?.(dimensions().width, dimensions().height) ?? [{ viewId: undefined, x: layout().editorX, y: 0, width: layout().editorWidth }] : []; };
   const tabContent = (width: number, viewId?: string) => {
     version();

@@ -468,7 +468,7 @@ function explorerRows(model: ExplorerReadModel, width: number, maxRows: number, 
         { text: `${'  '.repeat(visible.depth)}${chevron} `, foreground: theme.muted },
         { text: `${icon.glyph} `, foreground: iconColor(theme, icon.color) },
         ...(selected && focused && model.edit !== undefined ? directoryNameSegments(visible.label ?? node.name, model.edit.cursorColumn, theme) : [{ text: visible.label ?? node.name, foreground: model.edit?.pendingIds?.includes(node.id) ? helixThemeColor(theme, 'error', 'fg', theme.error) : selected ? theme.foreground : (node.kind === 'directory' || node.kind === 'root' ? helixThemeColor(theme, 'ui.text.directory', 'fg', theme.foreground) : theme.foreground), bold: selected || visual, ...(directoryStyle === undefined ? {} : { style: directoryStyle }) }]),
-        ...(model.edit?.pendingIds?.includes(node.id) ? [{ text: ' ●', foreground: helixThemeColor(theme, 'error', 'fg', theme.error) }] : []),
+        ...(model.edit?.pendingIds?.includes(node.id) ? [{ text: ' *', foreground: helixThemeColor(theme, 'error', 'fg', theme.error) }] : []),
         ...(node.git === undefined ? [] : [{ text: ` ${node.git.label}`, foreground: gitColor, ...(gitStyle === undefined ? {} : { style: gitStyle }) }]),
         ...(suffix.length === 0 ? [] : [{ text: suffix, foreground: node.loadState === 'permission-denied' ? theme.error : theme.muted }]),
       ], width),
@@ -749,11 +749,17 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
           const start = Math.max(0, Math.min(review.selectedIndex, review.lines.length - capacity));
           return [
             { text: `Review ${review.lines.length} Files change${review.lines.length === 1 ? '' : 's'}`, foreground: theme.foreground, bold: true },
-            { text: 'Nothing is applied until you confirm.', foreground: theme.muted },
-            ...review.lines.slice(start, start + capacity).map((line, index) => ({ text: (root === undefined ? line : line.replaceAll(`${root}/`, '')).slice(0, width), foreground: line.startsWith('Trash ') ? helixThemeColor(theme, 'error', 'fg', theme.error) : theme.foreground, background: start + index === review.selectedIndex ? theme.surfaceActive : theme.surface })),
+            { text: review.error === undefined ? 'Occupied names get a free name. Nothing is applied until you confirm.' : 'Resolve conflicts before applying. Existing files will not be overwritten.', foreground: theme.muted },
+            ...review.lines.slice(start, start + capacity).map((line, index) => ({ text: (root === undefined ? line : line.replaceAll(`${root}/`, '')).slice(0, width), foreground: line.startsWith('Trash ') || line.startsWith('Conflict: ') ? helixThemeColor(theme, 'error', 'fg', theme.error) : theme.foreground, background: start + index === review.selectedIndex ? theme.surfaceActive : theme.surface })),
             { text: review.lines.length > capacity ? `Showing ${start + 1}–${Math.min(review.lines.length, start + capacity)} of ${review.lines.length} · j/k scroll` : '', foreground: theme.muted },
-            { text: 'Tab / ← → choose · Enter confirm · Esc cancel', foreground: theme.muted },
-            { segments: [{ text: '[ Cancel ]', foreground: review.confirm ? theme.foreground : theme.accent, style: { bg: review.confirm ? theme.surface : theme.surfaceActive }, bold: !review.confirm }, { text: '   ', foreground: theme.foreground }, { text: review.busy ? '[ Applying… ]' : '[ Apply changes ]', foreground: helixThemeColor(theme, 'error', 'fg', theme.error), style: { bg: review.confirm ? theme.surfaceActive : theme.surface }, bold: review.confirm }] },
+            { text: 'Tab / ← → choose · Enter confirm · Esc keep editing', foreground: theme.muted },
+            { segments: [
+              { text: '[ Cancel ]', foreground: review.choice === 'cancel' ? theme.accent : theme.foreground, style: { bg: review.choice === 'cancel' ? theme.surfaceActive : theme.surface }, bold: review.choice === 'cancel' },
+              { text: '   ', foreground: theme.foreground },
+              { text: '[ Discard all ]', foreground: helixThemeColor(theme, 'error', 'fg', theme.error), style: { bg: review.choice === 'discard' ? theme.surfaceActive : theme.surface }, bold: review.choice === 'discard' },
+              { text: '   ', foreground: theme.foreground },
+              { text: review.busy ? '[ Checking… ]' : review.error === undefined ? '[ Apply changes ]' : '[ Apply blocked ]', foreground: review.error === undefined ? theme.accent : theme.muted, style: { bg: review.choice === 'apply' ? theme.surfaceActive : theme.surface }, bold: review.choice === 'apply' },
+            ] },
           ];
         },
         maxRows: 18,
@@ -773,7 +779,8 @@ export function WorkbenchApp(props: WorkbenchAppProps): JSX.Element {
           const buttonRow = Math.min(review?.lines.length ?? 0, Math.max(0, height - 5)) + 4;
           if (event.type === 'down' && event.button === 0 && row === buttonRow && !review?.busy) {
             if (column >= 0 && column < 10) options.explorer?.onReviewAction?.('cancel');
-            else if (column >= 13 && column < 30) options.explorer?.onReviewAction?.('apply');
+            else if (column >= 13 && column < 28) options.explorer?.onReviewAction?.('discard');
+            else if (column >= 31 && column < 48 && review?.error === undefined) options.explorer?.onReviewAction?.('apply');
           }
           return true;
         },

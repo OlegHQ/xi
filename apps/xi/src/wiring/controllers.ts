@@ -844,7 +844,14 @@ function createExplorerEditing(ctx: BuildContext, forward: ForwardRefs, host: Bu
   return new ExplorerBufferController({
     root: workspaceRoot, encodeName: escapeDirectoryName, parseLine: parseDirectoryBufferLine,
     onHostCommand: (command) => { const viewId = workbench.activeViewId; if (viewId !== undefined) return forward.hostCommands.handleVimHostCommand(command, viewId); },
-    compile: (buffers, sources) => compileDirectoryBuffers(workspaceRoot, buffers, sources),
+    compile: (buffers, sources) => compileDirectoryBuffers(workspaceRoot, buffers, sources, true),
+    preflight: async (plan) => {
+      const cancellation = new CancellationSource();
+      try {
+        const checked = await operations.prepareReview(plan, cancellation.token);
+        return checked.ok ? { plan: checked.value, error: undefined } : { plan, error: checked.error.kind === 'preflight-conflict' ? `${checked.error.path}: ${checked.error.message}` : `Cannot apply changes: ${checked.error.kind}` };
+      } finally { cancellation.dispose(); }
+    },
     list: async (path) => {
       const cancellation = new CancellationSource();
       try {
@@ -1470,7 +1477,7 @@ function createInputAndPointerRouters(
     overlayContextMenu: contextMenuStore,
     overlayCompletion: { isOpen: () => forward.completionFeature.isCompletionOpen, onKeypress: (event) => forward.completionFeature.handleCompletionKeypress(event) },
     overlayPicker: { isOpen: () => picker.isOpen, onKeypress: (event) => picker.handleKeypress(event) },
-    overlayExplorer: { isOpen: () => forward.explorerFeature.isOpen, onKeypress: (event) => forward.explorerFeature.handleKeypress(event), capturesTextInput: () => forward.explorerFeature.capturesTextInput },
+    overlayExplorer: { isOpen: () => forward.explorerFeature.isOpen, onKeypress: (event) => forward.explorerFeature.handleKeypress(event), capturesTextInput: () => forward.explorerFeature.capturesTextInput, acceptsLeader: () => forward.explorerFeature.editing?.acceptsLeader === true },
     overlaySearch: { isOpen: () => forward.searchFeature.isOpen, onKeypress: (event) => forward.searchFeature.handleKeypress(event), capturesTextInput: () => forward.searchFeature.capturesTextInput },
     overlayGit: { isOpen: () => forward.gitPanelFeature.isOpen, onKeypress: (event) => forward.gitPanelFeature.handleKeypress(event) },
     overlayGitDiff: { isOpen: () => gitDiffFeature.isOpen, isReadOnly: () => gitDiffFeature.readComparison()?.editable === false, onKeypress: (event) => gitDiffFeature.handleKeypress(event) },

@@ -6,6 +6,7 @@ import type {
   Result,
 } from '../../contracts/src/index.ts';
 import type { DirectoryOperation, DirectoryOperationPlan } from './directory-draft';
+import { directoryCopyName } from './directory-buffer';
 
 /** Public contract version for durable workspace file operations. */
 export const FILE_OPERATION_CONTRACT_VERSION = 1 as const;
@@ -249,6 +250,44 @@ export class JournaledFilesystemOperations {
   async restoreJournal(path: string, cancellation: CancellationToken): Promise<Result<FileOperationRecoveryResult, FileOperationFailure>> {
     const loaded = await this.readJournal(path, cancellation);
     return loaded.ok ? this.restoreApplied(loaded.value, cancellation) : loaded;
+  }
+
+  /** Suggest free destination names, then run the same read-only checks used by Apply. */
+  async prepareReview(plan: DirectoryOperationPlan, cancellation: CancellationToken): Promise<Result<DirectoryOperationPlan, FileOperationFailure>> {
+    const initial = await this.preflight(plan, cancellation);
+    if (initial.ok) return { ok: true, value: plan };
+    if (initial.error.kind !== 'preflight-conflict') return initial;
+    const reserved = new Set(plan.operations.flatMap(operation => operation.kind === 'trash' ? [operation.sourcePath] : [operation.sourcePath, operation.destinationPath]));
+    const vacated = new Set(plan.operations.filter(operation => operation.kind === 'rename' || operation.kind === 'trash').map(operation => operation.sourcePath));
+    const operations: DirectoryOperation[] = [];
+    const renamedDirectories = new Map<string, string>();
+    for (const operation of plan.operations) {
+      if (operation.kind === 'trash') { operations.push(operation); continue; }
+      let destinationPath = operation.destinationPath;
+      for (const [from, to] of renamedDirectories) if (destinationPath.startsWith(`${from}/`)) destinationPath = `${to}${destinationPath.slice(from.length)}`;
+      const requestedPath = destinationPath;
+      let occupied = await this.fingerprint(destinationPath, cancellation);
+      if (!occupied.ok) return occupied;
+      if (occupied.value !== undefined && (operation.kind === 'copy' || !vacated.has(destinationPath))) {
+        const source = operation.kind === 'create' ? undefined : await this.fingerprint(operation.sourcePath, cancellation);
+        if (source !== undefined && !source.ok) return source;
+        const directory = operation.kind === 'create' ? operation.directory : source?.ok === true && source.value?.kind === 'directory';
+        let attempt = 1;
+        do {
+          if (attempt > 2048) return conflict(destinationPath, 'no free destination name found');
+          destinationPath = directoryCopyName(requestedPath, attempt++, directory);
+          if (reserved.has(destinationPath)) continue;
+          occupied = await this.fingerprint(destinationPath, cancellation);
+          if (!occupied.ok) return occupied;
+        } while (reserved.has(destinationPath) || occupied.value !== undefined);
+      }
+      reserved.add(destinationPath);
+      if (operation.kind === 'create' && operation.directory && destinationPath !== operation.destinationPath) renamedDirectories.set(operation.destinationPath, destinationPath);
+      operations.push(operation.kind === 'rename' ? { ...operation, destinationPath, to: destinationPath } : operation.kind === 'create' ? { ...operation, sourcePath: destinationPath, destinationPath } : { ...operation, destinationPath });
+    }
+    const proposed = { ...plan, operations };
+    const ready = await this.preflight(proposed, cancellation);
+    return ready.ok ? { ok: true, value: proposed } : ready;
   }
 
   async preflight(

@@ -62,6 +62,10 @@ try {
   assert.ok(!ui.model.nodes.some(node => node.id === 'directory-footer' || node.id.startsWith('directory-review-')), 'mode and confirmation do not occupy tree rows');
   await keys('\r'); assert.equal(editor.model.reviewLines, undefined, 'Enter defaults to cancel without changing files');
   assert.ok(editor.model.dirty, 'cancel preserves draft edits');
+  await editor.selectTreeRow(pick(`${root}/seed.txt`).id); await keys('oseed.txt\x1b');
+  const duplicate = rows().find(row => row.selected); assert.ok(duplicate?.pending, 'new row stays pending even when its path matches an existing file');
+  assert.ok(ui.model.edit?.pendingIds?.includes(duplicate.id), 'duplicate destination retains the themed pending marker');
+  await keys('u');
   editor.setViewportRows(8); await keys('gg');
   const first = rows().findIndex(row => row.selected);
   await editor.handleKey({ name: 'd', raw: '\x04', ctrl: true, shift: false, meta: false, option: false });

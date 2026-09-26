@@ -70,6 +70,8 @@ class FakeExplorer implements RouterExplorerPort {
   opened = false;
   isOpen = false;
   handledKeys: RouterKeyEvent[] = [];
+  capturesTextInput = false;
+  acceptsLeader = false;
   expandAllCalls = 0;
   open(): void { this.opened = true; this.isOpen = true; }
   close(): void { this.isOpen = false; }
@@ -176,7 +178,7 @@ function makeRouter(
     scrollLines: 1,
     getViewportHeight: () => 10,
     clock,
-    overlayExplorer: { isOpen: () => explorer.isOpen, onKeypress: (event) => explorer.handleKeypress(event) },
+    overlayExplorer: { isOpen: () => explorer.isOpen, onKeypress: (event) => explorer.handleKeypress(event), capturesTextInput: () => explorer.capturesTextInput, acceptsLeader: () => explorer.acceptsLeader },
     overlaySearch: { isOpen: () => search.isOpen, onKeypress: (event) => search.handleKeypress(event) },
     ...(git === undefined ? {} : { overlayGit: git.panel, overlayGitDiff: git.diff }),
   });
@@ -373,6 +375,7 @@ function makeRouter(
     { mode: 'files-panel', keys: ['<Space>', 'l'], commandId: 'panel.preview' },
   ]);
   explorer.open();
+  explorer.capturesTextInput = true; explorer.acceptsLeader = true;
 
   assert.equal(await router.dispatchKey(key('space', ' ')), 'consumed');
   await new Promise((resolve) => setTimeout(resolve, 300));
@@ -381,6 +384,10 @@ function makeRouter(
   assert.equal(explorer.handledKeys.at(-1)?.name, 'l', 'T116-ROUTER-05b configurable preview dispatches to the focused panel');
   assert.equal(explorer.isOpen, true, 'T116-ROUTER-05c preview keeps panel focus');
 
+  explorer.acceptsLeader = false;
+  await router.dispatchKey(key('space', ' '));
+  assert.equal(router.leaderPending, false, 'Files Insert space stays with filename editing');
+  assert.equal(explorer.handledKeys.at(-1)?.raw, ' ', 'Files Insert receives its space');
   router.dispose();
 }
 

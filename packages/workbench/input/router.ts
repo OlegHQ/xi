@@ -106,6 +106,7 @@ export interface RouterOverlayKeypressPort {
   /** True while the overlay owns typed characters (a filter/rename prompt); `:` then stays
    * with the overlay instead of opening the editor's command line. Absent means never. */
   readonly capturesTextInput?: () => boolean;
+  readonly acceptsLeader?: () => boolean;
 }
 
 export interface RouterVoidOverlayKeypressPort {
@@ -541,7 +542,7 @@ export class WorkbenchInputRouter implements Disposable {
     // The leader key is global even while a navigational panel is focused: it is how users
     // reach terminal controls such as mouse-mode toggle without first dismissing the panel.
     const activeMode = o.session.activeViewId === undefined ? undefined : o.session.readView(o.session.activeViewId)?.session.mode;
-    if ((event.raw === ' ' && activeMode === 'normal' && o.overlayExplorer?.capturesTextInput?.() !== true) || this.#leaderPending) return finishOverlay(this.handleKeypress(event));
+    if ((event.raw === ' ' && ((o.overlayExplorer?.isOpen() === true && o.overlayExplorer.acceptsLeader?.() === true) || (activeMode === 'normal' && o.overlayExplorer?.capturesTextInput?.() !== true))) || this.#leaderPending) return finishOverlay(this.handleKeypress(event));
     if (o.overlayContextMenu?.open === true) return finishOverlay(o.overlayContextMenu.handleKey(event));
     if (this.isCommandLineActive()) return finishOverlay(this.handleCommandLineKeypress(event));
     if (this.#jumpLabels !== undefined) return finishOverlay(this.#handleJumpLabelKeypress(event));
@@ -632,7 +633,7 @@ export class WorkbenchInputRouter implements Disposable {
     if (completion.isCompletionTrigger(event, activeMode)) return completion.openCompletion();
     if (completion.isSignatureTrigger(event, activeMode)) return completion.openSignature();
     if (completion.isSnippetActive) return completion.handleSnippetKeypress(event);
-    if ((activeMode === 'normal' || activeMode === undefined) && ((this.#bindingMode() !== 'normal' && (event.raw === ' ' || event.name.toLowerCase() === 'space')) || isNormalSpace(event, activeMode))) {
+    if ((activeMode === 'normal' || activeMode === undefined || (this.#options.overlayExplorer?.isOpen() === true && this.#options.overlayExplorer.acceptsLeader?.() === true)) && ((this.#bindingMode() !== 'normal' && (event.raw === ' ' || event.name.toLowerCase() === 'space')) || isNormalSpace(event, activeMode))) {
       this.#leaderPending = true;
       this.#leaderKeys = Object.freeze(['<Space>']);
       this.scheduleLeaderHelp();

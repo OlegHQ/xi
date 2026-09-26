@@ -188,7 +188,7 @@ export interface OpenTuiWorkbenchOptions {
     readonly isFocused?: () => boolean;
     readonly visualIds?: () => readonly string[];
     readonly onViewportRows?: (rows: number, offset: number) => void;
-    readonly onReviewAction?: (action: 'apply' | 'cancel') => void;
+    readonly onReviewAction?: (action: 'apply' | 'cancel' | 'discard') => void;
     readonly onPointer?: (event: WorkbenchPanelPointerEvent) => boolean;
     readonly prompt?: () => string | undefined;
   };

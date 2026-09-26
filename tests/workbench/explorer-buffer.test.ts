@@ -24,7 +24,7 @@ const editor = new ExplorerBufferController({
 });
 async function keys(source: string): Promise<void> {
   for (const raw of source) {
-    const event: OwnedVimKeyEvent = { name: raw === '\x1b' ? 'escape' : raw === '\x12' ? 'r' : raw.toLowerCase(), raw: raw === '\x12' ? 'r' : raw, ctrl: raw === '\x12', shift: raw !== raw.toLowerCase(), meta: false, option: false };
+    const event: OwnedVimKeyEvent = { name: raw === '\t' ? 'tab' : raw === '\x1b' ? 'escape' : raw === '\x12' ? 'r' : raw.toLowerCase(), raw: raw === '\x12' ? 'r' : raw, ctrl: raw === '\x12', shift: raw !== raw.toLowerCase(), meta: false, option: false };
     await editor.handleKey(event);
   }
 }
@@ -69,13 +69,27 @@ try {
   assert.equal(await readFile(`${root}/rename-b.txt`, 'utf8'), 'beta', 'i edits the existing name through Vim');
   assert.equal(errors.length, 0, 'all edits apply without engine or filesystem errors');
   await keys('o../outside.txt\x1b=');
-  assert.ok(errors.pop()?.includes('invalid entry name'), 'directory traversal is rejected before review');
-  assert.equal(editor.model.reviewLines, undefined);
+  assert.ok(editor.model.reviewError?.includes('invalid entry name'), 'directory traversal appears as a blocked review');
+  await keys('y'); assert.ok(editor.model.reviewError && editor.model.reviewLines !== undefined, 'blocked review cannot apply');
+  await keys('\x1b');
   await keys('u'); await keys('onew-review.txt\x1b=');
   const reviewed = names(); editor.handlePaste(new TextEncoder().encode('unreviewed.txt'));
   assert.deepEqual(names(), reviewed, 'paste cannot change a plan while confirmation is open');
   await keys('\x1b');
   assert.equal(await editor.handleKey({ name: 'escape', raw: '\x1b', ctrl: false, shift: false, meta: false, option: false }), 'close', 'normal Escape returns focus even with a draft');
   assert.ok(names().includes('new-review.txt'), 'returning focus preserves the directory draft');
+  await keys('=');
+  await editor.reviewAction('discard');
+  assert.equal(editor.model.dirty, false, 'Discard all clears every directory draft');
+  assert.ok(!names().includes('new-review.txt'), 'Discard all removes unapplied create');
+  await editor.open(root, `${root}/c.txt`); await keys('Cdestination\x1b=');
+  assert.ok(editor.model.reviewError?.includes('Rename') && editor.model.reviewError.includes('duplicate destination'), 'conflict review names the intended rename');
+  await keys('\t'); assert.equal(editor.model.reviewChoice, 'discard', 'conflict review offers discard');
+  await editor.reviewAction('discard'); assert.equal(editor.model.dirty, false);
+  assert.equal(await readFile(`${root}/c.txt`, 'utf8'), 'gamma', 'discard never changes disk');
+  await keys('yyonew.txt\x1b='); await editor.reviewAction('discard');
+  await keys('p=');
+  assert.ok(editor.model.reviewError?.includes('duplicate destination') && !editor.model.reviewError.includes('identity was modified'), 'discard retains valid register identities');
+  await editor.reviewAction('discard');
   console.log('Files buffers passed: incomplete d, dd/register/p, per-directory undo/redo, next cursor, i/o/O, nested creates, Visual x, named yy/p and reviewed apply');
 } finally { editor.dispose(); operations.dispose(); cancellation.dispose(); await rm(root, { recursive: true, force: true }); }

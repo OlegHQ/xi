@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdtemp, readFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CancellationSource, type CancellationToken, type PlatformFailure, type Result } from '../../packages/contracts/src/index';
@@ -33,6 +33,27 @@ try {
   assert.equal(collision.ok, false, 'preflight refuses existing create destination');
   assert.ok(!(await readdir(root)).includes('first.txt'), 'preflight failure creates nothing');
   assert.equal(await readFile(`${root}/occupied.txt`, 'utf8'), 'external', 'collision preserves external content');
+
+  await writeFile(`${root}/occupied (copy).txt`, 'existing copy');
+  const suggested = await service.prepareReview(plan([['occupied.txt', false]]), cancellation.token);
+  assert.ok(suggested.ok);
+  assert.equal(suggested.value.operations[0]?.kind !== 'trash' && suggested.value.operations[0]?.destinationPath, `${root}/occupied (copy 2).txt`, 'review skips occupied proposals and keeps extension');
+  assert.ok(!(await readdir(root)).includes('occupied (copy 2).txt'), 'review makes no filesystem changes');
+  const appliedSuggestion = await service.apply(suggested.value, cancellation.token);
+  assert.ok(appliedSuggestion.ok);
+  assert.equal(await readFile(`${root}/occupied.txt`, 'utf8'), 'external', 'suggested create preserves original');
+  await mkdir(`${root}/folder.ext`);
+  const nestedSuggestion = await service.prepareReview(plan([['folder.ext', true], ['folder.ext/child.txt', false]]), cancellation.token);
+  assert.ok(nestedSuggestion.ok);
+  assert.equal(nestedSuggestion.value.operations[0]?.kind !== 'trash' && nestedSuggestion.value.operations[0]?.destinationPath, `${root}/folder.ext (copy)`, 'directory suffix follows the full folder name');
+  assert.equal(nestedSuggestion.value.operations[1]?.kind !== 'trash' && nestedSuggestion.value.operations[1]?.destinationPath, `${root}/folder.ext (copy)/child.txt`, 'nested creates follow proposed parent');
+  assert.ok((await service.apply(nestedSuggestion.value, cancellation.token)).ok);
+  const race = await service.prepareReview(plan([['occupied.txt', false]]), cancellation.token);
+  assert.ok(race.ok);
+  const destination = race.value.operations[0]; assert.ok(destination?.kind === 'create');
+  await writeFile(destination.destinationPath, 'arrived after review');
+  assert.equal((await service.apply(race.value, cancellation.token)).ok, false, 'Apply refuses a proposal occupied after review');
+  assert.equal(await readFile(destination.destinationPath, 'utf8'), 'arrived after review');
 
   filesystem.fail = true;
   const partial = await service.apply(plan([['first.txt', false], ['second.txt', false]]), cancellation.token);

@@ -238,9 +238,10 @@ def isolated_undo_and_rename() -> None:
             editor.keys(b"/target\rCcancelled.txt\x1bu")
             assert (workspace / "target.txt").read_bytes() == b"target content\n", "undo of rename draft touched disk"
             editor.keys(b"Cseed.txt\x1b=")
-            assert b"duplicate destination" in editor.output, "invalid rename did not show its validation error"
+            assert any('Rename target.txt' in terminal_screen(editor).row_text(row) and 'seed (copy).txt' in terminal_screen(editor).row_text(row) for row in range(1, 41)), 'review did not propose a free rename destination'
+            assert any('[ Apply changes ]' in terminal_screen(editor).row_text(row) for row in range(1, 41)), 'free-name proposal cannot be confirmed'
             assert (workspace / "seed.txt").read_bytes() == b"seed\n", "collision overwrote another file"
-            editor.keys(b"uCrenamed.txt\x1b=\x1b")
+            editor.keys(b"\x1buCrenamed.txt\x1b=\x1b")
             assert not (workspace / "renamed.txt").exists(), "cancelled review applied a rename"
             editor.sync()
             assert (workspace / "renamed.txt").read_bytes() == b"target content\n"
@@ -308,6 +309,67 @@ def trash_and_dirty_refusal() -> None:
             editor.close()
 
 
+def conflict_discard_and_leader() -> None:
+    with tempfile.TemporaryDirectory(prefix="xi-files-review-") as temporary:
+        workspace = Path(temporary)
+        setup(workspace)
+        (workspace / 'nested').mkdir()
+        (workspace / 'nested/a.txt').write_text('nested')
+        editor = Editor(workspace)
+        try:
+            editor.files()
+            editor.keys(b' ')
+            drain(editor.master, editor.output, .7)
+            assert any('Space' in terminal_screen(editor).row_text(row) for row in range(1, 41)), 'Files space did not reach leader menu'
+            editor.keys(b'\x1b')
+            click(editor, 'nested')
+            click(editor, 'a.txt')
+            editor.keys(b'onew file.txt\x1b')
+            assert any('new file.txt' in line for line in sidebar(editor)), 'space in Insert became a leader chord'
+            assert not any('●' in line for line in sidebar(editor)), 'pending rows still use circle markers'
+            click(editor, 'target.txt')
+            editor.keys(b'Cseed.txt\x1b=')
+            screen = terminal_screen(editor)
+            assert any('Rename target.txt' in screen.row_text(row) and 'seed (copy).txt' in screen.row_text(row) for row in range(1, 41)), 'review omitted suggested rename'
+            assert any('[ Discard all ]' in screen.row_text(row) and '[ Apply changes ]' in screen.row_text(row) for row in range(1, 41)), 'blocked review has no discard action'
+            assert (workspace / 'target.txt').read_text() == 'target content\n'
+            screen = terminal_screen(editor)
+            button_row = next(row for row in range(1, 41) if '[ Discard all ]' in screen.row_text(row))
+            column = screen.row_text(button_row).index('[ Discard all ]') + 2
+            start = len(editor.output)
+            editor.keys(f"\x1b[<0;{column};{button_row}M\x1b[<0;{column};{button_row}m".encode())
+            editor.wait(b'XI_FILES_DISCARDED', start)
+            assert 'review changes' not in terminal_screen(editor).row_text(40), 'discard left dirty status'
+            assert not any('new file.txt' in line for line in sidebar(editor)), 'discard missed another folder draft'
+            assert any('target.txt' in line for line in sidebar(editor)), 'discard missed renamed source'
+            assert (workspace / 'seed.txt').read_text() == 'seed\n'
+            assert not (workspace / 'nested/new file.txt').exists()
+            # This destination appeared after the directory document was opened.
+            (workspace / 'external.txt').write_text('external')
+            click(editor, 'target.txt')
+            editor.keys(b'Cexternal.txt\x1b=')
+            screen = terminal_screen(editor)
+            assert any('Rename target.txt' in screen.row_text(row) for row in range(1, 41)), 'external conflict omitted intended rename'
+            assert any('external (copy).txt' in screen.row_text(row) for row in range(1, 41)), 'existing disk destination has no free-name proposal'
+            editor.keys(b'\t\r')
+            assert 'review changes' not in terminal_screen(editor).row_text(40), 'keyboard Discard all did not reset drafts'
+            assert (workspace / 'external.txt').read_text() == 'external'
+            click(editor, 'target.txt')
+            editor.keys(b'Cseed.txt\x1b=')
+            editor.keys(b'y')
+            assert (workspace / 'seed (copy).txt').read_text() == 'target content\n', 'Apply did not use the exact suggested destination'
+            assert (workspace / 'seed.txt').read_text() == 'seed\n', 'suggestion overwrote existing file'
+            assert not (workspace / 'target.txt').exists()
+            editor.keys(b'o../outside.txt\x1b=')
+            assert any('[ Apply blocked ]' in terminal_screen(editor).row_text(row) for row in range(1, 41)), 'unsafe edit allowed Apply'
+            editor.keys(b'y')
+            assert any('[ Discard all ]' in terminal_screen(editor).row_text(row) for row in range(1, 41)), 'blocked Apply dismissed review'
+            editor.keys(b'\t\r')
+
+        finally:
+            editor.close()
+
+
 def external_destination() -> None:
     with tempfile.TemporaryDirectory(prefix="xi-files-external-") as temporary:
         workspace = Path(temporary)
@@ -332,5 +394,6 @@ mouse_and_tree_editing()
 isolated_undo_and_rename()
 registers_and_create()
 trash_and_dirty_refusal()
+conflict_discard_and_leader()
 external_destination()
-print("Files management PTY passed: mouse tree, Visual d/u and clean review, main status mode/dirty hint, modal Cancel/Apply/outside click, viewport Ctrl-U/Ctrl-D, isolated undo, rename/cancel/collision, dd/p move, named yy/p copy, o/O creates, trash, dirty-buffer refusal and external destination preservation")
+print("Files management PTY passed: mouse tree, Visual d/u and clean review, main status mode/dirty hint, conflict review/Discard all/leader menu, modal Cancel/Apply/outside click, viewport Ctrl-U/Ctrl-D, isolated undo, rename/cancel/collision, dd/p move, named yy/p copy, o/O creates, trash, dirty-buffer refusal and external destination preservation")
