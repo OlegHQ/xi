@@ -43,6 +43,8 @@ try {
     assert.ok(!rendered.includes('[link]('), 'native viewer conceals link markup');
     assert.match(rendered, /Preview title/);
     assert.match(rendered, /const value = 1/);
+    assert.ok(rendered.includes('┌──────┬────────┐'), 'table renders top border');
+    assert.ok(rendered.includes('│ api  │ ready  │'), 'table renders padded data row');
     assert.equal(viewport.cursorCell, undefined, 'source cursor hidden');
     await mkdir('.artifacts/markdown-preview', { recursive: true });
     await writeFile('.artifacts/markdown-preview/frame.txt', rendered);

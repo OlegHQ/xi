@@ -74,6 +74,22 @@ async function main(): Promise<void> {
     assert.equal(text(finalSnapshot), 'foo.', 'D3-CW <C-w> after "foo.bar" leaves "foo."');
   }
 
+  // nvim: `A<C-w>` on "foo bar baz" -> "foo bar " (a press at the insert start deletes older text).
+  {
+    const doc = document('D3-CW-START', 'foo bar baz');
+    const entered = beginVimInsert(doc.snapshot(), off(11), 'i');
+    if (!entered.ok) throw new Error('unreachable');
+    let current = applyPlan(doc, entered.value.plan);
+    let session = entered.value.session;
+    for (const expected of ['foo bar ', 'foo ']) {
+      const cw = planVimInsertInput(current, session, { kind: 'key', key: '<C-w>' });
+      if (!cw.ok || cw.value.kind !== 'continued') throw new Error('unreachable');
+      current = applyPlan(doc, cw.value.plan);
+      session = cw.value.session;
+      assert.equal(text(current), expected, 'D3-CW-START <C-w> at insert start deletes older text');
+    }
+  }
+
   // <C-u> preserves an auto-indent inserted by <CR> during the same insert session.
   {
     const doc = document('D3-CU', '  if (x) {\n');

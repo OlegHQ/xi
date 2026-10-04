@@ -761,6 +761,42 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     }
   }
 
+  function applyPaste(bytes: Uint8Array): boolean {
+  if (mode === 'normal') {
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/\r\n?/gu, '\n');
+      return text.length === 0 ? true : storeClipboardTextAndPut(text, '+', 'p');
+    } catch {
+      message('xi: paste failed: invalid UTF-8\n');
+      return true;
+    }
+  }
+  if (!isInsertMode(mode) || insert === null) {
+    message('xi: paste is only supported while inserting\n');
+    return true;
+  }
+  const planned = planVimMultiInsertInput(document.snapshot(), insert, { kind: 'paste', bytes });
+  if (!planned.ok) { message(`xi: paste failed: ${planned.error.kind}\n`); return true; }
+  commitPlan(document, planned.value, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
+  // Pasted text is one opaque, atomic insertion, not a stream of single keys -- taint
+  // any in-progress dot-repeat recording rather than risk misrepresenting it (T130).
+  insertTainted = true;
+  insert = planned.value.nextSession;
+  if (insert === null) {
+    mode = 'normal';
+    const primary = planned.value.members.find((member) => member.id === selections.primaryId) ?? planned.value.members[0];
+    const transition = primary?.transition;
+    const cursor = transition?.kind === 'exited' ? transition.plan.cursorOffset : planned.value.members[0]?.transition.plan.cursorOffset;
+    selections = makeNormalSelection(document.snapshot(), cursor ?? offset(0), (selections.selectionGeneration as number) + 1);
+    motionCursor = makeMotionCursor(document.snapshot(), selections);
+    insertEntryKey = undefined;
+  } else {
+    selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
+  }
+  parser = makeParser(mode, selections);
+  return true;
+  }
+
   const session: OwnedVimSession = {
     get activeViewId(): ViewId { return viewId; },
     get indentStyle(): string {
@@ -992,39 +1028,11 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
     },
     handlePaste(bytes: Uint8Array): boolean {
       if (disposed) return true;
-      if (mode === 'normal') {
-        try {
-          const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/\r\n?/gu, '\n');
-          return text.length === 0 ? true : storeClipboardTextAndPut(text, '+', 'p');
-        } catch {
-          message('xi: paste failed: invalid UTF-8\n');
-          return true;
-        }
-      }
-      if (!isInsertMode(mode) || insert === null) {
-        message('xi: paste is only supported while inserting\n');
-        return true;
-      }
-      const planned = planVimMultiInsertInput(document.snapshot(), insert, { kind: 'paste', bytes });
-      if (!planned.ok) { message(`xi: paste failed: ${planned.error.kind}\n`); return true; }
-      commitPlan(document, planned.value, undoOpen, (value) => { undoOpen = value; }, options.onDocumentChange);
-      // Pasted text is one opaque, atomic insertion, not a stream of single keys -- taint
-      // any in-progress dot-repeat recording rather than risk misrepresenting it (T130).
-      insertTainted = true;
-      insert = planned.value.nextSession;
-      if (insert === null) {
-        mode = 'normal';
-        const primary = planned.value.members.find((member) => member.id === selections.primaryId) ?? planned.value.members[0];
-        const transition = primary?.transition;
-        const cursor = transition?.kind === 'exited' ? transition.plan.cursorOffset : planned.value.members[0]?.transition.plan.cursorOffset;
-        selections = makeNormalSelection(document.snapshot(), cursor ?? offset(0), (selections.selectionGeneration as number) + 1);
-        motionCursor = makeMotionCursor(document.snapshot(), selections);
-        insertEntryKey = undefined;
-      } else {
-        selections = makeInsertSelections(document.snapshot(), insert, (selections.selectionGeneration as number) + 1);
-      }
-      parser = makeParser(mode, selections);
-      return true;
+      const result = applyPaste(bytes);
+      // Like a key, a paste moves selections onto the new document version; publish them so views never project a stale snapshot.
+      options.onStateChange?.({ selections, mode });
+      publishAuxiliaryState();
+      return result;
     },
     async handleClipboardPaste(selection = 'clipboard'): Promise<boolean> {
       if (disposed) return true;
@@ -1032,7 +1040,10 @@ export function createOwnedVimSession(document: TextFileDocument, options: Owned
       if (text === undefined) return true;
       if (isInsertMode(mode)) return session.handlePaste(new TextEncoder().encode(text));
       if (mode !== 'normal') { message('xi: clipboard paste requires Normal or Insert mode\n'); return true; }
-      return storeClipboardTextAndPut(text, selection === 'primary' ? '*' : '+', 'p');
+      const result = storeClipboardTextAndPut(text, selection === 'primary' ? '*' : '+', 'p');
+      options.onStateChange?.({ selections, mode });
+      publishAuxiliaryState();
+      return result;
     },
     dispose(): void {
       if (disposed) return;

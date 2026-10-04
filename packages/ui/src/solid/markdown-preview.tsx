@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { useRenderer, type JSX } from '@opentui/solid';
-import { SyntaxStyle, type MarkdownRenderable, type ScrollBoxRenderable } from '@opentui/core';
+import { SyntaxStyle, type MarkdownRenderable, type Renderable, type ScrollBoxRenderable } from '@opentui/core';
 import { createSignal, onCleanup } from 'solid-js';
 import type { Disposable, ViewId } from '../../../contracts/src/index';
 import type { WorkbenchReadPort } from '../../../workbench/src/index';
@@ -8,6 +8,7 @@ import type { WorkbenchTheme } from '../workbench';
 import { helixThemeColor } from '../workbench';
 import { themeColor } from '../../theme/color-input';
 import type { SolidThemeBridge } from './composition';
+import { createMarkdownTable } from './markdown-table';
 
 export interface MarkdownPreviewProps {
   readonly pane: { readonly viewId: string; readonly x: number; readonly y: number; readonly width: number; readonly height: number };
@@ -31,6 +32,12 @@ export default function MarkdownPreview(props: MarkdownPreviewProps): JSX.Elemen
   let priorLine: number | undefined;
   let pendingScroll: 'top' | 'bottom' | number | undefined;
   const renderer = useRenderer();
+  const renderNode = (token: { readonly type: string }, ctx: { readonly syntaxStyle: SyntaxStyle }): Renderable | undefined | null => {
+    if (token.type === 'table') {
+      return createMarkdownTable(token as never, renderer, ctx.syntaxStyle, theme());
+    }
+    return null;
+  };
   const [style, setStyle] = createSignal(SyntaxStyle.fromStyles({}));
   const retiredStyles = new Set<SyntaxStyle>();
   const releaseStyles = () => { for (const retired of retiredStyles) retired.destroy(); retiredStyles.clear(); };
@@ -50,7 +57,16 @@ export default function MarkdownPreview(props: MarkdownPreviewProps): JSX.Elemen
     nextStyle.registerStyle('markup.raw', { fg: themeColor(helixThemeColor(next, 'markup.raw', 'fg', next.foreground), 'fg') });
     retiredStyles.add(style());
     setStyle(nextStyle);
-    if (markdown !== undefined) markdown.syntaxStyle = nextStyle;
+    if (markdown !== undefined) {
+      markdown.syntaxStyle = nextStyle;
+      markdown.renderNode = renderNode;
+      markdown.tableOptions = {
+        cellPaddingX: 1,
+        widthMode: 'content',
+        borderStyle: 'single',
+        borderColor: themeColor(next.muted, 'fg'),
+      };
+    }
     props.requestFrame();
   });
 
@@ -108,7 +124,23 @@ export default function MarkdownPreview(props: MarkdownPreviewProps): JSX.Elemen
     <box position="absolute" left={props.pane.x} top={props.pane.y} width={props.pane.width} height={props.pane.height} zIndex={2} paddingX={2} backgroundColor={themeColor(theme().background, 'bg')} flexDirection="column">
       <text height={1} content={message()} fg={themeColor(theme().muted, 'fg')} />
       <scrollbox ref={node => { scroll = node; }} width="100%" flexGrow={1} scrollX={false} scrollY={true} viewportCulling={true}>
-        <markdown ref={node => { markdown = node; }} width="100%" content={content()} syntaxStyle={style()} conceal={true} concealCode={false} fg={themeColor(theme().foreground, 'fg')} bg={themeColor(theme().background, 'bg')} />
+        <markdown
+          ref={node => { markdown = node; }}
+          width="100%"
+          content={content()}
+          syntaxStyle={style()}
+          conceal={true}
+          concealCode={false}
+          renderNode={renderNode}
+          tableOptions={{
+            cellPaddingX: 1,
+            widthMode: 'content',
+            borderStyle: 'single',
+            borderColor: themeColor(theme().muted, 'fg'),
+          }}
+          fg={themeColor(theme().foreground, 'fg')}
+          bg={themeColor(theme().background, 'bg')}
+        />
       </scrollbox>
     </box>
   );

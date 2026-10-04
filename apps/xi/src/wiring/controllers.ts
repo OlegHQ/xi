@@ -140,8 +140,9 @@ export interface Controllers {
    * cached; `undefined` while loading (a surface change re-renders once it lands). */
   readonly pickerPreview: (entry: PickerEntry) => { readonly title: string; readonly lines: readonly string[]; readonly selectedLine?: number; readonly startLine?: number } | undefined;
   readonly editorDiagnostics: (documentId: import('../../../../packages/primitives/src/entrypoints/launch').DocumentId) => ReturnType<InstanceType<CoreServicesModule['DiagnosticStore']>['diagnosticsFor']>;
-  readonly fileIndexStarter: { readonly schedule: () => void; readonly cancel: () => void };
   readonly ensureGitAndOpenPicker: () => Promise<void>;
+  /** Starts the workspace filename walk. Safe to call again; `cancel` stops an in-flight walk. */
+  readonly startFileIndexPopulation: (() => Promise<void>) & { readonly cancel: () => void };
 }
 
 export function id<T extends string>(value: string): T {
@@ -170,28 +171,18 @@ function createRendererToggle(): { readonly registered: (toggle: () => boolean) 
   };
 }
 
-/** A single deferred one-shot call, cancellable -- replaces a bare `let ...Timer` +
- * `clearTimeout` pair with one owned handle. */
-function createDeferredStart(delayMilliseconds: number, start: () => void): { readonly schedule: () => void; readonly cancel: () => void } {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return {
-    schedule: () => { timer = setTimeout(() => { timer = undefined; start(); }, delayMilliseconds); },
-    cancel: () => clearTimeout(timer),
-  };
-}
-
 /** Helix's file picker always skips these VCS entries, even when ignore files are off. */
 const VCS_DIRECTORY_NAMES = ['.git', '.pijul', '.jj', '.hg', '.svn'];
 
-async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, shouldPublishEarly: (entries: readonly { readonly relativePath: string }[]) => boolean, onUpdate: () => void, onError: (message: string) => void): Promise<void> {
-  const cancellation = new CancellationSource();
+async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, shouldPublishEarly: (entries: readonly { readonly relativePath: string }[]) => boolean, onUpdate: () => void, onError: (message: string) => void, editorBusy: () => boolean, cancellation: CancellationSource): Promise<void> {
   // ponytail: publish the first partial batch immediately, then every 2,048 paths;
   // lower the interval if measured first-match latency requires more frequent refreshes.
   let lastPublishedEntries = 0;
   let indexedEntries = 0;
   let reportedIndexError = false;
   try {
-    const result = await filesystem.enumerateFiles(root, cancellation.token, (entries) => {
+    const result = await filesystem.enumerateFiles(root, cancellation.token, async (entries) => {
+      if (cancellation.token.isCancelled) return;
       const indexed = entries.map((entry) => ({ rootId: 'workspace' as const, relativePath: entry.relativePath, absolutePath: entry.absolutePath, hidden: entry.hidden }));
       const added = index.addPaths('workspace', indexed);
       if (added.ok && added.value > 0 && (lastPublishedEntries === 0 || indexedEntries + added.value - lastPublishedEntries >= 2_048 || shouldPublishEarly(entries))) {
@@ -200,9 +191,17 @@ async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePat
         onUpdate();
       }
       else if (added.ok) indexedEntries += added.value;
-      else if (!reportedIndexError) { reportedIndexError = true; onError(`xi: file picker index incomplete: ${added.error.kind}`); }
+      else if (!reportedIndexError && !cancellation.token.isCancelled) { reportedIndexError = true; onError(`xi: file picker index incomplete: ${added.error.kind}`); }
+      // ponytail: setImmediate still keeps the editor thread busy. Wait 16ms between
+      // batches while the picker is closed; opening it drops the gap so matches finish.
+      if (!editorBusy() && !cancellation.token.isCancelled) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => { subscription.dispose(); resolve(); }, 16);
+          const subscription = cancellation.token.onCancel(() => { clearTimeout(timer); resolve(); });
+        });
+      }
     }, { maxEntries: 120_000, ignoredDirectoryNames: VCS_DIRECTORY_NAMES, followSymlinks, deduplicateLinks, ...(maxDepth === undefined ? {} : { maxDepth }), ignore });
-    if (!result.ok) onError(`xi: file picker index incomplete: ${result.error.message}`);
+    if (!result.ok && !cancellation.token.isCancelled) onError(`xi: file picker index incomplete: ${result.error.message}`);
   } finally {
     index.markReady();
     onUpdate();
@@ -212,12 +211,14 @@ async function populateFileIndex(index: InstanceType<CoreServicesModule['FilePat
 
 /** A single lazily-started, memoized population run -- replaces a bare `let ...Population`
  * closure with one owned handle. */
-function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, shouldPublishEarly: (entries: readonly { readonly relativePath: string }[]) => boolean, onUpdate: () => void, onError: (message: string) => void): () => Promise<void> {
+function createFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, shouldPublishEarly: (entries: readonly { readonly relativePath: string }[]) => boolean, onUpdate: () => void, onError: (message: string) => void, editorBusy: () => boolean): (() => Promise<void>) & { readonly cancel: () => void } {
+  const cancellation = new CancellationSource();
   let population: Promise<void> | undefined;
-  return () => {
-    population ??= populateFileIndex(fileIndex, filesystem, root, followSymlinks, deduplicateLinks, maxDepth, ignore, shouldPublishEarly, onUpdate, onError);
+  const start = (): Promise<void> => {
+    population ??= populateFileIndex(fileIndex, filesystem, root, followSymlinks, deduplicateLinks, maxDepth, ignore, shouldPublishEarly, onUpdate, onError, editorBusy, cancellation);
     return population;
   };
+  return Object.assign(start, { cancel: (): void => { cancellation.cancel(); } });
 }
 
 function createIgnoredFileIndexPopulator(fileIndex: InstanceType<CoreServicesModule['FilePathIndex']>, filesystem: NodeFilesystemPort, root: string, followSymlinks: boolean, deduplicateLinks: boolean, maxDepth: number | undefined, ignore: WorkspaceIgnoreOptions, startDefaultPopulation: () => Promise<void>, onUpdate: () => void, onError: (message: string) => void): () => Promise<void> {
@@ -1672,10 +1673,11 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     });
   }
   const filePicker = ctx.startupConfig?.editor.filePicker;
-  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd(), ...(process.env.XDG_CONFIG_HOME === undefined ? {} : { xdgConfigHome: process.env.XDG_CONFIG_HOME }) }, entries => picker.isOpen && picker.mode === 'file' && pickerModel.model.entries.length === 0 && hasNewLiteralMatch(pickerModel.model.query, entries), () => { if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
+  // The filename index warms up after the first frame. Opening the picker joins the same walk.
+  const editorBusy = (): boolean => picker.isOpen && picker.mode === 'file';
+  const startFileIndexPopulation = createFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd(), ...(process.env.XDG_CONFIG_HOME === undefined ? {} : { xdgConfigHome: process.env.XDG_CONFIG_HOME }) }, entries => editorBusy() && pickerModel.model.entries.length === 0 && hasNewLiteralMatch(pickerModel.model.query, entries), () => { if (editorBusy()) picker.refresh(); }, message => deps.statusMessages.publish(message), editorBusy);
   forward.startFileIndexPopulation = startFileIndexPopulation;
-  forward.startIgnoredFileIndexPopulation = createIgnoredFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd(), ...(process.env.XDG_CONFIG_HOME === undefined ? {} : { xdgConfigHome: process.env.XDG_CONFIG_HOME }) }, startFileIndexPopulation, () => { if (picker.isOpen && picker.mode === 'file') picker.refresh(); }, message => deps.statusMessages.publish(message));
-  const fileIndexStarter = createDeferredStart(1000, () => { void startFileIndexPopulation(); });
+  forward.startIgnoredFileIndexPopulation = createIgnoredFileIndexPopulator(fileIndex, filesystem, ctx.workspaceRoot, filePicker?.followSymlinks ?? true, filePicker?.deduplicateLinks ?? true, filePicker?.maxDepth, { parents: filePicker?.parents ?? true, ignore: filePicker?.ignore ?? true, gitIgnore: filePicker?.gitIgnore ?? true, gitGlobal: filePicker?.gitGlobal ?? true, gitExclude: filePicker?.gitExclude ?? true, homeDirectory: process.env.HOME ?? process.cwd(), ...(process.env.XDG_CONFIG_HOME === undefined ? {} : { xdgConfigHome: process.env.XDG_CONFIG_HOME }) }, startFileIndexPopulation, () => { if (editorBusy()) picker.refresh(); }, message => deps.statusMessages.publish(message));
   async function ensureGitAndOpenPicker(): Promise<void> {
     const resolved = await optionalServices.ensure();
     void resolved.gitStatusService.refresh();
@@ -1711,7 +1713,7 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     diagnostics,
     contextMenuStore,
     pickerModel,
-    fileIndex,
+    fileIndex, startFileIndexPopulation,
     commandRegistry,
     contributionRegistry,
     commandAliasRegistration,
@@ -1723,7 +1725,6 @@ export async function createControllers(deps: ControllersDeps): Promise<Controll
     mouseMode,
     wrapMode,
     jobControlDisposables, scheduleMarkdownPreview: task => clock.schedule(0, task),
-    fileIndexStarter,
     pickerPreview: createPickerPreview(ctx, host, workbench, diagnostics),
     editorDiagnostics: documentId => {
       const path = workbench.buffer(documentId)?.path;

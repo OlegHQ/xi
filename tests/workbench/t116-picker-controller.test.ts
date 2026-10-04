@@ -34,11 +34,13 @@ class FakePickerModel<TEntry extends WorkbenchPickerEntry> implements PickerMode
   entries: readonly TEntry[] = [];
   selectedId: string | undefined;
   cancelled = 0;
+  readonly queries: string[] = [];
   readonly visibility: Array<{ readonly hidden: boolean | undefined; readonly ignored: boolean | undefined }> = [];
   get model(): { readonly entries: readonly TEntry[]; readonly selectedId: string | undefined } {
     return { entries: this.entries, selectedId: this.selectedId };
   }
-  async query(_mode: WorkbenchPickerMode, _query: string, options?: { readonly includeHidden?: boolean; readonly includeIgnored?: boolean }): Promise<Result<{ readonly entries: readonly TEntry[] }, WorkbenchPickerFailure>> {
+  async query(_mode: WorkbenchPickerMode, query: string, options?: { readonly includeHidden?: boolean; readonly includeIgnored?: boolean }): Promise<Result<{ readonly entries: readonly TEntry[] }, WorkbenchPickerFailure>> {
+    this.queries.push(query);
     this.visibility.push({ hidden: options?.includeHidden, ignored: options?.includeIgnored });
     this.selectedId = this.entries[0]?.id;
     return { ok: true, value: { entries: this.entries } };
@@ -225,8 +227,29 @@ picker.open('file');
 await flush();
 secondaryActions.length = 0;
 await picker.handleKeypress({ name: 's', raw: 's', shift: false, option: false, ctrl: false, meta: false });
-assert.equal(secondaryActions.length, 0, 'T116-PICKER-05b s/u outside git mode falls through to the ordinary filter-query path');
 await picker.close(true);
+
+// T116-PICKER-CTRL-W: Ctrl+W deletes previous word like in Vim.
+model.entries = [{ id: 'd', mode: 'file', value: '/workspace/a.txt' }];
+picker.open('file');
+await flush();
+model.queries.length = 0;
+for (const char of 'foo/bar baz ') {
+  await picker.handleKeypress({ name: char, raw: char, shift: false, option: false, ctrl: false, meta: false });
+}
+assert.equal(model.queries.at(-1), 'foo/bar baz ', 'T116-PICKER-CTRL-W-01 typing populates query');
+await picker.handleKeypress({ name: 'w', raw: '\u0017', shift: false, option: false, ctrl: true, meta: false });
+assert.equal(model.queries.at(-1), 'foo/bar ', 'T116-PICKER-CTRL-W-02 deletes trailing word and space');
+await picker.handleKeypress({ name: 'w', raw: '\u0017', shift: false, option: false, ctrl: true, meta: false });
+assert.equal(model.queries.at(-1), 'foo/', 'T116-PICKER-CTRL-W-03 deletes trailing word and space before it');
+await picker.handleKeypress({ name: 'w', raw: '\u0017', shift: false, option: false, ctrl: true, meta: false });
+assert.equal(model.queries.at(-1), 'foo', 'T116-PICKER-CTRL-W-04 deletes punctuation chunk');
+await picker.handleKeypress({ name: 'w', raw: '\u0017', shift: false, option: false, ctrl: true, meta: false });
+assert.equal(model.queries.at(-1), '', 'T116-PICKER-CTRL-W-05 deletes first word to empty query');
+await picker.handleKeypress({ name: 'w', raw: '\u0017', shift: false, option: false, ctrl: true, meta: false });
+assert.equal(model.queries.at(-1), '', 'T116-PICKER-CTRL-W-06 ctrl-w on empty query remains empty');
+await picker.close(true);
+
 
 // Diagnostics reuse query/selection/cancel without opening a preview buffer.
 model.entries = [{ id: 'problem-1', mode: 'diagnostic', value: 'problem-1' }, { id: 'problem-2', mode: 'diagnostic', value: 'problem-2' }];

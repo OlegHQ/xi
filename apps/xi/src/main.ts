@@ -185,8 +185,8 @@ async function main(): Promise<void> {
  * before this extraction. Mechanical split out of `main()` to stay under
  * ARCH-APP-FUNCTION-LENGTH-01's line budget; no ordering or behavior change. */
 async function teardownControllers(controllers: Controllers, persistence: PersistenceService, marker: (name: string, payload?: unknown) => void): Promise<void> {
+  controllers.startFileIndexPopulation.cancel();
   await controllers.editorState.dispose();
-  controllers.fileIndexStarter.cancel();
   // H2-4: `awaitPending()` hands back the same typed bundle `ensure()` resolved to (or
   // `undefined` if the optional services never loaded) -- teardown reads it once instead of
   // going back through twelve independent nullable getters on `optionalServices`.

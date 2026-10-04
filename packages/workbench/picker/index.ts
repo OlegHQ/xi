@@ -158,6 +158,11 @@ export class PickerController<TEntry extends WorkbenchPickerEntry = WorkbenchPic
       this.#runQuery();
       return;
     }
+    if ((event.ctrl && key === 'w') || event.raw === '\u0017') {
+      this.#query = this.#query.replace(/(?:[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]+|\s+)\s*$/u, '');
+      this.#runQuery();
+      return;
+    }
     if (event.ctrl || event.meta || event.option) return;
     const raw = event.raw;
     if (this.#mode === 'git' && this.#options.onSecondaryAction !== undefined && (raw === 's' || raw === 'u')) {

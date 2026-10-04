@@ -1,7 +1,7 @@
 import { asIdentifier, type ClipboardPort, type ClockPort, type DocumentId, type Disposable, type Result, type PersistedJumpLocation, type DocumentVersion, type Utf16Offset, type ViewId } from '../../contracts/src/index';
 import type { SelectionSetSnapshot } from '../../selections/src/index';
 import type { TextFileDocument } from '../../document/src/entrypoints/launch';
-import { createVimJumpHistory, recordVimJump, type VimHostCommand, type VimInsertOptions, type VimJumpHistory, type VimNavigationTarget } from '../../vim/src/index';
+import { createVimJumpHistory, createVimRegisterBank, recordVimJump, type VimHostCommand, type VimInsertOptions, type VimJumpHistory, type VimNavigationTarget } from '../../vim/src/index';
 import { createOwnedVimSession } from '../vim-session';
 import type { OwnedVimKeyEvent, OwnedVimSession, VimCommandLineState, VimPrefixHelpState } from '../vim-session';
 import type { WorkbenchBufferSnapshot, WorkbenchSession, WorkbenchSessionFailure } from '../session';
@@ -107,6 +107,8 @@ export class BufferHost {
   #surfaceChangeScheduled = false;
   #documentSequence = 0;
   #jumpHistory: VimJumpHistory = createVimJumpHistory();
+  // One register bank for every buffer's session, so yank/delete in one buffer pastes in another.
+  #registers = createVimRegisterBank();
   readonly #jumpLocations = new Map<VimNavigationTarget, PersistedJumpLocation>();
 
   constructor(session: WorkbenchSession, launchDocument: TextFileDocument, options: BufferHostOptions) {
@@ -164,6 +166,7 @@ export class BufferHost {
       ...(options.mouseYankRegister === undefined ? {} : { mouseYankRegister: options.mouseYankRegister }),
       ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard }),
       isActive: () => workbenchSession.activeViewId === viewId,
+      registers: { read: () => this.#registers, write: (bank) => { this.#registers = bank; } },
       ...(insertOptions === undefined ? {} : { insertOptions }),
       ...(options.clock === undefined ? {} : { clock: options.clock }),
       files: {

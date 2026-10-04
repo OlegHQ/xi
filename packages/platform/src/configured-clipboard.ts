@@ -17,7 +17,7 @@ export function createConfiguredClipboardPort(
   termcode: ClipboardPort = builtin,
 ): ClipboardPort & Disposable {
   if (provider.kind === 'builtin') {
-    if (provider.name === 'platform' || provider.name === 'windows') return builtin as ClipboardPort & Disposable;
+    if (provider.name === 'platform' || provider.name === 'windows') return withTermcodeFallback(builtin, termcode);
     if (provider.name === 'termcode') return termcode as ClipboardPort & Disposable;
     if (provider.name === 'none') return noClipboardPort();
     const commands = builtinCommands(provider.name);
@@ -25,6 +25,22 @@ export function createConfiguredClipboardPort(
     return builtin as ClipboardPort & Disposable;
   }
   return createCommandClipboardPort({ yank: provider.yank, paste: provider.paste, ...(provider.primaryYank === undefined ? {} : { primaryYank: provider.primaryYank }), ...(provider.primaryPaste === undefined ? {} : { primaryPaste: provider.primaryPaste }) }, ProcessPort, cwd);
+}
+
+/** Headless/SSH hosts have no native clipboard; writes then reach the user's terminal via OSC52. */
+function withTermcodeFallback(builtin: ClipboardPort, termcode: ClipboardPort): ClipboardPort & Disposable {
+  if (builtin === termcode) return builtin as ClipboardPort & Disposable;
+  const write = async (native: Promise<Result<void, PlatformFailure>>, fallback: () => Promise<Result<void, PlatformFailure>>) => {
+    const result = await native;
+    return result.ok || result.error.code === 'cancelled' ? result : fallback();
+  };
+  return {
+    readText: cancellation => builtin.readText(cancellation),
+    writeText: (text, cancellation) => write(builtin.writeText(text, cancellation), () => termcode.writeText(text, cancellation)),
+    ...(builtin.readPrimaryText === undefined ? {} : { readPrimaryText: (cancellation: CancellationToken) => builtin.readPrimaryText!(cancellation) }),
+    ...(builtin.writePrimaryText === undefined ? {} : { writePrimaryText: (text: string, cancellation: CancellationToken) => write(builtin.writePrimaryText!(text, cancellation), () => termcode.writePrimaryText!(text, cancellation)) }),
+    dispose: () => { (builtin as Partial<Disposable>).dispose?.(); },
+  };
 }
 
 interface ClipboardCommandSet {

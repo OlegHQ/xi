@@ -142,7 +142,9 @@ export function createOpenTuiTermcodeClipboardPort(): ClipboardPort & Disposable
   const write = async (text: string, selection: 'clipboard' | 'primary', cancellation: CancellationToken): Promise<Result<void, PlatformFailure>> => {
     if (cancellation.isCancelled) return { ok: false, error: { code: 'cancelled', message: 'clipboard write was cancelled', retryable: false } };
     try {
-      process.stdout.write(`\u001b]52;${selection === 'primary' ? 'p' : 'c'};${Buffer.from(text, 'utf8').toString('base64')}\u001b\\`);
+      const osc52 = `\u001b]52;${selection === 'primary' ? 'p' : 'c'};${Buffer.from(text, 'utf8').toString('base64')}\u0007`;
+      // tmux only forwards OSC52 it did not originate through its DCS passthrough (ESC doubled inside).
+      process.stdout.write(process.env['TMUX'] === undefined ? osc52 : `\u001bPtmux;${osc52.replaceAll('\u001b', '\u001b\u001b')}\u001b\\`);
       return { ok: true, value: undefined };
     } catch (error: unknown) {
       return clipboardFailure(error instanceof Error ? error.message : String(error));

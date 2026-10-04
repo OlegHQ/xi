@@ -153,6 +153,8 @@ function resolveThemeVariants(controllers: Controllers, themeWiring: ThemeWiring
 
 function handleWorkbenchReady(controllers: Controllers, startupTrace: WorkbenchUiOptionsDeps['startupTrace']): void {
   startupTrace('ready-callback');
+  // Warm the filename index after the first frame. Batches yield while the picker is closed.
+  void controllers.startFileIndexPopulation();
   const viewId = controllers.workbench.activeViewId;
   const view = viewId === undefined ? undefined : controllers.workbench.readView(viewId);
   const path = view === undefined ? undefined : controllers.workbench.buffer(view.document.id)?.path;
@@ -161,7 +163,6 @@ function handleWorkbenchReady(controllers: Controllers, startupTrace: WorkbenchU
       controllers.statusMessages.publish(`xi: language server unavailable: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
-  controllers.fileIndexStarter.schedule();
   if (controllers.sidebarController.visible) {
     if (controllers.sidebarController.lastPanel === 'search') controllers.searchFeature.open();
     else if (controllers.sidebarController.lastPanel === 'git') controllers.gitPanelFeature.open();
@@ -180,7 +181,7 @@ export function buildWorkbenchUiOptions(controllers: Controllers, deps: Workbenc
   const {
     host, inputRouter, pointerRouter, sidebarController, contextMenuStore, syntaxTracker, optionalServices,
     mouseMode, jobControlDisposables, workbench, picker, pickerModel, explorerFeature, searchFeature, gitPanelFeature, gitDiffFeature, diagnostics, problemsFeature, taskWiring, directoryDraftController, overlayFeature, completionFeature,
-    fileIndexStarter, pickerPreview, statusMessages,
+    pickerPreview, statusMessages,
   } = controllers;
   const { renderer, themeWiring, marker, startupTrace, installJobControl } = deps; const loadingExplorer = pendingExplorerRead(explorerFeature); const themeVariants = resolveThemeVariants(controllers, themeWiring); const colorMode = resolveStartupColorMode(controllers, marker); let directoryExplorerRead: ReturnType<typeof createDirectoryExplorerRead> | undefined; const options: RelaxedWorkbenchUiOptions = {
     renderer,

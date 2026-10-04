@@ -125,13 +125,6 @@ export interface VimInsertSession {
   readonly suspendedForNormalCommand: boolean;
   readonly undoEpoch: number;
   /**
-   * `backspace=start` lets `<C-w>`/`<C-u>` delete text typed before Insert
-   * mode started, but only stops there once: the press that lands exactly on
-   * the insert-start boundary is swallowed, and the next press continues
-   * into the pre-existing text.
-   */
-  readonly stoppedAtInsertStart: boolean;
-  /**
    * Display-cell column an `<Up>`/`<Down>` chain tries to land on (`:help
    * curswant`), null when it should be recomputed from the actual cursor
    * column. Any other cursor-moving action resets it to null so a later
@@ -287,7 +280,6 @@ export function beginVimInsert(
       autoIndentLineHasContent: false,
       suspendedForNormalCommand: false,
       undoEpoch: 0,
-      stoppedAtInsertStart: false,
       desiredColumn: null,
     });
     return success(Object.freeze({
@@ -325,7 +317,6 @@ export function beginVimInsert(
     autoIndentLineHasContent: false,
     suspendedForNormalCommand: false,
     undoEpoch: 0,
-    stoppedAtInsertStart: false,
     desiredColumn: null,
   });
   return success(Object.freeze({
@@ -994,14 +985,10 @@ function deletePreviousWord(snapshot: DocumentSnapshot, source: string, base: nu
   if (!isSafeBoundary(source, cursor) || cursor <= 0) return success(ignored(snapshot, session));
   const entryBound = Math.max(0, (session.entryOffset as number) - base);
   const canPassEntry = hasOption(session.options, 'start');
-  // With `backspace=start`, deleting past where Insert began stops once at
-  // that boundary; the very next `<C-w>` press continues into older text.
-  if (cursor <= entryBound) {
-    if (!canPassEntry || cursor < entryBound || session.stoppedAtInsertStart) return success(ignored(snapshot, session));
-    const next = freezeSession({ ...session, stoppedAtInsertStart: true });
-    return success(continued(snapshot, next, []));
-  }
-  const lowerBound = canPassEntry && session.stoppedAtInsertStart ? 0 : entryBound;
+  // nvim: a deletion that would cross where Insert began stops there; once the
+  // cursor is at that point the next `<C-w>` deletes older text (needs `backspace=start`).
+  if (cursor <= entryBound && (!canPassEntry || cursor < entryBound)) return success(ignored(snapshot, session));
+  const lowerBound = cursor <= entryBound ? 0 : entryBound;
   let start = cursor;
   while (start > lowerBound) {
     const previous = previousGrapheme(source, start, lowerBound);
@@ -1032,7 +1019,6 @@ function deletePreviousWord(snapshot: DocumentSnapshot, source: string, base: nu
     replaceStack: [],
     autoIndentSpan: adjustSpanAfterEdit(session.autoIndentSpan, absoluteStart, absoluteCursor, ''),
     autoIndentLineHasContent: false,
-    stoppedAtInsertStart: start <= entryBound,
     desiredColumn: null,
   });
   return success(continued(snapshot, next, [makeEdit(absoluteStart, absoluteCursor, '')], 'continued'));

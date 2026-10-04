@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix='xi-markdown-preview-') as temporary:
     try:
         wait_for(lambda: b'XI_WORKBENCH_READY' in diagnostics and '**bold**' in text())
         for _ in range(3):
-            send(b' p', lambda: 'Markdown preview' in text() and 'Preview title' in text() and 'ready' in text() and '**bold**' not in text())
+            send(b' p', lambda: 'Markdown preview' in text() and 'Preview title' in text() and 'ready' in text() and '┌──────┬────────┐' in text() and '│ api  │ ready  │' in text() and '**bold**' not in text())
             send(b'G', lambda: 'End of preview' in text() and 'Preview title' not in text())
             send(b'gg', lambda: 'Preview title' in text() and 'End of preview' not in text())
             send(b' p', lambda: '**bold**' in text() and 'Markdown preview' not in text())
